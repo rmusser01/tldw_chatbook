@@ -390,7 +390,7 @@ def test_undotted_two_arg_call_returns_the_caller_default_without_crashing() -> 
 
     `get_cli_setting("database", {})` is a long-lived misuse shape: keys are
     always strings, so the second positional can only be a default. It never
-    resolved config, but it also never crashed. The TASK-1754 sentinel change
+    resolved config, but it also never crashed. The TASK-1771 sentinel change
     briefly let it reach `dict.get()` with an unhashable key, which raised
     `TypeError: unhashable type: 'dict'` and broke
     `Helper_Scripts/Mass-Ingestion/mass_ingest.py` (found in PR review).

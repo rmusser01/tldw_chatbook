@@ -4456,7 +4456,7 @@ def get_cli_setting(
     third argument (even ``None``) always means "traditional form,
     honour this default". Without one, ``section`` is the complete
     dotted path and ``key`` is really the default -- for a default of
-    *any* type, not just non-string ones. (TASK-1754: the previous
+    *any* type, not just non-string ones. (TASK-1771: the previous
     heuristic keyed off ``isinstance(key, str)``, so a string default --
     the common case for provider/model/language/device names -- was
     misread as one more path segment to walk, which always missed and
@@ -4505,7 +4505,7 @@ def get_cli_setting(
         # reaching `dict.get()` with an unhashable key, which would raise
         # TypeError -- turning a long-lived silent misread into a crash for
         # callers like Helper_Scripts/Mass-Ingestion (found reviewing the
-        # TASK-1754 fix).
+        # TASK-1771 fix).
         logger.warning(
             "get_cli_setting({!r}, <{}>) has no key; returning the default. "
             "Use get_cli_setting(section, key, default).",
@@ -4542,7 +4542,7 @@ def get_cli_setting(
     # CRASH: `dict.get()` on an unhashable key raises TypeError, which would
     # turn a long-standing silent misread into a hard failure in callers that
     # have lived with it for a long time (Helper_Scripts/Mass-Ingestion, found
-    # in review of the TASK-1754 fix). Return the caller's default, exactly as
+    # in review of the TASK-1771 fix). Return the caller's default, exactly as
     # before, and let the misuse stay visible in the warning below.
     if not isinstance(key, str):
         logger.warning(

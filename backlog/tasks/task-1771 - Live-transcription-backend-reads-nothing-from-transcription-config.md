@@ -1,5 +1,5 @@
 ---
-id: TASK-1754
+id: TASK-1771
 title: 'The live transcription backend reads nothing from [transcription] (dotted get_cli_setting returns None)'
 status: Done
 assignee: []

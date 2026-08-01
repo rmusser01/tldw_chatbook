@@ -1,4 +1,4 @@
-"""TASK-1754: the live transcription backend must read `[transcription]`.
+"""TASK-1771: the live transcription backend must read `[transcription]`.
 
 `_LegacyTranscriptionBackend.__init__` reads its configuration with the
 dotted 2-arg `get_cli_setting("transcription.default_provider", fallback)`
@@ -80,7 +80,7 @@ class TestConfiguredProviderReachesBackend:
     ):
         """The backend's config mirrors a real `[transcription]` section.
 
-        Pins TASK-1754 AC#1: before the accessor fix every one of these
+        Pins TASK-1771 AC#1: before the accessor fix every one of these
         fields read back as ``None``, so a user's configured provider,
         model and language never reached media-ingest transcription.
 
@@ -140,7 +140,7 @@ class TestMediaIngestEndToEnd:
     ):
         """A configured provider is what `transcribe()` actually dispatches on.
 
-        Pins TASK-1754 AC#3/#4 end to end. Uses a deliberately nonexistent
+        Pins TASK-1771 AC#3/#4 end to end. Uses a deliberately nonexistent
         provider id so the assertion is about routing rather than any real
         engine: pre-fix the misread config silently fell through to a
         different, dispatchable provider instead of failing on this one.
