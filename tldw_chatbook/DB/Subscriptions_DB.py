@@ -1838,7 +1838,12 @@ class SubscriptionsDB(BaseDB):
         THE coverage invariant's DB half: a `failed` briefing must never
         advance the window (failure never loses items -- the next attempt
         re-covers the same window), so 'failed' is deliberately excluded
-        from this status set. Do not add it here.
+        from this status set. Do not add it here. Pact partner:
+        `list_briefing_schedules` below uses the SAME
+        `('complete','empty')` allowlist for `last_completed_at`, because a
+        failed run must never advance the SCHEDULE either -- grep
+        "list_briefing_schedules" before changing this set, and change both
+        or neither.
 
         Args:
             watchlist_id: The watchlist to compute the watermark for.
