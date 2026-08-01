@@ -21,12 +21,23 @@ panes rather than reinvented:
 
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
+
+Spec #2 phase 2b, Task 7 (audio): `selected_script` above is `reactive(...,
+recompose=True)`, so EVERY script selection rebuilds every widget this
+`compose()` yields -- including Play/Stop. That rules out ever holding
+"is this row currently playing" as a reactive/attribute on this widget: it
+would be silently reset to its default on the very next selection, wrong by
+construction. The shared `SimpleAudioPlayer` singleton (`TTS/audio_player.
+get_audio_player`) is the only thing that survives a recompose, so it is
+also the only thing consulted for playback state -- see
+`WatchlistsCollectionsScreen.handle_stop_audio_requested`.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from rich.console import Group, RenderableType
@@ -164,6 +175,36 @@ class ScriptSelected(Message):
         super().__init__()
 
 
+class SynthesizeAudioRequested(Message):
+    """Posted when the user asks to synthesize audio for the selected script.
+
+    Carries nothing, same shape as `CastScriptRequested` and for the same
+    reason: the script to synthesize is the screen's own selection state
+    (`_selected_script`), already mirrored there by `handle_script_
+    selected`. The screen owns the guard (one synthesis in flight at a
+    time, zombie recovery) exactly as it owns `_cast_in_flight`'s guard for
+    Cast -- see `handle_synthesize_audio_requested`.
+    """
+
+
+class PlayAudioRequested(Message):
+    """Posted when the user asks to play the selected script's audio.
+
+    Carries nothing: the file to play is the screen's own `_loaded_script_
+    audio` state, resolved alongside `_selected_script` inside `_load_
+    briefings`. Playback state itself is never held on THIS widget -- see
+    the module docstring's own note on `selected_script`'s `recompose=True`
+    rebuilding every control on every selection.
+    """
+
+
+class StopAudioRequested(Message):
+    """Posted when the user asks to stop the selected script's audio.
+
+    Carries nothing, for the identical reason `PlayAudioRequested` does.
+    """
+
+
 class CitationActivated(Message):
     """Posted when the user activates a citation under the briefing body.
 
@@ -297,6 +338,95 @@ def _script_turns_renderable(turns_json: str | None) -> Text:
     return text
 
 
+#: Spec #2 phase 2b, Task 7. `briefing_audio.py` defines its OWN
+#: `STATUS_GENERATING`/`STATUS_COMPLETE`/`STATUS_FAILED`, but -- exactly
+#: like `briefing_cast.py`'s own copy above -- as the identical three
+#: strings already imported from `briefing_service`. Reused here for the
+#: same reason: one status vocabulary, not a third name for the same
+#: values.
+_AUDIO_NO_AUDIO = "No audio yet. Press Synthesize to generate it."
+_AUDIO_GENERATING_COPY = "This audio is being synthesized now."
+_AUDIO_UNEXPLAINED_FAILURE = "Audio synthesis failed, but recorded no reason."
+
+
+def _audio_status_text(row: dict[str, Any]) -> str:
+    """One audio render's status, as a bare lowercase string."""
+    return str(row.get("status") or "").strip().lower()
+
+
+def _audio_file_is_playable(row: dict[str, Any] | None) -> bool:
+    """Whether Play has a real file to hand the player.
+
+    `False` for no row at all, a row with no `file_path` (never
+    synthesized, or the one dedicated voice-resolution-failure row that
+    never gets one -- see `briefing_audio._record_voice_resolution_
+    failure`), and a `file_path` that no longer exists on disk (deleted
+    out from under the row -- the honest-degradation case: an artifact
+    whose file is gone must not offer a control that can never do
+    anything, spec §Error-handling ethos).
+
+    Args:
+        row: `ArtifactsPane.script_audio`, or `None`.
+
+    Returns:
+        `True` only when `row["file_path"]` is a non-empty string naming a
+        file that exists right now.
+    """
+    if row is None:
+        return False
+    file_path = row.get("file_path")
+    if not file_path:
+        return False
+    return Path(str(file_path)).exists()
+
+
+def _audio_detail_renderable(row: dict[str, Any] | None) -> RenderableType:
+    """What `_script_detail_renderable` appends for the script's audio.
+
+    Mirrors `_script_detail_renderable`'s own "every status gets a body of
+    its own" rule: `generating`/`complete`/`failed`, or "nothing
+    synthesized yet", each read as an outcome, never a blank pane. A plain
+    function (not a method) so it is directly testable against a bare
+    `dict | None` with no widget instance required, the same shape
+    `_script_turns_renderable` already uses for the turns half of the same
+    detail block.
+
+    Args:
+        row: `ArtifactsPane.script_audio` -- the selected script's newest
+            `briefing_audio` row, or `None`.
+
+    Returns:
+        A Rich renderable, grouped into `#artifacts-script-detail`'s own
+        render by `_script_detail_renderable`.
+    """
+    if row is None:
+        return Text(_AUDIO_NO_AUDIO)
+
+    status = _audio_status_text(row)
+    header = Text()
+    header.append("Audio: ", style="dim")
+    header.append(status or "unknown status", style="bold")
+    duration = row.get("duration_seconds")
+    if duration is not None:
+        header.append(" · ")
+        header.append(f"{float(duration):.1f}s")
+    header.append("\n")
+
+    if status == STATUS_FAILED:
+        # The provider/service's own message, appended to a `Text` -- which
+        # never parses Rich markup -- exactly like `_detail_renderable`'s
+        # own `error` handling; this is model/provider data, never a
+        # trusted string.
+        return Group(
+            header, Text(str(row.get("error") or _AUDIO_UNEXPLAINED_FAILURE))
+        )
+    if status == STATUS_GENERATING:
+        return Group(header, Text(_AUDIO_GENERATING_COPY))
+    if status == STATUS_COMPLETE:
+        return header
+    return Group(header, Text(f"Unrecognised audio status: {status or '—'}"))
+
+
 class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     """List a watchlist's briefings and render the selected one."""
 
@@ -335,6 +465,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: The script whose detail is rendered below the scripts table, or
     #: `None` when nothing is selected.
     selected_script = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Task 7: the SELECTED script's newest `briefing_audio` render, or
+    #: `None` when it has never been synthesized. Screen-supplied, resolved
+    #: alongside `selected_script` inside `_load_briefings` -- never set by
+    #: this widget itself, so (unlike `selected_briefing`/`selected_script`)
+    #: it carries no `watch_`/message pair: there is nothing on this pane
+    #: that "selects" a particular audio render, only ever the newest one.
+    script_audio = reactive[dict[str, Any] | None](None, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -595,6 +732,48 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # names it as "Script:" instead, for one row instead of four.
             yield Static(self._script_detail_renderable(), id="artifacts-script-detail")
 
+            if self.selected_script is not None:
+                # Task 7: synthesizing/playing audio is an action on THE
+                # SELECTED SCRIPT, so -- exactly like Cast's own gating on
+                # `selected_briefing` above -- there is nothing for it to
+                # act on without one, and this whole section renders only
+                # once a script is selected.
+                play_disabled = not _audio_file_is_playable(self.script_audio)
+                with Horizontal(
+                    id="artifacts-audio-toolbar", classes="destination-filter-strip"
+                ):
+                    yield Button(
+                        "Synthesize",
+                        id="artifacts-synthesize-button",
+                        compact=True,
+                        tooltip=(
+                            "Synthesize spoken audio for this script, using "
+                            "its roster's voices."
+                        ),
+                    )
+                    yield Button(
+                        "Play",
+                        id="artifacts-play-button",
+                        compact=True,
+                        disabled=play_disabled,
+                        tooltip=(
+                            "No playable audio file for this script."
+                            if play_disabled
+                            else "Play this script's synthesized audio."
+                        ),
+                    )
+                    yield Button(
+                        "Stop",
+                        id="artifacts-stop-button",
+                        compact=True,
+                        tooltip="Stop this script's audio playback.",
+                    )
+                # No separate audio-detail `Static`: its status/duration/
+                # error is folded into `_script_detail_renderable`'s own
+                # render, right above -- see that method's own comment on
+                # why (this section's `fr` budget is already measured and
+                # pinned; a second scrollable region would steal from it).
+
     def _detail_renderable(self) -> RenderableType:
         """What the detail area shows for the current selection.
 
@@ -676,15 +855,22 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         header.append("\n")
 
         if status == STATUS_COMPLETE:
-            return Group(header, _script_turns_renderable(row.get("turns_json")))
-        if status == STATUS_FAILED:
-            return Group(
-                header,
-                Text(str(row.get("error") or _SCRIPT_UNEXPLAINED_FAILURE)),
-            )
-        if status == STATUS_GENERATING:
-            return Group(header, Text(_SCRIPT_GENERATING_COPY))
-        return Group(header, Text(f"Unrecognised script status: {status or '—'}"))
+            body: RenderableType = _script_turns_renderable(row.get("turns_json"))
+        elif status == STATUS_FAILED:
+            body = Text(str(row.get("error") or _SCRIPT_UNEXPLAINED_FAILURE))
+        elif status == STATUS_GENERATING:
+            body = Text(_SCRIPT_GENERATING_COPY)
+        else:
+            body = Text(f"Unrecognised script status: {status or '—'}")
+
+        # Task 7: the script's audio render, appended below its own body --
+        # folded into this SAME renderable rather than a second scrollable
+        # `Static`, to stay inside the pane's already fully-measured `fr`
+        # budget instead of stealing new fixed rows from it (see
+        # `_watchlists.tcss`'s own comment on why that split is pinned).
+        return Group(
+            header, body, Text("\n"), _audio_detail_renderable(self.script_audio)
+        )
 
     def select_briefing_by_id(self, briefing_id: str) -> None:
         """Select one visible briefing by its row id."""
@@ -847,6 +1033,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(ManagePresetsRequested())
         elif button_id == "artifacts-cast-button":
             self.post_message(CastScriptRequested())
+        elif button_id == "artifacts-synthesize-button":
+            self.post_message(SynthesizeAudioRequested())
+        elif button_id == "artifacts-play-button":
+            self.post_message(PlayAudioRequested())
+        elif button_id == "artifacts-stop-button":
+            self.post_message(StopAudioRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:
