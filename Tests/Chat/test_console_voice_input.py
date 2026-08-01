@@ -558,18 +558,25 @@ class FakeDictationService:
     def emit_error(self, error):
         self._callbacks["on_error"](error)
 
+    def emit_segment_transcribing(self, done: bool = False):
+        self._callbacks["on_segment_transcribing"](done)
+
 
 class FakeAudioService:
     """Stands in for LazyLiveDictationService._audio_service.
 
     `abandon()` reaches for this private attribute on purpose: it is the
     teardown path that releases the microphone without going through
-    `stop_dictation()`'s 2s thread join.
+    `stop_dictation()`'s 2s thread join. `use_vad` mirrors the real
+    `AudioRecordingService` attribute `_maybe_report_vad_unavailable` reads;
+    it defaults to `True` (VAD came up fine) so every existing caller that
+    does not care about it gets today's non-degraded behaviour.
     """
 
-    def __init__(self, raise_on_stop: Exception | None = None):
+    def __init__(self, raise_on_stop: Exception | None = None, use_vad: bool = True):
         self.stop_called = False
         self._raise_on_stop = raise_on_stop
+        self.use_vad = use_vad
 
     def stop_recording(self):
         self.stop_called = True
@@ -730,6 +737,126 @@ def test_provider_override_is_announced_once(monkeypatch):
     overrides = [e for e in events if isinstance(e, cvi.VoiceProviderOverridden)]
     assert len(overrides) == 1
     assert overrides[0].effective == "faster-whisper"
+
+
+def test_model_default_is_announced_once(monkeypatch):
+    """Review finding L1: the fast default displacing a differing
+    configured `transcription.default_model` gets a once-per-controller
+    advisory, mirroring `test_provider_override_is_announced_once` exactly.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": "distil-large-v3",
+        },
+    )
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert len(defaults) == 1
+    assert defaults[0].configured == "distil-large-v3"
+    assert defaults[0].effective == cvi.DICTATION_FAST_MODEL_DEFAULT
+
+
+def test_model_default_is_not_announced_with_nothing_configured_to_displace(
+    monkeypatch,
+):
+    """No `transcription.default_model` configured means there is nothing
+    the fast default "displaced" -- a bare default winning over an equally
+    unconfigured slot needs no advisory.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    # `_controller()`'s own settings leave `transcription.default_model` unset.
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
+def test_model_default_is_not_announced_for_an_explicit_dictation_model_override(
+    monkeypatch,
+):
+    """An explicit `dictation.model` is the user's own deliberate choice --
+    no advisory needed, even though `transcription.default_model` differs.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": "distil-large-v3",
+            "dictation.model": "tiny",
+        },
+    )
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
+def test_model_default_is_not_announced_for_a_non_fast_provider(monkeypatch):
+    """Only the `DICTATION_FAST_MODEL_PROVIDER` branch can displace anything;
+    every other provider keeps reading `transcription.default_model` as-is.
+    """
+    controller, events, _ = _controller(
+        monkeypatch, spawn=lambda thunk: thunk()
+    )
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx",)
+    )
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "parakeet-mlx",
+            "transcription.default_model": "v2",
+        },
+    )
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
+def test_vad_unavailable_is_announced_once_across_captures(monkeypatch):
+    """Mirrors `test_provider_override_is_announced_once` exactly.
+
+    `_maybe_report_vad_unavailable` reads `service._audio_service.use_vad`
+    the same defensive way `_release()` reads `_audio_service` itself; a
+    recorder that came up with `use_vad=False` means commands cannot finalize
+    mid-capture this session, which must be surfaced once, not once per
+    capture.
+    """
+    service = FakeDictationService()
+    service._audio_service = FakeAudioService(use_vad=False)
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    unavailable = [e for e in events if isinstance(e, cvi.VoiceVadUnavailable)]
+    assert len(unavailable) == 1
+
+
+def test_vad_available_never_announces_unavailable(monkeypatch):
+    """The common case: VAD came up fine, so nothing degraded is reported."""
+    service = FakeDictationService()
+    service._audio_service = FakeAudioService(use_vad=True)
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    assert [e for e in events if isinstance(e, cvi.VoiceVadUnavailable)] == []
 
 
 # -- Fix round 1: wedge-proofing (probe/resolve crash, throwing emit, --------
@@ -2104,3 +2231,227 @@ def test_a_raising_stop_dictation_still_releases_the_microphone(monkeypatch):
     assert controller.state == cvi.STATE_IDLE
     failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
     assert len(failures) == 1
+
+
+# --------------------------------------------------------------------------
+# Spoken-command grammar: a finalized segment is either a command or text
+# --------------------------------------------------------------------------
+
+
+def test_console_comma_send_period_matches(monkeypatch):
+    """Recognizers emit 'Console, send.' — punctuation must not block the match."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, send.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_trailing_words_fail_open_to_text(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console send button is broken")
+    assert isinstance(result, cvi.VoiceFinal)
+    assert result.text == "Console send button is broken"
+
+
+def test_prefixed_typo_fails_open_to_text(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    assert isinstance(cvi.classify_segment("console sned"), cvi.VoiceFinal)
+
+
+def test_every_command_phrase_matches(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    for phrase, name in cvi.COMMAND_PHRASES.items():
+        result = cvi.classify_segment(f"Console, {phrase}!")
+        assert isinstance(result, cvi.VoiceCommand) and result.name == name
+
+
+def test_custom_prefix(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "hey app"})
+    assert isinstance(cvi.classify_segment("Hey app, stop."), cvi.VoiceCommand)
+    assert isinstance(cvi.classify_segment("Console, stop."), cvi.VoiceFinal)
+
+
+def test_blank_prefix_falls_back_to_default(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "   "})
+    assert isinstance(cvi.classify_segment("Console, stop."), cvi.VoiceCommand)
+
+
+def test_plain_segments_are_untouched(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("hello world")
+    assert isinstance(result, cvi.VoiceFinal) and result.text == "hello world"
+
+
+def test_controller_emits_voice_command_for_command_segment(monkeypatch):
+    """End-to-end through the controller's on_final seam."""
+    controller, events, service = _controller(monkeypatch)
+    controller.start()
+    service.emit_final("Console, stop.")
+    commands = [e for e in events if isinstance(e, cvi.VoiceCommand)]
+    finals = [e for e in events if isinstance(e, cvi.VoiceFinal)]
+    assert [c.name for c in commands] == ["stop"] and finals == []
+
+
+def test_ellipsis_does_not_block_the_match(monkeypatch):
+    """A hesitant "Console… send" must still match -- U+2026 is punctuation
+    too, not just ASCII `string.punctuation`.
+    """
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console… send")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_curly_quotes_do_not_block_the_match(monkeypatch):
+    """Right single quote U+2019 is common recognizer output around emphasis."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, ’send’")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_digits_survive_normalization_and_still_fail_open(monkeypatch):
+    """Digits are not punctuation: normalization must not eat them, and the
+    whole-segment rule must still reject the extra token.
+    """
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, send 2")
+    assert isinstance(result, cvi.VoiceFinal)
+    assert result.text == "Console, send 2"
+
+
+# --------------------------------------------------------------------------
+# `VoiceSegmentTranscribing`: fast-model default's companion feedback event.
+# `_run_begin()` wires `on_segment_transcribing` the same way it wires
+# `on_partial_transcript`/`on_final_transcript` -- bound to this attempt's
+# `capture_generation` at wiring time, forwarded through `_emit_capture_event`.
+# --------------------------------------------------------------------------
+
+
+def test_segment_transcribing_is_emitted_with_the_capture_generation_token(
+    monkeypatch,
+):
+    """Tagged the same way `on_partial_transcript`'s events are (Task 1's
+    `capture_generation` parameter): a real token makes `_emit_capture_event`
+    call `emit(event, generation)`, the two-arg form
+    `ConsoleStreamingDictationSession._handle_event` expects.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = FakeDictationService()
+
+    def _service_factory(**kwargs):
+        service.kwargs = kwargs
+        return service
+
+    events: list[tuple] = []
+
+    def _emit(event, *args):
+        events.append((event, args[0] if args else None))
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=_emit,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+
+    controller.start(capture_generation=7)
+    events.clear()
+
+    service.emit_segment_transcribing()  # done=False: "started"
+    service.emit_segment_transcribing(done=True)  # "completed"
+
+    assert len(events) == 2
+    started_event, started_generation = events[0]
+    done_event, done_generation = events[1]
+    assert isinstance(started_event, cvi.VoiceSegmentTranscribing)
+    assert started_event.done is False
+    assert started_generation == 7
+    assert isinstance(done_event, cvi.VoiceSegmentTranscribing)
+    assert done_event.done is True
+    assert done_generation == 7
+
+
+def test_segment_transcribing_with_no_generation_tracking_uses_the_single_arg_emit(
+    monkeypatch,
+):
+    """`capture_generation=None` (every caller except
+    `ConsoleStreamingDictationSession`) means the plain single-arg emit
+    contract every non-Console caller relies on -- see
+    `_emit_capture_event`'s docstring. Using `events.append` directly as
+    `emit` is the pin: `list.append` raises `TypeError` on a second
+    positional argument, so this fails loudly if `generation` (`None`) were
+    ever passed through anyway.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = FakeDictationService()
+
+    def _service_factory(**kwargs):
+        service.kwargs = kwargs
+        return service
+
+    events = []
+    controller = cvi.ConsoleVoiceInputController(
+        emit=events.append,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+
+    controller.start()  # capture_generation defaults to None
+    events.clear()
+
+    service.emit_segment_transcribing()
+
+    assert len(events) == 1
+    assert isinstance(events[0], cvi.VoiceSegmentTranscribing)
+
+
+def test_the_observed_dot_mishear_fires_stop(monkeypatch):
+    """parakeet-mlx live 2026-07-31: spoken 'stop' transcribed as 'dot'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console dot.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_the_observed_consoles_prefix_mishear_fires_the_command(monkeypatch):
+    """parakeet-mlx live 2026-07-31: 'console' transcribed as 'consoles'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Consoles. Stop.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_mishear_aliases_stay_whole_segment_only(monkeypatch):
+    """'dot' inside prose must never fire; the alias is whole-segment like
+    the real grammar."""
+    _stub_settings(monkeypatch, {})
+    assert isinstance(
+        cvi.classify_segment("Console dot the i and cross the t"), cvi.VoiceFinal
+    )
+    assert isinstance(cvi.classify_segment("dot"), cvi.VoiceFinal)
+
+
+def test_mishear_prefix_aliases_do_not_apply_to_a_custom_prefix(monkeypatch):
+    """'consoles' is a mis-hear of the DEFAULT prefix; a user who configured
+    their own prefix gets no silent extra wake words."""
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "jarvis"})
+    assert isinstance(cvi.classify_segment("Consoles. Stop."), cvi.VoiceFinal)
+    result = cvi.classify_segment("Jarvis, dot.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_punctuation_normalizes_to_a_space_not_deletion(monkeypatch):
+    """parakeet ITN writes 'Console.com' with no spaces; deletion glued it
+    into 'consolecom', unmatchable by any grammar or alias entry."""
+    _stub_settings(monkeypatch, {})
+    assert cvi.normalize_spoken("Console.com") == "console com"
+    assert cvi.normalize_spoken("Console, send.") == "console send"
+
+
+def test_the_observed_console_dot_com_mishear_fires_stop(monkeypatch):
+    """parakeet-mlx live 2026-07-31 (app run): spoken 'console stop' surfaced
+    in the draft as 'Console.com'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console.com")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"

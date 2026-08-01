@@ -546,3 +546,53 @@ was decorative.
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
 - `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
+
+---
+
+## The shared UI harness never loads the app stylesheet — geometry conclusions under it are void (2026-07-30)
+
+**Incident.** The V2 live gate failed its composer-overflow item AFTER the defect had
+been "fixed" twice, each fix RED-first, mutation-checked, 500k-trial fuzzed, and
+approved through two full review rounds. The real cause was one CSS rule —
+`#console-composer-expanded { height: 1 }` — cropping the grown 4-row draft to a single
+painted line. No test could see it: `Tests/UI` harnesses build `ConsoleHarness`, a bare
+`App[None]` that pushes `ChatScreen(app_instance)` directly. The `TldwCli` instance is
+only a service container there; the App that runs owns the stylesheet, and it has none.
+Every rule in `tldw_cli_modular.tcss` silently does not apply under these harnesses.
+Both instruments used to verify the fixes — `widget.render_line(...)` (the widget's own
+paint, blind to a parent's crop) and `widget.region` (layout placement, not clipped
+paint) — were also individually unable to see cropping. A 30-second tmux run of the
+real app reproduced the user's report on the first try.
+
+**What to do.** Any assertion about on-screen geometry — heights, clipping, whether a
+row is visible — must run under a harness whose `CSS_PATH` is the real bundle (see
+`_CssTrueConsoleHarness` in `Tests/UI/test_console_composer_overflow.py`), or against
+the real app in tmux. `render_line`/`region` alone prove what a widget WOULD paint,
+never what the screen shows; the composited screen is the only authority (third
+recorded instance of this lesson class). When a live report contradicts a green suite,
+suspect the harness before the reporter.
+
+---
+
+## A zero-latency fake makes loop-starvation bugs invisible (2026-07-30)
+
+**Incident.** Live dictation never emitted a final during capture — voice commands
+(classified on finals) were completely dead in the field — while 300+ dictation tests
+stayed green. `_processing_loop` transcribed each 0.5 s audio window synchronously on
+the same thread that runs the silence-finalize check; real transcription took 4-5 s per
+window (proven with `sys._current_frames()` stack dumps against a live microphone), so
+the check starved indefinitely. Every test fake transcribed in ~0 ms, which makes the
+serial design behave identically to a concurrent one. The probe ladder that isolated it,
+in increasing depth: call the transcriber+classifier directly (chain worked) → measure
+`captured_bytes` during silence (VAD worked) → shim the finalize method (never called
+despite an 8.6 s silence age at a 2.0 s threshold) → per-tick thread stack dumps (loop
+permanently inside the transcriber). Fix: segment-at-silence architecture; the RED test
+that pins it gives the fake a CONTROLLABLE latency (2× the threshold) — with a fast fake
+it cannot fail.
+
+**What to do.** Any fake standing in for an operation whose real latency exceeds the
+loop/timer cadence it shares a thread with must be able to sleep. Test both fast and
+slow. And when a threaded pipeline works in tests but not live, dump the worker's stack
+(`sys._current_frames()[thread.ident]`) once a second before theorizing — it answered in
+one run what three cheaper probes could only narrow. Bonus rig: macOS `say` through the
+speakers + the real microphone is a full live STT test harness needing no human.

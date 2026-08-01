@@ -3831,10 +3831,59 @@ class _LegacyTranscriptionBackend:
                     logger.error(f"Failed to load Parakeet MLX model: {e}")
                     raise TranscriptionError(f"Failed to load model: {str(e)}") from e
 
-        # Transcribe
+        # Transcribe. The installed parakeet-mlx package's `transcribe()`
+        # takes a file path -- internally it does `Path(path)` then
+        # `load_audio(...)` -- it does NOT accept a numpy array (confirmed
+        # against the installed package and reproduced live: "argument
+        # should be a str or an os.PathLike object where __fspath__ returns
+        # a str, not 'ndarray'"). `audio_array` above is already float32,
+        # mono, resampled to 16kHz, so it only needs to be written out as a
+        # standard 16-bit PCM WAV; the `astype(int16)` here exactly inverts
+        # the `/ 32768.0` normalization above (both are divisions/
+        # multiplications by an exact power of two, so this round-trip does
+        # not lose precision for real int16 input).
+        tmp_path: Optional[str] = None
         try:
-            # Parakeet MLX can transcribe numpy arrays directly
-            result = self._parakeet_mlx_model.transcribe(audio_array)
+            pcm = np.clip(
+                np.round(audio_array * 32768.0), -32768, 32767
+            ).astype(np.int16)
+            # `prefix` identifies these files as ours in a temp-dir listing;
+            # review Finding 3 (PR #1171): a crash between here and the
+            # `finally` below leaves raw microphone audio on disk, so a
+            # recognizable name is what makes a future stale-file sweep (out
+            # of scope for this fix) possible at all.
+            with tempfile.NamedTemporaryFile(
+                prefix="parakeet_mlx_", suffix=".wav", delete=False
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                # Best-effort: restrict to owner-only before any audio is
+                # written, not after. POSIX-only concern -- `chmod` can raise
+                # on Windows (no POSIX mode bits), so a failure here must
+                # never abort a transcription that would otherwise succeed.
+                try:
+                    os.chmod(tmp_path, 0o600)
+                except OSError:
+                    logger.debug(
+                        f"Could not chmod temporary Parakeet MLX WAV "
+                        f"{tmp_path} to 0o600 (non-POSIX filesystem?)"
+                    )
+                # Write through the SAME handle the file was created with,
+                # rather than closing it and reopening by path -- the old
+                # code did exactly that (create+close, then a separate
+                # `wave.open(tmp_path, "wb")`), leaving an empty file at a
+                # predictable, default-permission path for the gap between
+                # the two calls. `wave.open` accepts a file object directly
+                # and does not close it (only a path-opened `Wave_write`
+                # does), so this `tmp_file` is still ours to flush and close
+                # via the enclosing `with`.
+                with wave.open(tmp_file, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(pcm.tobytes())
+                tmp_file.flush()
+
+            result = self._parakeet_mlx_model.transcribe(tmp_path)
 
             # Extract text
             text = result.text if hasattr(result, "text") else str(result)
@@ -3867,6 +3916,15 @@ class _LegacyTranscriptionBackend:
         except Exception as e:
             logger.error(f"Parakeet MLX buffer transcription failed: {e}")
             raise TranscriptionError(f"Buffer transcription failed: {str(e)}") from e
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        f"Failed to clean up temporary Parakeet MLX WAV "
+                        f"{tmp_path}: {cleanup_error}"
+                    )
 
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""

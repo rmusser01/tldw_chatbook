@@ -111,12 +111,14 @@ class _WarmableDictationService:
         on_final_transcript,
         on_state_change,
         on_error,
+        on_segment_transcribing=None,
         save_audio: bool = False,
     ) -> bool:
         self.calls.append("start_dictation")
         self.on_partial = on_partial_transcript
         self.on_final = on_final_transcript
         self.on_error = on_error
+        self.on_segment_transcribing = on_segment_transcribing
         return True
 
     def stop_dictation(self):
