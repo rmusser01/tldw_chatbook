@@ -278,9 +278,10 @@ PR review hardened AC #78 by routing the shared local-audio entry point through
 dispatch; unsafe and missing paths retain the public `TranscriptionError`
 contract and cannot reach model loading.
 
-Final review also kept the fast missing-file regression in the mandatory unit
-suite, restored the CSS helper's exact base-selector input, and consolidated
-the duplicated Settings value waiter without changing its bounded behavior.
+Final review also moved the unsafe- and missing-path regressions into the
+cross-platform mandatory facade suite, restored the CSS helper's exact
+base-selector input, and consolidated the duplicated Settings value waiter
+without changing its bounded behavior.
 
 ADR required: no new ADR. The work applies ADR-029, ADR-033, and ADR-037 and
 does not introduce a new storage, security, runtime, or ownership boundary.

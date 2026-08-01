@@ -590,37 +590,6 @@ class TestMLXParakeetUnit:
         assert "chunk_size" in result
         assert "overlap" in result
 
-    def test_transcription_rejects_unsafe_path(self, transcription_service):
-        """Reject an unsafe audio path through the shared validator."""
-        with patch(
-            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
-        ) as model_loader:
-            with pytest.raises(
-                TranscriptionError,
-                match="Invalid audio file path",
-            ) as exc_info:
-                transcription_service.transcribe(
-                    audio_path="missing;unsafe.wav",
-                    provider="parakeet-mlx",
-                )
-
-        assert isinstance(exc_info.value.__cause__, ValueError)
-        assert "dangerous pattern" in str(exc_info.value.__cause__)
-        model_loader.assert_not_called()
-
-    def test_transcription_rejects_missing_file(self, transcription_service):
-        """Reject a missing audio file before acquiring a model."""
-        with patch(
-            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
-        ) as model_loader:
-            with pytest.raises(TranscriptionError):
-                transcription_service.transcribe(
-                    audio_path="non_existent_file.wav",
-                    provider="parakeet-mlx",
-                )
-
-        model_loader.assert_not_called()
-
 
 @pytest.mark.slow
 class TestMLXParakeetIntegration:
