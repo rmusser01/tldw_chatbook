@@ -5,6 +5,7 @@ import pytest
 from tldw_chatbook.Chat.console_ephemeral import (
     EPHEMERAL_BLOCKED_ACTIONS,
     TEMPORARY_LABEL,
+    TEMPORARY_TOOLTIP,
     blocked_reason,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -35,9 +36,16 @@ def test_blocked_reasons_name_the_artifact_not_the_feature():
 
 @pytest.mark.unit
 def test_user_facing_copy_never_overstates_the_guarantee():
-    """The promise is local durability only -- not privacy, not anonymity."""
+    """The promise is local durability only -- not privacy, not anonymity.
+
+    F3 (final-review): ``TEMPORARY_TOOLTIP`` -- the longest string here, and
+    the one place the save affordance gets spelled out in prose -- was
+    missing from this sweep; only the short chip label was checked.
+    """
     forbidden = ("private", "anonym", "untracked", "incognito", "secure")
-    copy = " ".join([TEMPORARY_LABEL, *EPHEMERAL_BLOCKED_ACTIONS.values()]).lower()
+    copy = " ".join(
+        [TEMPORARY_LABEL, TEMPORARY_TOOLTIP, *EPHEMERAL_BLOCKED_ACTIONS.values()]
+    ).lower()
     for word in forbidden:
         assert word not in copy, f"copy overstates the guarantee: {word!r}"
 
@@ -363,6 +371,51 @@ def test_promotion_is_idempotent(tmp_path):
         assert store.promote_ephemeral_session(session.id) is None
         assert _row_counts(db) == after_first
         assert session.persisted_conversation_id == first
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_flushes_the_context_summary(tmp_path):
+    """F2 (final review): a promoted chat's `/rewind` compaction must survive.
+
+    `_persist_context_summary` no-ops while the session's
+    `persisted_conversation_id` is `None`, so `/rewind ... summarize up to
+    here` on a temporary session only updates memory
+    (`_context_summary_by_session`). `promote_ephemeral_session` mints the
+    conversation and flushes every message, but the summary/boundary pair
+    is a second, separate piece of session-held state -- the same class of
+    bug Task 3's review already caught and fixed for the RAG scope holder,
+    which IS captured before the write and restored on failure. Without the
+    flush, a promoted-then-resumed conversation silently reverts to full
+    history instead of the compacted form the user asked for.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        first = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="hi there",
+            persist=True,
+        )
+        store.set_session_context_summary(session.id, "the recap", first.id)
+        assert store.session_context_summary(session.id) == ("the recap", first.id)
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        boundary_node = store._nodes_by_session[session.id][first.id]
+        assert boundary_node.persisted_message_id is not None
+        summary, boundary_persisted_id = db.get_conversation_context_summary(
+            conversation_id
+        )
+        assert summary == "the recap"
+        assert boundary_persisted_id == boundary_node.persisted_message_id
     finally:
         db.close()
 

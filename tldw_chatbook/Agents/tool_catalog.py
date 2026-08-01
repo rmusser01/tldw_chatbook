@@ -463,7 +463,10 @@ class BuiltinToolProvider:
     SOURCE = "builtin"
 
     def __init__(
-        self, gate: Any | None = None, workspace_id: str | None = None
+        self,
+        gate: Any | None = None,
+        workspace_id: str | None = None,
+        ephemeral: bool = False,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -474,6 +477,17 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        # final-review F4: whether THIS run's owning Console session is
+        # temporary. Mirrors `_workspace_id` exactly -- `False` (the
+        # default) preserves every pre-existing construction site's
+        # behavior unchanged; `console_agent_bridge._compose_run_registry_
+        # and_allowed` threads the real value through for an actual
+        # Console run. `invoke()` uses it to refuse the write-shaped
+        # built-ins (`create_note`/`update_note`/`write_file`) -- an
+        # ordinary agent reply composes and dispatches these exactly like
+        # any other built-in, independently of the Console UI action-id
+        # registry in `Chat/console_ephemeral.py`.
+        self._ephemeral = ephemeral
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
         # task-584: surface the app's existing sandbox-rooted file tools to the
         # agent loop. They were registered on the global ToolExecutor but never
@@ -571,6 +585,20 @@ class BuiltinToolProvider:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
+        # final-review F4: a temporary Console session must refuse the
+        # write-shaped built-ins outright, BEFORE the approval gate below
+        # -- this is an absolute local-durability boundary, not a
+        # permission decision, so it must win even for a tool the user has
+        # already approved (session or always-allow). Checked first, same
+        # reasoning `_console_save_as_destinations` already uses for the
+        # per-message Save-as row: "the write itself is the problem,
+        # service/approval readiness is moot."
+        if self._ephemeral:
+            from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+            reason = blocked_reason(name, ephemeral=True)
+            if reason is not None:
+                return ToolResult(ok=False, error=reason)
         # Defense in depth: the run-level review hook is the primary gate
         # (it batches approvals into one card per turn), but a caller that
         # reaches invoke() without going through it must still not execute

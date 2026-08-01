@@ -162,6 +162,22 @@ def test_store_creates_session_and_appends_messages():
     ]
 
 
+def test_session_is_ephemeral_mirrors_session_workspace_id():
+    """F4 (final-review): the accessor `ConsoleAgentBridge.run_reply` uses
+    to thread a session's temporary flag into `BuiltinToolProvider`, mirrors
+    `session_workspace_id`'s own shape exactly (raises `KeyError` for an
+    unknown session id -- callers degrade that to `False`, never let it
+    escape)."""
+    store = ConsoleChatStore()
+    normal = store.create_session(title="Normal")
+    temp = store.create_session(title="Temp", ephemeral=True)
+
+    assert store.session_is_ephemeral(normal.id) is False
+    assert store.session_is_ephemeral(temp.id) is True
+    with pytest.raises(KeyError):
+        store.session_is_ephemeral("no-such-session")
+
+
 def test_store_records_message_feedback():
     store = ConsoleChatStore()
     session = store.ensure_session()

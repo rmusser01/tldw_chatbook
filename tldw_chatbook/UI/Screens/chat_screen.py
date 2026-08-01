@@ -5225,7 +5225,7 @@ class ChatScreen(BaseAppScreen):
         if not action_id:
             return
         if action_id == ACTION_SAVE_CHAT:
-            self._promote_console_temporary_session()
+            self._dispatch_promote_console_temporary_session()
             return
         if action_id == ACTION_GENERATE_IMAGE:
             self.run_worker(
@@ -5246,18 +5246,46 @@ class ChatScreen(BaseAppScreen):
                 group="console-impersonate",
             )
 
-    def _promote_console_temporary_session(self) -> None:
+    def _dispatch_promote_console_temporary_session(self) -> None:
+        """Kick off the temporary-chat save as its own worker (F5, final review).
+
+        Both entry points (the composer menu row and the Temporary chip)
+        land here, so the save behaves identically however it was reached,
+        and both stay non-blocking: ``promote_ephemeral_session`` runs one
+        DB transaction over every tree node including attachment BLOBs,
+        which can visibly freeze the TUI for a temporary chat with several
+        pasted images. ``group="console-promote"`` is its own family,
+        distinct from ``console-sync``/``console-run-*``/``console-
+        impersonate`` -- see ``Tests/UI/test_chat_screen_worker_groups.py``
+        for why an ungrouped (or wrongly-grouped) exclusive worker is not a
+        cosmetic bug on this screen: one already cancelled in-flight
+        Console sends on this branch. ``exclusive=True`` collapses a
+        double-activation (menu row AND chip clicked before the first save
+        lands) into one save rather than two overlapping transactions on
+        the same session.
+        """
+        self.run_worker(
+            self._promote_console_temporary_session(),
+            exclusive=True,
+            group="console-promote",
+        )
+
+    async def _promote_console_temporary_session(self) -> None:
         """Save the active temporary chat, then refresh its marker and chip.
 
-        Both entry points (the composer menu row and the Temporary chip) land
-        here, so the save behaves identically however it was reached.
+        The actual store call is offloaded to a thread
+        (``asyncio.to_thread``) rather than run inline on the event loop --
+        see ``_dispatch_promote_console_temporary_session`` for why blocking
+        here is a real, user-visible freeze, not a theoretical one.
         """
         store = self._ensure_console_chat_store()
         session_id = getattr(store, "active_session_id", None)
         if not session_id:
             return
         try:
-            conversation_id = store.promote_ephemeral_session(session_id)
+            conversation_id = await asyncio.to_thread(
+                store.promote_ephemeral_session, session_id
+            )
         except Exception:
             logger.opt(exception=True).warning("Saving the temporary chat failed")
             self.app_instance.notify(
@@ -5266,6 +5294,27 @@ class ChatScreen(BaseAppScreen):
             )
             return
         if conversation_id is None:
+            # F6 (final review): every other outcome notifies -- a silent
+            # return here left the user with no feedback at all on "Save
+            # this chat". `promote_ephemeral_session` returns `None` for
+            # two different reasons (its own docstring): the session was
+            # already saved (idempotent, genuinely fine), or no
+            # persistence adapter is configured at all (the chat is still
+            # temporary and nothing happened) -- these read very
+            # differently to the user, so distinguish them rather than
+            # picking one generic sentence.
+            session = next(
+                (s for s in store.sessions() if s.id == session_id), None
+            )
+            if session is not None and not session.ephemeral:
+                self.app_instance.notify(
+                    "This chat is already saved.", severity="information"
+                )
+            else:
+                self.app_instance.notify(
+                    "Could not save this chat right now. It is still temporary.",
+                    severity="warning",
+                )
             return
         self._invalidate_console_persisted_rows_cache()
         # `_sync_native_console_chat_ui()` below never touches the Temporary
@@ -5285,7 +5334,7 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Save the temporary chat from its status chip."""
         event.stop()
-        self._promote_console_temporary_session()
+        self._dispatch_promote_console_temporary_session()
 
     async def _open_console_generate_image_modal(self) -> None:
         """Collect image options, then paste the command into the draft."""
@@ -12322,6 +12371,11 @@ class ChatScreen(BaseAppScreen):
             yield ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
+                # F1 (final review): compose the chip correctly on the very
+                # first render instead of relying on a post-mount sync call
+                # that some code paths (screen recreation via
+                # restore_state) never make.
+                ephemeral=self._console_active_session_is_ephemeral(),
                 id="console-status-chips",
                 classes="ds-panel",
             )

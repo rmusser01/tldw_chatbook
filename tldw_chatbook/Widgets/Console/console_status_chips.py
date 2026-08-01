@@ -179,6 +179,7 @@ class ConsoleStatusChips(Horizontal):
         state: ConsoleControlState,
         *,
         scope_state: ConsoleRetrievalScopeState | None = None,
+        ephemeral: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the strip.
@@ -189,6 +190,17 @@ class ConsoleStatusChips(Horizontal):
                 (task-10) -- the same ``ConsoleRetrievalScopeState`` the
                 Inspector's retrieval-scope row renders from. ``None``
                 renders as unscoped (hidden).
+            ephemeral: Whether the active session is temporary at
+                construction time (final-review F1). Without this the
+                Temporary chip always composed as "not temporary" on a
+                freshly (re)constructed screen -- e.g. after Console ->
+                another screen -> Console navigation, which builds a brand
+                new ``ChatScreen``/``ConsoleStatusChips`` -- and stayed
+                wrong until something happened to call
+                ``sync_temporary_chip`` by hand. Callers should still call
+                ``ChatScreen._sync_console_temporary_chip()`` after mount
+                as a second line of defense for session switches that
+                happen post-construction.
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -199,7 +211,7 @@ class ConsoleStatusChips(Horizontal):
         )
         self.state = state
         self.scope_state = scope_state
-        self.ephemeral = False
+        self.ephemeral = ephemeral
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1

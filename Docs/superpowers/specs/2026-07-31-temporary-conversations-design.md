@@ -281,6 +281,7 @@ row's precedent of documenting a reachable-but-not-applicable hit.
 | Narrate Entire Conversation (`narrate-conversation`, composer menu) | Yes | Nothing — feature is unimplemented; the handler only shows an information toast | allowed (no write) |
 | Impersonate (`impersonate`, composer menu, `_run_console_impersonate`) | Yes | Nothing — drafts the user's next message via a model call and inserts it into the composer | allowed (no write) |
 | Attachment staging (`attachment_core.py`: `process_attachment_path`, `process_attachment_bytes`, `load_processed_file`) | Yes | Nothing — zero `write`/`save` call sites in the file; bytes are staged in memory and referenced from the original path | allowed (no write) |
+| Agent **tool** calls in an ordinary reply (`create_note`/`update_note`/`write_file`, `Agents/tool_catalog.py:399-422` gateable built-ins, composed for every reply by `console_agent_bridge.py`'s `_compose_run_registry_and_allowed`, dispatched from `BuiltinToolProvider.invoke`) | Yes — a temporary chat runs the same agent loop as any other; the running session's identity was never threaded into tool dispatch at all before final-review F4 | Notes-DB row (`create_note`/`update_note`) or a file on disk (`write_file`) | blocked (final-review F4, new) |
 
 Six new rows extend `EPHEMERAL_BLOCKED_ACTIONS`: `save-image`,
 `save-as-note`, `save-as-media`, `save-as-prompt`, `save-as-chatbook`, and
@@ -289,6 +290,46 @@ predates this audit and only lists the original two; the full, current list
 is `tldw_chatbook.Chat.console_ephemeral.EPHEMERAL_BLOCKED_ACTIONS`, and
 task 9's UI wiring is scoped to all eight entries, not just the original
 two.
+
+**Follow-up (final-review F4): a 9th sink the task-1 audit above could not
+see.** The four greps and the by-hand trace both scoped to `Chat/`,
+`Widgets/Console/`, and `chat_screen.py`'s `action_id` dispatch table —
+none of which cover agent **tool** dispatch, a completely separate
+mechanism (`Agents/tool_catalog.py`'s `BuiltinToolProvider`, composed and
+invoked from `console_agent_bridge.py`). `Agents/tool_catalog.py:399-422`
+registers `create_note`, `update_note`, and `write_file` as built-ins the
+Console agent bridge composes for **every ordinary reply**
+(`console_agent_bridge.py:1030`, `_compose_run_registry_and_allowed`), not
+just explicit tool-invocation UI. Nothing gated these on a temporary
+session before this fix: a model could call `write_file` or `create_note`
+mid-reply in a temporary chat exactly as it could in a saved one.
+
+Mitigating, and why this was lower urgency than the eight UI-action sinks
+above: each of the three tools is **off by default**
+(`get_cli_setting("tools", entry.gate_key, False)` — the tool is not even
+registered into the run's catalog unless the operator has explicitly
+turned it on in Settings) and, when on, still requires **per-turn
+approval** through the built-in tool-review hook
+(`console_chat_controller.build_tool_review_hook`) before `invoke()` ever
+runs it — a temporary chat could only reach one of these writes with a
+double opt-in (gate enabled AND a call approved that turn), never as a
+byproduct of ordinary chatting.
+
+Fixed by threading the running session's `ephemeral` flag from
+`ConsoleChatStore.session_is_ephemeral` (new accessor, mirrors
+`session_workspace_id`) through `ConsoleAgentBridge.run_reply` →
+`_compose_run_registry_and_allowed(ephemeral=...)` →
+`BuiltinToolProvider(ephemeral=...)`, which `invoke()` now checks FIRST —
+before the approval gate, since this is an absolute local-durability
+boundary rather than a permission decision, and must win even over an
+already-approved call. The refusal reason comes from the same
+`EPHEMERAL_BLOCKED_ACTIONS` registry as the eight UI actions above (now
+also keyed by the three tool names, not just UI `action_id`s), so the
+model-facing error text follows the same "names the artifact, never
+overstates the guarantee" convention. `read_file`/`list_directory`/
+`glob_files`/`grep_files` and the always-on `calculator`/
+`get_current_datetime` are untouched — read-only tools produce no local
+artifact and keep working in a temporary chat.
 
 ## Live verification
 

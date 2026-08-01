@@ -4555,6 +4555,65 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
     assert all("None" not in reason for reason in reasons.values())
 
 
+def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
+    """F3 (final-review): a genuinely enumerative check on the registry.
+
+    The three tests in ``Tests/Chat/test_console_ephemeral.py`` that touch
+    ``EPHEMERAL_BLOCKED_ACTIONS`` all iterate the registry's OWN keys, so
+    none of them can detect an artifact-producing action missing FROM the
+    registry -- exactly the failure mode the module docstring claims they
+    guard against. This test derives its expected action ids from the REAL
+    runtime call site instead: ``_console_save_as_destinations`` builds
+    each save-as action id as ``f"save-as-{label.lower()}"`` from its own
+    ``("Chatbook", "Note", "Media", "Prompt")`` label list (the one
+    dynamically-constructed id family in the whole registry, and the one
+    the F4/task-9 review comment right above that call site already flags
+    as the most likely to drift). A spy on ``blocked_reason`` records every
+    action id that call path actually asks the registry about; if a future
+    label is added there without a matching registry row, this fails on
+    that id specifically -- unlike the own-keys tests, which would stay
+    green.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import (
+        EPHEMERAL_BLOCKED_ACTIONS,
+        blocked_reason as real_blocked_reason,
+    )
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    screen._console_active_session_is_ephemeral = lambda: True
+
+    requested_action_ids: list[str] = []
+
+    def spy(action_id, *, ephemeral):
+        requested_action_ids.append(action_id)
+        return real_blocked_reason(action_id, ephemeral=ephemeral)
+
+    with patch.object(chat_screen_module, "blocked_reason", spy):
+        destinations = screen._console_save_as_destinations(assistant)
+
+    assert requested_action_ids, (
+        "the ephemeral Save-as path never asked the registry anything -- "
+        "this test would not catch a missing entry"
+    )
+    for action_id in requested_action_ids:
+        assert action_id in EPHEMERAL_BLOCKED_ACTIONS, (
+            f"{action_id!r} is exercised by the real Save-as destinations "
+            "path but has no entry in EPHEMERAL_BLOCKED_ACTIONS -- it would "
+            "silently fall back to the generic 'Not available in a "
+            "temporary chat.' sentence instead of naming the artifact it "
+            "writes"
+        )
+    # The real per-artifact sentences came back, never the generic
+    # fallback that masks exactly this kind of registry gap (see
+    # test_console_save_as_destinations_never_show_a_literal_none_reason
+    # above for the fallback's own contract).
+    reasons = {d.label: d.reason for d in destinations}
+    assert "Not available in a temporary chat." not in reasons.values()
+
+
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()

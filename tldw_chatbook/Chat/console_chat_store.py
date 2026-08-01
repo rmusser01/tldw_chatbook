@@ -756,6 +756,18 @@ class ConsoleChatStore:
         """
         return self._session_or_raise(session_id).workspace_id
 
+    def session_is_ephemeral(self, session_id: str) -> bool:
+        """Return whether a native Console session is temporary.
+
+        Mirrors ``session_workspace_id`` exactly (final-review F4): used by
+        ``ConsoleAgentBridge.run_reply`` to thread THIS run's own session
+        into ``BuiltinToolProvider`` so it can refuse the write-shaped
+        built-in tools (``create_note``/``update_note``/``write_file``) for
+        a temporary chat -- never whatever session happens to be active in
+        the UI by the time a tool actually fires.
+        """
+        return self._session_or_raise(session_id).ephemeral
+
     def replace_session_settings(
         self,
         session_id: str,
@@ -2425,6 +2437,20 @@ class ConsoleChatStore:
                 )
             for message in messages:
                 self.persist_message_if_needed(message.id)
+            # F2 (final review): the `/rewind` context-summary/boundary
+            # pair is a second piece of session-held state, same class as
+            # the RAG scope holder flushed above -- must run AFTER the
+            # message loop so the boundary's native id already has a
+            # `persisted_message_id` for `_persist_context_summary` to map
+            # to. Called unconditionally, same as `rag_scope_holder.flush_
+            # to` in `persist_session_if_needed`: it is a no-op write when
+            # no summary was ever set, and running it inside this same
+            # transaction (nested `db.transaction()` seam, deferred to the
+            # outer one) means it rolls back with everything else here.
+            summary, boundary_native_id = self._context_summary_by_session.get(
+                session_id, (None, None)
+            )
+            self._persist_context_summary(session_id, summary, boundary_native_id)
             return conversation_id
 
         session.ephemeral = False

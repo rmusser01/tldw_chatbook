@@ -7,8 +7,29 @@ guarantee: the UI actions that would write a derived artifact to disk even
 though no conversation row exists.
 
 The registry below is the single place that list lives. Adding a new
-artifact-producing Console action means adding a row here -- the enumeration
-test in ``Tests/Chat/test_console_ephemeral.py`` is what keeps that honest.
+artifact-producing Console action means adding a row here.
+
+Honest scope of the automated coverage (final-review F3): the three tests
+in ``Tests/Chat/test_console_ephemeral.py`` that reference this registry
+(``test_blocked_reason_only_applies_to_temporary_sessions``,
+``test_blocked_reasons_name_the_artifact_not_the_feature``,
+``test_user_facing_copy_never_overstates_the_guarantee``) all iterate the
+registry's OWN keys -- they check that every entry is well-formed, never
+that some artifact-producing action is missing FROM it. They cannot catch
+a new sink that forgets to add a row here. The one test that genuinely can
+is ``Tests/UI/test_console_native_chat_flow.py::
+test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate``: it
+spies on ``blocked_reason`` while driving the real per-message Save-as call
+path, which builds its action id as ``f"save-as-{label.lower()}"`` from a
+label list independent of this registry -- the one dynamically-constructed
+id family here, and the one most likely to drift silently (a missing key
+just falls back to a generic "Not available" sentence instead of raising).
+Every other row is reached through a static string literal at its own call
+site (``grep -rn 'blocked_reason(' tldw_chatbook/`` to enumerate them
+today); keeping those in sync with this dict is manual discipline this
+docstring cannot enforce, and no test here claims otherwise. Tool-call
+sinks (``Agents/tool_catalog.py``) are a separate, later-discovered gap
+this registry does not cover at all -- see the design spec's audit table.
 
 The promise is LOCAL DURABILITY only: "not saved locally". Nothing here may
 imply privacy or provider-side behavior.
@@ -46,7 +67,15 @@ TEMPORARY_TOOLTIP = (
 
 #: Action id -> why it is unavailable while the chat is temporary. Keyed by
 #: the ids the Console workbench, composer menu, and message-action row
-#: already use, so a lookup needs no translation layer.
+#: already use, so a lookup needs no translation layer. Also keyed, since
+#: final-review F4, by the three write-shaped AGENT TOOL names
+#: (``create_note``/``update_note``/``write_file`` -- see
+#: ``Agents/tool_catalog.py``'s ``BuiltinToolProvider.invoke``) that an
+#: ordinary Console reply can compose and dispatch independently of any
+#: action_id above; ``blocked_reason`` is a plain string->string lookup, so
+#: reusing the one dict keeps this the single registry for every
+#: artifact-producing sink instead of splitting UI actions and tool calls
+#: across two lists that could drift apart.
 EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
     "generate-image": (
         "Generating an image writes a file to disk — not available in a "
@@ -79,6 +108,18 @@ EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
     "save-context": (
         "Saving the context snapshot writes a JSON file to disk — not "
         "available in a temporary chat."
+    ),
+    "create_note": (
+        "The create_note tool writes to the local Notes database — not "
+        "available in a temporary chat."
+    ),
+    "update_note": (
+        "The update_note tool writes to the local Notes database — not "
+        "available in a temporary chat."
+    ),
+    "write_file": (
+        "The write_file tool writes a file to disk — not available in a "
+        "temporary chat."
     ),
 }
 

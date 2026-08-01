@@ -346,6 +346,95 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
+    tmp_path, monkeypatch
+):
+    """F4 (final-review): agent tool calls are a 9th, ungated local-write
+    sink -- an ordinary reply in a temporary Console session can compose
+    and dispatch `write_file` (a gateable built-in) exactly like any other
+    session, independently of the Console UI action-id registry in
+    `Chat/console_ephemeral.py`. Verified end-to-end through `run_reply`,
+    mirroring `test_run_reply_threads_session_workspace_id_end_to_end`'s
+    own pattern (the bridge builds its own `BuiltinToolProvider` internally
+    with no seam for a test double) -- the RUNNING session's `ephemeral`
+    flag must reach it via `_store.session_is_ephemeral`.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True
+            if section == "tools" and key == "write_file_enabled"
+            else default
+        ),
+    )
+
+    called = {"n": 0}
+
+    async def _recording_execute(self, **kwargs):
+        called["n"] += 1
+        return {"success": True}
+
+    monkeypatch.setattr(WriteFileTool, "execute", _recording_execute)
+
+    scripts = [
+        [_fence("write_file", {"file_path": "note.txt", "content": "hi"})],
+        ["I could not save that."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome.status == "done"
+    assert called["n"] == 0, "write_file must never execute in a temporary chat"
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows, "a refused tool call still drops a TOOL marker"
+    assert "temporary chat" in tool_rows[0].content
+
+    # CONTROL: the identical scripted call executes normally outside a
+    # temporary chat.
+    called["n"] = 0
+    db2 = AgentRunsDB(tmp_path / "runs2.db", client_id="t")
+    store2 = ConsoleChatStore()
+    normal_session = store2.create_session()
+    store2.append_message(
+        normal_session.id, role=ConsoleMessageRole.USER, content="hi"
+    )
+    normal_assistant = store2.append_message(
+        normal_session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    scripts2 = [
+        [_fence("write_file", {"file_path": "note.txt", "content": "hi"})],
+        ["Saved."],
+    ]
+    bridge2 = ConsoleAgentBridge(
+        agent_runs_db=db2, store=store2, provider_gateway=_ChunkGateway(scripts2)
+    )
+    outcome2 = _run(
+        bridge2, store2, normal_session, normal_assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome2.status == "done"
+    assert called["n"] == 1, "write_file must execute normally outside a temporary chat"
+
+
 def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     # Finding A repro: a disobedient turn streams prose live, THEN a tool
     # fence, in the same response. The gate has already forwarded the prose
@@ -1853,6 +1942,48 @@ def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     result = registry.invoke_by_name("probe_workspace", {})
     assert result.ok, result.error
     assert '"workspace": null' in result.content
+
+
+class _StubWriteFileTool:
+    """Minimal Tool double named ``write_file`` -- ``_WorkspaceProbeTool``
+    above hardcodes its own name (``probe_workspace``), which would make
+    `registry.invoke_by_name("write_file", ...)` fail to resolve since the
+    catalog entry it produces is keyed by ``.name``, not by the provider's
+    internal dict key it was poked under."""
+
+    name = "write_file"
+    description = "stub"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return {"ok": True}
+
+
+def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
+    """F4 (final-review): `ephemeral=` must reach the freshly-built
+    `BuiltinToolProvider` so its `invoke()` refuses the write-shaped
+    built-ins for a temporary session. Mirrors ``..._threads_workspace_id_
+    into_the_provider`` exactly."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {},
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        ephemeral=True,
+    )
+    registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
+    result = registry.invoke_by_name("write_file", {})
+    assert result.ok is False
+    assert "temporary chat" in result.error
+
+
+def test_compose_run_registry_and_allowed_no_ephemeral_is_unchanged():
+    """`ephemeral=False` (the default) must not alter pre-F4 behavior --
+    the provider dispatches the tool normally."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
+    result = registry.invoke_by_name("write_file", {})
+    assert result.ok, result.error
 
 
 def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():

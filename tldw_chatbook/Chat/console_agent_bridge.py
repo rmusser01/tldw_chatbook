@@ -980,6 +980,7 @@ def _compose_run_registry_and_allowed(
     mcp_provider: Any | None = None,
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
+    ephemeral: bool = False,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -1017,6 +1018,12 @@ def _compose_run_registry_and_allowed(
             roots. ``None`` (the default) leaves the ContextVar unset for
             the run, which is ``allowed_file_roots``'s own documented
             fallback to whatever workspace is currently active.
+        ephemeral: final-review F4 -- whether THIS run's owning Console
+            session is temporary, threaded into the freshly-constructed
+            ``BuiltinToolProvider`` so its ``invoke()`` refuses the
+            write-shaped built-ins (``create_note``/``update_note``/
+            ``write_file``) for it. ``False`` (the default) preserves
+            every pre-existing caller's behavior unchanged.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -1027,7 +1034,9 @@ def _compose_run_registry_and_allowed(
         so a skill's sub-agent can never call another skill).
     """
     registry = ToolCatalogRegistry()
-    builtin_provider = BuiltinToolProvider(gate=builtin_gate, workspace_id=workspace_id)
+    builtin_provider = BuiltinToolProvider(
+        gate=builtin_gate, workspace_id=workspace_id, ephemeral=ephemeral
+    )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
@@ -1307,16 +1316,28 @@ class ConsoleAgentBridge:
             # closed session -- either degrades to `None`, never raises,
             # matching `allowed_file_roots`'s own fail-safe posture.
             run_workspace_id: str | None = None
+            # final-review F4: same fail-safe pattern as `run_workspace_id`
+            # immediately above, mirrored for the session's `ephemeral`
+            # flag. An unresolvable session degrades to `False` (not
+            # temporary) rather than raising -- consistent with every
+            # other lookup on this path, and the worst case is a normal
+            # run behaving normally, not a run crashing.
+            run_is_ephemeral = False
             if self._store is not None:
                 try:
                     run_workspace_id = self._store.session_workspace_id(session_id)
                 except KeyError:
                     run_workspace_id = None
+                try:
+                    run_is_ephemeral = self._store.session_is_ephemeral(session_id)
+                except KeyError:
+                    run_is_ephemeral = False
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
                 context,
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 workspace_id=run_workspace_id,
+                ephemeral=run_is_ephemeral,
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
