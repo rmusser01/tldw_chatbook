@@ -119,8 +119,16 @@ class SpeechSettingsMixin:
             logger.warning("Stored audio.cpp settings are invalid; using defaults")
             return AudioCppConfig()
 
-    def on_mount(self) -> None:
-        """Set initial values from config after mount"""
+    def legacy_on_mount(self) -> None:
+        """Set initial values for the retired mixed-scope form.
+
+        Textual dispatches matching event methods from every class in the
+        MRO, so leaving this named ``on_mount`` also ran it for the new
+        Studio-only pane even though that pane overrides ``on_mount``.  The
+        retired form is no longer mounted; retaining the helper under an
+        explicit legacy name keeps old diagnostic seams callable without
+        querying global controls that intentionally do not exist in Studio.
+        """
         self.call_after_refresh(self._set_initial_values)
 
     def _set_initial_values(self) -> None:

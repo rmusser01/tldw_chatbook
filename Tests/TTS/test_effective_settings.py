@@ -937,6 +937,45 @@ async def test_unknown_provider_option_blocks_without_using_saved_or_global() ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "provider_options",
+    (
+        {"temperature": 2.1},
+        {"num_candidates": True},
+        {"num_candidates": 0},
+        {"validate_with_whisper": "yes"},
+    ),
+)
+async def test_invalid_request_option_value_blocks_before_admission(
+    provider_options: dict[str, object],
+) -> None:
+    runtime = _ResolutionRuntime()
+
+    with pytest.raises(TTSEffectiveResolutionError) as caught:
+        await TTSEffectiveSettingsResolver().resolve_non_studio(
+            explicit=TTSSelectionOverrides(
+                provider_id="chatterbox",
+                model_mode="exact",
+                model_id="chatterbox",
+                voice_mode="exact",
+                voice_id="default",
+                response_format="wav",
+                speed=1.0,
+                provider_options=provider_options,
+            ),
+            global_preferences=_global_preferences(),
+            global_preferences_revision=7,
+            provider_revision_reader=runtime.provider_revision,
+            catalog_reader=runtime.read_catalog,
+        )
+
+    assert caught.value.code == "invalid_selection"
+    assert caught.value.axis == "provider_options"
+    assert caught.value.source is TTSSelectionSource.EXPLICIT
+    assert runtime.revision_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "private_value",
     (
         "https://user:credential@example.test/private?token=secret",

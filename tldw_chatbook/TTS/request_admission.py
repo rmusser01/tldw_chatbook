@@ -496,7 +496,10 @@ def _legacy_request(
     elif provider_id == "elevenlabs":
         internal_model_id = f"elevenlabs_{request.model}"
     elif provider_id == "kokoro":
-        internal_model_id = "local_kokoro_default_onnx"
+        engine = (
+            "onnx" if selection.provider_options.get("use_onnx", True) else "pytorch"
+        )
+        internal_model_id = f"local_kokoro_default_{engine}"
     elif provider_id == "chatterbox":
         internal_model_id = "local_chatterbox_default"
     elif provider_id == "higgs":

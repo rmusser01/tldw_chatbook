@@ -45,7 +45,7 @@ STUDIO_TTS_PROVIDER_OPTION_KEYS: Mapping[str, frozenset[str]] = MappingProxyType
         "alltalk": frozenset(),
     }
 )
-"""Request-local option keys admitted by the TASK-1692 ownership contract."""
+"""Request-local option keys permitted in durable Studio preferences."""
 
 _LEGACY_DEFAULTS: Mapping[str, object] = MappingProxyType(
     {

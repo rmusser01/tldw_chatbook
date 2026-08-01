@@ -27,6 +27,7 @@ from tldw_chatbook.TTS import (
     STTSPlaygroundRequest,
     TTSPreferencesSnapshot,
     TTSRequest,
+    TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
 from tldw_chatbook.TTS.adapter_types import (
@@ -815,6 +816,85 @@ class STTSEventHandler:
                     self._forget_operation_file(snapshot.operation_id, path)
             raise
 
+    async def _generate_studio_effective(
+        self,
+        snapshot: STTSPlaygroundRequest,
+        progress_sink: ProgressSink | None,
+    ) -> STTSGeneratedAudio:
+        """Generate from one revision-coherent Studio draft and saved snapshot."""
+
+        if self._stts_service is None:
+            raise RuntimeError("TTS service is not initialized")
+        if snapshot.studio_draft is None or snapshot.studio_preferences is None:
+            raise ValueError("Studio generation requires a complete Studio snapshot")
+
+        response = None
+        effective = None
+        primary_error: BaseException | None = None
+        try:
+            response, effective = await self._stts_service.synthesize_effective(
+                text=snapshot.text,
+                studio_draft=snapshot.studio_draft,
+                studio_preferences=snapshot.studio_preferences,
+                progress_sink=progress_sink,
+            )
+            chunks = [chunk async for chunk in response.byte_stream]
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            if response is not None:
+                try:
+                    await response.aclose()
+                except BaseException:
+                    if primary_error is None:
+                        raise
+                    logger.warning(
+                        "Failed to close Studio TTS response after {}",
+                        type(primary_error).__name__,
+                    )
+
+        assert response is not None
+        assert effective is not None
+        path = Path(
+            create_secure_temp_file(
+                b"".join(chunks),
+                suffix=f".{response.audio_format.removeprefix('.')}",
+                prefix="stts_playground_",
+            )
+        )
+        self._track_operation_file(snapshot.operation_id, path)
+        requested_selection = (
+            TTSRequestedSelectionSnapshot(
+                provider_id="audio_cpp",
+                model_id=effective.model_id,
+                voice_id=effective.voice_id,
+                response_format="wav",
+                speed=1.0,
+                options={},
+                configuration_revision=effective.revisions.provider_configuration,
+            )
+            if effective.provider_id == "audio_cpp"
+            else None
+        )
+        try:
+            return STTSGeneratedAudio(
+                path=path,
+                provider_id=effective.provider_id,
+                model_id=effective.model_id,
+                voice_id=effective.voice_id,
+                source_text=snapshot.text,
+                operation_id=snapshot.operation_id,
+                audio_format=response.audio_format,
+                content_type=response.content_type,
+                metadata=response.metadata,
+                requested_selection=requested_selection,
+            )
+        except BaseException:
+            if secure_delete_file(path) or not path.exists():
+                self._forget_operation_file(snapshot.operation_id, path)
+            raise
+
     @staticmethod
     def _legacy_internal_model_id(
         snapshot: STTSPlaygroundRequest,
@@ -898,7 +978,12 @@ class STTSEventHandler:
             self._update_generation_progress(snapshot.operation_id, info)
 
         try:
-            if snapshot.provider_id == "audio_cpp":
+            if snapshot.studio_preferences is not None:
+                artifact = await self._generate_studio_effective(
+                    snapshot,
+                    progress_callback,
+                )
+            elif snapshot.provider_id == "audio_cpp":
                 artifact = await self._generate_audio_cpp(
                     snapshot,
                     progress_callback,

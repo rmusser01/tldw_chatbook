@@ -34,6 +34,14 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
 )
+from tldw_chatbook.TTS.effective_settings import (
+    TTSSelectionOverrides,
+    TTSStudioDraftSelection,
+)
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSPreferenceStore,
+    StudioTTSPreferencesSnapshot,
+)
 from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
@@ -175,6 +183,21 @@ class _LegacyService:
         self.stream_calls.append((request, internal_model_id, progress_sink))
         yield b"RIFF"
         yield b"legacy"
+
+
+class _StudioService:
+    def __init__(self, response: _Response) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
+        self.calls.append(kwargs)
+        return self.response, SimpleNamespace(
+            provider_id="audio_cpp",
+            model_id="draft/model",
+            voice_id=None,
+            revisions=SimpleNamespace(provider_configuration=9),
+        )
 
 
 class _DeliveryPlayground:
@@ -960,6 +983,116 @@ async def test_cancelled_native_handler_closes_without_failure_notice() -> None:
     assert response.close_calls == 1
     assert app.notifications == []
     assert handler._is_generating is False
+
+
+@pytest.mark.asyncio
+async def test_studio_generation_uses_current_draft_without_persisting_it() -> None:
+    response = _Response(_CountingStream((b"RIFF", b"studio")))
+    service = _StudioService(response)
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="draft/model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-operation",
+        provider_id="audio_cpp",
+        model_id="draft/model",
+        text="private Studio text",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    assert len(service.calls) == 1
+    assert service.calls[0]["studio_draft"] is draft
+    assert service.calls[0]["studio_preferences"] is preferences
+    assert service.calls[0]["text"] == "private Studio text"
+    assert response.close_calls == 1
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.path.read_bytes() == b"RIFFstudio"
+        assert artifact.model_id == "draft/model"
+        assert artifact.requested_selection is not None
+        assert artifact.requested_selection.configuration_revision == 9
+        assert preferences.revision == 5
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True], ids=("failure", "cancellation"))
+async def test_failed_or_cancelled_studio_generation_never_persists_the_draft(
+    monkeypatch: pytest.MonkeyPatch,
+    cancel: bool,
+) -> None:
+    blocked = asyncio.Event() if cancel else None
+    response = _Response(
+        _CountingStream(
+            (),
+            blocked=blocked,
+            failure=None if cancel else RuntimeError("generation failed"),
+        )
+    )
+    service = _StudioService(response)
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    persist = Mock(side_effect=AssertionError("generation persisted Studio draft"))
+    monkeypatch.setattr(StudioTTSPreferenceStore, "save", persist)
+    preferences = StudioTTSPreferencesSnapshot(revision=6)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="draft/model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=6,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id=f"studio-{'cancel' if cancel else 'failure'}",
+        provider_id="audio_cpp",
+        model_id="draft/model",
+        text="ephemeral draft",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    generation = asyncio.create_task(
+        handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+    )
+    if cancel:
+        await asyncio.sleep(0)
+        generation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+    else:
+        await generation
+
+    persist.assert_not_called()
+    assert preferences.revision == 6
+    assert response.close_calls == 1
 
 
 @pytest.mark.asyncio

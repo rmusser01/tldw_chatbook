@@ -2640,6 +2640,16 @@ async def test_supported_studio_options_reach_the_legacy_request(
         revision=2,
         provider_options={"chatterbox": {"exaggeration": 0.8, "cfg_weight": 0.3}},
     )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_options={
+                "temperature": 1.2,
+                "num_candidates": 3,
+                "validate_with_whisper": True,
+            }
+        ),
+        base_revision=2,
+    )
     service = _test_service(
         registry,
         preferences_snapshot=_snapshot(
@@ -2656,12 +2666,16 @@ async def test_supported_studio_options_reach_the_legacy_request(
     try:
         response, selection = await service.synthesize_effective(
             text="Studio response",
+            studio_draft=draft,
             studio_preferences=saved,
         )
 
         assert dict(selection.provider_options) == {
             "exaggeration": 0.8,
             "cfg_weight": 0.3,
+            "temperature": 1.2,
+            "num_candidates": 3,
+            "validate_with_whisper": True,
         }
         assert captured == [
             OpenAISpeechRequest(
@@ -2670,7 +2684,13 @@ async def test_supported_studio_options_reach_the_legacy_request(
                 voice="default",
                 response_format="wav",
                 speed=1.0,
-                extra_params={"exaggeration": 0.8, "cfg_weight": 0.3},
+                extra_params={
+                    "temperature": 1.2,
+                    "num_candidates": 3,
+                    "validate_with_whisper": True,
+                    "exaggeration": 0.8,
+                    "cfg_weight": 0.3,
+                },
             )
         ]
     finally:

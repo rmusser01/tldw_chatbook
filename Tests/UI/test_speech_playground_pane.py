@@ -266,9 +266,36 @@ async def test_a_fresh_install_seeds_no_axis_defaults_and_paints_no_markers(
             )
         ]
         assert not marked, (
-            f"first run painted override markers with no saved defaults: "
-            f"{marked}"
+            f"first run painted override markers with no saved defaults: {marked}"
         )
+
+
+def test_studio_provider_override_does_not_relabel_other_provider_defaults() -> None:
+    """Global model/voice values belong to their provider, not every provider."""
+
+    from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+    from tldw_chatbook.TTS.studio_preferences import (
+        StudioTTSPreferencesSnapshot,
+        StudioTTSSelectionOverrides,
+    )
+    from tldw_chatbook.UI.STTS_Window import _seed_axis_defaults
+
+    global_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="tts-1-hd",
+        voice_mode="exact",
+        voice_id="shimmer",
+        response_format="mp3",
+        speed=1.0,
+    )
+    studio_preferences = StudioTTSPreferencesSnapshot(
+        selection=StudioTTSSelectionOverrides(provider_id="chatterbox")
+    )
+
+    assert _seed_axis_defaults(studio_preferences, global_preferences) == {
+        "tts-provider-select": "chatterbox"
+    }
 
 
 def _controls(
@@ -330,9 +357,7 @@ async def test_applying_controls_paints_the_override_marker(
     async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
-        provider_chip = app.query_one(
-            f"#{axis_chip_id('tts-provider-select')}", Static
-        )
+        provider_chip = app.query_one(f"#{axis_chip_id('tts-provider-select')}", Static)
         format_chip = app.query_one(f"#{axis_chip_id('tts-format-select')}", Static)
 
         # Baseline: seeded equal to the defaults, so nothing is marked yet.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import MappingProxyType
+
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -169,30 +171,32 @@ _VOICES = {
     "higgs": ("default",),
     "alltalk": ("female_01.wav", "male_01.wav"),
 }
-_OPTIONS = {
-    "openai": (),
-    "elevenlabs": (
-        "stability",
-        "similarity_boost",
-        "style",
-        "use_speaker_boost",
-    ),
-    "kokoro": ("language", "use_onnx"),
-    "chatterbox": (
-        "exaggeration",
-        "cfg_weight",
-        "temperature",
-        "num_candidates",
-        "validate_with_whisper",
-    ),
-    "higgs": (
-        "temperature",
-        "top_p",
-        "repetition_penalty",
-        "language",
-    ),
-    "alltalk": ("language",),
-}
+LEGACY_REQUEST_OPTION_KEYS = MappingProxyType(
+    {
+        "openai": (),
+        "elevenlabs": (
+            "stability",
+            "similarity_boost",
+            "style",
+            "use_speaker_boost",
+        ),
+        "kokoro": ("language", "use_onnx"),
+        "chatterbox": (
+            "exaggeration",
+            "cfg_weight",
+            "temperature",
+            "num_candidates",
+            "validate_with_whisper",
+        ),
+        "higgs": (
+            "temperature",
+            "top_p",
+            "repetition_penalty",
+            "language",
+        ),
+        "alltalk": ("language",),
+    }
+)
 
 
 def legacy_catalog(provider_id: str) -> TTSProviderCatalog:
@@ -212,7 +216,7 @@ def legacy_catalog(provider_id: str) -> TTSProviderCatalog:
                 formats=_ALL_VISIBLE_FORMATS,
                 voices=_VOICES[provider_id],
                 supports_speed=True,
-                supports_options=_OPTIONS[provider_id],
+                supports_options=LEGACY_REQUEST_OPTION_KEYS[provider_id],
             )
             for model_id in models
         ),

@@ -60,6 +60,8 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectSentinel,
     SelectValue,
     controls_from_catalog,
+    controls_from_profile_preset,
+    profile_availability_from_catalog,
     provider_options,
 )
 
@@ -178,6 +180,7 @@ class SpeechCatalogMixin:
     ) -> None:
         """Load descriptors and one selected provider catalog."""
         token: CatalogRequestToken | None = None
+        profile_voice_token: CatalogRequestToken | None = None
         try:
             if self._tts_service is None:
                 self._tts_service = await self._tts_service_factory()
@@ -187,6 +190,7 @@ class SpeechCatalogMixin:
                 descriptors = service.provider_descriptors()
                 options = provider_options(descriptors)
                 if not options:
+                    self._profile_preview_loading = False
                     self._set_provider_status("No TTS providers are registered")
                     return
                 self._provider_ids = frozenset(value for _label, value in options)
@@ -201,11 +205,16 @@ class SpeechCatalogMixin:
                     "default_provider",
                     options[0][1],
                 )
-                selected = (
-                    configured_default
-                    if configured_default in self._provider_ids
-                    else options[0][1]
+                preset_provider = (
+                    self._profile_preset.provider_id
+                    if self._profile_preset is not None
+                    else None
                 )
+                selected = options[0][1]
+                if configured_default in self._provider_ids:
+                    selected = configured_default
+                if preset_provider in self._provider_ids:
+                    selected = preset_provider
                 self._selected_provider_id = selected
                 self._applying_catalog_controls = True
                 try:
@@ -221,6 +230,8 @@ class SpeechCatalogMixin:
             if provider_id is None or provider_id not in getattr(
                 self, "_provider_ids", ()
             ):
+                self._profile_preview_loading = False
+                self._sync_profile_preview_status()
                 return
 
             configuration_revision = service.configuration_revision(provider_id)
@@ -231,6 +242,9 @@ class SpeechCatalogMixin:
                 configuration_revision=configuration_revision,
                 request_generation=request_generation,
             )
+            preset = self._profile_preset
+            if preset is not None and preset.provider_id == provider_id:
+                self._profile_configuration_revision = configuration_revision
             self._set_provider_status("Loading selected provider models…")
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
@@ -244,6 +258,7 @@ class SpeechCatalogMixin:
                 )
                 return
 
+            self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (
                 previous_catalog is not None
@@ -257,7 +272,46 @@ class SpeechCatalogMixin:
             self._catalogs[provider_id] = catalog
             self._catalog_configuration_revisions[provider_id] = configuration_revision
             self._stale_providers.discard(provider_id)
+            preset = self._profile_preset
+            if preset is not None and preset.provider_id == provider_id:
+                self._profile_effective_availability = (
+                    profile_availability_from_catalog(preset, catalog)
+                )
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and preset.voice_id is not None
+                and self._profile_effective_availability != "unavailable"
+            ):
+                profile_voice_token = self._reserve_voice_request_token(
+                    provider_id,
+                    preset.model_id,
+                    catalog.revision,
+                )
+                self._profile_voice_validation_token = profile_voice_token
             self._apply_catalog(provider_id, catalog)
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and catalog.health.state == "closed"
+            ):
+                self._stale_providers.add(provider_id)
+                self._catalog_generation_allowed = False
+                if self._profile_effective_availability != "unavailable":
+                    self._set_provider_status("The TTS service is unavailable")
+                self._sync_generate_enabled()
+                if profile_voice_token is not None:
+                    self._clear_profile_voice_validation(profile_voice_token)
+                return
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and (
+                    self._profile_effective_availability == "unavailable"
+                    or preset.voice_id is None
+                )
+            ):
+                return
 
             model_id = self._current_select_value("#tts-model-select")
             if isinstance(model_id, str):
@@ -266,19 +320,35 @@ class SpeechCatalogMixin:
                     model_id,
                     catalog.revision,
                     refresh=refresh,
+                    request_token=profile_voice_token,
                 )
+            elif profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
         except asyncio.CancelledError:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             raise
         except Exception as error:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             target = provider_id or self._selected_provider_id
             if token is not None and not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
                     self._mark_stale_catalog_result(token)
                 return
             if target is not None:
+                exact_attempt_allowed = (
+                    self._tts_service is not None
+                    and not isinstance(error, TTSRegistryClosedError)
+                    and not (
+                        isinstance(error, TTSOperationError)
+                        and error.code in {"configuration_invalid", "not_configured"}
+                    )
+                )
                 self._catalog_failure(
                     target,
                     self._catalog_error_copy(error, target),
+                    exact_attempt_allowed=exact_attempt_allowed,
                 )
 
     def _load_provider_voices(
@@ -288,16 +358,54 @@ class SpeechCatalogMixin:
         catalog_revision: int,
         *,
         refresh: bool = False,
+        request_token: CatalogRequestToken | None = None,
     ) -> None:
         """Reserve request identity before starting exclusive voice work."""
-        request_key = (provider_id, model_id)
-        request_generation = self._voice_request_generations.get(request_key, 0) + 1
-        self._voice_request_generations[request_key] = request_generation
+        token = request_token or self._reserve_voice_request_token(
+            provider_id,
+            model_id,
+            catalog_revision,
+        )
+        preset = self._profile_preset
+        if (
+            preset is not None
+            and preset.provider_id == provider_id
+            and preset.model_id == model_id
+            and preset.voice_id is not None
+        ):
+            self._profile_voice_validation_token = token
+            self._sync_profile_preview_status()
+            self._sync_generate_enabled()
         self._load_provider_voices_worker(
             provider_id,
             model_id,
             catalog_revision,
             refresh=refresh,
+            request_token=token,
+        )
+
+    def _reserve_voice_request_token(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+    ) -> CatalogRequestToken:
+        """Reserve one voice request and capture its catalog authority."""
+
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
+        configuration_revision = self._catalog_configuration_revisions.get(provider_id)
+        if configuration_revision is None:
+            service = self._tts_service
+            if service is None:
+                raise TTSRegistryClosedError("The TTS service is unavailable")
+            configuration_revision = service.configuration_revision(provider_id)
+        return CatalogRequestToken(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            catalog_revision=catalog_revision,
+            model_id=model_id,
             request_generation=request_generation,
         )
 
@@ -313,20 +421,15 @@ class SpeechCatalogMixin:
         catalog_revision: int,
         *,
         refresh: bool = False,
-        request_generation: int,
+        request_token: CatalogRequestToken,
     ) -> None:
         """Load voices for only the selected provider model."""
-        service = self._tts_service
-        if service is None:
-            return
-        token = CatalogRequestToken(
-            provider_id=provider_id,
-            configuration_revision=service.configuration_revision(provider_id),
-            catalog_revision=catalog_revision,
-            model_id=model_id,
-            request_generation=request_generation,
-        )
         try:
+            service = self._tts_service
+            if service is None:
+                self._clear_profile_voice_validation(request_token)
+                return
+            observation: TTSVoiceDiscoveryResult | None = None
             observe_voices = getattr(service, "observe_voices", None)
             if provider_id == AUDIO_CPP_PROVIDER_ID and callable(observe_voices):
                 observation = await observe_voices(
@@ -351,15 +454,46 @@ class SpeechCatalogMixin:
                     refresh=refresh,
                 )
         except asyncio.CancelledError:
+            self._clear_profile_voice_validation(request_token)
             raise
         except Exception as error:
-            if not self._voice_token_is_current(token):
+            self._clear_profile_voice_validation(request_token)
+            if not self._voice_token_is_current(request_token):
                 return
             if isinstance(
                 error,
                 (TTSProviderReconfiguringError, TTSRegistryClosedError),
             ):
                 if provider_id == self._selected_provider_id:
+                    preset = self._profile_preset
+                    if preset is not None and preset.provider_id == provider_id:
+                        if self._profile_effective_availability != "unavailable":
+                            self._profile_effective_availability = "unverified"
+                        if (
+                            isinstance(error, TTSProviderReconfiguringError)
+                            and self._profile_effective_availability != "unavailable"
+                        ):
+                            self._stale_providers.add(provider_id)
+                            self._catalog_generation_allowed = True
+                            self._set_provider_status(
+                                "Profile availability is unverified. Generate makes "
+                                "one exact attempt without fallback and shows a warning."
+                            )
+                            self._sync_generate_enabled()
+                            return
+                        self._stale_providers.add(provider_id)
+                        self._catalog_generation_allowed = False
+                        if self._profile_effective_availability == "unavailable":
+                            self._set_provider_status(
+                                "The exact profile selection is unavailable. Return "
+                                "to Voice profiles and choose Edit."
+                            )
+                        else:
+                            self._set_provider_status(
+                                self._catalog_error_copy(error, provider_id)
+                            )
+                        self._sync_generate_enabled()
+                        return
                     self._stale_providers.add(provider_id)
                     self._catalog_generation_allowed = False
                     self._set_provider_status(
@@ -377,19 +511,56 @@ class SpeechCatalogMixin:
                 SERVER_DEFAULT_VOICE_ID
             )
             catalog = self._catalogs.get(provider_id)
+            preset = self._profile_preset
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and self._profile_effective_availability != "unavailable"
+            ):
+                self._profile_effective_availability = "unverified"
             if catalog is not None:
                 self._apply_catalog(provider_id, catalog)
-            self._set_provider_status(
-                "Voices are unavailable; the provider default remains available"
-            )
+            if preset is not None and preset.provider_id == provider_id:
+                if self._profile_effective_availability != "unavailable":
+                    self._set_provider_status(
+                        "Exact profile voice discovery is unverified; "
+                        "the exact selection remains selected without fallback."
+                    )
+            else:
+                self._set_provider_status(
+                    "Voices are unavailable; the provider default remains available"
+                )
             return
 
-        if not self._voice_token_is_current(token):
+        if not self._voice_token_is_current(request_token):
+            self._clear_profile_voice_validation(request_token)
             return
         self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == provider_id:
+            if observation is not None:
+                if observation.state == "unverified":
+                    if self._profile_effective_availability != "unavailable":
+                        self._profile_effective_availability = "unverified"
+                elif observation.state == "model_missing":
+                    self._profile_effective_availability = "unavailable"
+                elif (
+                    preset.voice_id is not None
+                    and preset.voice_id not in observation.voices
+                ):
+                    self._profile_effective_availability = "unavailable"
+                elif catalog is not None:
+                    self._profile_effective_availability = (
+                        profile_availability_from_catalog(preset, catalog)
+                    )
+            elif catalog is not None:
+                self._profile_effective_availability = (
+                    profile_availability_from_catalog(preset, catalog)
+                )
         if catalog is not None:
             self._apply_catalog(provider_id, catalog)
+        self._clear_profile_voice_validation(request_token)
 
     def _voice_token_is_current(self, token: CatalogRequestToken) -> bool:
         """Return whether a voice result still targets the displayed model."""
@@ -439,8 +610,17 @@ class SpeechCatalogMixin:
     def _mark_stale_catalog_result(self, token: CatalogRequestToken) -> None:
         if token.provider_id != self._selected_provider_id:
             return
+        self._profile_preview_loading = False
         self._stale_providers.add(token.provider_id)
         self._catalog_generation_allowed = False
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == token.provider_id:
+            if preset.availability != "unavailable":
+                self._profile_effective_availability = "unverified"
+            self._project_profile_preset_controls(
+                token.provider_id,
+                generation_allowed=False,
+            )
         display_name = self._provider_display_name(token.provider_id)
         self._set_provider_status(f"{display_name} settings changed; refresh models")
         self._sync_generate_enabled()
@@ -453,48 +633,61 @@ class SpeechCatalogMixin:
         if provider_id != self._selected_provider_id:
             return
         snapshot = self._control_snapshot_for(provider_id)
-        selected_model = snapshot.get("model_id")
-        if selected_model is None:
-            if provider_id == AUDIO_CPP_PROVIDER_ID:
-                configured_model = self._cli_setting(
-                    "app_tts",
-                    "default_model",
-                    None,
-                )
-                selected_model = (
-                    configured_model
-                    if isinstance(configured_model, str) and configured_model
-                    else None
-                )
-            else:
-                selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
-        selected_voice = snapshot.get("voice_id")
-        if selected_voice is None:
-            if provider_id == AUDIO_CPP_PROVIDER_ID:
-                configured_voice = self._cli_setting(
-                    "app_tts",
-                    "default_voice",
-                    None,
-                )
-                selected_voice = (
-                    configured_voice
-                    if isinstance(configured_voice, str) and configured_voice
-                    else None
-                )
-            else:
-                selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id != provider_id:
+            preset = None
+        if preset is not None:
+            selected_model: object = preset.model_id
+            selected_voice: object = preset.voice_id
+            selected_format: object = preset.response_format
+            speed = preset.speed
+        else:
+            selected_model = snapshot.get("model_id")
+            if selected_model is None:
+                if provider_id == AUDIO_CPP_PROVIDER_ID:
+                    configured_model = self._cli_setting(
+                        "app_tts",
+                        "default_model",
+                        None,
+                    )
+                    selected_model = (
+                        configured_model
+                        if isinstance(configured_model, str) and configured_model
+                        else None
+                    )
+                else:
+                    selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
+            selected_voice = snapshot.get("voice_id")
+            if selected_voice is None:
+                if provider_id == AUDIO_CPP_PROVIDER_ID:
+                    configured_voice = self._cli_setting(
+                        "app_tts",
+                        "default_voice",
+                        None,
+                    )
+                    selected_voice = (
+                        configured_voice
+                        if isinstance(configured_voice, str) and configured_voice
+                        else None
+                    )
+                else:
+                    selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+            selected_format = snapshot.get("response_format")
+            if selected_format is None:
+                selected_format = self._cli_setting("app_tts", "default_format", None)
+            speed = self._snapshot_speed(snapshot)
         pending_voice = self._pending_voice_selections.get(provider_id)
-        if pending_voice is not None:
+        if pending_voice is not None and preset is None:
             selected_voice = pending_voice
-        selected_format = snapshot.get("response_format")
-        if selected_format is None:
-            selected_format = self._cli_setting("app_tts", "default_format", None)
-        speed = self._snapshot_speed(snapshot)
 
         voice_choices: tuple[tuple[str, SelectValue], ...] | None = None
         discovered_voices: tuple[str, ...] | None
         if provider_id == AUDIO_CPP_PROVIDER_ID:
-            model_for_voices = self._catalog_model_id(catalog, selected_model)
+            model_for_voices = (
+                preset.model_id
+                if preset is not None
+                else self._catalog_model_id(catalog, selected_model)
+            )
             discovered_voices = (
                 self._discovered_voices.get((provider_id, model_for_voices))
                 if model_for_voices is not None
@@ -503,6 +696,7 @@ class SpeechCatalogMixin:
             voice_discovery_pending = discovered_voices is None
             if (
                 voice_discovery_pending
+                and preset is None
                 and isinstance(selected_voice, str)
                 and selected_voice
             ):
@@ -515,24 +709,39 @@ class SpeechCatalogMixin:
             discovered_voices = tuple(value for _label, value in voice_choices)
             voice_discovery_pending = False
 
-        controls = controls_from_catalog(
-            catalog,
-            selected_model_id=selected_model,
-            selected_voice_id=selected_voice,
-            discovered_voices=discovered_voices,
-            selected_format=selected_format,
-            speed=speed,
-        )
+        if preset is not None:
+            controls = controls_from_profile_preset(
+                catalog,
+                preset=preset,
+                discovered_voices=discovered_voices,
+            )
+        else:
+            controls = controls_from_catalog(
+                catalog,
+                selected_model_id=(
+                    selected_model if isinstance(selected_model, str) else None
+                ),
+                selected_voice_id=(
+                    selected_voice
+                    if isinstance(selected_voice, (str, SelectSentinel))
+                    else None
+                ),
+                discovered_voices=discovered_voices,
+                selected_format=(
+                    selected_format if isinstance(selected_format, str) else None
+                ),
+                speed=speed,
+            )
         if voice_choices is not None:
             controls = replace(controls, voice_options=voice_choices)
-        if voice_discovery_pending and pending_voice is not None:
+        if preset is None and voice_discovery_pending and pending_voice is not None:
             model_changed = (
                 selected_model is not None
                 and selected_model != controls.selected_model_id
             )
             controls = replace(controls, selection_changed=model_changed)
         self._apply_controls(controls)
-        if voice_discovery_pending and pending_voice is not None:
+        if preset is None and voice_discovery_pending and pending_voice is not None:
             self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
                 pending_voice
             )
@@ -893,9 +1102,36 @@ class SpeechCatalogMixin:
             return f"{display_name} is not configured; open STTS Settings"
         return f"{display_name} is unavailable; check STTS Settings"
 
-    def _catalog_failure(self, provider_id: str, copy: str) -> None:
+    def _catalog_failure(
+        self,
+        provider_id: str,
+        copy: str,
+        *,
+        exact_attempt_allowed: bool = False,
+    ) -> None:
         logger.warning("TTS catalog discovery failed for {}", provider_id)
         if provider_id != self._selected_provider_id:
+            return
+        self._profile_preview_loading = False
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == provider_id:
+            if preset.availability != "unavailable":
+                self._profile_effective_availability = "unverified"
+            generation_allowed = bool(
+                exact_attempt_allowed
+                and self._profile_effective_availability != "unavailable"
+            )
+            self._stale_providers.add(provider_id)
+            self._project_profile_preset_controls(
+                provider_id,
+                generation_allowed=generation_allowed,
+            )
+            if (
+                not generation_allowed
+                and self._profile_effective_availability != "unavailable"
+            ):
+                self._set_provider_status(copy)
+            self._sync_generate_enabled()
             return
         self._stale_providers.add(provider_id)
         self._catalog_generation_allowed = False
@@ -933,6 +1169,8 @@ class SpeechCatalogMixin:
         """Handle canonical provider/model/voice/format selections."""
         if self._applying_catalog_controls:
             return
+        if event.value != event.select.value:
+            return
         if event.select.id == "tts-provider-select":
             if not isinstance(event.value, str) or event.value not in getattr(
                 self, "_provider_ids", ()
@@ -940,6 +1178,7 @@ class SpeechCatalogMixin:
                 return
             if event.value == self._selected_provider_id:
                 return
+            self._end_profile_preset(before_controls=True)
             if self._selected_provider_id is not None:
                 self._remember_current_controls(self._selected_provider_id)
             self._selected_provider_id = event.value
@@ -954,6 +1193,7 @@ class SpeechCatalogMixin:
                 return
             if event.value == self._applied_model_id:
                 return
+            self._end_profile_preset()
             self._remember_current_controls(provider_id)
             catalog = self._catalogs.get(provider_id)
             if catalog is not None:
@@ -975,6 +1215,7 @@ class SpeechCatalogMixin:
                 and event.value == self._applied_format
             ):
                 return
+            preset_ended = self._end_profile_preset()
             if event.select.id == "tts-voice-select":
                 self._applied_voice_id = (
                     event.value
@@ -987,7 +1228,13 @@ class SpeechCatalogMixin:
                 )
             if self._selected_provider_id is not None:
                 self._remember_current_controls(self._selected_provider_id)
-            self._sync_generate_enabled()
+            if preset_ended:
+                self._reproject_current_catalog()
+            else:
+                self._sync_generate_enabled()
+            return
+        if event.select.has_focus and self._end_profile_preset():
+            self._reproject_current_catalog()
 
     def _check_higgs_installation(self) -> None:
         """Check if Higgs Audio is properly installed"""

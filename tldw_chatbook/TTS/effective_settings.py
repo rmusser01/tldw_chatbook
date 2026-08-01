@@ -24,13 +24,11 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
     LEGACY_DEFAULT_VOICES,
+    LEGACY_REQUEST_OPTION_KEYS,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
-from tldw_chatbook.TTS.studio_preferences import (
-    STUDIO_TTS_PROVIDER_OPTION_KEYS,
-    StudioTTSPreferencesSnapshot,
-)
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 ModelMode: TypeAlias = Literal["exact", "first_available"]
 VoiceMode: TypeAlias = Literal["exact", "server_default"]
@@ -52,6 +50,16 @@ _RESPONSE_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
 _MAX_IDENTIFIER_CHARACTERS = 512
 _UNSAFE_IDENTIFIER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _DEFAULT_PROVIDER_ID = "openai"
+TTS_REQUEST_OPTION_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "audio_cpp": frozenset(),
+        **{
+            provider_id: frozenset(option_keys)
+            for provider_id, option_keys in LEGACY_REQUEST_OPTION_KEYS.items()
+        },
+    }
+)
+"""Validated per-generation options, distinct from the persistable subset."""
 _SOURCE_AXES = frozenset(
     {
         "provider_id",
@@ -638,7 +646,7 @@ def _validated_options(
             axis="provider_options",
             source=source,
         )
-    allowed = STUDIO_TTS_PROVIDER_OPTION_KEYS[provider_id]
+    allowed = TTS_REQUEST_OPTION_KEYS[provider_id]
     normalized: dict[str, object] = {}
     for key, option in value.items():
         if type(key) is not str or key not in allowed:
@@ -647,21 +655,62 @@ def _validated_options(
                 axis="provider_options",
                 source=source,
             )
-        if provider_id == "chatterbox":
-            if isinstance(option, bool) or not isinstance(option, Real):
+        if key in {
+            "use_speaker_boost",
+            "use_onnx",
+            "validate_with_whisper",
+        }:
+            if type(option) is not bool:
                 raise TTSEffectiveResolutionError(
                     code="invalid_selection",
                     axis="provider_options",
                     source=source,
                 )
-            number = float(option)
-            if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+            normalized[key] = option
+            continue
+        if key == "language":
+            normalized[key] = _validate_identifier(
+                option,
+                "provider_options",
+                source,
+            )
+            continue
+        if key == "num_candidates":
+            if type(option) is not int or not 1 <= option <= 5:
                 raise TTSEffectiveResolutionError(
                     code="invalid_selection",
                     axis="provider_options",
                     source=source,
                 )
-            normalized[key] = number
+            normalized[key] = option
+            continue
+        if isinstance(option, bool) or not isinstance(option, Real):
+            raise TTSEffectiveResolutionError(
+                code="invalid_selection",
+                axis="provider_options",
+                source=source,
+            )
+        number = float(option)
+        if not math.isfinite(number):
+            raise TTSEffectiveResolutionError(
+                code="invalid_selection",
+                axis="provider_options",
+                source=source,
+            )
+        minimum, maximum = (
+            (0.0, 2.0)
+            if key == "temperature"
+            else (1.0, 10.0)
+            if key == "repetition_penalty"
+            else (0.0, 1.0)
+        )
+        if not minimum <= number <= maximum:
+            raise TTSEffectiveResolutionError(
+                code="invalid_selection",
+                axis="provider_options",
+                source=source,
+            )
+        normalized[key] = number
     return MappingProxyType(normalized)
 
 
@@ -679,7 +728,7 @@ def _resolve_options(
     resolved: dict[str, object] = {}
     option_sources: dict[str, TTSSelectionSource] = {}
     axis_source: TTSSelectionSource | None = None
-    allowed = STUDIO_TTS_PROVIDER_OPTION_KEYS[provider_id]
+    allowed = TTS_REQUEST_OPTION_KEYS[provider_id]
     for layer in layers:
         options_owner = layer.provider_options_provider_id
         if options_owner is None:
@@ -1253,4 +1302,5 @@ __all__ = [
     "TTSSelectionOverrides",
     "TTSSelectionSource",
     "TTSStudioDraftSelection",
+    "TTS_REQUEST_OPTION_KEYS",
 ]

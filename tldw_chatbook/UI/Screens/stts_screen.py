@@ -42,7 +42,7 @@ SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("playground", "🎤 TTS Playground"),
             ("profiles", "🗣️ Voice Profiles"),
-            ("settings", "⚙️ TTS Settings"),
+            ("settings", "⚙️ Studio TTS Preferences"),
             ("audiobook", "📚 AudioBook/Podcast"),
         ),
     ),
@@ -178,9 +178,7 @@ class STTSScreen(LabScreen):
         if self.stts_window is None:
             # Redesigned panes own their own state; nothing to bind yet.
             return
-        self.watch(
-            self.stts_window, "current_view", self._sync_rail_active, init=True
-        )
+        self.watch(self.stts_window, "current_view", self._sync_rail_active, init=True)
         self._apply_pending_navigation_context()
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
@@ -194,8 +192,7 @@ class STTSScreen(LabScreen):
         has_preset = "profile_preset" in context
         preset = context.get("profile_preset")
         if has_preset and (
-            view != "playground"
-            or type(preset) is not TTSPlaygroundSelectionPreset
+            view != "playground" or type(preset) is not TTSPlaygroundSelectionPreset
         ):
             return
         exact_preset = preset if has_preset else None
@@ -209,7 +206,12 @@ class STTSScreen(LabScreen):
             return
         self._pending_navigation_context = None
         view, preset = context
-        window.select_view(view, profile_preset=preset)
+        self.run_worker(
+            window.request_view(view, profile_preset=preset),
+            group="speech-view-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     def _sync_rail_active(self, current_view: str) -> None:
         """Move the rail highlight to the row matching the active view.
@@ -245,4 +247,16 @@ class STTSScreen(LabScreen):
         if self.stts_window is None:
             logger.warning("Speech rail pressed before the body mounted; ignored.")
             return
-        self.stts_window.current_view = view_key
+        self.run_worker(
+            self.stts_window.request_view(view_key),
+            group="speech-view-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def flush_pending_work(self) -> bool:
+        """Protect a dirty Studio preference draft before screen navigation."""
+
+        if self.stts_window is None:
+            return True
+        return await self.stts_window.confirm_studio_preferences_leave()

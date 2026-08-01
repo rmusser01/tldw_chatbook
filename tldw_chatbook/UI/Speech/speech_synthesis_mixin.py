@@ -32,6 +32,13 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
 )
 from tldw_chatbook.TTS import STTSPlaygroundRequest
+from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
+from tldw_chatbook.TTS.effective_settings import (
+    TTS_REQUEST_OPTION_KEYS,
+    TTSSelectionOverrides,
+    TTSStudioDraftSelection,
+)
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     LOADING_SELECT_VALUE,
@@ -381,6 +388,30 @@ class SpeechSynthesisMixin:
             speed = 1.0
             extra_params = {}
 
+        studio_preferences = getattr(self, "studio_preferences", None)
+        studio_draft = None
+        if type(studio_preferences) is StudioTTSPreferencesSnapshot:
+            allowed_options = TTS_REQUEST_OPTION_KEYS[provider]
+            studio_options = {
+                key: value
+                for key, value in extra_params.items()
+                if key in allowed_options
+            }
+            studio_draft = TTSStudioDraftSelection(
+                selection=TTSSelectionOverrides(
+                    provider_id=provider,
+                    model_mode="exact",
+                    model_id=model,
+                    voice_mode=("server_default" if voice_id is None else "exact"),
+                    voice_id=voice_id,
+                    response_format=format,
+                    speed=speed,
+                    provider_options=studio_options,
+                ),
+                base_revision=studio_preferences.revision,
+                preview=bool(getattr(self, "_profile_preset", None)),
+            )
+
         # Disable generate button
         self.query_one("#tts-generate-btn", Button).disabled = True
 
@@ -393,6 +424,10 @@ class SpeechSynthesisMixin:
             response_format=format,
             speed=speed,
             options=extra_params,
+            studio_draft=studio_draft,
+            studio_preferences=(
+                studio_preferences if studio_draft is not None else None
+            ),
         )
         self._generation_operation_id = request.operation_id
         self.app.post_message(STTSPlaygroundGenerateEvent(request))

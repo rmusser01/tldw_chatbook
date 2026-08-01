@@ -29,16 +29,12 @@ from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
-from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
-    STTSSettingsSaveEvent,
-)
+from textual.message import Message
 from tldw_chatbook.TTS import (
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
 )
-from tldw_chatbook.UI.stts_playground_catalog import (
-    SERVER_DEFAULT_VOICE_ID,
-)
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 from textual.widgets import (
     Button,
@@ -56,11 +52,14 @@ from tldw_chatbook.UI.stts_playground_catalog import UNAVAILABLE_SELECT_VALUE
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
-from .speech_axis_row import AXIS_EMPTY_PROMPTS, DEFAULT_SPEED, SpeechAxisRow
+from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
 from .speech_playground_model import AXIS_CONTROLS
-from .speech_profile_mixin import SpeechProfileMixin
+from .speech_profile_mixin import (
+    AdoptStudioPreferencesRequested,
+    SpeechProfileMixin,
+)
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -75,6 +74,11 @@ if TYPE_CHECKING:
 #: a measured threshold, toggled from `on_resize`, because Textual has no
 #: media queries.
 SPEECH_SPLIT_MIN_WIDTH = 64
+
+
+class OpenStudioPreferencesRequested(Message):
+    """Ask the owning Speech window to show its Studio-only editor."""
+
 
 #: Providers that synthesize from a reference clip, so the clip picker is
 #: only mounted for them -- legacy mounted it always and hid it, which left
@@ -106,9 +110,9 @@ PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
         tooltip="Re-read available models and voices",
     ),
     WorkbenchAction(
-        id="tts-save-default-btn",
-        label="Save default",
-        tooltip="Keep these axes as the app-wide defaults",
+        id="tts-open-studio-preferences-btn",
+        label="Studio preferences",
+        tooltip="Configure saved overrides used only by the Speech Studio",
     ),
 )
 
@@ -185,6 +189,8 @@ class SpeechPlaygroundPane(
         axis_defaults: dict[str, str] | None = None,
         takes: Any = None,
         capability_line: str = "",
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        global_preferences: TTSPreferencesSnapshot | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the pane.
@@ -201,6 +207,7 @@ class SpeechPlaygroundPane(
         super().__init__(classes=f"speech-pane {classes}".strip(), **kwargs)
         #: None until first measured, so the first sync always applies.
         self._stacked: bool | None = None
+        self._provider_regions_replacing = False
         #: Effective axis values for this session, and the persisted
         #: defaults they are compared against. The pane never writes the
         #: defaults -- overrides are session-scoped by design.
@@ -213,24 +220,95 @@ class SpeechPlaygroundPane(
         #: One-line capability status, sourced from lab_speech_status by the
         #: screen rather than re-derived here.
         self.capability_line = capability_line
+        if studio_preferences is not None and (
+            type(studio_preferences) is not StudioTTSPreferencesSnapshot
+        ):
+            raise TypeError("studio_preferences must be a Studio snapshot")
+        if global_preferences is not None and (
+            type(global_preferences) is not TTSPreferencesSnapshot
+        ):
+            raise TypeError("global_preferences must be a TTS preferences snapshot")
+        self.studio_preferences = studio_preferences
+        self.global_preferences = global_preferences
         self.init_synthesis_state()
         self.init_catalog_state()
         self.init_playback_state()
         self.init_profile_state(profile_preset)
 
-    @on(Button.Pressed, "#tts-save-default-btn")
-    def _on_save_default_pressed(self, event: Button.Pressed) -> None:
-        """Commit the current axes as defaults.
+    def _cli_setting(self, section: str, key: str, default: Any = None) -> Any:
+        """Project saved Studio inheritance into the existing catalog loader.
 
-        Declared here rather than added to the shared `on_button_pressed`:
-        that dispatcher is the legacy playground's, and this action is new
-        to the rebuild.
-
-        Args:
-            event: The press.
+        The loader already owns provider/model/voice restoration.  Supplying
+        its normal cached-setting seam with the effective Studio seed avoids
+        a second catalog path and performs no persistence or discovery.
         """
+
+        studio = self.studio_preferences
+        global_preferences = self.global_preferences
+        if (
+            section != "app_tts"
+            or type(studio) is not StudioTTSPreferencesSnapshot
+            or type(global_preferences) is not TTSPreferencesSnapshot
+        ):
+            return super()._cli_setting(section, key, default)
+
+        selection = studio.selection
+        provider_id = selection.provider_id or global_preferences.provider_id
+        if key == "default_provider":
+            return provider_id
+        global_applies = provider_id == global_preferences.provider_id
+        if key == "default_model":
+            if selection.model_mode == "exact":
+                return selection.model_id
+            if selection.model_mode == "first_available":
+                return None
+            return (
+                global_preferences.model_id
+                if global_applies and global_preferences.model_mode == "exact"
+                else None
+            )
+        if key == "default_voice":
+            if selection.voice_mode == "exact":
+                return selection.voice_id
+            if selection.voice_mode == "server_default":
+                return None
+            return (
+                global_preferences.voice_id
+                if global_applies and global_preferences.voice_mode == "exact"
+                else None
+            )
+        if key == "default_format":
+            if provider_id == "audio_cpp":
+                return "wav"
+            return selection.response_format or (
+                global_preferences.response_format if global_applies else default
+            )
+        if key == "default_speed":
+            if provider_id == "audio_cpp":
+                return 1.0
+            return (
+                selection.speed
+                if selection.speed is not None
+                else (global_preferences.speed if global_applies else default)
+            )
+        return super()._cli_setting(section, key, default)
+
+    @on(Button.Pressed, "#tts-adopt-studio-preferences-btn")
+    def _on_adopt_studio_preferences(self, event: Button.Pressed) -> None:
+        """Move an exact preview to the Studio editor only on explicit intent."""
+
         event.stop()
-        self._save_axes_as_default()
+        preset = self._profile_preset
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            return
+        self.post_message(AdoptStudioPreferencesRequested(preset))
+
+    @on(Button.Pressed, "#tts-open-studio-preferences-btn")
+    def _on_open_studio_preferences(self, event: Button.Pressed) -> None:
+        """Open the Studio-only editor without persisting Playground state."""
+
+        event.stop()
+        self.post_message(OpenStudioPreferencesRequested())
 
     @on(Switch.Changed)
     def on_tts_option_switch_changed(self, event: Switch.Changed) -> None:
@@ -337,62 +415,6 @@ class SpeechPlaygroundPane(
         if event.text_area.id == "tts-text-input":
             self._sync_generate_enabled()
 
-    def _save_axes_as_default(self) -> None:
-        """Persist the current axes as the app-wide defaults.
-
-        The one path by which the Playground writes a persisted value, and
-        it exists because the screen's purpose is to identify what works
-        best: a comparison you cannot keep is half a tool. Everything else
-        here stays session-scoped.
-
-        Reuses the snapshot and event Settings posts rather than writing
-        config directly, so both views commit defaults exactly one way.
-        """
-        provider = self._get_select_key(
-            self.query_one("#tts-provider-select", Select)
-        )
-        model = self._get_select_key(self.query_one("#tts-model-select", Select))
-        voice = self._get_select_key(self.query_one("#tts-voice-select", Select))
-        fmt = self._get_select_key(self.query_one("#tts-format-select", Select))
-
-        if not isinstance(provider, str) or not isinstance(fmt, str):
-            # Refuse rather than persist a sentinel as though it were a
-            # choice. Before a catalog loads there is nothing to commit.
-            self.app.notify(
-                "Choose a provider and format before saving them as default",
-                severity="warning",
-            )
-            return
-
-        try:
-            speed = float(
-                self.query_one("#tts-speed-input", Input).value or DEFAULT_SPEED
-            )
-        except ValueError:
-            speed = float(DEFAULT_SPEED)
-
-        preferences = TTSPreferencesSnapshot(
-            provider_id=provider,
-            model_mode="exact" if isinstance(model, str) else "first_available",
-            model_id=model if isinstance(model, str) else None,
-            voice_mode=(
-                "exact"
-                if isinstance(voice, str) and voice is not SERVER_DEFAULT_VOICE_ID
-                else "server_default"
-            ),
-            voice_id=(
-                voice
-                if isinstance(voice, str) and voice is not SERVER_DEFAULT_VOICE_ID
-                else None
-            ),
-            response_format=fmt,
-            speed=speed,
-        )
-        self.app.post_message(
-            STTSSettingsSaveEvent({}, preferences=preferences)
-        )
-        self.app.notify("Saved as default", severity="information")
-
     def _show_provider_specific_controls(self, provider: str) -> None:
         """Re-scope the parameter group and clip picker to `provider`.
 
@@ -438,10 +460,34 @@ class SpeechPlaygroundPane(
         # succession -- which is normal, since loading a catalog can trigger
         # another -- otherwise queue two mounts and the second duplicates the
         # first.
-        group.remove()
-        for row in self.query(".speech-source-row"):
-            row.remove()
-        self.call_after_refresh(self._reconcile_provider_regions)
+        source_rows = tuple(self.query(".speech-source-row"))
+        if self._provider_regions_replacing:
+            return
+        self._provider_regions_replacing = True
+        self.run_worker(
+            self._replace_provider_regions(group, source_rows),
+            group="speech-provider-regions",
+            exclusive=False,
+            exit_on_error=False,
+        )
+
+    async def _replace_provider_regions(
+        self,
+        group: Any,
+        source_rows: tuple[Any, ...],
+    ) -> None:
+        """Await deferred removals before reconciling the current provider."""
+
+        try:
+            if group.is_mounted:
+                await group.remove()
+            for row in source_rows:
+                if row.is_mounted:
+                    await row.remove()
+        finally:
+            self._provider_regions_replacing = False
+        if self.is_mounted:
+            self._reconcile_provider_regions()
 
     def _reconcile_provider_regions(self) -> None:
         """Mount the provider-scoped regions if they are not already there.
@@ -458,14 +504,36 @@ class SpeechPlaygroundPane(
         except NoMatches:
             return
 
-        if not self.query("#speech-param-group"):
+        groups = list(self.query("#speech-param-group"))
+        if not groups:
             self.mount(
-                SpeechParamGroup(provider=self.provider, id="speech-param-group"),
+                SpeechParamGroup(
+                    provider=self.provider,
+                    values=self._saved_studio_param_values(self.provider),
+                    id="speech-param-group",
+                ),
                 after=anchor,
             )
         if not self.query(".speech-source-row"):
             for widget in self._compose_voice_source():
                 text_pane.mount(widget)
+
+    def _saved_studio_param_values(self, provider: str) -> dict[str, object]:
+        """Return saved request-scoped values keyed by Playground control ID."""
+
+        preferences = self.studio_preferences
+        if type(preferences) is not StudioTTSPreferencesSnapshot:
+            return {}
+        options = preferences.provider_options.get(provider, {})
+        controls = {
+            "exaggeration": "#tts-exaggeration-input",
+            "cfg_weight": "#tts-cfg-weight-input",
+        }
+        return {
+            controls[option].removeprefix("#"): value
+            for option, value in options.items()
+            if option in controls
+        }
 
     def _settle_language_axis(self, provider: str) -> None:
         """Say something terminal on the language axis once a catalog is in.
@@ -592,6 +660,13 @@ class SpeechPlaygroundPane(
             classes="speech-status-line hidden",
             markup=False,
         )
+        yield Button(
+            "Adopt as Studio Preferences",
+            id="tts-adopt-studio-preferences-btn",
+            classes="workbench-action hidden",
+            compact=True,
+            disabled=True,
+        )
 
         yield SpeechActionStrip(PLAYGROUND_ACTIONS, id="speech-playground-actions")
 
@@ -619,15 +694,15 @@ class SpeechPlaygroundPane(
                 yield from self._compose_voice_source()
 
             with Vertical(id="speech-result-pane", classes="speech-split-pane"):
-                yield SpeechResultHistory(
-                    takes=self.takes, id="speech-result-history"
-                )
+                yield SpeechResultHistory(takes=self.takes, id="speech-result-history")
                 yield from self._compose_player()
 
         yield from self._compose_generation_status()
 
         yield SpeechParamGroup(
-            provider=self.provider, id="speech-param-group"
+            provider=self.provider,
+            values=self._saved_studio_param_values(self.provider),
+            id="speech-param-group",
         )
 
         yield Static(

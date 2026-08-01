@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
@@ -62,6 +62,16 @@ async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
     raise AssertionError("condition did not become true")
 
 
+def _playground_ready(screen: STTSScreen) -> bool:
+    """Return whether the dynamically mounted Playground is interactive."""
+
+    return (
+        len(screen.query(SpeechPlaygroundPane)) == 1
+        and len(screen.query("#audio-play-btn")) == 1
+        and len(screen.query("#tts-provider-select SelectOverlay")) == 1
+    )
+
+
 @pytest.mark.asyncio
 async def test_profile_library_navigation_waits_for_deferred_speech_body() -> None:
     app = _SpeechHost({"view": "profiles"})
@@ -88,8 +98,10 @@ async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> 
         await _wait_until(
             pilot,
             lambda: (
-                len(screen.query(SpeechPlaygroundPane)) == 1
+                _playground_ready(screen)
                 and screen.query_one(SpeechPlaygroundPane)._profile_preset is preset
+                and screen.query_one("#tts-provider-select", Select).value
+                == "audio_cpp"
             ),
         )
 
@@ -103,7 +115,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         original = screen.query_one(SpeechPlaygroundPane)
 
@@ -130,7 +142,7 @@ async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._store_delivered_artifact(artifact, announce=False)
@@ -161,7 +173,7 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._generation_operation_id = artifact.operation_id
