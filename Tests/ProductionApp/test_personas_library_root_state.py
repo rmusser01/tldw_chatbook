@@ -197,7 +197,7 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                     character_notifications.append((str(message), severity))
                     return original_notify(message, severity=severity, **kwargs)
 
-                def fail_character_import(_path: str):
+                def fail_character_import(_source_bytes: bytes):
                     raise RuntimeError(private_character_error)
 
                 character_failure.setattr(
@@ -207,7 +207,7 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 )
                 character_failure.setattr(
                     ccp_character_handler,
-                    "import_character_card",
+                    "import_character_card_with_outcome",
                     fail_character_import,
                 )
                 failed_character_worker = personas._start_character_import(
@@ -366,17 +366,17 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             )
             import_started = threading.Event()
             release_import = threading.Event()
-            real_import = ccp_character_handler.import_character_card
+            real_import = ccp_character_handler.import_character_card_with_outcome
 
-            def delayed_real_import(path: str):
+            def delayed_real_import(source_bytes: bytes):
                 import_started.set()
                 if not release_import.wait(timeout=5):
                     raise TimeoutError("TASK-651 import release timed out")
-                return real_import(path)
+                return real_import(source_bytes)
 
             monkeypatch.setattr(
                 ccp_character_handler,
-                "import_character_card",
+                "import_character_card_with_outcome",
                 delayed_real_import,
             )
             import_worker = stale_personas._start_character_import(

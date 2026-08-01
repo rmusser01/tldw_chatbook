@@ -122,6 +122,7 @@ def test_session_accepts_only_verified_default_library_install(tmp_path):
     session = ConsoleDictationSession(
         installed_model_dir=installed_dir,
         verify_installed_bundle=verify,
+        managed_model_dir_resolver=lambda: None,
         recorder_factory=lambda **kwargs: recorder,
         transcription_service=Mock(),
     )
@@ -138,6 +139,7 @@ def test_session_reports_missing_model_without_starting_microphone(tmp_path):
     session = ConsoleDictationSession(
         installed_model_dir=missing_dir,
         verify_installed_bundle=lambda path: False,
+        managed_model_dir_resolver=lambda: None,
         recorder_factory=recorder_factory,
         transcription_service=Mock(),
     )
@@ -146,6 +148,120 @@ def test_session_reports_missing_model_without_starting_microphone(tmp_path):
         session.start()
 
     recorder_factory.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TASK-1696: managed-first resolver order -- cached -> explicitly configured
+# -> active managed artifact -> verified legacy bundle -> error.
+# ---------------------------------------------------------------------------
+
+
+def test_session_prefers_active_managed_artifact_over_legacy_bundle(tmp_path):
+    (tmp_path / "managed").mkdir()
+    managed_dir = _model_dir(tmp_path / "managed")
+    legacy_dir = tmp_path / "legacy"
+    legacy_verify = Mock(return_value=True)
+    recorder = FakeRecorder()
+    session = ConsoleDictationSession(
+        installed_model_dir=legacy_dir,
+        verify_installed_bundle=legacy_verify,
+        managed_model_dir_resolver=lambda: managed_dir,
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+
+    session.start()
+
+    assert session.model_dir == managed_dir
+    legacy_verify.assert_not_called()
+
+
+def test_session_falls_back_to_legacy_bundle_when_no_managed_artifact(tmp_path):
+    (tmp_path / "legacy").mkdir()
+    legacy_dir = _model_dir(tmp_path / "legacy")
+    resolver = Mock(return_value=None)
+    recorder = FakeRecorder()
+    session = ConsoleDictationSession(
+        installed_model_dir=legacy_dir,
+        verify_installed_bundle=lambda path: path == legacy_dir,
+        managed_model_dir_resolver=resolver,
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+
+    session.start()
+
+    resolver.assert_called_once_with()
+    assert session.model_dir == legacy_dir
+
+
+def test_session_ignores_managed_dir_missing_required_files(tmp_path):
+    incomplete_managed_dir = tmp_path / "managed-incomplete"
+    incomplete_managed_dir.mkdir()
+    (tmp_path / "legacy").mkdir()
+    legacy_dir = _model_dir(tmp_path / "legacy")
+    recorder = FakeRecorder()
+    session = ConsoleDictationSession(
+        installed_model_dir=legacy_dir,
+        verify_installed_bundle=lambda path: path == legacy_dir,
+        managed_model_dir_resolver=lambda: incomplete_managed_dir,
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+
+    session.start()
+
+    assert session.model_dir == legacy_dir
+
+
+def test_session_explicitly_configured_dir_wins_over_managed_artifact(tmp_path):
+    (tmp_path / "configured").mkdir()
+    configured_dir = _model_dir(tmp_path / "configured")
+    (tmp_path / "managed").mkdir()
+    managed_dir = _model_dir(tmp_path / "managed")
+    resolver = Mock(return_value=managed_dir)
+    recorder = FakeRecorder()
+    session = ConsoleDictationSession(
+        model_dir=configured_dir,
+        managed_model_dir_resolver=resolver,
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+
+    session.start()
+
+    assert session.model_dir == configured_dir
+    resolver.assert_not_called()
+
+
+def test_session_default_managed_resolver_uses_only_model_artifacts_service(
+    tmp_path, monkeypatch
+):
+    """The production default (no injected resolver) must resolve through
+    ``parakeet_v2_artifact.active_managed_parakeet_v2_dir`` -- backed by
+    only ``Model_Artifacts.service`` -- never the async acquisition layer.
+    """
+    (tmp_path / "managed").mkdir()
+    managed_dir = _model_dir(tmp_path / "managed")
+
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact
+
+    monkeypatch.setattr(
+        parakeet_v2_artifact, "active_managed_parakeet_v2_dir", lambda: managed_dir
+    )
+    legacy_verify = Mock(return_value=True)
+    recorder = FakeRecorder()
+    session = ConsoleDictationSession(
+        installed_model_dir=tmp_path / "legacy",
+        verify_installed_bundle=legacy_verify,
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+
+    session.start()
+
+    assert session.model_dir == managed_dir
+    legacy_verify.assert_not_called()
 
 
 def test_session_reports_microphone_start_failure(tmp_path):

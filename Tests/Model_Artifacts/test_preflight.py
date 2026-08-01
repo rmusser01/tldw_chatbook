@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import (
@@ -26,20 +26,6 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightNotGrantableError,
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server, in egress's real format.
-
-    ``tldw_chatbook.Utils.egress._normalize_trusted`` / ``_post_resolution``
-    key membership on the bare, lowercased HOSTNAME (e.g. ``"127.0.0.1"``),
-    not a scheme+host+port URL string -- mirrors the ``_trusted`` helper in
-    ``Tests/Model_Artifacts/test_stream_fetch.py``. The fixture server binds
-    to the loopback IP literal, which classifies as "private" under
-    ``_classify_ip`` and would otherwise be egress-blocked; listing it here
-    is what lets policy allow the preflight HEAD probe to reach it.
-    """
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 @pytest.mark.asyncio
@@ -64,6 +50,9 @@ async def test_preflight_aggregates_and_grants(tmp_path):
     assert report.download_bytes == 2048
     assert report.sufficient_space is True
     assert report.entries[0].already_installed is False
+    assert report.entries[0].provenance == (
+        ProvenanceClass.CHATBOOK_CURATED,
+    )
     report.grant()  # must not raise
 
 
@@ -74,41 +63,44 @@ async def test_preflight_counts_staged_credit(tmp_path):
     The staged file itself must actually exist with AT LEAST as many
     bytes as the sidecar claims: credit is capped by the file's real
     on-disk size, not just the sidecar's say-so (see the review finding
-    covered by test_preflight_stale_sidecar_credit_capped_by_actual_file_size)."""
+    covered by test_preflight_stale_sidecar_credit_capped_by_actual_file_size).
+
+    TASK-1694: staged credit is now read from a service-owned download
+    stage's ``state/`` subtree (``core._download_stage_for``), not a bare
+    ``staging/managed/<id>/<rev>/<variant>`` directory with a sibling
+    sidecar file -- see acquisition.py's ``_fetch_sidecar_path`` and
+    ``_staged_bytes_for``.
+    """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 500)
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 500,
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 500)
+        # Sidecar lives inside the stage's state/ subtree (see
+        # acquisition.py's _fetch_sidecar_path), never inside payload/.
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 500,
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 500
     assert report.download_bytes == 2048 - 500
@@ -243,38 +235,34 @@ async def test_preflight_clamps_oversized_staged_credit_to_entry_total(tmp_path)
     """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 2048)
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 999_999,
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        # TASK-1694: staged credit now lives under a service-owned
+        # download stage's state/ subtree (see _staged_bytes_for).
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 2048)
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 999_999,
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 2048
     assert report.download_bytes == 0
@@ -298,49 +286,48 @@ async def test_preflight_stale_sidecar_credit_capped_by_actual_file_size(tmp_pat
     """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 5000,  # claims far more than exists
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        # TASK-1694: staged credit now lives under a service-owned
+        # download stage's state/ subtree (see _staged_bytes_for).
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 5000,  # claims far more than exists
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 100
     assert report.download_bytes == 2048 - 100
 
 
 def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:
-    """A 2-file descriptor -- real per-file URLs are undefined until the
-    catalog work (TASK-596/1301) specifies them; only the file COUNT
-    matters here (mirrors test_provision_fetch.py's identical-purpose
-    ``_make_two_file_descriptor``, duplicated locally per this suite's
-    convention of not cross-importing test-private helpers)."""
+    """A 2-file descriptor with no ``ArtifactSourceMap`` entries anywhere
+    in this file's tests -- TASK-1695 defines per-file URLs via an explicit
+    caller-supplied source map (see ``test_source_map.py`` for the
+    end-to-end multi-file coverage); this fixture instead exercises the
+    "resolution still fails when no map is supplied" path, so only the
+    file COUNT matters here (mirrors test_provision_fetch.py's identical-
+    purpose ``_make_two_file_descriptor``, duplicated locally per this
+    suite's convention of not cross-importing test-private helpers)."""
 
     files = (
         ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
@@ -373,15 +360,22 @@ def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:
 
 @pytest.mark.asyncio
 async def test_preflight_multi_file_descriptor_raises_catalog_error(tmp_path):
-    """A 2-file descriptor fails ``preflight()`` itself, before any report
-    or consent exists -- not just later at ``provision()``'s fetch phase.
+    """A 2-file descriptor with no ``sources`` map fails ``preflight()``
+    itself, before any report or consent exists -- not just later at
+    ``provision()``'s fetch phase.
 
-    Regression test for the review finding: previously only
-    ``_fetch_artifact`` guarded this shape, so a preflight report could be
-    built and consent granted for a closure that ``provision()`` would
-    ALWAYS reject with ``CatalogError`` -- after already taking the
-    exclusive session lease. The spec requires catalog problems to surface
-    at preflight. No network fixture is needed: ``_aggregate_closure``
+    TASK-1695 note: multi-file descriptors are no longer refused outright
+    (see ``test_source_map.py`` for the now-supported end-to-end path via
+    an explicit ``ArtifactSourceMap``) -- this test's ``CatalogError`` now
+    comes from ``_resolve_file_sources`` finding no resolvable URL for a
+    declared file (no map entry, and no single-file fallback since this
+    descriptor declares two), not from a blanket multi-file refusal.
+    Original regression rationale still holds: previously only
+    ``_fetch_artifact`` guarded resolution failures of this shape, so a
+    preflight report could be built and consent granted for a closure that
+    ``provision()`` would ALWAYS reject -- after already taking the
+    exclusive session lease. The spec requires catalog/source problems to
+    surface at preflight. No network fixture is needed: ``_aggregate_closure``
     raises before ``preflight()`` ever reaches its gating probe.
     """
     core = ModelArtifactService(tmp_path / "root")

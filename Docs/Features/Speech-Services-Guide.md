@@ -285,6 +285,144 @@ Control how your voice data is handled:
 - Look for the "🎤 Voice" button next to text fields
 - Click to add voice input anywhere in the app
 
+### Console Voice Commands (V2)
+
+The Console's dictation capture (the composer's mic button) recognizes a
+small set of spoken commands while the microphone is open, so a capture can
+be controlled — and, with spoken feedback on, operated — without touching
+the keyboard, the mouse, or the screen. This is separate from the generic
+"Voice Commands" list below, which applies to the standalone Dictation
+window.
+
+**Activation.** Say the configured prefix word (`dictation.command_prefix`,
+default `"console"`) immediately followed by one of the command phrases
+below, as the *entire* spoken segment — nothing before it, nothing after.
+For example: "Console, stop." A segment that only starts with the prefix but
+goes on to say other things — "console send button is broken" — is not a
+command; it fails the match and lands in the transcript as ordinary text.
+
+**Fail-open, not fail-silent.** Normalization lowercases the segment,
+strips all punctuation (leading, trailing, and internal), and collapses
+whitespace, then checks the result against `<prefix> <phrase>`. Anything
+that isn't an exact whole-segment match — plain dictation, a misheard
+command like "console sned" — is emitted as ordinary text into the draft,
+never dropped and never actioned silently. There is no error for an
+unrecognized command; the words simply appear where you can read, edit, or
+delete them.
+
+**Command table:**
+
+| Say (after the prefix) | Kind | Effect |
+|---|---|---|
+| "new paragraph" | inline | Inserts a paragraph break (`\n\n`); capture keeps running. |
+| "new line" | inline | Inserts a line break (`\n`); capture keeps running. |
+| "stop" | capture-ending | Ends the capture and inserts the accumulated text at the caret — the same as pressing the mic button again. |
+| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. |
+| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. |
+| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. |
+| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. |
+
+Inline commands leave the capture open; every other command in the table
+ends it. A capture whose spoken segments were entirely commands — for
+example, dictating nothing but "console, stop" — is not treated as a failed
+or empty capture: it produces no error and inserts no stray text, only a
+"Nothing to insert." notice so a capture that dropped your break is not
+silently indistinguishable from one that landed.
+
+Every refusal says so rather than looking like a missed command.
+"Session changed — not sent.", "Too late to discard — text inserted." and
+"Nothing to insert." each show as a notice always, and are spoken as well
+when `spoken_feedback` is on. A `send` that Send itself refused (empty draft,
+a run already in flight, send blocked, a typed `/`-command) already shows
+that reason in its own notice, so the spoken ack is just "Not sent." — never
+"Sent." for a message that never went out.
+
+**Choreography and latency.** A command only fires once its segment
+finalizes, and a segment finalizes on a pause in speech — so **pause
+briefly both before and after speaking a command**. Concretely: the
+recorder runs voice-activity detection over 20 ms frames and only forwards
+the ones that contain speech; the dictation service accumulates whatever it
+is forwarded and, once the recorder has forwarded nothing for the whole
+`dictation.silence_threshold_seconds` (default 2.0 s), transcribes that
+*entire* accumulated segment in one call and finalizes it. There is no
+periodic transcription cycle any more — a segment's audio is only ever sent
+to the speech model once, at that pause (or at stop). So the realistic
+budget for a command to fire is `silence_threshold_seconds` **plus one
+whole-segment transcription** — measured 4-5 s for a short utterance on a
+loaded machine with a local Whisper-family model; faster on an idle machine,
+and it scales with how much was said, not with a fixed buffer interval. This
+is expected behavior, not a bug, and lowering the threshold shortens the
+pause half of it (at the cost of finalizing plain dictation into more,
+shorter segments) — it does not shorten the transcription itself. Because
+the pause *before* the command and the pause *after* it must each complete
+their own threshold-plus-transcription cycle before their segments
+finalize, a full "pause, command, pause" round trip costs roughly **two**
+threshold intervals **plus two whole-segment transcriptions**, not one of
+each — budget for that rather than reading it as lag.
+
+Voice-activity detection needs the optional `webrtcvad-wheels` package
+(installed by the `speech_recording` extra; it still imports as `webrtcvad`,
+unchanged). Without it the recorder forwards every frame, nothing ever looks
+like a pause, and segments finalize only when the capture stops — so inline
+commands and mid-capture finalization do not fire, though dictation itself
+still works end to end: the *entire* capture accumulates as one segment and
+is transcribed in a single call once you stop, bounded by
+`dictation.stop_join_timeout_seconds` (default 30 s) rather than by
+anything mid-capture. The Console notifies once per run when this happens.
+
+**Onset pre-roll.** VAD gating a frame at a time can clip the very start of
+an utterance: low-energy onsets — word-initial fricatives especially ("s" in
+"stop"/"send") — are classified as non-speech at the default
+`vad_aggressiveness`, so without further help the first frame(s) of a word
+would be dropped before transcription ever saw them (observed live as "stop"
+transcribed as "top"/"dot"-like forms, "send" as "and"). The recorder guards
+against this with a small pre-roll: it keeps the last
+`dictation.vad_preroll_ms` (default 240 ms / 12 frames) of *rejected* audio
+on hand and replays it, through the same path as any accepted frame, the
+instant VAD accepts a frame after a silence run — recovering the clipped
+onset without holding back enough rejected audio to meaningfully dilute VAD
+gating. It never fires between two already-accepted frames, so ongoing
+speech and the choreography above are unaffected.
+
+**Configuring the prefix.** `dictation.command_prefix` accepts multi-word
+prefixes and is normalized the same way as spoken commands. Leaving it
+blank (or whitespace-only) falls back to the default `"console"` rather
+than matching every segment as prefixed.
+
+**A known, accepted false-fire.** Because punctuation is stripped before
+matching, staccato dictated prose that finalizes as one segment can
+normalize to the same text as a real command and fire it — the canonical
+example is "Console. Send." finalizing as a single segment and firing
+`send`. This trade-off is deliberate: keeping punctuation would let the
+comma that recognizers almost universally insert after a vocative prefix
+("Console, send.") break every real command, i.e. the feature would never
+fire at all. The false-fire is rare and visible — an inline break acknowledges itself in
+the composer's voice chip as `¶`, and a capture-ending command's evidence is
+the action itself: the chip flips to `◌ Transcribing…`, the capture visibly
+ends, and the command's effect (send, discard, new tab, read-back) follows
+on the spot — and it is one of the checks in live verification before every
+release.
+
+**Spoken feedback (opt-in).** `dictation.spoken_feedback` (default
+`false`) — when on, the Console speaks capture-ending acknowledgements
+("Sent.", "Discarded.", "New session.") and dictation error messages,
+through the same speech pipeline as per-message Speak. **"Capture started"
+is deliberately never spoken:** the microphone is already open by the time
+a capture starts, so speaking it would talk over the open mic and get
+transcribed straight back into the draft. With the toggle off, none of this
+speaks; "read that back" is the one exception and always speaks, since it's
+an explicit request rather than ambient feedback.
+
+Status speech never overlaps an open microphone: inline commands only
+acknowledge via the voice chip (never spoken), and capture-ending commands
+speak only after the capture has fully closed. **Starting a new capture
+always stops any speech that is currently playing first** — a status ack or
+an in-flight "read that back" — because the single-slot audio player only
+stops a clip when a *new* one starts, and opening the microphone plays
+nothing on its own. Without this rule, playback still running at capture
+start would be picked up by the open mic and transcribed into the new
+draft.
+
 ## Voice Commands
 
 ### Built-in Commands
@@ -553,6 +691,81 @@ stop_join_timeout_seconds = 30.0
 # Set to false to skip it: the model then loads during the capture, as it used
 # to. Default true.
 warm_model_before_capture = true
+# Prefix word(s) that activate a spoken command mid-capture in the Console,
+# e.g. "console, stop". Normalized the same way as spoken segments (lowercase,
+# all punctuation stripped, whitespace collapsed). A blank or whitespace-only
+# value falls back to this default rather than treating every segment as
+# prefixed. See "Console Voice Commands" below.
+command_prefix = "console"
+# Speak capture-ending acknowledgements ("Sent.", "Discarded.", "New
+# session.") and dictation error messages aloud, through the same speech
+# pipeline as per-message Speak. Off by default. "Capture started" is never
+# spoken (the microphone is already open by then); "read that back" always
+# speaks regardless of this setting, since it is an explicit request rather
+# than ambient feedback.
+spoken_feedback = false
+# Pause length, in seconds, that finalizes a spoken dictation segment -- and
+# therefore the delay before a spoken command executes. Must be a finite,
+# positive number; invalid or non-positive values fall back to this 2.0s
+# default. Lowering it shortens command latency at the cost of shorter,
+# choppier dictation segments.
+silence_threshold_seconds = 2.0
+# How aggressively the recorder's VAD classifies a frame as speech, 0-3.
+# Must be an integer in that range; invalid values fall back to this default.
+# Lower values admit more ambient noise as speech and can prevent
+# pause-finalization entirely.
+vad_aggressiveness = 3
+# How many milliseconds of recently-rejected audio the recorder replays the
+# instant VAD accepts a frame after a silence run, to recover a clipped
+# speech onset (see "Onset pre-roll" above). Must be a non-negative integer;
+# invalid values fall back to this 240ms (12-frame) default.
+vad_preroll_ms = 240
+# Speech-to-text model dictation uses. Model resolution is PROVIDER-SCOPED
+# and, when unset, never inherits `[transcription] default_model` -- that
+# key is not scoped to any particular provider, so it may well name a model
+# that belongs to a different provider than the one dictation resolved to
+# (e.g. a faster-whisper model name handed to parakeet-mlx, which tries to
+# load it as a HuggingFace repo and 404s -- this used to kill the capture
+# outright). Concretely:
+#   - Unset (the default) and the resolved provider is faster-whisper:
+#     dictation picks "base" rather than inheriting `[transcription]
+#     default_model` -- measured on real hardware, faster-whisper's own
+#     default (distil-large-v3) took 11.5s to transcribe a short spoken
+#     command under load, against 1.4s for "base"; a spoken command only
+#     fires once its segment finalizes (see "Choreography and latency"
+#     above), so that difference is the whole gap between commands feeling
+#     instant and feeling dead.
+#   - Unset and the resolved provider is anything else (parakeet-mlx,
+#     parakeet-onnx, lightning-whisper-mlx, ...): dictation passes no model
+#     at all, letting that provider's own transcription path load its own
+#     default (parakeet-mlx: `mlx-community/parakeet-tdt-0.6b-v2`).
+#   - Set (any provider): this value always wins, including setting it to
+#     distil-large-v3 on purpose if accuracy matters more than latency.
+# Blank/whitespace is treated as unset; a non-string value is ignored with a
+# warning. The Console shows a one-time notice (once per app run) when the
+# faster-whisper fast default actually displaces a differing
+# `[transcription] default_model` you configured, so that specific case
+# never happens silently.
+#
+# NOT a Console-only key: the standalone Dictation window (Speech >
+# Dictation) already reads and writes this same `dictation.model` value, so
+# a value set here also changes that window's model, and vice versa. That
+# window has no control of its own for picking a model -- it only ever
+# round-trips whatever this key already holds whenever some OTHER dictation
+# setting there is changed -- so it cannot silently acquire a value on its
+# own; the only way `dictation.model` gets set at all is by hand-editing
+# config.toml, or by setting it here.
+#
+# First-run cost: if faster-whisper is your resolved provider and you have
+# only a larger model (e.g. distil-large-v3) already downloaded, the fast
+# default triggers a fresh "base" download on your first Console dictation
+# capture. That warm-up (see "First run" below) is a single, non-fatal
+# attempt before the microphone opens -- a failure there does not block the
+# capture, but does NOT make the model load succeed either: if the download
+# was interrupted, every segment's own transcription for the rest of that
+# capture hits the same missing model, one at a time, rather than the
+# capture failing fast up front.
+# model = "base"
 
 [dictation.privacy]
 save_history = false
@@ -603,5 +816,5 @@ max_identifier_characters = 256
 
 ---
 
-**Last Updated**: 2026-07-27
-**Version**: 2.3 (Native audio.cpp voice profiles)
+**Last Updated**: 2026-07-29
+**Version**: 2.4 (Console voice control V2: spoken commands and spoken feedback)

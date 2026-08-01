@@ -8,9 +8,12 @@ handoffs keep working while Collections moves under Library.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -31,13 +34,25 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_audio import (
+    AudioGenerationError,
+    fail_interrupted_audio,
+    generate_script_audio,
+)
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
     fail_interrupted_scripts,
     generate_script,
 )
+from ...Subscriptions.briefing_export import (
+    BriefingExportError,
+    briefing_markdown_document,
+    default_briefing_filename,
+    export_feed_directory,
+)
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
+    STATUS_COMPLETE,
     STATUS_GENERATING,
     extract_citation_ids,
     fail_interrupted_briefings,
@@ -45,7 +60,10 @@ from ...Subscriptions.briefing_service import (
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
+from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
+from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -72,10 +90,16 @@ from ..Watchlists_Modules.artifacts_pane import (
     BriefingSelected,
     CastScriptRequested,
     CitationActivated,
+    ExportBriefingRequested,
+    ExportFeedRequested,
     GenerateBriefingRequested,
     ManagePresetsRequested,
+    PlayAudioRequested,
     RefreshBriefingsRequested,
     ScriptSelected,
+    StopAudioRequested,
+    SynthesizeAudioRequested,
+    audio_file_path_is_safe,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -383,6 +407,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_load_briefings` (see that method).
         self._loaded_scripts: list[dict[str, Any]] = []
         self._selected_script: dict[str, Any] | None = None
+        # Review round 1, Minor #4: `{script_id: status}` for every one of
+        # `_loaded_scripts`' ids that has at least one `briefing_audio`
+        # render -- the rebuild-survival mirror of `pane.scripts_with_
+        # audio`, resolved alongside `_loaded_scripts` inside `_load_
+        # briefings` (see that method). Owner decision, task-7 phase 2b
+        # follow-up: upgraded from a bare `frozenset[int]` of "has an
+        # attempt" to carry each script's newest audio status, so the
+        # scripts table can distinguish a failed render from a
+        # successful one instead of painting both identically.
+        self._scripts_with_audio: dict[int, str] = {}
         # True only while THIS screen's `wl-cast` worker is running -- the
         # exact sibling of `_briefing_in_flight` above, for the same reason:
         # `fail_interrupted_scripts` cannot tell a crashed worker's row from
@@ -405,6 +439,62 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # sync with it.
         self._loaded_citations: list[dict[str, Any]] = []
         self._citation_item_lookup: dict[int, dict[str, Any]] = {}
+        # Task 7: the SELECTED script's newest `briefing_audio` render, or
+        # `None` when it has never been synthesized -- the rebuild-survival
+        # mirror of `pane.script_audio`, resolved alongside `_selected_
+        # script` inside `_load_briefings` (see that method).
+        self._loaded_script_audio: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-audio` worker is running -- the
+        # exact sibling of `_cast_in_flight` above, for the same reason:
+        # `fail_interrupted_audio` cannot tell a crashed worker's row from a
+        # live one, so the live case is answered from memory here. See
+        # `handle_synthesize_audio_requested`.
+        self._audio_in_flight = False
+        # Which script `_audio_in_flight` refers to, or `None` -- the
+        # `_cast_in_flight_briefing_id` sibling, so a refusal can name the
+        # script actually being synthesized.
+        self._audio_in_flight_script_id: int | None = None
+        # Task 1 (phase 3): True from the moment Export is pressed until
+        # the `FileSave` dialog it pushed actually resolves -- via a real
+        # path, a cancel, or a rejected path -- not merely until the dialog
+        # is MOUNTED. Review round 1 (Important #1): a live repro (two
+        # rapid presses) produced `['FileSave', 'FileSave']` on the screen
+        # stack -- Textual stacks a second `push_screen`, it does not
+        # refuse one -- so without this flag a second press before the
+        # first dialog resolves opens a phantom second dialog, and
+        # completing both silently has the second write clobber the
+        # first's file. Claimed in `handle_export_briefing_requested`
+        # BEFORE `run_worker` (the same reason `_briefing_in_flight` is
+        # claimed before its own `run_worker`: a check made after
+        # scheduling leaves a window two presses can both pass). Cleared
+        # in `_write_briefing_export_file`'s `finally` -- not in `_push_
+        # export_briefing_dialog`, whose own `await self.app.push_screen`
+        # returns once the dialog is MOUNTED, long before the user has
+        # picked a path or cancelled -- so every resolution (success,
+        # cancel, rejected path, write failure) re-arms Export, and a
+        # failure to even OPEN the dialog clears it too (see that
+        # method's own `except`).
+        self._briefing_export_in_flight = False
+        # Task 5 (phase 3): the identical guard, for exporting a
+        # watchlist's audio as a podcast feed directory. Claimed in
+        # `handle_export_feed_requested` BEFORE `run_worker`, cleared in
+        # `_export_feed_directory`'s `finally` -- not in `_push_export_
+        # feed_dialog`, whose own `await self.app.push_screen` returns
+        # once the `SelectDirectory` dialog is MOUNTED, long before the
+        # user has picked a directory or cancelled. See `handle_export_
+        # feed_requested`'s own docstring for why this mirrors `_briefing_
+        # export_in_flight` rather than reusing it: a briefing export and
+        # a feed export are two independent actions a user could plausibly
+        # run at the same time (different destinations, different files).
+        self._feed_export_in_flight = False
+        # Whether THIS watchlist has at least one export-ready audio
+        # episode -- mirrored onto `ArtifactsPane.has_audio_episodes` by
+        # `_load_briefings`. Read (never written) by `handle_export_feed_
+        # requested`'s own re-check, for the identical reason `handle_
+        # export_briefing_requested`'s docstring gives for re-checking the
+        # selected briefing's status: the button's disabled state and the
+        # message it posts are two different frames.
+        self._watchlist_has_audio_episodes = False
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1341,7 +1431,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
+            artifacts_pane.script_audio = self._loaded_script_audio
+            artifacts_pane.scripts_with_audio = self._scripts_with_audio
             artifacts_pane.citations = self._loaded_citations
+            artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3170,8 +3263,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_default_preset_id = None
             self._loaded_scripts = []
             self._selected_script = None
+            self._loaded_script_audio = None
+            self._scripts_with_audio = {}
             self._loaded_citations = []
             self._citation_item_lookup = {}
+            self._watchlist_has_audio_episodes = False
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -3240,6 +3336,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if selected_briefing_id is None:
                 self._loaded_scripts = []
                 self._selected_script = None
+                self._loaded_script_audio = None
+                self._scripts_with_audio = {}
             else:
                 try:
                     # Zombie recovery for scripts, mirroring the briefing
@@ -3275,6 +3373,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         markup=False,
                     )
                     self._loaded_scripts = []
+                # Review round 1, Minor #4: which of THESE scripts have any
+                # audio at all, so the scripts table can show an indicator
+                # for every row -- not just the one currently selected
+                # (`_loaded_script_audio` below only ever answers that one
+                # question for ONE script). One `asyncio.to_thread` hop for
+                # the whole set, same "bundle several small reads into one
+                # thread-pool round trip" idiom `_read_watchlist_briefing_
+                # state` already uses -- `SubscriptionsDB` has no query
+                # batched by many script ids at once, and a briefing's own
+                # script count is small in practice, so N per-script
+                # existence checks inside ONE hop beats N separate hops.
+                try:
+                    script_ids = [
+                        row["id"]
+                        for row in self._loaded_scripts
+                        if row.get("id") is not None
+                    ]
+                    self._scripts_with_audio = await asyncio.to_thread(
+                        self._read_scripts_with_audio, db, script_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio presence for briefing "
+                        f"{selected_briefing_id}'s scripts: {type(exc).__name__}"
+                    )
+                    self._scripts_with_audio = {}
                 wanted_script = (
                     (self._selected_script or {}).get("id")
                     if self._selected_script
@@ -3288,6 +3412,59 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     ),
                     None,
                 )
+            # Task 7: the SELECTED script's newest audio render. Scoped to
+            # ONE script (the resolved selection above), the identical
+            # shape `_loaded_scripts` uses for ONE briefing above it --
+            # audio belongs to exactly one script, and this pane only ever
+            # shows one script's detail at a time. Runs inside the SAME
+            # `wl-briefings-load` worker/hop as everything else here (see
+            # `handle_script_selected`, which re-dispatches this whole
+            # method -- rather than an audio-only reload -- exactly so a
+            # script row click's audio arrives through this one pattern).
+            selected_script_id = (
+                (self._selected_script or {}).get("id")
+                if self._selected_script
+                else None
+            )
+            if selected_script_id is None:
+                self._loaded_script_audio = None
+            else:
+                try:
+                    # Zombie recovery for audio, mirroring the script sweep
+                    # above: a synthesis worker that crashed mid-render
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-synthesis-at-a-time guard shut forever. Gated
+                    # on `_audio_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_scripts_if_safe` is gated on
+                    # `_cast_sweep_is_safe`: a load racing a synthesis THIS
+                    # screen started must not fail that attempt's own row
+                    # out from under it.
+                    await self._fail_interrupted_audio_if_safe(
+                        db, selected_script_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-audio sweep failed for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                try:
+                    audio_rows = await asyncio.to_thread(
+                        db.list_briefing_audio, selected_script_id, limit=1
+                    )
+                    self._loaded_script_audio = (
+                        dict(audio_rows[0]) if audio_rows else None
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this script's audio.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_script_audio = None
             # Task 6: which items the SELECTED briefing's body actually
             # cites. `extract_citation_ids` is pure and cheap (a regex over
             # a body already held in memory), so it runs inline; only the
@@ -3366,8 +3543,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # whatever presets were already loaded, rather than aborting
             # the whole load -- the briefing list above is real data this
             # failure must not hide.
+            #
+            # Task 5 (phase 3): `has_audio_episodes` rides in the SAME hop
+            # -- one more cheap read bundled alongside the other two,
+            # rather than a fourth separate `to_thread` round trip just for
+            # a boolean the Export Feed button needs. A read failure
+            # degrades to `False` (button stays disabled) rather than
+            # guessing: an export button that might reach a broken query
+            # is worse than one that stays honestly disabled until the
+            # next successful load.
             try:
-                settings_row, preset_rows = await asyncio.to_thread(
+                settings_row, preset_rows, has_audio_episodes = await asyncio.to_thread(
                     self._read_watchlist_briefing_state, db, watchlist_id
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
@@ -3375,7 +3561,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Failed to read briefing settings/presets for watchlist "
                     f"{watchlist_id}: {type(exc).__name__}"
                 )
-                settings_row, preset_rows = {}, self._loaded_briefing_presets
+                settings_row, preset_rows, has_audio_episodes = (
+                    {},
+                    self._loaded_briefing_presets,
+                    False,
+                )
             mode = settings_row.get("briefing_selection_mode")
             self._briefing_selection_mode = (
                 str(mode) if mode in VALID_MODES else MODE_AUTO_FEATURED
@@ -3384,6 +3574,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "default_briefing_preset_id"
             )
             self._loaded_briefing_presets = preset_rows
+            self._watchlist_has_audio_episodes = has_audio_episodes
         if not self.is_mounted:
             return
         try:
@@ -3399,7 +3590,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.default_preset_id = self._briefing_default_preset_id
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
+        pane.script_audio = self._loaded_script_audio
+        pane.scripts_with_audio = self._scripts_with_audio
         pane.citations = self._loaded_citations
+        pane.has_audio_episodes = self._watchlist_has_audio_episodes
 
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
@@ -3423,24 +3617,81 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @staticmethod
     def _read_watchlist_briefing_state(
         db: Any, watchlist_id: int
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """`_read_watchlist_briefing_settings` plus `list_briefing_presets`,
-        as one synchronous unit for `_load_briefings` to dispatch through a
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+        """`_read_watchlist_briefing_settings` plus `list_briefing_presets`
+        plus whether the watchlist has any export-ready audio, as one
+        synchronous unit for `_load_briefings` to dispatch through a
         SINGLE `asyncio.to_thread` call.
 
-        Both are cheap reads on the same thread-local connection; bundling
-        them here is purely about round trips through the thread pool, not
-        about the SQL itself -- `_load_briefing_presets` still does its own
-        separate `list_briefing_presets` call for its OTHER caller
-        (`_open_briefing_preset_manager`), which has no settings row to
-        read alongside it. Always called through `asyncio.to_thread`; never
-        call this directly from the UI thread.
+        All three are cheap reads on the same thread-local connection;
+        bundling them here is purely about round trips through the thread
+        pool, not about the SQL itself -- `_load_briefing_presets` still
+        does its own separate `list_briefing_presets` call for its OTHER
+        caller (`_open_briefing_preset_manager`), which has no settings
+        row to read alongside it. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Returns:
+            `(settings_row, preset_rows, has_audio_episodes)`.
         """
         settings_row = WatchlistsCollectionsScreen._read_watchlist_briefing_settings(
             db, watchlist_id
         )
         preset_rows = [dict(row) for row in db.list_briefing_presets()]
-        return settings_row, preset_rows
+        # Task 5 (phase 3): a `limit=1` probe -- the Export Feed button
+        # only needs a boolean, not the full episode page `export_feed_
+        # directory` itself re-queries at export time, so this avoids
+        # fetching a page nothing here reads (CLAUDE.md Performance Rules:
+        # paginate DB results).
+        has_audio_episodes = bool(
+            db.list_watchlist_audio_episodes(watchlist_id, limit=1)
+        )
+        return settings_row, preset_rows, has_audio_episodes
+
+    @staticmethod
+    def _read_scripts_with_audio(db: Any, script_ids: list[int]) -> dict[int, str]:
+        """Each of `script_ids` that has at least one `briefing_audio`
+        render, mapped to that render's NEWEST status.
+
+        Review round 1, Minor #4: a single read per script
+        (`list_briefing_audio(script_id, limit=1)`, newest-first --
+        Subscriptions_DB's own `ORDER BY created_at DESC, id DESC`),
+        bundled into one synchronous unit for `_load_briefings` to
+        dispatch through a SINGLE `asyncio.to_thread` call -- the
+        `_read_watchlist_briefing_state` idiom immediately above.
+        `SubscriptionsDB` has no query batched by many script ids at once
+        (`list_briefing_audio` is scoped to exactly one), and a
+        briefing's own cast-script count is small in real use, so N of
+        these small reads inside one thread hop beats N separate hops
+        through the thread pool. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x"): this used to return a bare
+        `frozenset[int]` of "has at least one attempt" (review round 1's
+        original ask), which let a failed synthesis paint identically to
+        a successful one in the scripts table. `limit=1` already fetches
+        the newest render -- reusing its `status` costs nothing extra,
+        so `ArtifactsPane._audio_cell` can tell a `STATUS_FAILED` render
+        apart from a `STATUS_COMPLETE`/`STATUS_GENERATING` one without a
+        second query or a second `to_thread` hop.
+
+        Args:
+            db: An open `SubscriptionsDB`.
+            script_ids: `briefing_scripts.id` values to check.
+
+        Returns:
+            `{script_id: status}` for every id in `script_ids` that has
+            at least one `briefing_audio` row, using that row's newest
+            status. A `script_id` with no `briefing_audio` row at all is
+            simply absent from the mapping.
+        """
+        result: dict[int, str] = {}
+        for script_id in script_ids:
+            rows = db.list_briefing_audio(script_id, limit=1)
+            if rows:
+                result[script_id] = str(rows[0].get("status") or "")
+        return result
 
     @on(BriefingSelected)
     def handle_briefing_selected(self, event: BriefingSelected) -> None:
@@ -3474,6 +3725,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # click and that reload's completion.
         self._selected_script = None
         self._loaded_scripts = []
+        # Task 7: a different briefing means different scripts, which means
+        # different audio -- the identical stale-window hazard fixed for
+        # scripts above, one level down.
+        self._loaded_script_audio = None
+        self._scripts_with_audio = {}
         # Task 6: a different briefing also means different citations --
         # the identical stale-window hazard fix round 1 fixed for scripts
         # above, for the identical reason. Without clearing
@@ -3489,6 +3745,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if pane is not None:
             pane.scripts = []
             pane.selected_script = None
+            pane.script_audio = None
+            pane.scripts_with_audio = {}
             pane.citations = []
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
@@ -3498,9 +3756,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_script_selected(self, event: ScriptSelected) -> None:
         """Mirror the pane's script selection, for rebuild survival --
         the `_selected_briefing`/`handle_briefing_selected` sibling.
+
+        Task 7: a REAL selection (`event.script is not None`) also means
+        different audio to fetch -- `_loaded_script_audio` is scoped to
+        ONE script, the same way `_loaded_scripts` is scoped to one
+        briefing, and (unlike a script's own row, already fully loaded as
+        part of `_loaded_scripts`) its audio is not preloaded for every
+        script up front, so a newly selected script's audio still needs a
+        fresh read. Re-dispatches the whole `_load_briefings` (mirroring
+        `handle_briefing_selected`) rather than a narrower audio-only
+        worker, for the same one-worker-pattern reason that method's own
+        docstring gives.
+
+        Deliberately does NOT re-dispatch when `event.script is None`:
+        that case fires either from a genuine deselection or -- far more
+        commonly -- as the reactive echo of `handle_briefing_selected`
+        clearing this pane's `selected_script` to `None` itself, right
+        before dispatching its OWN `_load_briefings()` reload. Re-
+        dispatching here too would only be a second, redundant worker
+        racing the one already started.
         """
         event.stop()
         self._selected_script = event.script
+        if event.script is None:
+            self._loaded_script_audio = None
+            return
+        self._loaded_script_audio = None
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.script_audio = None
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
 
     @on(CitationActivated)
     def handle_citation_activated(self, event: CitationActivated) -> None:
@@ -3573,6 +3863,486 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )
+
+    # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
+
+    @on(ExportBriefingRequested)
+    def handle_export_briefing_requested(
+        self, event: ExportBriefingRequested
+    ) -> None:
+        """Claim the one-export-at-a-time guard, then dispatch.
+
+        `ArtifactsPane.compose` already disables Export for no-selection
+        and any non-`complete` status, but this handler re-checks both
+        anyway: the button's disabled state and the message it posts are
+        two different frames, and a press already in flight when the
+        selection changes underneath it must not be trusted just because
+        it once passed a disabled check.
+
+        Review round 1 (Important #1): an earlier draft shipped with no
+        guard at all, reasoning that Textual "refuses to stack" a second
+        `FileSave`. A live repro of two rapid presses disproved that --
+        the screen stack ended up `['FileSave', 'FileSave']`, two live
+        dialogs, not one refused. `_briefing_export_in_flight` is claimed
+        HERE, before `run_worker` -- the same reason `_briefing_in_flight`
+        is claimed before ITS `run_worker` in `handle_generate_briefing_
+        requested`: claiming inside the worker body leaves a window where
+        two presses both pass the check before either sets the flag.
+        """
+        event.stop()
+        briefing = self._selected_briefing
+        if briefing is None or str(briefing.get("status") or "").strip().lower() != (
+            STATUS_COMPLETE
+        ):
+            self._notify_watchlists(
+                "Select a completed briefing to export.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_export_in_flight:
+            self._notify_watchlists(
+                "A briefing export is already in progress. Nothing else "
+                "was started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        watchlist_id = briefing.get("watchlist_id")
+        watchlist_name = (
+            self._watchlist_display_name(watchlist_id)
+            if watchlist_id is not None
+            else "this watchlist"
+        )
+        self._briefing_export_in_flight = True
+        self.run_worker(
+            self._push_export_briefing_dialog(dict(briefing), watchlist_name),
+            group="wl-briefing-export",
+        )
+
+    async def _push_export_briefing_dialog(
+        self, briefing: dict[str, Any], watchlist_name: str
+    ) -> None:
+        """Push `FileSave`, seeded with a sanitized default filename.
+
+        Mirrors `_export_library_note`'s flow (`library_screen.py:6428`):
+        a `FileSave` prompt pre-filled with a sanitized default filename,
+        whose callback writes the export once a path is chosen. Imports
+        the VENDORED picker (`Third_Party.textual_fspicker.FileSave`,
+        keyword `default_file`) -- not the enhanced picker in `Widgets/
+        enhanced_file_picker.py`, a different class whose keyword is
+        `default_filename` and which also takes `context=`; mixing the two
+        raises `TypeError`.
+
+        `briefing["watchlist_name"]` is merged in here, once, rather than
+        threaded through as a separate parameter to every downstream
+        function: `briefing_markdown_document`/`default_briefing_filename`
+        both read it directly off the mapping they are given.
+
+        Does NOT clear `_briefing_export_in_flight` on the ordinary
+        success path: `await self.app.push_screen(...)` returns once the
+        dialog is MOUNTED, not once the user has chosen a path or
+        cancelled -- clearing the guard here would re-open the window a
+        second press could race through while the first dialog is still
+        on screen. `_write_briefing_export_file` (the callback) is what
+        clears it, in its own `finally`, once the dialog actually
+        resolves. The guard IS cleared here on any path that never reaches
+        that callback at all -- a failure to even open the dialog, or the
+        worker being cancelled while awaiting the push.
+
+        Review round 1 named a real (if not currently exploitable) gap
+        here: the original shape cleared the guard inside `except
+        Exception`, which does NOT catch `asyncio.CancelledError` (a
+        `BaseException` since Python 3.8) -- a worker cancelled mid-`await
+        self.app.push_screen(...)` would skip straight past that `except`
+        with the guard still `True`, stranding Export shut for the rest of
+        this screen instance's life. Not reachable today (nothing cancels
+        this worker's `wl-briefing-export` group, and the flag dies with
+        the screen instance regardless), but `_generate_briefing`'s own
+        try/finally shape fixes it for free: `finally` runs for *every*
+        exit path, including a `BaseException`, so the `pushed` sentinel
+        below -- set only once the dialog has actually mounted -- is
+        enough to tell "never reached the callback" apart from "did" --
+        without needing a second `except` clause for cancellation.
+        """
+        pushed = False
+        try:
+            enriched = {**briefing, "watchlist_name": watchlist_name}
+            default_filename = default_briefing_filename(
+                enriched, watchlist_name=watchlist_name
+            )
+            await self.app.push_screen(
+                FileSave(
+                    location=str(Path.home()),
+                    title="Export Briefing as Markdown",
+                    default_file=default_filename,
+                ),
+                callback=lambda path: self._write_briefing_export_file(
+                    path, enriched
+                ),
+            )
+            pushed = True
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(f"Failed to open the export dialog: {type(exc).__name__}")
+            self._notify_watchlists(
+                "Could not open the export dialog.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            if not pushed:
+                self._briefing_export_in_flight = False
+
+    async def _write_briefing_export_file(
+        self, selected_path: Path | None, briefing: Mapping[str, Any]
+    ) -> None:
+        """Validate the chosen path, build the document, and write it.
+
+        Mirrors `_write_library_note_export_file`'s validate -> write ->
+        honest-toasts shape (`library_screen.py:6445`), with three
+        deliberate differences this feature's own rules (and review round
+        1) require: the write itself runs in `asyncio.to_thread` (a
+        `FileSave`-chosen destination can be anywhere, including a slow or
+        network-mounted path, so the write must never block the event
+        loop); exception logging is type-only -- never `logger.opt(
+        exception=True)`, and never the briefing body; and the write's
+        `except` is broad (`Exception`, not just `OSError`) -- review
+        round 1 (Important #2) confirmed a `UnicodeEncodeError` (entirely
+        plausible from model/feed-derived body text) escaped uncaught
+        under the narrower catch, a silent failure with no toast at all.
+        `asyncio.CancelledError` is deliberately re-raised rather than
+        caught by that broad except: a cancelled worker must not be
+        reported as a failed export.
+
+        `_briefing_export_in_flight` is cleared in `finally`, on every
+        exit path -- cancelled, rejected path, export-error, write
+        failure, or success alike -- so a cancel or a refusal never wedges
+        Export shut for the rest of the session (review round 1's own
+        re-arm requirement).
+
+        Args:
+            selected_path: The chosen destination, or `None` if the
+                dialog was cancelled.
+            briefing: The briefing row, with `watchlist_name` merged in by
+                `_push_export_briefing_dialog`.
+        """
+        try:
+            if not selected_path:
+                self._notify_watchlists(
+                    "Briefing export cancelled.", severity="information"
+                )
+                return
+            try:
+                validated_path = validate_path_simple(
+                    selected_path, require_exists=False
+                )
+            except ValueError as exc:
+                logger.warning(
+                    f"Rejected briefing export path: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Rejected export path: {exc}",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                document = briefing_markdown_document(briefing)
+            except BriefingExportError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+                return
+            try:
+                await asyncio.to_thread(
+                    validated_path.write_text, document, encoding="utf-8"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    f"Briefing export write failed: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Error exporting briefing: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            self._notify_watchlists(
+                f"Briefing exported successfully to {validated_path.name}",
+                severity="information",
+                markup=False,
+            )
+        finally:
+            self._briefing_export_in_flight = False
+
+    # --- Exporting a watchlist's podcast feed directory (spec #2 phase -----
+    # 3, Task 5). Sibling of the markdown-export flow immediately above in
+    # every respect that matters: an independent in-flight guard
+    # (`_feed_export_in_flight` -- deliberately its OWN flag, not reused
+    # from `_briefing_export_in_flight`, since a briefing export and a
+    # feed export are two independent actions with two different
+    # destinations a user could plausibly run at the same time), claimed
+    # before `run_worker` for the identical reason
+    # `handle_export_briefing_requested`'s docstring gives, and a picker
+    # pushed via `push_screen(..., callback=...)` rather than `push_
+    # screen_wait` -- NOT `exclusive=True` on the worker either.
+    #
+    # Review round 1: the durable reason, confirmed by the reviewer, is
+    # structural rather than just "the guard already prevents a second
+    # dispatch." `Screen._push_result_callback` wraps the callback in a
+    # `ResultCallback`, and `ResultCallback.__call__` -- what `Screen.
+    # dismiss` invokes -- schedules it via `requester.call_next(...)`,
+    # i.e. onto the REQUESTER's (this screen's) own message pump, never
+    # back inside the `wl-feed-export` worker. `_push_export_feed_dialog`'s
+    # entire life is therefore the single `await self.app.push_screen(...)`
+    # that returns once `SelectDirectory` MOUNTS -- by the time a user
+    # could ever pick a path or cancel, that worker has already finished
+    # and exited; `_export_feed_directory` (where the guard actually
+    # clears) never runs inside it at all. `exclusive=True` cancelling a
+    # "previous" worker in this group is therefore a no-op on every
+    # reachable path: there is nothing long-lived left to cancel, and the
+    # `_start_tree_write`-style zombie-modal failure mode (a live worker
+    # still awaiting a picker's dismissal, cancelled out from under it) is
+    # structurally impossible here -- not merely guarded against. Left
+    # here anyway as belt-and-suspenders should a future refactor route
+    # the guard differently: the boolean check below still makes a second
+    # dispatch impossible while one is in flight, so `exclusive` would
+    # only ever fire on a bug in THAT guard.
+    #
+    # Two differences from the markdown flow, both Task 4's own contract:
+    # the destination must already EXIST (`export_feed_directory`'s own
+    # `validate_path_simple(..., require_exists=True)`, which is exactly
+    # what `SelectDirectory` -- a directory BROWSER, not a name prompt --
+    # ever hands back), and a partial export (some episodes skipped) is a
+    # SUCCESSFUL result, not an error: `FeedExportResult.skipped` exists
+    # precisely so the toast can say "N of M exported" rather than
+    # silently claiming everything landed.
+
+    @on(ExportFeedRequested)
+    def handle_export_feed_requested(self, event: ExportFeedRequested) -> None:
+        """Claim the one-feed-export-at-a-time guard, then dispatch.
+
+        Re-checks `_watchlist_has_audio_episodes` even though `Artifacts
+        Pane.compose` already disables the button for the same reason
+        `handle_export_briefing_requested`'s own docstring gives: the
+        button's disabled state and the message this handler acts on are
+        two different frames, and a press already in flight when the
+        underlying audio changes underneath it must not be trusted just
+        because it once passed a disabled check.
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Select a watchlist in the rail to export its feed.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if not self._watchlist_has_audio_episodes:
+            self._notify_watchlists(
+                "This watchlist has no complete audio episodes to export.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._feed_export_in_flight:
+            self._notify_watchlists(
+                "A feed export is already in progress. Nothing else was "
+                "started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        watchlist_name = self._watchlist_display_name(watchlist_id)
+        self._feed_export_in_flight = True
+        # `db`/`watchlist_id`/`watchlist_name` are snapshotted here, on the
+        # UI thread, alongside the rest of this synchronous dispatch --
+        # not re-read from `self` later, so a concurrent scope change on
+        # the rail cannot redirect an export already in flight to a
+        # different watchlist's audio.
+        self.run_worker(
+            self._push_export_feed_dialog(db, watchlist_id, watchlist_name),
+            group="wl-feed-export",
+        )
+
+    async def _push_export_feed_dialog(
+        self, db: Any, watchlist_id: int, watchlist_name: str
+    ) -> None:
+        """Push `SelectDirectory`, starting from the user's home directory.
+
+        Mirrors `_push_export_briefing_dialog` exactly, including its own
+        review-round-1 fix: `pushed` is set only once the dialog has
+        actually mounted, so `finally` clears the guard on any path that
+        never reaches `_export_feed_directory` (the callback) at all -- a
+        failure to even open the dialog, or this worker being cancelled
+        while awaiting the push.
+        """
+        pushed = False
+        try:
+            await self.app.push_screen(
+                SelectDirectory(str(Path.home()), title="Export Podcast Feed"),
+                callback=lambda path: self._export_feed_directory(
+                    db, watchlist_id, watchlist_name, path
+                ),
+            )
+            pushed = True
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(
+                f"Failed to open the feed export dialog: {type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Could not open the feed export dialog.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            if not pushed:
+                self._feed_export_in_flight = False
+
+    #: Task 5 (phase 3), review round 1, Minor #2: the ceiling on how many
+    #: of `FeedExportResult.skipped`'s reasons are inlined into the
+    #: partial-export toast. `export_feed_directory` can skip arbitrarily
+    #: many episodes, and a toast quoting every one of them is unreadable
+    #: long before it gets there -- the headline "N of M" count already
+    #: states the honest outcome; these are just the first few reasons,
+    #: for a user who wants to know why.
+    _MAX_INLINE_SKIP_REASONS = 3
+
+    #: Every reason `export_feed_directory` writes is `f"audio {audio_id}:
+    #: ..."` (that module's own docstring, decision 3) -- the id is
+    #: load-bearing for support/debugging (kept in the log line in
+    #: `_export_feed_directory` below) but means nothing to a user reading
+    #: a toast, so it is stripped before any reason reaches one.
+    _SKIP_REASON_ID_PREFIX = re.compile(r"^audio \d+: ")
+
+    @classmethod
+    def _user_facing_skip_reasons(cls, reasons: list[str]) -> str:
+        """The first `_MAX_INLINE_SKIP_REASONS` of `reasons`, id-stripped
+        and joined for a toast.
+
+        Args:
+            reasons: `FeedExportResult.skipped`, verbatim.
+
+        Returns:
+            `"reason one; reason two; reason three; …and 4 more"` -- or
+            just the id-stripped reasons, joined, with no trailer, when
+            `len(reasons) <= _MAX_INLINE_SKIP_REASONS`.
+        """
+        stripped = [cls._SKIP_REASON_ID_PREFIX.sub("", reason, count=1) for reason in reasons]
+        shown = stripped[: cls._MAX_INLINE_SKIP_REASONS]
+        remaining = len(stripped) - len(shown)
+        text = "; ".join(shown)
+        return f"{text}; …and {remaining} more" if remaining > 0 else text
+
+    async def _export_feed_directory(
+        self,
+        db: Any,
+        watchlist_id: int,
+        watchlist_name: str,
+        selected_path: Path | None,
+    ) -> None:
+        """Validate the chosen directory, export the feed, and toast honestly.
+
+        All DB and filesystem work -- `export_feed_directory` itself --
+        runs in ONE `asyncio.to_thread` hop; that function does its own
+        destination validation (`require_exists=True`, matching what
+        `SelectDirectory` ever hands back), the per-episode safety checks
+        and copies, and the atomic `feed.xml` write.
+
+        A partial export (`result.skipped` non-empty) is reported as
+        exactly that -- "N of M episodes exported", plus up to `_MAX_
+        INLINE_SKIP_REASONS` of the reasons `export_feed_directory` wrote
+        (id-stripped -- see `_user_facing_skip_reasons`), with an honest
+        "…and N more" trailer past that cap -- never collapsed into a
+        plain success toast. `_feed_export_in_flight` is cleared in
+        `finally`, on every exit path (cancelled, rejected destination,
+        export-error, or success alike), mirroring `_write_briefing_
+        export_file`'s own re-arm guarantee.
+
+        Args:
+            db: Snapshotted by the handler at dispatch time.
+            watchlist_id: Snapshotted by the handler at dispatch time.
+            watchlist_name: Snapshotted by the handler at dispatch time.
+            selected_path: The chosen destination directory, or `None` if
+                the dialog was cancelled.
+        """
+        try:
+            if not selected_path:
+                self._notify_watchlists(
+                    "Feed export cancelled.", severity="information"
+                )
+                return
+            try:
+                result = await asyncio.to_thread(
+                    export_feed_directory,
+                    db,
+                    watchlist_id,
+                    destination=selected_path,
+                    watchlist_name=watchlist_name,
+                    now=datetime.now(timezone.utc),
+                )
+            except asyncio.CancelledError:
+                raise
+            except ValueError as exc:
+                logger.warning(
+                    f"Rejected feed export destination: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Rejected export destination: {exc}",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            except Exception as exc:
+                logger.warning(f"Feed export failed: {type(exc).__name__}")
+                self._notify_watchlists(
+                    f"Error exporting the feed: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            total = result.episode_count + len(result.skipped)
+            if result.skipped:
+                # Honest, not a success toast: this is Task 4's own named
+                # invariant (`FeedExportResult.skipped`'s docstring) applied
+                # at the UI boundary -- a user who exported ten episodes and
+                # got eight must be told, in the reasons `export_feed_
+                # directory` already wrote in plain language.
+                #
+                # Review round 1, Minor #2: the FULL list (with each
+                # episode's `audio_id`, useful for support) is logged
+                # here -- these are already-benign, app-generated reason
+                # strings, never model/user content, so this is not the
+                # "type only" rule `logger.warning` calls elsewhere on this
+                # screen apply to an exception. The TOAST gets a separate,
+                # user-facing rendering: capped to `_MAX_INLINE_SKIP_
+                # REASONS` (with an honest "…and N more" trailer) and with
+                # the internal `audio {id}:` prefix stripped, since a raw
+                # database id means nothing to a user.
+                logger.info(
+                    f"Feed export for watchlist {watchlist_id} skipped "
+                    f"{len(result.skipped)} of {total} episode(s): "
+                    f"{'; '.join(result.skipped)}"
+                )
+                reasons = self._user_facing_skip_reasons(result.skipped)
+                self._notify_watchlists(
+                    f"Exported {result.episode_count} of {total} episodes "
+                    f"to {result.directory.name} ({reasons}).",
+                    severity="warning",
+                    markup=False,
+                )
+            else:
+                plural = "" if result.episode_count == 1 else "s"
+                self._notify_watchlists(
+                    f"Exported {result.episode_count} episode{plural} to "
+                    f"{result.directory.name}.",
+                    severity="information",
+                    markup=False,
+                )
+        finally:
+            self._feed_export_in_flight = False
 
     # --- Briefing selection-mode and default-preset pickers (Task 4) -------
     #
@@ -4314,6 +5084,239 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # zombie row, and a completed cast has a new script to show.
             if self.is_attached:
                 await self._load_briefings()
+
+    # --- Artifacts: synthesizing and playing a script's audio (spec #2 --
+    # phase 2b, Task 7) --------------------------------------------------
+    #
+    # Sibling of the Cast machinery immediately above in every respect: an
+    # in-flight flag (`_audio_in_flight`), own worker group (`wl-audio`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_cast_script_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    # Unlike Cast (which has no one-generating-row-per-briefing invariant),
+    # audio's own zombie sweep runs in the SAME two separate seams `_cast_
+    # script`'s own comment names: `_load_briefings` sweeps whenever
+    # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
+    # audio` below sweeps again at its own front, exactly where `_cast_
+    # script` sweeps for Cast.
+
+    def _audio_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_audio` may run right now.
+
+        Sibling of `_cast_sweep_is_safe`: a load racing a synthesis THIS
+        screen started must not fail that attempt's own `generating` row
+        out from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._audio_in_flight
+
+    async def _fail_interrupted_audio_if_safe(self, db: Any, script_id: int) -> int:
+        """Zombie recovery for the Artifacts-load path's audio, off the UI
+        thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
+        one script's audio renders rather than one briefing's scripts.
+        """
+        if not self._audio_sweep_is_safe():
+            return 0
+        return await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+
+    @on(SynthesizeAudioRequested)
+    def handle_synthesize_audio_requested(
+        self, event: SynthesizeAudioRequested
+    ) -> None:
+        """Claim the one-synthesis-at-a-time guard, then dispatch.
+
+        Mirrors `handle_cast_script_requested` exactly: `_audio_in_flight`
+        is claimed HERE, before `run_worker`, and not inside the worker
+        body, for the identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        script = self._selected_script
+        if db is None or script is None:
+            self._notify_watchlists(
+                "Select a script to synthesize its audio.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._audio_in_flight:
+            running_id = self._audio_in_flight_script_id
+            message = (
+                f"Audio is already being synthesized for script {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "Audio is already being synthesized. Nothing else was "
+                "started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        script_id = script.get("id")
+        self._audio_in_flight = True
+        self._audio_in_flight_script_id = script_id
+        # Snapshotted on the UI thread, alongside the rest of this
+        # synchronous dispatch -- the `preset_id` read
+        # `handle_cast_script_requested` already does the same way, for
+        # the same reason: read once, here, not again later inside the
+        # worker where a concurrent app-level rebind could change it out
+        # from under a synthesis already in flight for THIS script.
+        tts_service = getattr(self.app_instance, "tts_service", None)
+        profile_service = getattr(self.app_instance, "_tts_profile_service", None)
+        self.run_worker(
+            self._synthesize_audio(db, script_id, tts_service, profile_service),
+            exclusive=True,
+            group="wl-audio",
+        )
+
+    async def _synthesize_audio(
+        self, db: Any, script_id: int, tts_service: Any, profile_service: Any
+    ) -> None:
+        """Worker body: sweep, synthesize, repaint. Sibling of `_cast_script`.
+
+        `generate_script_audio`'s own DB calls already run through
+        `asyncio.to_thread` internally (Task 6's own docstring), but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script_audio` uncaught -- that is Task 6's deliberate
+        "DB errors propagate" contract, the caller's own worker is where
+        they must be wrapped. An exception escaping a Textual worker with
+        the default `exit_on_error=True` takes the whole application down,
+        so -- exactly like `_cast_script` -- the call is wrapped in a bare
+        `except` that turns any surviving exception into a toast instead
+        of a crash.
+
+        `AudioGenerationError` is caught FIRST and separately: it is
+        `generate_script_audio`'s own honest, pre-flight refusal (the
+        script is not `complete`, or its turns/roster snapshot cannot be
+        parsed) -- a message safe to show verbatim (see that exception's
+        own docstring), not a database failure to hide behind a generic
+        toast.
+        """
+        try:
+            try:
+                await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Audio guard failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this script's audio. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script_audio(
+                    db,
+                    script_id,
+                    tts_service=tts_service,
+                    profile_service=profile_service,
+                )
+                # The freshly synthesized audio (whatever its outcome) is
+                # the one on screen, re-resolved against the reload below.
+                self._loaded_script_audio = row
+            except AudioGenerationError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Audio synthesis failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not synthesize audio: the watchlist database "
+                    "could not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._audio_in_flight = False
+            self._audio_in_flight_script_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed (or failed) attempt has a new
+            # audio row to show.
+            if self.is_attached:
+                await self._load_briefings()
+
+    @on(PlayAudioRequested)
+    def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:
+        """Play the selected script's audio file, if it still exists.
+
+        Never routed through a worker/`asyncio.to_thread`: `play_audio_
+        file` only spawns a detached subprocess and returns
+        (`SimpleAudioPlayer.play`) -- `TTSEventHandler.handle_tts_
+        playback`'s own "play" branch calls it exactly this way, direct,
+        with no thread hop. Playback state itself is never held here or
+        on the pane: the shared `SimpleAudioPlayer` singleton (`TTS.
+        audio_player.get_audio_player`) is the only source of truth for
+        "what's currently loaded" -- see `ArtifactsPane`'s own module
+        docstring on why (a script selection recomposes every widget this
+        pane renders).
+
+        A missing file is refused with a toast rather than handed to the
+        player: `ArtifactsPane.compose` already disables Play for exactly
+        this case (`_audio_file_is_playable`), so reaching here with no
+        file, or a file since deleted, means the disk state changed
+        between that render and this press -- an honest race, not a bug
+        to silently swallow.
+
+        Qodo review round 1, FIX B: `audio_file_path_is_safe` is checked
+        BEFORE any filesystem access -- a path that resolves outside
+        `briefing_audio_dir()` (a tampered or corrupted row) is treated
+        exactly like the "no file at all" case: a silent return, no
+        `.exists()` probe, no exception. `ArtifactsPane.compose` already
+        disables Play for this case too (`_audio_file_is_playable` uses the
+        same helper), so reaching here with an unsafe path is the same kind
+        of race as the missing-file case above, not a new failure mode.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        if not audio_file_path_is_safe(file_path):
+            return
+        path = Path(str(file_path))
+        if not path.exists():
+            self._notify_watchlists(
+                "This audio file no longer exists on disk.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        play_audio_file(path)
+
+    @on(StopAudioRequested)
+    def handle_stop_audio_requested(self, event: StopAudioRequested) -> None:
+        """Stop playback, but only if THIS script's audio is what the
+        shared player actually has loaded.
+
+        Delegates to `tts_events.stop_audio_playback_if_current` rather
+        than reimplementing its comparison here: that function's own
+        docstring records the task-559 fix rounds (the guard must key off
+        the player's LIVE `get_current_file()`, never a local cache with a
+        TTL -- `SimpleAudioPlayer` is a single-slot, APP-WIDE singleton, so
+        a bare `.stop()` could silence a completely unrelated clip playing
+        elsewhere, e.g. Console TTS). A private copy of that same
+        comparison here would only ever be one edit away from drifting
+        from it -- exactly the failure mode that cost this branch a whole
+        task to reconcile for the two legacy TTS id-builders (Task 2's own
+        carried finding, `TTS/legacy_request_builder.py`'s module
+        docstring). Imported locally rather than at module scope, matching
+        `chat_screen.py`'s own lazy-import convention for this exact
+        module: `Event_Handlers.TTS_Events.tts_events` pulls in the TTS
+        adapter package (`tldw_chatbook.TTS`'s own imports), a cost most
+        Watchlists sessions never need to pay just to stop a clip.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        from ...Event_Handlers.TTS_Events.tts_events import (
+            stop_audio_playback_if_current,
+        )
+
+        stop_audio_playback_if_current(Path(str(file_path)))
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)

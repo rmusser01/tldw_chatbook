@@ -30,6 +30,23 @@ that function rather than reinventing it -- the same convention
 (historical runs recorded before this field existed, or a failed capture
 that degraded to ``""``) renders nothing extra: no empty label, no
 dangling separator.
+
+task-1710 T2: two more changes, the per-snippet sibling of task-1691's own
+per-target continuation above --
+
+- The "Estimate" call count now accounts for ``BenchConfig.
+  capture_continuations`` (``_continuation_call_count``): a raw-mode run
+  with the flag on issues one extra request per measured cell, roughly
+  doubling the total; chat mode salvages the continuation off the
+  measurement response already made and adds nothing. This is the ONE
+  place a user sees this cost BEFORE pressing Run, not after.
+- ``EvalsCellInspector`` (below) renders ``CellCapture.continuation`` --
+  a captured continuation of THIS cell's own snippet, not the fixed
+  canary prompt above -- beside the focused cell's top-K, under the same
+  rules: ``markup=False``, ␣ whitespace marking via ``render_snippet_
+  cell``, the ⏎ single-line guard, a bounded preview, and nothing
+  rendered for an absent/empty continuation (a historical run, a flag-off
+  run, or a failed capture -- see ``_cell_continuation_static``).
 """
 
 from __future__ import annotations
@@ -44,7 +61,7 @@ from textual.widgets import Static
 
 from ...config import LOCAL_PROVIDERS
 from ...Evals.word_bench import analysis
-from ...Evals.word_bench.models import CellError, PreflightResult
+from ...Evals.word_bench.models import BenchConfig, CellCapture, CellError, PreflightResult
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
 from .results_grid import degenerate_canary_text, render_probe_reading, render_token
@@ -110,6 +127,34 @@ def _is_local_provider(provider: str) -> bool:
 def _format_estimate_duration(total_seconds: float) -> str:
     minutes, seconds = divmod(max(0, int(round(total_seconds))), 60)
     return f"~{minutes:02d}:{seconds:02d}"
+
+
+def _continuation_call_count(config: BenchConfig, measured_call_count: int) -> int:
+    """The EXTRA calls ``BenchConfig.capture_continuations`` (task-1710)
+    adds on top of ``measured_call_count`` (``sample_count * target_
+    count``), so the "Estimate" section's call count is honest BEFORE a
+    run starts, not only after (the whole point of task-1710's own
+    "Estimate" acceptance criterion).
+
+    Mirrors the engine's own, already-implemented cost story exactly
+    (never reached from this module -- see the module docstring's own
+    "never calls a provider" guarantee -- only mirrored in arithmetic)
+    rather than re-deriving it independently:
+
+    - Raw mode: the engine issues one genuinely separate HTTP request per
+      measured cell for the continuation -- the flag roughly DOUBLES the
+      run's call count, so this returns ``measured_call_count`` again.
+    - Chat mode: the engine salvages the continuation off the measurement
+      response already made -- costs nothing extra, so this returns ``0``
+      even when the flag is on. A bench in chat mode must never have its
+      estimate inflated for a cost it will not actually pay.
+    - The flag off: ``0``, unconditionally -- today's request count is
+      unchanged, per task-1710's own "with it off, request count per cell
+      is unchanged from today" acceptance criterion.
+    """
+    if config.capture_continuations and config.prompt_mode == "raw":
+        return measured_call_count
+    return 0
 
 
 def _status_css_class(result: Optional[PreflightResult]) -> str:
@@ -194,6 +239,45 @@ def _continuation_static(index: int, continuation: str) -> Optional[Static]:
         classes="evals-target-continuation",
         markup=False,
     )
+
+
+#: task-1710 T2: the focused-cell continuation's own label -- unlike
+#: ``_CONTINUATION_LABEL`` above, this one deliberately does NOT name
+#: "canary prompt": ``EvalsCellInspector`` is already scoped to ONE
+#: specific measured (snippet, target) cell (its own header line already
+#: names the snippet and target -- see ``show_cell``), so "Continuation"
+#: unambiguously means "what this cell's own snippet continues as" with
+#: no risk of being misread as the fixed canary sample the readiness pane
+#: shows for a different selection kind entirely.
+_CELL_CONTINUATION_LABEL = "Continuation: "
+
+
+def _cell_continuation_text(continuation: str) -> Optional[Text]:
+    """The focused-cell continuation line's Rich ``Text``, or ``None`` for
+    an absent/empty continuation -- a historical run recorded before
+    task-1710, a run captured with ``BenchConfig.capture_continuations``
+    off, or a capture that failed and degraded to ``""`` (see
+    ``CellCapture.continuation``'s own docstring). ``None`` means "render
+    nothing", not "render an empty line" -- see ``EvalsCellInspector.
+    show_cell``, which hides the continuation widget entirely in that
+    case.
+
+    Deliberately reuses ``_continuation_preview_text``/``_CONTINUATION_
+    PREVIEW_MAX_LEN`` -- task-1691's own preview bound -- rather than a
+    second, independently-tuned cap: both are the same pane's own display
+    bound on a captured continuation, and a per-cell continuation is no
+    more or less likely to run long than a per-target one.
+    """
+    if not continuation:
+        return None
+    label = Text(_CELL_CONTINUATION_LABEL)
+    # Same markup-safety argument as `_continuation_static` above: a
+    # Rich `Text.append` call, never an f-string built into a plain
+    # `str` -- `render_snippet_cell`'s output is LITERAL content by
+    # construction, and appending it preserves that guarantee through to
+    # the `Static(..., markup=False)` this label is ultimately handed to.
+    label.append(render_snippet_cell(_continuation_preview_text(continuation)))
+    return label
 
 
 class EvalsInspector(Vertical):
@@ -318,7 +402,17 @@ class EvalsInspector(Vertical):
         dataset = self._view_model.dataset_by_id(config.dataset_id)
         sample_count = ((dataset or {}).get("metadata") or {}).get("sample_count") or 0
         target_count = len(config.target_ids)
-        call_count = sample_count * target_count
+        measured_call_count = sample_count * target_count
+        # task-1710: with `capture_continuations` on, a raw-mode run also
+        # issues one separate request per cell -- see
+        # `_continuation_call_count`'s own docstring for why this is `0`
+        # in chat mode (salvaged off the measurement response, free) and
+        # always `0` with the flag off. Must be reflected here, BEFORE the
+        # run starts -- this is the one place a user can see the cost of
+        # turning the flag on before pressing Run.
+        call_count = measured_call_count + _continuation_call_count(
+            config, measured_call_count
+        )
         duration = _format_estimate_duration(call_count * _ASSUMED_SECONDS_PER_CALL)
         yield Static(
             f"{call_count} calls · {duration}",
@@ -367,6 +461,16 @@ class EvalsCellInspector(Vertical):
     Renders no arithmetic of its own -- every value it prints is read
     directly off a ``CellCapture``/``ProbeReading`` the engine already
     computed, mirroring ``results_grid.py``'s own rule.
+
+    task-1710 T2: also renders ``CellCapture.continuation`` (the per-cell
+    sibling of ``PreflightResult.continuation``, task-1691's per-target
+    canary continuation shown in the READINESS pane, an entirely
+    different widget for an entirely different selection kind) as a
+    dedicated sub-line BELOW the top-K/probe body -- see
+    ``_cell_continuation_text`` for the rendering rules and
+    ``#evals-cell-inspector-continuation``'s own compose()-time comment
+    for why it is a permanent, always-composed widget rather than one
+    mounted/removed per focus change.
     """
 
     def compose(self) -> ComposeResult:
@@ -379,6 +483,26 @@ class EvalsCellInspector(Vertical):
             id="evals-cell-inspector-body",
             markup=False,
         )
+        # task-1710 T2: always composed (never conditionally, unlike
+        # `_continuation_static`'s per-target Optional[Static] above,
+        # which `EvalsInspector.compose()` can afford since it rebuilds
+        # from scratch on every bench selection) -- `show_cell()` below
+        # is a TARGETED update against an already-mounted widget (see the
+        # class docstring: never a recompose, so the grid's own cursor
+        # position survives an arrow-key press), so there is no compose()
+        # call between focus changes to conditionally yield or withhold
+        # this widget from. Starts hidden (`display = False`) and empty;
+        # `show_cell()` toggles both together on every focus change, the
+        # same `display`-toggle idiom `bench_editor.py`'s `#evals-bench-
+        # form-error` uses for an analogous "nothing to say yet" state.
+        continuation_widget = Static(
+            "",
+            id="evals-cell-inspector-continuation",
+            classes="evals-target-continuation",
+            markup=False,
+        )
+        continuation_widget.display = False
+        yield continuation_widget
 
     def show_cell(self, event: "ResultsGrid.CellFocused") -> None:
         """Renders one focused cell. ``event`` is a
@@ -459,3 +583,36 @@ class EvalsCellInspector(Vertical):
                     )
 
         body.update("\n".join(lines))
+
+        # task-1710 T2: the per-cell continuation sub-line -- only ever
+        # present on a real `CellCapture` (never `None`/`CellError`,
+        # neither of which has anything to continue), and only when one
+        # was actually captured (`CellCapture.continuation` defaults to
+        # ``""`` for a flag-off run, a historical run recorded before
+        # task-1710, or a capture that failed and degraded to ``""``).
+        continuation_text = (
+            _cell_continuation_text(cell.continuation)
+            if isinstance(cell, CellCapture)
+            else None
+        )
+        try:
+            continuation_widget = self.query_one(
+                "#evals-cell-inspector-continuation", Static
+            )
+        except QueryError:
+            # Defensive only: compose() always yields this widget
+            # together with `#evals-cell-inspector-body` above (already
+            # confirmed reachable by the earlier `body = ...` lookup this
+            # far into the method) -- kept for the same reason that
+            # earlier lookup's own `except QueryError: return` is kept.
+            return
+        if continuation_text is None:
+            # `display = False` AND cleared content, not just hidden --
+            # a stale continuation from a PREVIOUS focused cell must
+            # never linger invisibly and reappear if some later change
+            # ever flips `display` back on without also updating content.
+            continuation_widget.display = False
+            continuation_widget.update("")
+        else:
+            continuation_widget.update(continuation_text)
+            continuation_widget.display = True

@@ -1,7 +1,7 @@
 # Watchlists Briefings & Podcasts — design (spec #2)
 
 **Date:** 2026-07-30
-**Status:** phase 1 implemented (2026-07-30); phases 2-4 pending
+**Status:** phases 1-3 implemented (2026-08-01); phase 4 pending
 
 **Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both confirmed by
 the project owner (2026-07-30):
@@ -19,7 +19,8 @@ synthesis split out to phase 2b (task-1630) after the adapter reality below surf
 (this design's own "verified against the real adapters at plan time" caveat, see "Casting and
 audio" below):
 
-1. `synthesize()` returns a byte-stream `TTSAudioResponse` the caller must drain and `aclose()`.
+1. `synthesize()` returns a byte-stream `TTSAudioResponse` the caller must drain and `aclose()`
+   (it is also an async context manager -- prefer `async with`).
 2. Legacy adapters (kokoro/openai/elevenlabs/chatterbox/higgs/alltalk) reject a plain
    `TTSRequest` -- per-call synthesis goes through `generate_audio_stream(OpenAISpeechRequest,
    internal_model_id)`.
@@ -28,10 +29,128 @@ audio" below):
    decode-and-concat primitive must be written.
 5. `private_paths` has no binary append/stream/move helper -- storage is buffer-whole-then-
    `atomic_private_write_bytes` or a new helper.
+
+**Re-verified against dev 2026-07-31 (`8b7fa5eb6`), after ~2,000 lines of TTS character-assignment
+work merged from another workstream.** Findings 1, 3 and 4 hold verbatim. Three corrections, and
+one new constraint that bounds what phase 2b can promise:
+
+- **Finding 2, corrected.** The adapter-level rejection stands (`legacy_bridge.py:681`), but a
+  public all-provider entry point now exists: `TTSService.synthesize_default(text=...,
+  voice_override=...)` builds the legacy option pair itself (`request_admission.py:314,356`).
+  It reads provider/model/format/speed from the app's global `TTSPreferencesSnapshot` and accepts
+  only a voice override, so it is a **one-voice-for-everyone** path -- it cannot express a roster.
+  The new `character_request_resolver.py` does not close this either: it is hard-fenced to
+  `audio_cpp` at two levels (`character_request_resolver.py:85`, `TTS_Generation.py:562`).
+- **Finding 5, corrected.** `open_private_binary` **does** exist (`private_paths.py:864`) but is
+  **read-only** (`O_RDONLY`, `:28`) -- useful for playback-side reads, not for writing. A text
+  append stream exists (`:767`); the binary equivalent does not, and there is no public move
+  helper. The write decision stands: buffer-whole-then-`atomic_private_write_bytes`, or add
+  `open_private_binary_append` modelled on the text one.
+- **The id-builder is now duplicated and the two copies disagree.**
+  `stts_events.py:737` derives kokoro's engine suffix from `options["use_onnx"]` and alltalk's id
+  from `snapshot.model_id`; `request_admission.py:356` hardcodes `local_kokoro_default_onnx` and
+  `alltalk_default`. Phase 2b must promote one to a public builder rather than writing a third.
+- **New constraint: per-speaker exact voices work only on `audio_cpp` today.** `synthesize_exact`
+  (the only path that guarantees the voice you asked for is the voice you got) refuses every other
+  provider. A legacy-provider roster is reachable only through raw
+  `generate_audio_stream(OpenAISpeechRequest, internal_model_id)`, which returns a bare
+  `AsyncIterator[bytes]` with no response contract to validate against. Phase 2b must either scope
+  multi-voice rosters to `audio_cpp` and say so in the UI, or own that validation itself.
+- **Audio snapshots need more than 2a records.** `briefing_scripts.roster_snapshot_json` stores
+  `voice_profile_id` (a stringified profile UUID) and is deliberately immutable. For audio to stay
+  self-interpreting the `briefing_audio` row must snapshot the profile's **`revision`** plus the
+  denormalized selection -- `CharacterTTSRequestResolution` already carries `profile_revision` for
+  exactly this purpose. `profile_portability.py` is the right shape precedent but not a reusable
+  mechanism (it is `audio_cpp`-only and drops `revision`).
+- **Reference implementation to transcribe, not reinvent:** `TTSEventHandler._generate_tts`
+  (`Event_Handlers/TTS_Events/tts_events.py:731`) already solves response-contract validation,
+  batched artifact appends, `aclose()`-in-`finally` that preserves the primary exception,
+  cancellation cleanup, bounded error copy, and metrics. Playback, rate limiting and cooldown
+  admission all exist too. The genuinely new surfaces are: a general decode-and-concat stitcher,
+  a `TTSProfileService.get_profile(UUID)` passthrough (the repository has one, the service does
+  not expose it), the `briefing_audio` table, and the binary-append decision above.
 6. `briefing_presets` ships a single free-text `style_notes` field, not the separate "style and
    target-length notes" the entity table below promises: target-length guidance ships folded into
    that same free-text field for 2a, with no dedicated field of its own; a dedicated field is 2b's
    call if audio pacing turns out to need one.
+
+**Phase 2b delivery notes (2026-07-31):** the audio half (task-1630) shipped on
+`feat/briefings-phase-2b` -- phase 2 is now complete. `briefing_audio` table + CRUD; a per-turn
+`synthesize_turn` reached through either `TTSService.synthesize_exact` (the `audio_cpp` path) or a
+newly-public `TTS/legacy_request_builder.build_legacy_speech_request` (every other provider); a
+real pydub decode-and-concat stitcher (`TTS/audio_stitch.concat_wav_segments`, WAV-first); the
+`generate_script_audio` orchestrator plus a `fail_interrupted_audio` zombie sweep matching
+`briefing_cast`'s own; and Synthesize/Play/Stop wired into the Artifacts pane's existing audio
+player. Two decisions the plan left open, made explicit:
+
+- **All-providers.** The owner chose per-speaker voices on every configured TTS provider, not
+  scoped to `audio_cpp` alone. This has one real consequence worth stating plainly: per-speaker
+  *exact-provenance* synthesis -- the guarantee that the voice you asked for is the voice you
+  got, backed by a response snapshot to check it against -- remains `audio_cpp`-only at the
+  platform level; `synthesize_exact` is the only call with that contract, and every legacy
+  provider is reached through `generate_audio_stream`, which returns a bare byte stream with
+  nothing to validate against. Phase 2b does not change that platform fact -- it validates legacy
+  responses itself instead: non-empty bytes and a payload that decodes as WAV, both raising a
+  `TurnSynthesisError` naming the speaker and turn on failure. That is the honest statement of
+  what the guarantee is on each provider -- field-for-field provenance on `audio_cpp`, "it
+  produced *some* well-formed audio" everywhere else -- not a claim that legacy providers now
+  carry the same assurance `audio_cpp` does.
+- **Buffer-whole storage.** A correct decode-and-concat must already hold every turn's decoded
+  audio in memory to join it, so the whole finished payload exists in memory before there is
+  anything to write at all -- a streaming append would still need a full re-encode pass over
+  everything written so far, and gains nothing. `Utils/private_paths` also has no binary append
+  call (`open_private_binary` is `O_RDONLY`); only a text append stream exists. The payload is
+  therefore written once, atomically, via `atomic_private_write_bytes`, with cleanup on any
+  failure that lands after the write succeeds.
+
+Two smaller findings worth recording: `audioop-lts` is now a declared dependency
+(`pyproject.toml`, three optional-extra groups) -- pydub needs it once the stdlib `audioop` module
+is removed on Python 3.13+, and phase 2b's stitcher is 2b's first real caller of pydub in this
+codebase. And `Event_Handlers/STTS_Events/stts_events.py`'s `_legacy_internal_model_id` --  the
+live playground's own copy of the id-derivation logic `legacy_request_builder` promotes --
+continues to diverge by design (it derives kokoro's onnx/pytorch suffix from live playground
+options and alltalk's from the requested model id, where the builder uses fixed constants); both
+sides carry a cross-reference comment (the TASK-1393 pact convention) so the two are never mistaken
+for interchangeable and never converged without updating both call sites' expectations.
+
+**Phase 3 delivery notes (2026-08-01):** markdown export and the podcast feed directory (Tasks
+1-5) shipped on `feat/briefings-phase-3`. Four things worth recording against this design's
+original text:
+
+- **Localhost serving is cut, by the project owner's decision — the spec's premise was false.**
+  This design's "Exports and feed" section above says "if the app's `[web_server]` is enabled it
+  can serve that directory over localhost for podcast clients; serving is a toggle." At plan time
+  that toggle turned out not to exist: `[web_server]` is **textual-serve** — a mutually exclusive
+  process mode that serves the *TUI itself* to a browser (`app.py` returns instead of running the
+  TUI when it is engaged), whose only static route is hardcoded to textual-serve's own assets, and
+  whose `enabled` key is read by no code at all anywhere in the app. There was never a server
+  running alongside the TUI for this feature to toggle. Consequently the directory is the whole
+  deliverable, exactly as this design's own wording already said ("the directory is the
+  deliverable"); a user-run static server (e.g. `python -m http.server` from the exported folder)
+  is the documented path for pointing a podcast client at it. See task-1760 for the scoped,
+  net-new follow-up (a standalone opt-in static server) this finding produced.
+- **The feed directory is self-contained by design.** `briefing_feed.build_feed_xml` writes
+  enclosure URLs as **bare relative filenames**, not absolute paths or `file://` URIs. This is
+  deliberate, not an oversight: a relative URL means the folder can be copied, zipped, synced to
+  another machine, or handed to someone else, and it still resolves correctly wherever it lands —
+  no home directory, username, or local filesystem layout ever leaks into `feed.xml`.
+- **Exported files are `0o644` by deliberate decision — recorded as Decision 4 in
+  `Subscriptions/briefing_export.py`'s module docstring.** Audio inside the app's private storage
+  (`briefing_audio_dir()`) is written `0o600` by `atomic_private_write_bytes`; naively inheriting
+  that mode into an export would make a folder the user explicitly chose *in order to share it*
+  readable only by the exporting account — silently defeating the point of exporting at all. The
+  fixed mode is applied explicitly (not derived from umask): umask expresses a default for
+  arbitrary file creation, not intent for a folder picked for sharing, and honouring a hardened
+  umask here would hand the most security-conscious users a silently unreadable feed. The real
+  access boundary is unchanged — the destination directory's own permissions (left untouched by
+  Decision 1 in the same docstring) remain what actually gates access; a `0o644` file inside a
+  `0o700` directory stays unreachable to anyone else regardless.
+- **§Testing's "every new test `pytest.mark.unit` or it is invisible to CI" is stale.** That was
+  true when this design was written; since task-1465, CI instead runs `pytest Tests
+  --ignore=Tests/UI` plus a separate `pytest Tests/UI` pass, neither with marker selection, so an
+  unmarked test is collected and run either way. What actually matters now is `--strict-markers`:
+  an unregistered `@pytest.mark.*` name is a collection **error**, not a silent no-op, so the
+  bar is "use a registered marker (or none)," not "must be `unit`."
 
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled

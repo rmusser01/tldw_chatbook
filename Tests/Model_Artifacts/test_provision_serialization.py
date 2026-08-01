@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import grant_consent
 from Tests.Model_Artifacts.lease_processes import hold_one
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
-from tldw_chatbook.Model_Artifacts import ArtifactDependencyError, ArtifactRef, closure_fingerprint
+from tldw_chatbook.Model_Artifacts import ArtifactDependencyError, ArtifactRef
 from tldw_chatbook.Model_Artifacts.acquisition import (
     AcquisitionBusyError,
-    AcquisitionConsent,
     ArtifactAcquisitionService,
     ConsentMismatchError,
     TransferError,
@@ -110,19 +110,19 @@ async def test_provision_serializes_concurrent_calls_in_process(tmp_path, monkey
     root = ArtifactRef("root-model", "r1", "int8")
     desc = make_descriptor(ref=root)
     catalog = DictCatalog({root: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
+    consent = grant_consent(svc, root, catalog)
 
     events: list[str] = []
     entered = asyncio.Event()
     gate = asyncio.Event()
 
-    async def fake_fetch(descriptor, staging_dir, progress_state):
+    async def fake_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         events.append("enter")
         entered.set()
         await gate.wait()
         events.append("exit")
 
-    async def fake_preverify(descriptor, staging_dir, progress_state):
+    async def fake_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         pass
 
     async def fake_install(descriptor, staging_dir):
@@ -263,10 +263,10 @@ async def test_provision_fully_installed_closure_skips_stubs(tmp_path, monkeypat
 
     calls = {"fetch": 0, "preverify": 0, "install": 0}
 
-    async def counting_fetch(descriptor, staging_dir, progress_state):
+    async def counting_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         calls["fetch"] += 1
 
-    async def counting_preverify(descriptor, staging_dir, progress_state):
+    async def counting_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         calls["preverify"] += 1
 
     async def counting_install(descriptor, staging_dir):
@@ -304,12 +304,12 @@ async def test_provision_holds_session_lease_across_phase_stub(tmp_path, monkeyp
     root = ArtifactRef("root-model", "r1", "int8")
     desc = make_descriptor(ref=root)
     catalog = DictCatalog({root: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
+    consent = grant_consent(svc, root, catalog)
 
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_fetch(descriptor, staging_dir, progress_state):
+    async def paused_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         entered.set()
         await release.wait()
         raise NotImplementedError("stop here; only the pause matters")
@@ -386,7 +386,7 @@ async def test_provision_releases_session_lease_when_cancelled_during_acquire(
     root = ArtifactRef("root-model", "r1", "int8")
     desc = make_descriptor(ref=root)
     catalog = DictCatalog({root: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
+    consent = grant_consent(svc, root, catalog)
 
     started = threading.Event()
     gate = threading.Event()
@@ -465,9 +465,11 @@ async def test_provision_not_yet_installed_reaches_fetch_phase(tmp_path):
     means a genuine network attempt against the placeholder ``source_url``
     (an RFC 2606 ``.test`` domain, guaranteed to never resolve) -- which the
     egress policy's DNS-failure path rejects, wrapped as ``TransferError``.
-    Consent is constructed directly rather than via ``preflight().grant()``
-    to keep this test's OWN setup network-free -- ``preflight()`` would
-    otherwise gating-probe this same placeholder URL itself.
+    Consent is granted via ``grant_consent`` (the network-free
+    ``_aggregate_closure(...).grant()`` path) rather than the real
+    ``preflight()`` to keep this test's OWN setup network-free --
+    ``preflight()`` would otherwise gating-probe this same placeholder URL
+    itself.
     """
 
     core = ModelArtifactService(tmp_path / "root")
@@ -475,7 +477,7 @@ async def test_provision_not_yet_installed_reaches_fetch_phase(tmp_path):
     root = ArtifactRef("root-model", "r1", "int8")
     desc = make_descriptor(ref=root)
     catalog = DictCatalog({root: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
+    consent = grant_consent(svc, root, catalog)
 
     with pytest.raises(TransferError) as excinfo:
         await svc.provision(root, consent, catalog)

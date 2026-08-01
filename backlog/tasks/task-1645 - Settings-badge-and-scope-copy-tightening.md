@@ -1,5 +1,5 @@
 ---
-id: task-1645
+id: TASK-1645
 title: 'Settings: badge and scope-copy tightening'
 status: Done
 assignee:

@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -168,13 +168,9 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
 )
-from ...Local_Ingestion.parakeet_v2_installer import (
-    PARAKEET_V2_LICENSE,
-    PARAKEET_V2_REPOSITORY,
-    PARAKEET_V2_REVISION,
-    PARAKEET_V2_TOTAL_BYTES,
-    install_verified_parakeet_v2,
-    parakeet_v2_install_dir,
+from ...Local_Ingestion.parakeet_v2_artifact import (
+    run_parakeet_v2_preflight,
+    run_parakeet_v2_provision,
 )
 from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -236,10 +232,17 @@ from ...Widgets.Library import (
 from ...Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
+from ...Widgets.ModelArtifacts import (
+    InstallProgressed,
+    ModelInstallModal,
+    ModelInstallProgress,
+    make_progress_callback,
+)
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from .model_browser_state import install_failure_message
 from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -247,6 +250,10 @@ from .study_scope_models import (
     StudyScopeContext,
     StudySourceItem,
 )
+
+if TYPE_CHECKING:
+    # Type-only: the shared modal owns the runtime acquisition-plan import.
+    from ...Model_Artifacts.acquisition import PreflightReport
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -818,68 +825,8 @@ class IngestGuardrailModal(ModalScreen[bool]):
             self.notify("Clipboard not available", severity="warning")
 
 
-class ParakeetV2InstallModal(ModalScreen[bool]):
-    """Consent prompt for the curated Parakeet v2 INT8 download."""
-
-    DEFAULT_CSS = """
-    ParakeetV2InstallModal {
-        align: center middle;
-    }
-
-    #parakeet-v2-install-modal {
-        width: 76;
-        height: auto;
-        border: tall $accent;
-        background: $surface;
-        padding: 1 2;
-    }
-
-    #parakeet-v2-install-actions {
-        height: 3;
-        margin-top: 1;
-        align-horizontal: right;
-    }
-    """
-
-    BINDINGS = [("escape", "dismiss(false)", "Close")]
-
-    def __init__(self, destination: Path) -> None:
-        self.destination = destination
-        super().__init__()
-
-    def compose(self) -> ComposeResult:
-        size_mib = PARAKEET_V2_TOTAL_BYTES / (1024 * 1024)
-        details = (
-            "Install the curated Parakeet v2 INT8 speech model?\n\n"
-            f"Source: {PARAKEET_V2_REPOSITORY}\n"
-            f"Revision: {PARAKEET_V2_REVISION}\n"
-            f"License: {PARAKEET_V2_LICENSE}\n"
-            f"Download: {size_mib:.1f} MiB\n"
-            f"Destination: {self.destination}\n\n"
-            "All four files are checked against pinned sizes and SHA-256 "
-            "digests before the bundle becomes usable."
-        )
-        with Vertical(id="parakeet-v2-install-modal"):
-            yield Static(details, markup=False)
-            with Horizontal(id="parakeet-v2-install-actions"):
-                yield Button(
-                    "Cancel",
-                    id="parakeet-v2-install-cancel",
-                    variant="default",
-                )
-                yield Button(
-                    "Install",
-                    id="parakeet-v2-install-confirm",
-                    variant="primary",
-                )
-
-    @on(Button.Pressed, "#parakeet-v2-install-confirm")
-    def _confirm(self) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#parakeet-v2-install-cancel")
-    def _cancel(self) -> None:
-        self.dismiss(False)
+class _ParakeetV2NoPendingReportError(RuntimeError):
+    """Raised when confirmation has no retained preflight report."""
 
 
 def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
@@ -1340,8 +1287,20 @@ class LibraryScreen(BaseAppScreen):
         # and replaced on every new trigger so rapid edits never stack.
         self._library_ingest_preflight_worker: Worker | None = None
         # Explicit user-started curated model install. It is separate from
-        # inference: providers never acquire models on first use.
+        # inference: providers never acquire models on first use. The same
+        # worker slot tracks BOTH the preflight step (plan computation) and
+        # the install step (grant + provision) -- either one running blocks
+        # a second trigger, matching the single busy notification already
+        # shown to the user.
         self._parakeet_v2_install_worker: Worker | None = None
+        # TASK-1696: the immutable PreflightReport a completed preflight
+        # worker handed to the consent modal -- read back by
+        # ``_run_parakeet_v2_install`` (kept zero-argument; see
+        # ``Tests/UI/test_parakeet_v2_install_ui.py::
+        # test_confirmation_starts_background_installer_worker``) once the
+        # user confirms.
+        self._parakeet_v2_pending_report: "PreflightReport | None" = None
+        self._parakeet_v2_install_progress = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -3772,6 +3731,12 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
+        install_progress = ModelInstallProgress(
+            self._parakeet_v2_install_progress,
+            id="library-model-install-progress",
+        )
+        install_progress.display = self._parakeet_v2_install_progress is not None
+        yield install_progress
         if shell.canvas_kind == "notes":
             with Horizontal(id="library-notes-source-strip"):
                 database_selected = self._library_notes_source == "database"
@@ -12147,7 +12112,7 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             A directory path suitable for ``FileOpen(location=...)``.
         """
-        remembered = get_cli_setting("library.ingest", "last_directory")
+        remembered = get_cli_setting("library.ingest", "last_directory", None)
         if remembered:
             try:
                 candidate = Path(str(remembered)).expanduser()
@@ -12221,7 +12186,13 @@ class LibraryScreen(BaseAppScreen):
         self,
         event: LibraryIngestCanvas.ParakeetInstallRequested,
     ) -> None:
-        """Show immutable source, license, size, and destination before install."""
+        """Resolve the immutable install plan, then show it for consent.
+
+        TASK-1696: the consent modal must render real repository, revision,
+        license, precision, byte, destination, and free-space figures from
+        a ``PreflightReport`` -- computed here, off the Textual event loop,
+        before the modal is ever pushed.
+        """
         event.stop()
         worker = getattr(self, "_parakeet_v2_install_worker", None)
         if worker is not None and not worker.is_finished:
@@ -12230,8 +12201,65 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
             return
+        self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
+
+    @on(InstallProgressed)
+    def handle_model_install_progressed(self, event: InstallProgressed) -> None:
+        """Retain and render progress after the consent modal is dismissed."""
+        event.stop()
+        self._parakeet_v2_install_progress = event.progress
+        try:
+            progress = self.query_one(
+                "#library-model-install-progress", ModelInstallProgress
+            )
+        except NoMatches:
+            return
+        progress.display = True
+        progress.update_progress(event.progress)
+
+    @work(thread=True, group="library_parakeet_v2_preflight", exit_on_error=False)
+    def _run_parakeet_v2_preflight(self) -> None:
+        """Resolve the managed-download plan off the Textual event loop."""
+        try:
+            report = asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_v2_preflight()
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error("Parakeet v2 preflight failed")
+            self.app.call_from_thread(
+                self._apply_parakeet_v2_preflight_result,
+                None,
+                install_failure_message(exc, model_label="Parakeet v2"),
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_parakeet_v2_preflight_result,
+            report,
+            None,
+        )
+
+    def _apply_parakeet_v2_preflight_result(
+        self,
+        report: "PreflightReport | None",
+        error: str | None,
+    ) -> None:
+        """Show the plan-driven consent modal, or a sanitized preflight failure."""
+        self._parakeet_v2_install_worker = None
+        if error is not None or report is None:
+            self.app_instance.notify(
+                f"Parakeet v2 preflight failed: {error or 'unknown error'}",
+                severity="error",
+            )
+            return
+        self._parakeet_v2_pending_report = report
         self.app.push_screen(
-            ParakeetV2InstallModal(parakeet_v2_install_dir()),
+            ModelInstallModal(
+                report,
+                model_label="Parakeet v2",
+                container_id="parakeet-v2-install-modal",
+                confirm_id="parakeet-v2-install-confirm",
+                cancel_id="parakeet-v2-install-cancel",
+            ),
             self._confirm_parakeet_v2_install,
         )
 
@@ -12250,15 +12278,33 @@ class LibraryScreen(BaseAppScreen):
 
     @work(thread=True, group="library_parakeet_v2_install", exit_on_error=False)
     def _run_parakeet_v2_install(self) -> None:
-        """Install off the Textual event loop and return one terminal result."""
+        """Grant consent and provision off the Textual event loop.
+
+        Reads the pending report from ``self`` (rather than a parameter) so
+        this stays a zero-argument call -- see
+        ``Tests/UI/test_parakeet_v2_install_ui.py::
+        test_confirmation_starts_background_installer_worker``, which pins
+        that ``_confirm_parakeet_v2_install`` invokes this with no
+        arguments.
+        """
+        report = self._parakeet_v2_pending_report
         try:
-            installed = install_verified_parakeet_v2()
+            if report is None:
+                raise _ParakeetV2NoPendingReportError(
+                    "No Parakeet v2 install plan is available; retry Install."
+                )
+            installed = asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_v2_provision(
+                    report,
+                    progress=make_progress_callback(self.post_message),
+                )
+            )
         except Exception as exc:
             logger.opt(exception=True).error("Parakeet v2 installation failed")
             self.app.call_from_thread(
                 self._apply_parakeet_v2_install_result,
                 None,
-                str(exc),
+                install_failure_message(exc, model_label="Parakeet v2"),
             )
             return
         self.app.call_from_thread(
@@ -12274,6 +12320,14 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Populate the current batch form only after verified publication."""
         self._parakeet_v2_install_worker = None
+        self._parakeet_v2_pending_report = None
+        self._parakeet_v2_install_progress = None
+        try:
+            self.query_one(
+                "#library-model-install-progress", ModelInstallProgress
+            ).display = False
+        except NoMatches:
+            pass
         if error is not None or installed is None:
             self.app_instance.notify(
                 f"Parakeet v2 install failed: {error or 'unknown error'}",

@@ -30,11 +30,11 @@ import logging
 import subprocess
 import sys
 import textwrap
-from urllib.parse import urlparse
 
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, _two_file_descriptor
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import ArtifactRef
@@ -47,18 +47,6 @@ from tldw_chatbook.Model_Artifacts.fetch import stream_fetch
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 TOKEN = "tok-secret-9f3c4a"
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server, in egress's real format.
-
-    Keyed on the bare, lowercased HOSTNAME (see ``test_stream_fetch.py`` /
-    ``test_preflight.py``'s identical helpers) -- both fixture servers in
-    the cross-origin test bind the SAME loopback hostname on different
-    ports, and egress's trust check is host-only (port-blind), so this one
-    entry covers both.
-    """
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 class _StaticResolver:
@@ -126,9 +114,8 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
                 trusted_origins=_trusted(srv),
                 credential_resolver=resolver,
             )
-            catalog = DictCatalog(
-                {root: make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))}
-            )
+            desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+            catalog = DictCatalog({root: desc})
 
             report = await svc.preflight(root, catalog)
             assert report.gating_errors == (), (
@@ -169,13 +156,221 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
             assert TOKEN.encode() not in path.read_bytes(), f"token leaked into {path}"
     assert scanned > 0, "sanity: the artifact store must contain files to scan"
 
-    # 3. The fetch-state sidecar specifically no longer exists (install()
-    #    removes it), which the tree scan above already covers, but assert
-    #    it explicitly as the most direct claim the brief asks for. Lives
-    #    as a SIBLING of the payload directory, never a child of it (see
-    #    acquisition.py's _fetch_sidecar_path).
-    sidecar_path = root_dir / "staging" / "managed" / "gated-model" / "r1" / "int8.fetch-state.json"
-    assert not sidecar_path.exists()
+    # 3. The fetch-state sidecar specifically no longer exists (a
+    #    successful finalize retires the whole download stage, sidecar
+    #    included -- see core._finalize_download_stage /
+    #    _remove_finalized_download_stage), which the tree scan above
+    #    already covers, but assert it explicitly as the most direct claim
+    #    the brief asks for. It would have lived inside the stage's
+    #    state/ subtree, never inside payload/ (see acquisition.py's
+    #    _fetch_sidecar_path).
+    assert core._download_stage_for(desc, create=False) is None
+
+
+# ---------------------------------------------------------------------------
+# (e) TASK-1695: per-file source-map URLs never leak into manifests, resume
+# state, errors, or logs -- extends (b) above to the new source-map path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_errors(
+    tmp_path, caplog
+):
+    """TASK-1695: per-file source-map URLs are credential-free by
+    construction (rejected at ``preflight()`` otherwise -- see
+    ``test_source_map.py``), but this proves the mechanism doesn't
+    accidentally start PERSISTING url text anywhere either: the fetch-state
+    sidecar, the installed manifest, and any raised error stay exactly as
+    opaque to per-file origin identity as the single-file ``source_url``
+    path always was.
+
+    Structural guarantee behind this, not just an incidental test result:
+    TASK-1695's AC #2 forbids adding a ``url`` field to ``ArtifactFile``/
+    ``ArtifactDescriptor``, so there is nowhere in the manifest schema a
+    per-file URL COULD be serialized into even if this test were absent.
+    This is the regression guard that keeps that true.
+    """
+    MARKER = "sourcemarkxyz789"
+    root_dir = tmp_path / "root"
+    core = ModelArtifactService(root_dir)
+    root = ArtifactRef("multi-file-hygiene", "r1", "int8")
+
+    with caplog.at_level(logging.DEBUG):
+        with FixtureArtifactServer() as srv:
+            srv.serve(f"/{MARKER}/a.bin", b"aaaa", etag='"va"', support_range=True)
+            srv.serve(f"/{MARKER}/b.bin", b"bbbb", etag='"vb"', support_range=True)
+            svc = ArtifactAcquisitionService(
+                core,
+                free_bytes_probe=lambda p: 10**12,
+                trusted_origins=_trusted(srv),
+            )
+            # Deliberately NOT marker-bearing: descriptor.source_url is a
+            # pre-existing, unrelated field that manifest.json has ALWAYS
+            # persisted (it is credential-free by its own validation, so
+            # that persistence is expected and fine) -- keeping it marker-
+            # free isolates this test to what TASK-1695 actually adds: the
+            # PER-FILE source-map entries below, which must never appear
+            # anywhere a plain descriptor field legitimately does.
+            desc = _two_file_descriptor(root, srv.url("/hygiene-descriptor-source"))
+            catalog = DictCatalog({root: desc})
+            sources = {
+                root: {
+                    "a.bin": srv.url(f"/{MARKER}/a.bin"),
+                    "b.bin": srv.url(f"/{MARKER}/b.bin"),
+                }
+            }
+
+            report = await svc.preflight(root, catalog, sources=sources)
+            consent = report.grant()
+            activated = await svc.provision(root, consent, catalog, sources=sources)
+            assert activated == root
+
+    installed_refs = {
+        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+    }
+    assert root in installed_refs
+
+    # 1. No THIS-APPLICATION log record carries the marker. httpx/httpcore's
+    #    own DEBUG/INFO request tracing is deliberately excluded: it
+    #    legitimately logs the exact (credential-free, by construction --
+    #    see test_source_map.py's preflight-time rejection tests) URL it
+    #    requests, which is expected operational visibility, not a secret
+    #    leak -- the design spec forbids bearer tokens, cookies, signed
+    #    redirect targets, and query strings from ever appearing anywhere,
+    #    not the credential-free URL identity itself (which the spec's own
+    #    "Resume metadata is credential-free and contains only ... a
+    #    credential-free origin source identity" explicitly allows). What
+    #    this DOES catch: any accidental ``logger.info(f"...{url}...")``
+    #    this task's own new code (``_resolve_file_sources``,
+    #    ``_closure_fingerprint_with_sources``, the ``_fetch_*`` threading)
+    #    might have introduced.
+    app_records = [
+        record
+        for record in caplog.records
+        if not record.name.startswith(("httpx", "httpcore"))
+    ]
+    for record in app_records:
+        assert MARKER not in record.getMessage()
+
+    # 2. Nothing under the artifact store's root -- staging sidecars,
+    #    installed payloads, manifests, lease files -- contains the marker.
+    scanned = 0
+    for path in root_dir.rglob("*"):
+        if path.is_file():
+            scanned += 1
+            assert MARKER.encode() not in path.read_bytes(), f"source-map URL leaked into {path}"
+    assert scanned > 0, "sanity: the artifact store must contain files to scan"
+
+
+# ---------------------------------------------------------------------------
+# (f) PR-1165 review, P0: a bearer token resolved for a repository must
+# never reach a per-file mapped URL on a DIFFERENT origin than the
+# descriptor's own source_url -- not just on a redirect hop (which
+# fetch.stream_fetch already strips independently, see (c) below), but on
+# the INITIAL request too.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_credential_attached_to_same_origin_mapped_file(tmp_path):
+    """A per-file source-map URL on the SAME origin as ``descriptor.
+    source_url`` receives the repository's resolved bearer token, exactly
+    like the single-file fallback path already did."""
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("same-origin-mapped-model", "r1", "int8")
+    resolver = _StaticResolver(TOKEN)
+
+    with FixtureArtifactServer() as srv:
+        srv.serve("/a.bin", b"aaaa", require_token=TOKEN, etag='"va"')
+        srv.serve("/b.bin", b"bbbb", require_token=TOKEN, etag='"vb"')
+        desc = _two_file_descriptor(root, srv.url("/a.bin"))
+        catalog = DictCatalog({root: desc})
+        sources = {root: {"a.bin": srv.url("/a.bin"), "b.bin": srv.url("/b.bin")}}
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(srv),
+            credential_resolver=resolver,
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+        consent = report.grant()
+        activated = await svc.provision(root, consent, catalog, sources=sources)
+        assert activated == root
+
+    for path in ("/a.bin", "/b.bin"):
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}"
+            for headers in srv.requests[path]
+        ), f"same-origin mapped file {path} must have received the credential"
+
+
+@pytest.mark.asyncio
+async def test_credential_withheld_from_cross_origin_mapped_file_but_both_download(
+    tmp_path,
+):
+    """A per-file source-map URL on a DIFFERENT origin than ``descriptor.
+    source_url`` must NEVER receive the repository's bearer token -- not
+    just on a redirect hop, but on its very first request. Both files must
+    still download successfully: the cross-origin file is public (no
+    credential needed at all), matching a real third-party CDN or mirror.
+
+    Regression test for the P0 finding: before this fix, ``_auth_headers``
+    attached a resolved token to EVERY per-file request for the
+    descriptor's repository, regardless of which URL (and therefore which
+    origin) it was actually going to -- modeled here with two real,
+    differently-ported ``FixtureArtifactServer`` instances, which is what
+    makes this the INITIAL-request case ``stream_fetch``'s own
+    redirect-hop stripping does not cover.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("cross-origin-mapped-model", "r1", "int8")
+    resolver = _StaticResolver(TOKEN)
+
+    with FixtureArtifactServer() as same_origin, FixtureArtifactServer() as cross_origin:
+        same_origin.serve("/a.bin", b"aaaa", require_token=TOKEN, etag='"va"')
+        # Public: a real cross-origin CDN never receives this repository's
+        # credential, so it must not require one either.
+        cross_origin.serve("/b.bin", b"bbbb", etag='"vb"')
+
+        desc = _two_file_descriptor(root, same_origin.url("/a.bin"))
+        catalog = DictCatalog({root: desc})
+        sources = {
+            root: {
+                "a.bin": same_origin.url("/a.bin"),
+                "b.bin": cross_origin.url("/b.bin"),
+            }
+        }
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(same_origin) | _trusted(cross_origin),
+            credential_resolver=resolver,
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+        assert report.gating_errors == ()
+        consent = report.grant()
+        activated = await svc.provision(root, consent, catalog, sources=sources)
+        assert activated == root
+
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}"
+            for headers in same_origin.requests["/a.bin"]
+        ), "the same-origin mapped file must have received the credential"
+
+        b_requests = cross_origin.requests["/b.bin"]
+        assert b_requests, "the cross-origin mapped file must have been reached at all"
+        assert all("Authorization" not in headers for headers in b_requests), (
+            "the credential must NOT have reached the cross-origin mapped file"
+        )
+
+    destination = core.artifact_path(root)
+    assert (destination / "a.bin").read_bytes() == b"aaaa"
+    assert (destination / "b.bin").read_bytes() == b"bbbb"
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +501,17 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     (``STT.persistence`` -- reached transitively -- uses
     ``ArtifactLeaseKey``); only the async, network-capable, credentialed
     modules are forbidden.
+
+    TASK-1696: also imports ``Audio.console_dictation`` and the new
+    ``Local_Ingestion.parakeet_v2_artifact`` adapter it and
+    ``transcription_service`` both now reach transitively -- the managed-
+    first model-directory resolver these two worker-side modules share.
+    ``parakeet_v2_artifact`` itself imports only ``Model_Artifacts.service``
+    at module scope (its ``ArtifactAcquisitionService``-based orchestration
+    helpers import ``.acquisition`` locally, inside their own function
+    bodies, and only the Library UI ever calls them -- see that module's
+    own docstring), so it must load here without pulling in ``.acquisition``
+    or ``.fetch`` either.
     """
     script = textwrap.dedent(
         """
@@ -343,7 +549,10 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
             import tldw_chatbook.STT.legacy_bridge
             import tldw_chatbook.STT.registry
             import tldw_chatbook.STT.routing
+            import tldw_chatbook.Model_Artifacts.curated_registry
+            import tldw_chatbook.Model_Artifacts.store
             import tldw_chatbook.Local_Ingestion.transcription_service
+            import tldw_chatbook.Audio.console_dictation
         finally:
             builtins.__import__ = original_import
 
@@ -390,6 +599,11 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     all_modules = set(imported["all"])
     assert "tldw_chatbook.Model_Artifacts.leases" in all_modules
     assert "tldw_chatbook.Model_Artifacts.service" in all_modules
+    # TASK-1696: same sanity check for the new adapter module --
+    # ``transcription_service`` imports it at module scope (``console_
+    # dictation`` only imports it lazily, inside its own resolver method,
+    # so a plain import of that module alone would not prove this).
+    assert "tldw_chatbook.Local_Ingestion.parakeet_v2_artifact" in all_modules
 
 
 # ---------------------------------------------------------------------------

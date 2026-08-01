@@ -78,6 +78,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactPreflightEntry",
         "ArtifactRef",
         "ArtifactRole",
+        "ArtifactSourceMap",
         "ArtifactStateError",
         "CatalogError",
         "ConsentMismatchError",
@@ -1536,12 +1537,552 @@ def test_install_verifies_then_promotes_immutable_directory(tmp_path: Path) -> N
     }
 
 
+# ---------------------------------------------------------------------------
+# TASK-1694: service-owned download-stage seam.
+#
+# Ported (unmodified in intent) from codex/task-595-managed-downloads-v2's
+# Tests/Model_Artifacts/test_service.py -- that branch's own tests for the
+# stage API just ported into service.py above (see the reconciliation
+# review, item 1). All fixture helpers used below (``descriptor``,
+# ``artifact_file``, ``install_inputs``, ``symlink_or_skip``) already exist
+# in this file with matching signatures.
+# ---------------------------------------------------------------------------
+
+
+def test_download_stage_finalizes_only_verified_payload(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+
+    stage = service._download_stage_for(item, create=True)
+
+    assert stage is not None
+    assert stage.operation.parent == service.staging_path
+    assert stage.payload.parent == stage.operation
+    assert stage.state.parent == stage.operation
+    assert stage.marker.parent == stage.operation
+    assert service.artifact_path(item.reference).exists() is False
+
+    (stage.payload / "model.onnx").write_bytes(b"model")
+    (stage.state / "model.json").write_text("{}", encoding="utf-8")
+
+    assert service._finalize_download_stage(item, stage) == item.reference
+
+    final = service.artifact_path(item.reference)
+    assert (final / "model.onnx").read_bytes() == b"model"
+    assert (final / "manifest.json").is_file()
+    assert not (final / "model.json").exists()
+    assert not stage.operation.exists()
+
+
+def test_download_stage_create_false_is_non_mutating_when_absent(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+
+    assert service._download_stage_for(item, create=False) is None
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_download_stage_reopens_its_exact_marked_operation(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+
+    stage = service._download_stage_for(item, create=True)
+
+    assert stage is not None
+    assert service._download_stage_for(item, create=False) == stage
+
+
+@pytest.mark.parametrize("corruption", ("extra", "size", "digest", "symlink"))
+def test_invalid_download_stage_payload_never_creates_final_directory(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+    if corruption == "extra":
+        (stage.payload / "extra.bin").write_bytes(b"extra")
+    elif corruption == "size":
+        (stage.payload / "model.onnx").write_bytes(b"wrong")
+    elif corruption == "digest":
+        (stage.payload / "model.onnx").write_bytes(b"xxxxx")
+    else:
+        (stage.payload / "model.onnx").unlink()
+        external = tmp_path / "external-model"
+        external.write_bytes(b"model")
+        symlink_or_skip(
+            stage.payload / "model.onnx",
+            external,
+            target_is_directory=False,
+        )
+
+    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+        service._finalize_download_stage(item, stage)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_download_stage_finalization_does_not_copy_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+
+    def fail_copy(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("finalization must not copy the payload")
+
+    monkeypatch.setattr(service, "_copy_payload", fail_copy)
+
+    assert service._finalize_download_stage(item, stage) == item.reference
+
+
+def test_download_stage_recovers_a_matching_staged_manifest(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+    (stage.payload / "manifest.json").write_text(
+        json.dumps({"schema_version": 1, "descriptor": item.to_dict()}),
+        encoding="utf-8",
+    )
+
+    reopened = service._download_stage_for(item, create=False)
+
+    assert reopened == stage
+    assert service._finalize_download_stage(item, reopened) == item.reference
+    assert not (service.artifact_path(item.reference) / "state").exists()
+
+
+def test_discard_download_stage_refuses_substituted_operation(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    shutil.rmtree(stage.operation)
+    stage.operation.mkdir()
+    (stage.operation / "keep").write_bytes(b"existing")
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service._discard_download_stage(stage)
+
+    assert (stage.operation / "keep").read_bytes() == b"existing"
+
+
+def test_download_stage_rejects_a_changed_descriptor_or_malformed_marker(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    changed = descriptor(reference=item.reference, model_id="example/changed")
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+
+    assert service._download_stage_for(changed, create=False) is None
+    with pytest.raises(service_module.ArtifactPathError):
+        service._finalize_download_stage(changed, stage)
+
+    stage.marker.write_text("{", encoding="utf-8")
+    with pytest.raises(service_module.ArtifactPathError):
+        service._download_stage_for(item, create=False)
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_download_stage_rejects_special_state_node_without_finalizing(
+    tmp_path: Path,
+) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO creation is unavailable")
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+    try:
+        os.mkfifo(stage.state / "resume.json")
+    except OSError as error:
+        pytest.skip(f"FIFO creation is unavailable: {error}")
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service._finalize_download_stage(item, stage)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_download_stage_converges_on_identical_destination_without_state_changes(
+    tmp_path: Path,
+) -> None:
+    service, item, source = install_inputs(tmp_path, {"model.onnx": b"model"})
+    service.install(item, source)
+    service.activate(item.reference)
+    readiness_before = service.readiness_path(item.reference).read_bytes()
+    active_before = service.active_path(item.reference.artifact_id).read_bytes()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+
+    assert service._finalize_download_stage(item, stage) == item.reference
+
+    assert not stage.operation.exists()
+    assert service.readiness_path(item.reference).read_bytes() == readiness_before
+    assert service.active_path(item.reference.artifact_id).read_bytes() == active_before
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("missing", "extra", "size", "digest", "symlink"),
+)
+def test_download_stage_validates_before_identical_destination_convergence(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    service, item, source = install_inputs(tmp_path, {"model.onnx": b"model"})
+    service.install(item, source)
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    payload = stage.payload / "model.onnx"
+    payload.write_bytes(b"model")
+    if corruption == "missing":
+        payload.unlink()
+    elif corruption == "extra":
+        (stage.payload / "extra.bin").write_bytes(b"extra")
+    elif corruption == "size":
+        payload.write_bytes(b"wrong")
+    elif corruption == "digest":
+        payload.write_bytes(b"xxxxx")
+    else:
+        payload.unlink()
+        external = tmp_path / "external-model"
+        external.write_bytes(b"model")
+        symlink_or_skip(payload, external, target_is_directory=False)
+
+    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+        service._finalize_download_stage(item, stage)
+
+    assert stage.operation.exists()
+    assert service.artifact_path(item.reference).is_dir()
+
+
+def test_download_stage_preserves_a_conflicting_destination(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    destination = service.artifact_path(item.reference)
+    destination.mkdir(parents=True)
+    (destination / "keep").write_bytes(b"existing")
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+
+    with pytest.raises(service_module.ArtifactConflictError):
+        service._finalize_download_stage(item, stage)
+
+    assert (destination / "keep").read_bytes() == b"existing"
+    assert stage.operation.exists()
+
+
+def test_discard_download_stage_removes_only_its_contained_marked_operation(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    unrelated = service.staging_path / "unrelated"
+    unrelated.mkdir()
+
+    service._discard_download_stage(stage)
+
+    assert not stage.operation.exists()
+    assert unrelated.is_dir()
+    escaped = dataclasses.replace(stage, operation=tmp_path / "outside")
+    with pytest.raises(service_module.ArtifactPathError):
+        service._discard_download_stage(escaped)
+
+
+def test_discard_download_stage_does_not_change_readiness_or_active_state(
+    tmp_path: Path,
+) -> None:
+    service, item, source = install_inputs(tmp_path, {"model.onnx": b"model"})
+    service.install(item, source)
+    service.activate(item.reference)
+    readiness_before = service.readiness_path(item.reference).read_bytes()
+    active_before = service.active_path(item.reference.artifact_id).read_bytes()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+
+    service._discard_download_stage(stage)
+
+    assert service.readiness_path(item.reference).read_bytes() == readiness_before
+    assert service.active_path(item.reference.artifact_id).read_bytes() == active_before
+
+
+def test_failed_discard_cleanup_never_poison_canonical_stage_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "store"
+    service = service_module.ModelArtifactService(root)
+    item = descriptor()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    original_rmtree = service_module.shutil.rmtree
+
+    def partially_remove_retired(path: Path, *args: object, **kwargs: object) -> None:
+        if path.parent == service.staging_path and path.name.startswith(
+            ".download-retired-"
+        ):
+            original_rmtree(path / "state")
+            raise OSError("injected retired cleanup failure")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(service_module.shutil, "rmtree", partially_remove_retired)
+
+    with pytest.raises(service_module.ArtifactStateError):
+        service._discard_download_stage(stage)
+
+    assert not stage.operation.exists()
+    monkeypatch.setattr(service_module.shutil, "rmtree", original_rmtree)
+    restarted = service_module.ModelArtifactService(root)
+    assert restarted._download_stage_for(item, create=True) is not None
+
+
+def test_failed_final_stage_cleanup_never_leaves_canonical_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    (stage.payload / "model.onnx").write_bytes(b"model")
+    original_rmtree = service_module.shutil.rmtree
+
+    def fail_retired_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if path.parent == service.staging_path and path.name.startswith(
+            ".download-retired-"
+        ):
+            raise OSError("injected retired cleanup failure")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(service_module.shutil, "rmtree", fail_retired_cleanup)
+
+    with pytest.raises(service_module.ArtifactStateError):
+        service._finalize_download_stage(item, stage)
+
+    assert not stage.operation.exists()
+    monkeypatch.setattr(service_module.shutil, "rmtree", original_rmtree)
+    restarted = service_module.ModelArtifactService(tmp_path / "store")
+    assert restarted._download_stage_for(item, create=True) is not None
+
+
+def test_fresh_service_recovers_and_discards_post_promotion_stage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "store"
+    service = service_module.ModelArtifactService(root)
+    item = descriptor(files=(artifact_file(b"model"),))
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    shutil.rmtree(stage.payload)
+
+    restarted = service_module.ModelArtifactService(root)
+    recovered = restarted._download_stage_for(item, create=False)
+
+    assert recovered is not None
+    assert not recovered.payload.exists()
+    restarted._discard_download_stage(recovered)
+    assert not stage.operation.exists()
+
+
+def test_fresh_service_discards_marker_only_post_promotion_stage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "store"
+    service = service_module.ModelArtifactService(root)
+    item = descriptor()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    shutil.rmtree(stage.payload)
+    shutil.rmtree(stage.state)
+
+    restarted = service_module.ModelArtifactService(root)
+    recovered = restarted._download_stage_for(item, create=False)
+
+    assert recovered is not None
+    assert not recovered.payload.exists()
+    assert not recovered.state.exists()
+    restarted._discard_download_stage(recovered)
+    assert not stage.operation.exists()
+
+
+def test_download_stage_never_publishes_partial_canonical_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "store"
+    service = service_module.ModelArtifactService(root)
+    item = descriptor()
+    operation, _marker, _payload, _state, _fingerprint = service._download_stage_paths(
+        item,
+    )
+    original_identity = service._download_stage_node_identity
+
+    def fail_temporary_identity(path: Path, *, directory: bool) -> tuple[int, int, int]:
+        if path.parent == service.staging_path and path.name.startswith(".download-"):
+            raise service_module.ArtifactPathError("injected temporary identity failure")
+        return original_identity(path, directory=directory)
+
+    monkeypatch.setattr(service, "_download_stage_node_identity", fail_temporary_identity)
+    with pytest.raises(service_module.ArtifactPathError):
+        service._download_stage_for(item, create=True)
+
+    assert not operation.exists()
+    restarted = service_module.ModelArtifactService(root)
+    assert restarted._download_stage_for(item, create=True) is not None
+
+
+def test_download_stage_discards_losing_temporary_publication_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    operation, _marker, _payload, _state, _fingerprint = service._download_stage_paths(
+        item,
+    )
+    original_exists = service._managed_path_exists
+    winner_published = False
+
+    def publish_winner(path: Path) -> bool:
+        nonlocal winner_published
+        if path == operation and not winner_published:
+            candidates = tuple(
+                candidate
+                for candidate in service.staging_path.iterdir()
+                if candidate.name.startswith(".download-")
+            )
+            if candidates:
+                shutil.copytree(candidates[0], operation)
+                winner_published = True
+        return original_exists(path)
+
+    monkeypatch.setattr(service, "_managed_path_exists", publish_winner)
+
+    stage = service._download_stage_for(item, create=True)
+
+    assert stage is not None
+    assert stage.operation == operation
+    assert tuple(
+        candidate
+        for candidate in service.staging_path.iterdir()
+        if candidate.name.startswith(".download-")
+    ) == ()
+
+
+def test_download_stage_retries_after_marker_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    original_write = service_module.atomic_write_json
+
+    def fail_marker_write(path: Path, *args: object, **kwargs: object) -> None:
+        if path.name == "download-stage.json":
+            raise OSError("injected marker write failure")
+        original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(service_module, "atomic_write_json", fail_marker_write)
+    with pytest.raises(service_module.ArtifactStateError):
+        service._download_stage_for(item, create=True)
+
+    assert tuple(service.staging_path.iterdir()) == ()
+    monkeypatch.setattr(service_module, "atomic_write_json", original_write)
+    assert service._download_stage_for(item, create=True) is not None
+
+
+@pytest.mark.parametrize("failed_directory", ("payload", "state"))
+def test_download_stage_retries_after_layout_directory_creation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_directory: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    original_mkdir = Path.mkdir
+
+    def fail_selected_mkdir(
+        path: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if (
+            path.name == failed_directory
+            and path.parent.parent == service.staging_path
+            and path.parent.name.startswith(".download-")
+        ):
+            raise OSError(f"injected {failed_directory} mkdir failure")
+        original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_selected_mkdir)
+    with pytest.raises(service_module.ArtifactStateError):
+        service._download_stage_for(item, create=True)
+
+    assert tuple(service.staging_path.iterdir()) == ()
+    monkeypatch.setattr(Path, "mkdir", original_mkdir)
+    assert service._download_stage_for(item, create=True) is not None
+
+
+def test_discard_rejects_forged_post_promotion_handle_outside_staging(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor()
+    stage = service._download_stage_for(item, create=True)
+    assert stage is not None
+    outside = service.artifacts_path / stage.operation.name
+    outside.mkdir()
+    marker = outside / stage.marker.name
+    marker.write_bytes(stage.marker.read_bytes())
+    state = outside / stage.state.name
+    state.mkdir()
+    payload = outside / stage.payload.name
+
+    def identity(path: Path) -> tuple[int, int, int]:
+        info = path.stat(follow_symlinks=False)
+        return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+
+    forged = dataclasses.replace(
+        stage,
+        operation=outside,
+        marker=marker,
+        payload=payload,
+        state=state,
+        operation_identity=identity(outside),
+        marker_identity=identity(marker),
+        payload_identity=None,
+        state_identity=identity(state),
+    )
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service._discard_download_stage(forged)
+
+    assert marker.is_file()
+
+
 def test_service_validates_root_and_creates_only_owned_layout(tmp_path: Path) -> None:
     root = tmp_path / "store"
     service = service_module.ModelArtifactService(root)
 
     assert service.artifacts_path == root.resolve() / "artifacts"
     assert service.staging_path == root.resolve() / "staging"
+    assert service.locks_path == root.resolve() / "locks"
     assert {path.name for path in root.iterdir()} == {
         "active",
         "artifacts",

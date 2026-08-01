@@ -2841,7 +2841,7 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
-        # task-1642: BOTH panes are now fixed-header-over-scroll-body;
+        # task-1716: BOTH panes are now fixed-header-over-scroll-body;
         # the scrollable container is the -body child in each.
         assert isinstance(
             screen.query_one("#settings-detail-pane-body"), VerticalScroll
@@ -6197,7 +6197,7 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         text = _visible_text(screen)
         assert "Focused setting: Endpoint" in text
         assert "Controls the provider endpoint used by Console generation." in text
-        # task-1642: the in-place refresh folds dotted keys at separators,
+        # task-1716: the in-place refresh folds dotted keys at separators,
         # so the key spans two lines in visible text.
         assert "Saved as: api_settings.ollama." in text
         assert "api_url" in text
@@ -8039,12 +8039,12 @@ async def test_compact_input_edge_renders_under_real_bundle():
         assert border_style == "solid", f"rest edge missing: {border_style!r}"
 
 
-# ---- critique round-3 batch: tasks 1620-1625 ----
+# ---- critique round-3 batch: tasks 1623-1625 and 1711-1713 ----
 
 
 def test_state_banner_leads_with_persistence_badge():
     """Five save models coexist on this screen; the badge names the active
-    category's model in the same State-bar position everywhere (task-1620),
+    category's model in the same State-bar position everywhere (task-1717),
     so the footer keys' coming and going stops reading as inconsistency."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -8080,7 +8080,7 @@ def test_state_banner_dirty_branch_keeps_priority():
 
 def test_workspaces_banner_names_reversal_paths():
     """Workspaces applies immediately; the banner says how each action is
-    walked back instead of leaving 'no draft' unexplained (task-1620)."""
+    walked back instead of leaving 'no draft' unexplained (task-1717)."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     text = screen._category_state_banner_text(SettingsCategoryId.WORKSPACES)
@@ -8090,7 +8090,7 @@ def test_workspaces_banner_names_reversal_paths():
 @pytest.mark.asyncio
 async def test_filter_clears_after_opening_a_match():
     """Enter-open used to leave the query behind, pruning the rail to the
-    last search's matches for the rest of the session (task-1621)."""
+    last search's matches for the rest of the session (task-1712)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
@@ -8120,7 +8120,7 @@ def test_fold_prefers_slash_boundaries_over_extension_dots():
 
 def test_threshold_field_has_focused_guidance():
     """The inspector promised setting-specific guidance on focus; the
-    Threshold field answered with the empty fallback (task-1622)."""
+    Threshold field answered with the empty fallback (task-1713)."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen._active_settings_field_id = "settings-console-paste-collapse-threshold"
@@ -8132,7 +8132,7 @@ def test_threshold_field_has_focused_guidance():
 @pytest.mark.asyncio
 async def test_numeric_labels_carry_units():
     """'Threshold 50' and friends were unit-less mystery numerics; the
-    widened label column carries the unit (task-1622)."""
+    widened label column carries the unit (task-1713)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
@@ -8163,7 +8163,7 @@ async def test_inspector_overflow_hint_matches_body_overflow():
 
 @pytest.mark.asyncio
 async def test_every_category_renders_the_state_banner():
-    """task-1620 AC: the persistence badge appears in the same State-bar
+    """task-1717 AC: the persistence badge appears in the same State-bar
     position on EVERY category -- the four own-persistence categories
     (Theme, Splash, Internal Prompts, Image Gen) and Workspaces previously
     skipped the banner entirely, so their save contract was unlabeled."""
@@ -8180,13 +8180,13 @@ async def test_every_category_renders_the_state_banner():
             assert str(banner.renderable).startswith("State: "), summary.category
 
 
-# ---- critique round-4 batch: tasks 1640-1646 ----
+# ---- critique round-4 batch: tasks 1644 and 1714-1716 ----
 
 
 def test_field_search_surfaces_category_and_names_the_field():
     """Field search surfaces the owning category and names the field.
 
-    task-1641: typing a setting's visible name ("threshold") must surface
+    task-1715: typing a setting's visible name ("threshold") must surface
     its category, with the echo line promising the field-level landing.
     """
     app = _build_test_app()
@@ -8205,7 +8205,7 @@ def test_field_search_surfaces_category_and_names_the_field():
 async def test_field_search_enter_focuses_the_field():
     """Enter on a field match focuses that field.
 
-    task-1641: opening the category is not enough -- landing focus on the
+    task-1715: opening the category is not enough -- landing focus on the
     matched field is what fires its inspector guidance.
     """
     app = _build_test_app()
@@ -8227,7 +8227,7 @@ async def test_field_search_enter_focuses_the_field():
 async def test_state_banner_is_pinned_outside_detail_scroll():
     """The State banner is pinned outside the detail scroll body.
 
-    task-1642: the persistence badge is the save-contract carrier, so it
+    task-1716: the persistence badge is the save-contract carrier, so it
     must not scroll away with the category content (RAG showed no State
     line at all in the round-4 evidence).
     """
@@ -8244,7 +8244,7 @@ async def test_state_banner_is_pinned_outside_detail_scroll():
 def test_t_hint_uses_each_categorys_real_verb():
     """The t hint names each category's real verb.
 
-    task-1640: "t test category" named an abstraction while the on-page
+    task-1714: "t test category" named an abstraction while the on-page
     buttons say Check/Validate/Test.
     """
     app = _build_test_app()
@@ -8283,7 +8283,7 @@ def test_toast_severity_variants_pin_the_left_edge():
 async def test_reassurance_short_line_off_overview():
     """The long reassurance paragraph is Overview-only.
 
-    task-1640: elsewhere a single line keeps the local-first promise
+    task-1714: elsewhere a single line keeps the local-first promise
     without eating pinned inspector rows on all 22 categories.
     """
     app = _build_test_app()

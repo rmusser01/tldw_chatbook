@@ -5144,18 +5144,11 @@ class TldwCli(
             server_service=self.server_text2sql_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_sync_service = ServerSyncService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-                state_repository=self.sync_state_repository,
-            )
-        except ValueError:
-            self.server_sync_service = ServerSyncService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-                state_repository=self.sync_state_repository,
-            )
+        self.server_sync_service = ServerSyncService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+            state_repository=self.sync_state_repository,
+        )
         self.sync_scope_service = SyncScopeService(
             server_service=self.server_sync_service,
             policy_enforcer=self.service_policy_enforcer,
@@ -6572,19 +6565,14 @@ class TldwCli(
             )
             decision = result is True
         except asyncio.CancelledError:
-            self.post_message(
-                TTSGlobalOverrideDecisionEvent(token, accepted=False)
-            )
+            self.post_message(TTSGlobalOverrideDecisionEvent(token, accepted=False))
             raise
         except Exception as error:
             self.loguru_logger.warning(
-                "TTS global fallback prompt failed "
-                "(exception_category={})",
+                "TTS global fallback prompt failed (exception_category={})",
                 type(error).__name__,
             )
-        self.post_message(
-            TTSGlobalOverrideDecisionEvent(token, accepted=decision)
-        )
+        self.post_message(TTSGlobalOverrideDecisionEvent(token, accepted=decision))
 
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
@@ -6617,9 +6605,7 @@ class TldwCli(
                 self.loguru_logger.error(f"Error updating message UI: {e}")
             if event.global_override_token is not None:
                 self.run_worker(
-                    self._offer_tts_global_override(
-                        event.global_override_token
-                    ),
+                    self._offer_tts_global_override(event.global_override_token),
                     name="tts_global_voice_confirmation",
                 )
         else:
@@ -6960,6 +6946,33 @@ class TldwCli(
         # the reason mount does not complete.
         try:
             persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
+        except Exception:
+            pass
+
+        # Which interpreter's speech stack this run actually has. Dictation
+        # degrades silently and differently per missing package -- without
+        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
+        # until stop and no voice command can fire), and without the
+        # configured provider's package the resolver quietly picks another.
+        # Both were diagnosed only after several live rounds because the run
+        # left no record of its own environment (2026-08-01); one line here
+        # dates every future report to a specific interpreter.
+        try:
+            from importlib.util import find_spec
+
+            from .Chat.console_voice_input import resolve as _resolve_dictation
+
+            # The provider dictation would actually use, not merely one that
+            # is installed: the resolver's config precedence is exactly what
+            # went wrong before, so recording its answer is the point.
+            _effective = _resolve_dictation()
+            persist_event(
+                "dictation",
+                "speech_stack_available",
+                status="ok" if find_spec("webrtcvad") is not None else "degraded",
+                provider=_effective.provider if _effective else "none",
+                model=(_effective.model if _effective else None) or "provider-default",
+            )
         except Exception:
             pass
 

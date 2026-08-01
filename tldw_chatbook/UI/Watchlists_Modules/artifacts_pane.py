@@ -21,12 +21,23 @@ panes rather than reinvented:
 
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
+
+Spec #2 phase 2b, Task 7 (audio): `selected_script` above is `reactive(...,
+recompose=True)`, so EVERY script selection rebuilds every widget this
+`compose()` yields -- including Play/Stop. That rules out ever holding
+"is this row currently playing" as a reactive/attribute on this widget: it
+would be silently reset to its default on the very next selection, wrong by
+construction. The shared `SimpleAudioPlayer` singleton (`TTS/audio_player.
+get_audio_player`) is the only thing that survives a recompose, so it is
+also the only thing consulted for playback state -- see
+`WatchlistsCollectionsScreen.handle_stop_audio_requested`.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from rich.console import Group, RenderableType
@@ -38,6 +49,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Select, Static
 
+from ...Subscriptions.briefing_audio import audio_file_path_is_safe, briefing_audio_dir
 from ...Subscriptions.briefing_selection import (
     MODE_AUTO,
     MODE_AUTO_FEATURED,
@@ -109,6 +121,17 @@ class RefreshBriefingsRequested(Message):
     """Posted when the user asks to re-read the briefing list."""
 
 
+class ExportBriefingRequested(Message):
+    """Posted when the user asks to export the selected briefing as markdown.
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/`CastScript
+    Requested` and for the same reason: the briefing to export is the
+    screen's own `_selected_briefing`, already mirrored there by `handle_
+    briefing_selected` -- there is nothing this message needs to carry that
+    the screen does not already hold.
+    """
+
+
 class BriefingModeChanged(Message):
     """Posted when the user picks a different selection mode.
 
@@ -162,6 +185,59 @@ class ScriptSelected(Message):
     def __init__(self, script: dict[str, Any] | None) -> None:
         self.script = script
         super().__init__()
+
+
+class SynthesizeAudioRequested(Message):
+    """Posted when the user asks to synthesize audio for the selected script.
+
+    Carries nothing, same shape as `CastScriptRequested` and for the same
+    reason: the script to synthesize is the screen's own selection state
+    (`_selected_script`), already mirrored there by `handle_script_
+    selected`. The screen owns the guard (one synthesis in flight at a
+    time, zombie recovery) exactly as it owns `_cast_in_flight`'s guard for
+    Cast -- see `handle_synthesize_audio_requested`.
+    """
+
+
+class PlayAudioRequested(Message):
+    """Posted when the user asks to play the selected script's audio.
+
+    Carries nothing: the file to play is the screen's own `_loaded_script_
+    audio` state, resolved alongside `_selected_script` inside `_load_
+    briefings`. Playback state itself is never held on THIS widget -- see
+    the module docstring's own note on `selected_script`'s `recompose=True`
+    rebuilding every control on every selection.
+    """
+
+
+class StopAudioRequested(Message):
+    """Posted when the user asks to stop the selected script's audio.
+
+    Carries nothing, for the identical reason `PlayAudioRequested` does.
+    """
+
+
+class ExportFeedRequested(Message):
+    """Posted when the user asks to export this watchlist's audio as a
+    podcast feed directory (spec #2 phase 3, Task 5).
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/
+    `SynthesizeAudioRequested` and for the same reason: the watchlist to
+    export is the screen's own scope (`_briefing_watchlist_id`), and
+    whether there is anything worth exporting is already mirrored onto
+    this pane's own `has_audio_episodes` reactive -- there is nothing this
+    message needs to carry that the screen does not already hold.
+
+    Posted from the button living in `#artifacts-toolbar` -- the SAME
+    watchlist-scoped toolbar Generate/Refresh/Task 1's markdown Export
+    already live in, and (review round 1, Important #1) NOT `#artifacts-
+    audio-toolbar`, where an earlier draft placed it: that toolbar only
+    renders once a SCRIPT is selected, but this export is WATCHLIST-
+    scoped (every complete episode across the whole watchlist), so a
+    button hidden behind an unrelated script selection is a button a
+    user cannot find at all -- see `compose`'s own comment at the
+    button's new site.
+    """
 
 
 class CitationActivated(Message):
@@ -297,6 +373,99 @@ def _script_turns_renderable(turns_json: str | None) -> Text:
     return text
 
 
+#: Spec #2 phase 2b, Task 7. `briefing_audio.py` defines its OWN
+#: `STATUS_GENERATING`/`STATUS_COMPLETE`/`STATUS_FAILED`, but -- exactly
+#: like `briefing_cast.py`'s own copy above -- as the identical three
+#: strings already imported from `briefing_service`. Reused here for the
+#: same reason: one status vocabulary, not a third name for the same
+#: values.
+_AUDIO_NO_AUDIO = "No audio yet. Press Synthesize to generate it."
+_AUDIO_GENERATING_COPY = "This audio is being synthesized now."
+_AUDIO_UNEXPLAINED_FAILURE = "Audio synthesis failed, but recorded no reason."
+
+
+def _audio_status_text(row: dict[str, Any]) -> str:
+    """One audio render's status, as a bare lowercase string."""
+    return str(row.get("status") or "").strip().lower()
+
+
+def _audio_file_is_playable(row: dict[str, Any] | None) -> bool:
+    """Whether Play has a real file to hand the player.
+
+    `False` for no row at all, a row with no `file_path` (never
+    synthesized, or the one dedicated voice-resolution-failure row that
+    never gets one -- see `briefing_audio._record_voice_resolution_
+    failure`), a `file_path` that fails `audio_file_path_is_safe` (Qodo
+    review round 1, FIX B -- checked BEFORE any filesystem access, so an
+    unsafe path is never even probed), and a `file_path` that no longer
+    exists on disk (deleted out from under the row -- the honest-
+    degradation case: an artifact whose file is gone must not offer a
+    control that can never do anything, spec §Error-handling ethos).
+
+    Args:
+        row: `ArtifactsPane.script_audio`, or `None`.
+
+    Returns:
+        `True` only when `row["file_path"]` is a non-empty string naming a
+        file, inside `briefing_audio_dir()`, that exists right now.
+    """
+    if row is None:
+        return False
+    file_path = row.get("file_path")
+    if not file_path:
+        return False
+    if not audio_file_path_is_safe(file_path):
+        return False
+    return Path(str(file_path)).exists()
+
+
+def _audio_detail_renderable(row: dict[str, Any] | None) -> RenderableType:
+    """What `_script_detail_renderable` appends for the script's audio.
+
+    Mirrors `_script_detail_renderable`'s own "every status gets a body of
+    its own" rule: `generating`/`complete`/`failed`, or "nothing
+    synthesized yet", each read as an outcome, never a blank pane. A plain
+    function (not a method) so it is directly testable against a bare
+    `dict | None` with no widget instance required, the same shape
+    `_script_turns_renderable` already uses for the turns half of the same
+    detail block.
+
+    Args:
+        row: `ArtifactsPane.script_audio` -- the selected script's newest
+            `briefing_audio` row, or `None`.
+
+    Returns:
+        A Rich renderable, grouped into `#artifacts-script-detail`'s own
+        render by `_script_detail_renderable`.
+    """
+    if row is None:
+        return Text(_AUDIO_NO_AUDIO)
+
+    status = _audio_status_text(row)
+    header = Text()
+    header.append("Audio: ", style="dim")
+    header.append(status or "unknown status", style="bold")
+    duration = row.get("duration_seconds")
+    if duration is not None:
+        header.append(" · ")
+        header.append(f"{float(duration):.1f}s")
+    header.append("\n")
+
+    if status == STATUS_FAILED:
+        # The provider/service's own message, appended to a `Text` -- which
+        # never parses Rich markup -- exactly like `_detail_renderable`'s
+        # own `error` handling; this is model/provider data, never a
+        # trusted string.
+        return Group(
+            header, Text(str(row.get("error") or _AUDIO_UNEXPLAINED_FAILURE))
+        )
+    if status == STATUS_GENERATING:
+        return Group(header, Text(_AUDIO_GENERATING_COPY))
+    if status == STATUS_COMPLETE:
+        return header
+    return Group(header, Text(f"Unrecognised audio status: {status or '—'}"))
+
+
 class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     """List a watchlist's briefings and render the selected one."""
 
@@ -304,6 +473,27 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: `NotificationsPane._SELECTED_ROW_STYLE` -- a `DataTable` cell's `Text`
     #: cannot reference Textual CSS variables the way a widget's styles can.
     _SELECTED_ROW_STYLE = "reverse bold"
+
+    #: Review round 1, Minor #4. A plain, app-controlled glyph -- never
+    #: provider/model-derived text -- exactly like `ItemsPane._QUEUED_
+    #: GLYPH`'s own phase-1 precedent: a single, plain-width character
+    #: rather than an emoji, so it cannot skew a `DataTable` column's
+    #: alignment the way a double-width glyph could.
+    _AUDIO_GLYPH = "♪"
+
+    #: Owner decision, task-7 phase 2b follow-up ("if synthesis fails, show
+    #: the audio glyph with a red x", verbatim): the mark appended after
+    #: `_AUDIO_GLYPH` when a script's NEWEST `briefing_audio` render is
+    #: `STATUS_FAILED` -- the same `✗` a failed status already uses
+    #: elsewhere in this app (`chat_screen.py`/`library_rail.py`'s own
+    #: ✓/✗ vocabulary). Plain and app-controlled, same reasoning as
+    #: `_AUDIO_GLYPH` above. The red comes from an explicit `rich.text.Text`
+    #: style, never a markup string -- this pane never markup-parses cell
+    #: content (see the module docstring's `hyperlinks=False` note); a
+    #: literal `[bold red]` in provider/model text must keep rendering as
+    #: those literal characters, not be interpreted as styling.
+    _AUDIO_FAILED_MARK = "✗"
+    _AUDIO_FAILED_STYLE = "bold red"
 
     briefings = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_briefing = reactive[dict[str, Any] | None](None, recompose=True)
@@ -335,6 +525,39 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: The script whose detail is rendered below the scripts table, or
     #: `None` when nothing is selected.
     selected_script = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Task 7: the SELECTED script's newest `briefing_audio` render, or
+    #: `None` when it has never been synthesized. Screen-supplied, resolved
+    #: alongside `selected_script` inside `_load_briefings` -- never set by
+    #: this widget itself, so (unlike `selected_briefing`/`selected_script`)
+    #: it carries no `watch_`/message pair: there is nothing on this pane
+    #: that "selects" a particular audio render, only ever the newest one.
+    script_audio = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Review round 1, Minor #4: `{script_id: status}` for every one of
+    #: `scripts`' ids that has at least one `briefing_audio` render, keyed
+    #: to that render's NEWEST status (`list_briefing_audio` is
+    #: newest-first) -- so the scripts table can show an "Audio" indicator
+    #: for every row, not just the currently selected one (before this, a
+    #: user had to select each script in turn to discover whether it had
+    #: ever been synthesized at all). A script id absent from this mapping
+    #: has no audio row at all. Owner decision, task-7 phase 2b follow-up:
+    #: this used to be a bare `frozenset[int]` of "has at least one
+    #: attempt" -- upgraded to carry status so the scripts table can also
+    #: distinguish a `STATUS_FAILED` render from a `STATUS_COMPLETE` one
+    #: (see `_AUDIO_FAILED_MARK` above), which the old presence-only
+    #: shape could not do: a failed synthesis rendered visually identical
+    #: to a successful one. Screen-supplied, resolved alongside `scripts`
+    #: inside `_load_briefings`.
+    scripts_with_audio = reactive[dict[int, str]]({}, recompose=True)
+    #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
+    #: selected script -- has at least one export-ready audio episode
+    #: (`SubscriptionsDB.list_watchlist_audio_episodes`'s own `complete`
+    #: + `file_path IS NOT NULL` predicate). Screen-supplied, resolved
+    #: alongside the rest of `_load_briefings`'s watchlist-scoped reads --
+    #: never computed on this widget, which has no database handle of its
+    #: own. Gates the Export Feed button's disabled state: a dead control
+    #: offering to export nothing is a spec violation (phase 2b shipped a
+    #: disabled Play for exactly this reason).
+    has_audio_episodes = reactive(False, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -375,6 +598,68 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         if self.default_preset_id is not None and self.default_preset_id not in known_ids:
             options.append((f"Preset {self.default_preset_id} (deleted)", self.default_preset_id))
         return options
+
+    @staticmethod
+    def _audio_cell(status: str | None, style: str) -> Text:
+        """The scripts table's "Audio" cell for one row.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x", verbatim) -- before this, the
+        cell only ever answered "has an attempt of ANY status", so a
+        failed synthesis painted identically to a successful one (a
+        reviewer independently flagged the same gap). Three states, one
+        per value `scripts_with_audio` can carry for a script id:
+
+        * `status is None` (the id is absent from `scripts_with_audio` --
+          no `briefing_audio` row at all): an empty cell. A blank cell
+          reads as "never attempted", which is exactly the honest state
+          here -- unlike the other two branches below, there is no
+          attempt to under- or over-state.
+        * `status == STATUS_FAILED` (the newest render failed -- this
+          also covers a recovered interrupted render: `fail_interrupted_
+          audio` writes `STATUS_FAILED`, never a separate "interrupted"
+          status, mirroring `fail_interrupted_briefings` exactly): the
+          note glyph PLUS a red `_AUDIO_FAILED_MARK`, so a failed
+          synthesis finally looks different from a successful one
+          without opening the row.
+        * Anything else (`STATUS_COMPLETE`, or `STATUS_GENERATING`): the
+          note glyph alone, same as a successful render. A `generating`
+          row is deliberately read as "an attempt exists" rather than
+          "an attempt failed" -- it has not failed yet, and marking it
+          with `_AUDIO_FAILED_MARK` pre-emptively would be dishonest in
+          the other direction; a THIRD glyph was considered and rejected
+          for this one row shape (see the phase-2b report) since nothing
+          in the spec calls for one and the column is already
+          tight (`test_the_briefings_table_keeps_at_least_three_usable_
+          rows`'s own sibling pins this table's width).
+
+        A single `Text`, assembled with `.append(..., style=...)` per
+        span -- exactly like `_audio_detail_renderable`'s own header
+        above -- never a markup string: this pane never markup-parses
+        cell content (module docstring, `hyperlinks=False`), and the red
+        mark must come from an explicit style object for the identical
+        reason a briefing/watchlist name must never reach a markup
+        parser.
+
+        Args:
+            status: The newest `briefing_audio` status for this script
+                (`scripts_with_audio.get(script_id)`), or `None`.
+            style: The row's own selection style (`_SELECTED_ROW_STYLE`
+                or `""`) -- applied to the whole cell so a selected row's
+                Audio cell reverses/bolds exactly like its siblings.
+
+        Returns:
+            A `Text` -- empty, glyph-only, or glyph-plus-red-mark.
+        """
+        cell = Text("", style=style)
+        if status is None:
+            return cell
+        cell.append(ArtifactsPane._AUDIO_GLYPH, style=style)
+        if status == STATUS_FAILED:
+            cell.append(" ")
+            mark_style = f"{style} {ArtifactsPane._AUDIO_FAILED_STYLE}".strip()
+            cell.append(ArtifactsPane._AUDIO_FAILED_MARK, style=mark_style)
+        return cell
 
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
@@ -421,6 +706,62 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 id="artifacts-refresh-button",
                 compact=True,
                 tooltip="Re-read this watchlist's briefings.",
+            )
+            # Task 1 (phase 3): exporting is an action on THE SELECTED
+            # briefing, so -- unlike Generate/Refresh, which are
+            # watchlist-wide -- it is disabled with nothing selected, and
+            # ALSO disabled for any non-`complete` row: a `failed`/`empty`/
+            # `generating` briefing has no body worth exporting (`empty`
+            # writes no body by design, `failed` recorded none, and
+            # `generating` has not finished). Placed in this SAME toolbar
+            # rather than a new `Horizontal` -- adding a row here would cost
+            # height this pane's budget cannot spare (see the module
+            # docstring's own note on the pane's fixed `fr` split).
+            export_disabled = (
+                self.selected_briefing is None
+                or _status_text(self.selected_briefing) != STATUS_COMPLETE
+            )
+            yield Button(
+                "Export…",
+                id="artifacts-export-button",
+                compact=True,
+                disabled=export_disabled,
+                tooltip=(
+                    "Select a completed briefing to export it."
+                    if export_disabled
+                    else "Export this briefing as a markdown file."
+                ),
+            )
+            # Task 5 (phase 3): review round 1, Important #1. The brief
+            # originally placed this button in `#artifacts-audio-toolbar`,
+            # which only renders once a SCRIPT is selected -- but the feed
+            # export itself is WATCHLIST-scoped (every complete episode
+            # across the whole watchlist), not script-scoped, so a user
+            # could not find it without first selecting some unrelated
+            # script. Moved to THIS toolbar instead: it is the one Task 1's
+            # own watchlist-scoped markdown Export already lives in, and it
+            # renders unconditionally (see `compose`'s own top-level
+            # structure -- unlike the picker/scripts/audio sections below,
+            # nothing gates this `Horizontal` at all), so the button is
+            # discoverable the moment a watchlist is in scope, exactly like
+            # Generate/Refresh/Export are. Still costs zero rows: both are
+            # EXISTING `.destination-filter-strip` toolbars, `height: 1`
+            # either way -- see the pinned geometry tests re-run for this
+            # move (`test_the_list_the_button_and_the_body_are_all_on_
+            # screen`, `test_the_briefings_table_keeps_at_least_three_
+            # usable_rows`).
+            yield Button(
+                "Export Feed…",
+                id="artifacts-export-feed-button",
+                compact=True,
+                disabled=not self.has_audio_episodes,
+                tooltip=(
+                    "This watchlist has no complete audio episodes to "
+                    "export."
+                    if not self.has_audio_episodes
+                    else "Export this watchlist's audio episodes as a "
+                    "podcast feed directory."
+                ),
             )
 
         if self.can_generate:
@@ -561,7 +902,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 else None
             )
             scripts_table = DataTable(id="artifacts-scripts-table")
-            scripts_table.add_columns("Preset", "Status", "Created")
+            scripts_table.add_columns("Preset", "Status", "Created", "Audio")
             selected_script_index: int | None = None
             for index, row in enumerate(self.scripts):
                 row_key = str(row.get("id"))
@@ -572,10 +913,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     if row_key == selected_script_key
                     else ""
                 )
+                audio_status = self.scripts_with_audio.get(row.get("id"))
                 scripts_table.add_row(
                     Text(str(row.get("preset_name") or "—"), style=style),
                     Text(_script_status_text(row) or "—", style=style),
                     Text(str(row.get("created_at") or "—"), style=style),
+                    self._audio_cell(audio_status, style),
                     key=row_key,
                 )
             if selected_script_index is not None:
@@ -594,6 +937,48 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # test fixture needs). `_script_detail_renderable`'s own header
             # names it as "Script:" instead, for one row instead of four.
             yield Static(self._script_detail_renderable(), id="artifacts-script-detail")
+
+            if self.selected_script is not None:
+                # Task 7: synthesizing/playing audio is an action on THE
+                # SELECTED SCRIPT, so -- exactly like Cast's own gating on
+                # `selected_briefing` above -- there is nothing for it to
+                # act on without one, and this whole section renders only
+                # once a script is selected.
+                play_disabled = not _audio_file_is_playable(self.script_audio)
+                with Horizontal(
+                    id="artifacts-audio-toolbar", classes="destination-filter-strip"
+                ):
+                    yield Button(
+                        "Synthesize",
+                        id="artifacts-synthesize-button",
+                        compact=True,
+                        tooltip=(
+                            "Synthesize spoken audio for this script, using "
+                            "its roster's voices."
+                        ),
+                    )
+                    yield Button(
+                        "Play",
+                        id="artifacts-play-button",
+                        compact=True,
+                        disabled=play_disabled,
+                        tooltip=(
+                            "No playable audio file for this script."
+                            if play_disabled
+                            else "Play this script's synthesized audio."
+                        ),
+                    )
+                    yield Button(
+                        "Stop",
+                        id="artifacts-stop-button",
+                        compact=True,
+                        tooltip="Stop this script's audio playback.",
+                    )
+                # No separate audio-detail `Static`: its status/duration/
+                # error is folded into `_script_detail_renderable`'s own
+                # render, right above -- see that method's own comment on
+                # why (this section's `fr` budget is already measured and
+                # pinned; a second scrollable region would steal from it).
 
     def _detail_renderable(self) -> RenderableType:
         """What the detail area shows for the current selection.
@@ -676,15 +1061,22 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         header.append("\n")
 
         if status == STATUS_COMPLETE:
-            return Group(header, _script_turns_renderable(row.get("turns_json")))
-        if status == STATUS_FAILED:
-            return Group(
-                header,
-                Text(str(row.get("error") or _SCRIPT_UNEXPLAINED_FAILURE)),
-            )
-        if status == STATUS_GENERATING:
-            return Group(header, Text(_SCRIPT_GENERATING_COPY))
-        return Group(header, Text(f"Unrecognised script status: {status or '—'}"))
+            body: RenderableType = _script_turns_renderable(row.get("turns_json"))
+        elif status == STATUS_FAILED:
+            body = Text(str(row.get("error") or _SCRIPT_UNEXPLAINED_FAILURE))
+        elif status == STATUS_GENERATING:
+            body = Text(_SCRIPT_GENERATING_COPY)
+        else:
+            body = Text(f"Unrecognised script status: {status or '—'}")
+
+        # Task 7: the script's audio render, appended below its own body --
+        # folded into this SAME renderable rather than a second scrollable
+        # `Static`, to stay inside the pane's already fully-measured `fr`
+        # budget instead of stealing new fixed rows from it (see
+        # `_watchlists.tcss`'s own comment on why that split is pinned).
+        return Group(
+            header, body, Text("\n"), _audio_detail_renderable(self.script_audio)
+        )
 
     def select_briefing_by_id(self, briefing_id: str) -> None:
         """Select one visible briefing by its row id."""
@@ -843,10 +1235,20 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(GenerateBriefingRequested())
         elif button_id == "artifacts-refresh-button":
             self.post_message(RefreshBriefingsRequested())
+        elif button_id == "artifacts-export-button":
+            self.post_message(ExportBriefingRequested())
         elif button_id == "artifacts-presets-button":
             self.post_message(ManagePresetsRequested())
         elif button_id == "artifacts-cast-button":
             self.post_message(CastScriptRequested())
+        elif button_id == "artifacts-synthesize-button":
+            self.post_message(SynthesizeAudioRequested())
+        elif button_id == "artifacts-play-button":
+            self.post_message(PlayAudioRequested())
+        elif button_id == "artifacts-stop-button":
+            self.post_message(StopAudioRequested())
+        elif button_id == "artifacts-export-feed-button":
+            self.post_message(ExportFeedRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:

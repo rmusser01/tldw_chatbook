@@ -1,5 +1,5 @@
 ---
-id: task-1624
+id: TASK-1624
 title: 'Image Gen: checkbox glyph carries state (no color-only X)'
 status: Done
 assignee:

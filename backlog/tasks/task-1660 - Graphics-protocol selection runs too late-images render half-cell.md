@@ -1,5 +1,5 @@
 ---
-id: task-1660
+id: TASK-1660
 title: 'Graphics-protocol selection runs too late; images render half-cell'
 status: Done
 assignee:

@@ -27,14 +27,17 @@ could plausibly have shipped:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from io import StringIO
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console
@@ -48,8 +51,13 @@ from Tests.UI.test_destination_visual_parity_correction import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
+from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
+from tldw_chatbook.Subscriptions.briefing_export import default_briefing_filename
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+from tldw_chatbook.Third_Party.textual_fspicker import FileSave, SelectDirectory
+from tldw_chatbook.TTS import audio_player as audio_player_module
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
@@ -59,7 +67,14 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     BriefingSelected,
     CastScriptRequested,
     CitationActivated,
+    ExportBriefingRequested,
+    ExportFeedRequested,
     GenerateBriefingRequested,
+    PlayAudioRequested,
+    StopAudioRequested,
+    SynthesizeAudioRequested,
+    _audio_file_is_playable,
+    audio_file_path_is_safe,
 )
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
@@ -2473,3 +2488,2110 @@ async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_mini
             f"{table.region.height} row(s) -- the pinned floor from Task 5 "
             "must survive a citations table sharing the same budget"
         )
+
+
+# --- Task 7: synthesizing and playing a script's audio -------------------
+#
+# Unlike Cast (Task 5), which fakes only the chat call so the REAL cast
+# service runs underneath, these tests fake `generate_script_audio` itself
+# at the screen's own reference -- the brief's own instruction, mirroring
+# `_use_fake_cast_chat`'s seam-choice but one level deeper: the real
+# pipeline needs a real TTS service, a real profile service, and real
+# per-turn synthesis (Tasks 4-6), none of which a UI-focused test should
+# need to stand up just to press a button and read a status back. A
+# `complete` script row is built directly via `insert_briefing_script`
+# rather than through a real Cast pass, for the identical reason
+# `test_casting_a_non_complete_briefing_refuses_naming_the_status` builds
+# its briefing row directly -- everything these tests exercise is
+# downstream of that row already existing.
+
+
+class _FakeAudioService:
+    """The one faked seam: a stand-in for `briefing_audio.generate_script_
+    audio`, called exactly as the screen calls the real thing
+    (`db, script_id, *, tts_service, profile_service`).
+
+    Writes a REAL `briefing_audio` row through the REAL DB methods (Task
+    1's CRUD), so a test asserting against `db.list_briefing_audio` sees
+    exactly what the real pipeline would leave behind -- only the
+    synthesis/stitching/voice-resolution machinery in between is skipped.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self._status = "complete"
+        self._file_path: str | None = None
+        self._duration: float | None = 12.3
+        self._turn_count: int | None = 1
+        self._error: str | None = None
+        self._raise: AudioGenerationError | None = None
+
+    def set_next(
+        self,
+        *,
+        status: str = "complete",
+        file_path: str | None = None,
+        duration: float | None = 12.3,
+        turn_count: int | None = 1,
+        error: str | None = None,
+    ) -> None:
+        self._status = status
+        self._file_path = file_path
+        self._duration = duration
+        self._turn_count = turn_count
+        self._error = error
+
+    def raise_next(self, message: str) -> None:
+        self._raise = AudioGenerationError(message)
+
+    async def __call__(self, db, script_id, *, tts_service, profile_service):
+        self.calls.append(
+            {
+                "script_id": script_id,
+                "tts_service": tts_service,
+                "profile_service": profile_service,
+            }
+        )
+        if self._raise is not None:
+            exc, self._raise = self._raise, None
+            raise exc
+        audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+        if self._status == "complete":
+            db.update_briefing_audio(
+                audio_id,
+                status="complete",
+                file_path=self._file_path,
+                duration_seconds=self._duration,
+                turn_count=self._turn_count,
+            )
+        else:
+            db.update_briefing_audio(
+                audio_id, status=self._status, error=self._error or "synthesis failed"
+            )
+        return db.get_briefing_audio(audio_id)
+
+
+def _use_fake_audio_service(monkeypatch, fake) -> None:
+    """Fake `generate_script_audio` at the screen's own reference, exactly
+    like `_use_fake_cast_chat` fakes `generate_script` one level up.
+    """
+    monkeypatch.setattr(screen_module, "generate_script_audio", fake)
+
+
+class _FakePlayer:
+    """A stand-in for `SimpleAudioPlayer`, the two methods `handle_play_
+    audio_requested`/`handle_stop_audio_requested` actually call.
+    """
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self._current: Path | None = None
+
+    def get_current_file(self) -> Path | None:
+        return self._current
+
+    def set_current(self, path: Path) -> None:
+        self._current = path
+
+    def stop(self) -> None:
+        self.stopped = True
+        self._current = None
+
+
+def _patch_audio_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Redirect `briefing_audio_dir()` into `tmp_path` (Qodo review round 1,
+    FIX B): `_audio_file_is_playable`/`handle_play_audio_requested` now
+    validate a row's `file_path` against `briefing_audio_dir()`, which
+    calls `briefing_audio.get_user_data_dir()` -- a DIFFERENT name binding
+    than `tldw_chatbook.app.get_user_data_dir` (which `_build_test_app`
+    already patches), so tests that need a file to validate as safely
+    "inside" the audio dir must patch this one too, mirroring `Tests/
+    Subscriptions/test_briefing_audio_pipeline.py`'s own `_patch_user_data_
+    dir` helper exactly.
+    """
+    monkeypatch.setattr(briefing_audio, "get_user_data_dir", lambda: tmp_path)
+
+
+def _seed_complete_script(app, watchlist_id, *, roster=None) -> tuple[int, int]:
+    """A `complete` briefing and a `complete` cast script, built directly
+    via the DB rather than a real Generate+Cast pass -- these tests fake
+    `generate_script_audio` entirely, so nothing downstream of the script
+    ROW needs to be real either (unlike Task 5's `_prepare_cast`, whose
+    tests exercise the real cast service).
+
+    Returns:
+        `(briefing_id, script_id)`.
+    """
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+    script_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="Solo",
+        roster_snapshot_json=dump_roster(roster or ONE_SPEAKER_ROSTER),
+        status="complete",
+    )
+    return briefing_id, script_id
+
+
+async def _select_briefing_and_script(screen, pilot, host, briefing_id, script_id) -> None:
+    """Select a briefing then its script through the real pane, waiting
+    for both of the `_load_briefings` reloads either selection dispatches
+    (`handle_briefing_selected`/`handle_script_selected`) to actually land.
+    """
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.select_briefing_by_id(str(briefing_id))
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.select_script_by_id(str(script_id))
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def _press_synthesize(screen, pilot, app, script_id, *, timeout: float = 20.0):
+    """Press the real Synthesize button and wait until the press is
+    answered. Mirrors `_press_cast` exactly, scoped to one script's audio
+    rather than one briefing's scripts -- there is no dedicated audio
+    TABLE to wait on (the audio state is folded into the script detail
+    Static), so the final settle condition is the audio row count/a toast,
+    same observable-state discipline as every sibling `_press_*` helper.
+    """
+    db = app.watchlist_bundle_service.db
+    rows_before = len(db.list_briefing_audio(script_id))
+    notes_before = getattr(app.notify, "call_count", 0)
+
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.query_one("#artifacts-synthesize-button", Button).press()
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if (
+            screen._audio_in_flight
+            or getattr(app.notify, "call_count", 0) > notes_before
+            or len(db.list_briefing_audio(script_id)) != rows_before
+        ):
+            break
+    while time.monotonic() < deadline and screen._audio_in_flight:
+        await pilot.pause(0.02)
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if (
+            len(db.list_briefing_audio(script_id)) != rows_before
+            or getattr(app.notify, "call_count", 0) > notes_before
+        ):
+            return
+
+
+@pytest.mark.asyncio
+async def test_synthesizing_a_complete_script_writes_an_audio_row_and_the_detail_shows_it(
+    monkeypatch, tmp_path
+):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    audio_file = tmp_path / "clip.wav"
+    audio_file.write_bytes(b"RIFF....WAVEfmt ")
+    fake_audio = _FakeAudioService()
+    fake_audio.set_next(file_path=str(audio_file), duration=12.3, turn_count=1)
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        assert len(fake_audio.calls) == 1, "exactly one synthesis call per press"
+        assert fake_audio.calls[0]["script_id"] == script_id
+
+        db = app.watchlist_bundle_service.db
+        rows = db.list_briefing_audio(script_id)
+        assert [row["status"] for row in rows] == ["complete"]
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is not None
+        assert pane.script_audio["id"] == rows[0]["id"]
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert "complete" in plain
+        assert "12.3s" in plain
+
+
+@pytest.mark.asyncio
+async def test_synthesizing_a_non_complete_script_refuses_naming_the_status():
+    """Deliberately does NOT fake `generate_script_audio`: the REAL
+    function's own pre-flight refusal (`_load_script_for_audio`) raises
+    before ever touching `tts_service`/`profile_service`, exactly mirroring
+    why `test_casting_a_non_complete_briefing_refuses_naming_the_status`
+    uses the real `generate_script` for the identical reason.
+
+    Seeded directly as `failed`, not `generating`: `_load_briefings`'s OWN
+    (pre-existing, Task 5) zombie-script sweep would otherwise flip a
+    `generating` row to `failed`/`interrupted` the moment `_select_
+    briefing_and_script` re-dispatches its reload -- a real, separate
+    behaviour, just the wrong one for THIS test to trip over by accident.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+    script_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="Solo",
+        roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        status="failed",
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "failed" in message, (
+            "the toast must name the script's actual status"
+        )
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_audio(script_id) == [], (
+            "a pre-flight refusal must never write a row"
+        )
+
+
+@pytest.mark.asyncio
+async def test_second_synthesis_while_in_flight_refuses_naming_the_running_one():
+    """Sibling of `test_second_cast_while_in_flight_refuses_naming_the_
+    running_one`: `_audio_in_flight` is screen-global, so the refusal must
+    name which script is actually being synthesized.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen._audio_in_flight = True
+        screen._audio_in_flight_script_id = script_id
+        try:
+            screen.handle_synthesize_audio_requested(SynthesizeAudioRequested())
+        finally:
+            screen._audio_in_flight = False
+            screen._audio_in_flight_script_id = None
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert str(script_id) in message
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_the_audio_guard_is_claimed_before_the_worker_runs(monkeypatch):
+    """Mechanism half, the deterministic sibling of `test_the_cast_guard_
+    is_claimed_before_the_worker_runs`: the handler is synchronous with no
+    `await`, so when it returns, no worker code can yet have run. If the
+    guard is claimed there, `_audio_in_flight` is already True at that
+    instant; if it is claimed inside the worker body instead, it is still
+    False -- this is Step 5 mutation (a)'s target.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    fake_audio = _FakeAudioService()
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen.handle_synthesize_audio_requested(SynthesizeAudioRequested())
+
+        assert screen._audio_in_flight is True, (
+            "the guard must be claimed by the handler, before `run_worker` "
+            "has scheduled anything"
+        )
+        assert fake_audio.calls == [], "and no worker code can have run yet"
+
+        app.notify.reset_mock()
+        screen.handle_synthesize_audio_requested(SynthesizeAudioRequested())
+        assert app.notify.call_count == 1
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("markup") is False
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and screen._audio_in_flight:
+            await pilot.pause(0.02)
+        assert len(fake_audio.calls) == 1, "exactly one synthesis must have run"
+
+
+@pytest.mark.asyncio
+async def test_a_database_error_during_synthesis_does_not_exit_the_app(monkeypatch):
+    """Sibling of `test_a_database_error_during_generation_does_not_exit_
+    the_app`: `generate_script_audio` deliberately lets database errors
+    propagate (Task 6's own docstring), and an exception escaping a
+    Textual worker with the default `exit_on_error=True` takes the whole
+    application down with it -- proven live for Generate in phase 1, not
+    theoretical. `_synthesize_audio`'s bare `except Exception` around the
+    call is the guard; this drives a REAL raise through the faked seam and
+    asserts the app is still standing, not merely that a toast appeared
+    (review round 1, Important #1).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+
+    async def _explode(db_arg, script_id_arg, *, tts_service, profile_service):
+        # `generate_script_audio` turns synthesis/voice-resolution
+        # failures into a `failed` row but deliberately lets database
+        # errors propagate -- see its own docstring.
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(screen_module, "generate_script_audio", _explode)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        assert host.is_running, "a worker failure must not exit the application"
+        assert host.screen_stack[-1] is screen, "the screen must still be standing"
+        assert screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert app.notify.called, "a failure the user asked for must be reported"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False
+        assert screen._audio_in_flight is False, (
+            "the in-flight guard must clear even when synthesis raises"
+        )
+        assert db.list_briefing_audio(script_id) == [], (
+            "a pre-flight database error must not leave a `generating` "
+            "row behind"
+        )
+
+        # The guard is genuinely re-armed. Asserted on the SERVICE, not on
+        # "some toast happened" (mirrors the Generate sibling's own fix
+        # round 1, Finding 3): a refusal toasts identically, so the old
+        # assertion could not tell a re-armed button from a permanently
+        # wedged one. With the database reachable again, the same button
+        # must reach the service and leave a finished audio row behind.
+        fake_audio = _FakeAudioService()
+        _use_fake_audio_service(monkeypatch, fake_audio)
+        app.notify.reset_mock()
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        assert len(fake_audio.calls) == 1, (
+            "the second press must have reached the synthesis service"
+        )
+        assert any(
+            row["status"] == "complete" for row in db.list_briefing_audio(script_id)
+        ), "and must have left a finished audio row behind"
+
+
+@pytest.mark.asyncio
+async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_load(
+    monkeypatch,
+):
+    """Load-path seam: `_load_briefings` sweeps a crashed synthesis
+    worker's `generating` audio row, exactly like the sibling scripts/
+    briefings zombie tests. The recorder proves this is the LOAD path's
+    own sweep (`_audio_in_flight` clear at call time), not the Synthesize
+    worker's -- the flag-at-call-time lesson carried from phase 1: pinned
+    SEPARATELY from the dispatch-path test below, since adding this
+    recovery could otherwise silently vacate that one.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_audio
+
+        def _recording_sweep(db_arg, script_id_arg=None):
+            in_flight_at_call.append(bool(screen._audio_in_flight))
+            return real_sweep(db_arg, script_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
+
+        await screen._load_briefings()
+
+        assert in_flight_at_call, "the load path's own sweep must have run at all"
+        assert all(not flag for flag in in_flight_at_call), (
+            "the load path's sweep must run with `_audio_in_flight` CLEAR -- "
+            "a call recorded True could only be the Synthesize worker's own "
+            "sweep"
+        )
+        row = db.get_briefing_audio(zombie_id)
+        assert row["status"] == "failed"
+        assert row["error"] == "interrupted"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is not None
+        assert pane.script_audio["id"] == zombie_id
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert "interrupted" in plain
+        assert "This audio is being synthesized now." not in plain
+
+
+@pytest.mark.asyncio
+async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkeypatch):
+    """Synthesize-path seam, pinned SEPARATELY from the load-path test
+    above: the Synthesize worker sweeps `fail_interrupted_audio` at its
+    own front, exactly where `_cast_script` sweeps for Cast. The recorder
+    proves THIS call carries `_audio_in_flight` claimed (True) -- only the
+    Synthesize worker's own sweep call can, since the load path's sweep is
+    gated on the flag being clear.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    fake_audio = _FakeAudioService()
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_audio
+
+        def _recording_sweep(db_arg, script_id_arg=None):
+            in_flight_at_call.append(bool(screen._audio_in_flight))
+            return real_sweep(db_arg, script_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        assert True in in_flight_at_call, (
+            "the zombie must be recovered by the Synthesize worker's OWN "
+            "sweep (a call with `_audio_in_flight` claimed), not merely by "
+            "the load-path recovery that runs after the flag clears"
+        )
+        rows = {row["id"]: row for row in db.list_briefing_audio(script_id)}
+        assert rows[zombie_id]["status"] == "failed"
+        assert rows[zombie_id]["error"] == "interrupted"
+        assert any(
+            row["status"] == "complete"
+            for audio_id, row in rows.items()
+            if audio_id != zombie_id
+        ), "the same press must also have synthesized real audio"
+
+
+@pytest.mark.asyncio
+async def test_the_scripts_table_shows_an_audio_indicator_for_every_row_with_a_render():
+    """Review round 1, Minor #4: before this fix, a user had to select
+    each script row in turn to discover whether it had ever been
+    synthesized -- `pane.script_audio` only ever answers that for the
+    SELECTED script. The scripts table's own "Audio" column answers it up
+    front for every row, via a plain, app-controlled glyph
+    (`ArtifactsPane._AUDIO_GLYPH`), never provider/model text -- mirroring
+    `ItemsPane._QUEUED_GLYPH`'s own phase-1 precedent exactly.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    with_audio_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="With audio",
+        roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        status="complete",
+    )
+    db.create_briefing_audio(with_audio_id, voice_snapshot_json="[]")
+
+    without_audio_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="Without audio",
+        roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        status="complete",
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        host,
+    ):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert with_audio_id in pane.scripts_with_audio
+        assert without_audio_id not in pane.scripts_with_audio
+
+        # Real `DataTable` cells, not a painted screen region: the table's
+        # rendered WIDTH is a separate, already-covered concern (`test_the_
+        # briefings_table_keeps_at_least_three_usable_rows`'s own sibling
+        # for HEIGHT); reading cells directly proves the glyph logic
+        # itself without depending on this fixture's terminal width.
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        audio_column_index = 3  # "Preset", "Status", "Created", "Audio"
+        with_audio_row = table.get_row(str(with_audio_id))
+        without_audio_row = table.get_row(str(without_audio_id))
+        assert str(with_audio_row[audio_column_index]) == ArtifactsPane._AUDIO_GLYPH
+        assert str(without_audio_row[audio_column_index]) == ""
+
+
+# --- Owner decision, task-7 phase 2b follow-up: three-state audio glyph ----
+#
+# "If synthesis fails, show the audio glyph with a red x" (project owner,
+# verbatim). Before this, `scripts_with_audio` only ever answered "has an
+# attempt of ANY status" (the review-round-1 fix directly above), so a
+# FAILED synthesis painted identically to a successful one -- a reviewer
+# independently flagged the same gap. These three tests each drive the
+# real load path (`pane.select_briefing_by_id`, the same `_load_briefings`
+# reload every other test in this file exercises) for exactly one of
+# `ArtifactsPane._audio_cell`'s three readings.
+
+
+def _seed_briefing_with_three_script_audio_states(app, watchlist_id) -> dict[str, int]:
+    """One `complete` briefing, three `complete` cast scripts -- one for
+    each state `scripts_with_audio` can carry for a script id: a newest
+    audio render that is `complete`, one that is `failed`, and a script
+    with no `briefing_audio` row at all. Shared by the three tests below
+    so each asserts on exactly ONE state without re-deriving the same
+    fixture three times.
+
+    Returns:
+        `{"briefing_id": ..., "complete": script_id, "failed": script_id,
+        "none": script_id}`.
+    """
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    def _script(preset_name: str) -> int:
+        return db.insert_briefing_script(
+            briefing_id,
+            preset_id=None,
+            preset_name=preset_name,
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+            status="complete",
+        )
+
+    complete_script_id = _script("Complete audio")
+    complete_audio_id = db.create_briefing_audio(
+        complete_script_id, voice_snapshot_json="[]"
+    )
+    db.update_briefing_audio(complete_audio_id, status="complete")
+
+    failed_script_id = _script("Failed audio")
+    failed_audio_id = db.create_briefing_audio(
+        failed_script_id, voice_snapshot_json="[]"
+    )
+    db.update_briefing_audio(
+        failed_audio_id, status="failed", error="synthesis failed"
+    )
+
+    none_script_id = _script("No audio")
+
+    return {
+        "briefing_id": briefing_id,
+        "complete": complete_script_id,
+        "failed": failed_script_id,
+        "none": none_script_id,
+    }
+
+
+async def _load_scripts_table(app, watchlist_id, script_states) -> DataTable:
+    """Open Artifacts, select the seeded briefing through the real pane,
+    and return the mounted scripts table once the reload has landed.
+    """
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        host,
+    ):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(script_states["briefing_id"]))
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        # Copy the one cell each test cares about out of the live table --
+        # the `async with` block below tears the screen down on exit, and
+        # a `Text` cell value survives that fine (it owns no widget
+        # reference), but returning the `DataTable` itself would not.
+        return {
+            state: table.get_row(str(script_id))[3]
+            for state, script_id in script_states.items()
+            if state != "briefing_id"
+        }
+
+
+_AUDIO_COLUMN_INDEX = 3  # "Preset", "Status", "Created", "Audio"
+
+
+@pytest.mark.asyncio
+async def test_a_complete_audio_row_shows_the_note_glyph_alone():
+    """`STATUS_COMPLETE` -> the note glyph, and nothing else -- no failure
+    mark, in either the plain text or the styled render.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["complete"]
+
+    assert cell.plain == ArtifactsPane._AUDIO_GLYPH
+    _plain, ansi = _render_to_console(cell)
+    assert "\x1b[1;31m" not in ansi, "a complete render must carry no red mark at all"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audio_row_shows_the_note_glyph_and_a_red_x():
+    """`STATUS_FAILED` -> the note glyph PLUS a red `✗` -- the owner's own
+    words: "if synthesis fails, show the audio glyph with a red x".
+
+    Asserts the exact combined plain text (not merely "the glyph is
+    present", which the ORIGINAL bug -- and a complete row -- would also
+    satisfy) and that the `✗` specifically carries an explicit red style,
+    never a markup string (`ArtifactsPane._audio_cell` builds this with
+    `rich.text.Text.append(..., style=...)`, exactly like `_audio_detail_
+    renderable`'s header -- this pane never markup-parses cell content).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["failed"]
+
+    expected = f"{ArtifactsPane._AUDIO_GLYPH} {ArtifactsPane._AUDIO_FAILED_MARK}"
+    assert cell.plain == expected, (
+        "a failed render must show the note glyph AND the failure mark -- "
+        "not the glyph alone, which is what the bug this fixes looked like"
+    )
+    _plain, ansi = _render_to_console(cell)
+    assert "\x1b[1;31m" in ansi, "the ✗ must carry an explicit red style"
+
+
+@pytest.mark.asyncio
+async def test_a_script_with_no_audio_row_renders_a_blank_audio_cell():
+    """No `briefing_audio` row at all -> an empty cell -- never a bare
+    glyph (that would claim an attempt that never happened) and never a
+    failure mark either.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["none"]
+
+    assert cell.plain == ""
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audio_row_renders_its_error_text(monkeypatch):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    fake_audio = _FakeAudioService()
+    fake_audio.set_next(
+        status="failed", error="turn 0: no voice assigned for speaker 'Narrator'"
+    )
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        db = app.watchlist_bundle_service.db
+        rows = db.list_briefing_audio(script_id)
+        assert rows[0]["status"] == "failed"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is not None
+        assert pane.script_audio["id"] == rows[0]["id"]
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert rows[0]["error"] in plain
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audio_rows_error_text_paints_literally_never_as_markup(
+    monkeypatch,
+):
+    """Review round 1, Minor #2: the mandatory literal-paint test, the
+    exact sibling of `test_script_turns_render_as_speaker_labelled_text_
+    never_markup` -- a synthesis/provider error is untrusted (model or
+    provider-authored) text, so a bracket-shaped fragment like
+    `[bold red]x[/]` must paint as those literal characters, never
+    interpreted as Rich markup and never escaped into visible backslashes
+    either. `_audio_detail_renderable` appends it via `rich.text.Text`,
+    exactly like every other model/provider-derived field on this pane.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    fake_audio = _FakeAudioService()
+    fake_audio.set_next(status="failed", error="[bold red]x[/]")
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        await _press_synthesize(screen, pilot, app, script_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is not None
+        assert pane.script_audio["status"] == "failed"
+        plain, ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable,
+            width=100,
+        )
+
+        assert "[bold red]x[/]" in plain, "the error must paint exactly as written"
+        assert "\\[" not in plain, "and must not grow escaping backslashes"
+        assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
+
+
+@pytest.mark.asyncio
+async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
+    monkeypatch, tmp_path
+):
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    audio_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+    audio_file.write_bytes(b"RIFF....WAVEfmt ")
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(
+        audio_id,
+        status="complete",
+        file_path=str(audio_file),
+        duration_seconds=5.0,
+        turn_count=1,
+    )
+
+    play_calls: list[Path] = []
+    monkeypatch.setattr(
+        screen_module, "play_audio_file", lambda path: play_calls.append(path)
+    )
+    # `handle_stop_audio_requested` delegates to `tts_events.stop_audio_
+    # playback_if_current`, which does its OWN local `from tldw_chatbook.
+    # TTS.audio_player import get_audio_player` at call time -- so faking
+    # it means patching THAT module's attribute, not the screen's (the
+    # screen no longer holds a `get_audio_player` reference at all).
+    fake_player = _FakePlayer()
+    monkeypatch.setattr(audio_player_module, "get_audio_player", lambda: fake_player)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-play-button", Button).press()
+        await pilot.pause()
+
+        assert play_calls == [audio_file], (
+            "Play must hand the player exactly this row's own file path"
+        )
+
+        fake_player.set_current(audio_file)
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-stop-button", Button).press()
+        await pilot.pause()
+
+        assert fake_player.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypatch):
+    """Trap #3 (`tts_events.stop_audio_playback_if_current`'s own
+    docstring): the shared player is a single-slot APP-WIDE singleton, so
+    Stop must compare against what the player actually has loaded before
+    touching it -- never a bare, unconditional `.stop()`, which could
+    silence a completely unrelated clip.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(
+        audio_id,
+        status="complete",
+        file_path="/tmp/this-scripts-clip.wav",
+        duration_seconds=5.0,
+        turn_count=1,
+    )
+
+    fake_player = _FakePlayer()
+    fake_player.set_current(Path("/tmp/an-unrelated-clip.wav"))
+    monkeypatch.setattr(audio_player_module, "get_audio_player", lambda: fake_player)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen.handle_stop_audio_requested(StopAudioRequested())
+
+        assert fake_player.stopped is False, (
+            "Stop must not touch a DIFFERENT file the player is currently "
+            "playing"
+        )
+
+
+@pytest.mark.asyncio
+async def test_play_is_disabled_when_the_file_is_null_or_missing(monkeypatch, tmp_path):
+    """The spec's honest-degradation rule: an artifact whose file was
+    deleted underneath us -- or was never written at all (no row yet, or
+    a `failed` row) -- must not offer a control that can never do
+    anything. A positive control closes the vacuous-guard gap (`_assert_
+    on_screen`'s own naming for the lesson): Play really can be enabled,
+    so the disabled assertions above are not trivially true because Play
+    is simply never enabled at all.
+
+    Also covers Qodo review round 1, FIX B: a `file_path` outside
+    `briefing_audio_dir()` must leave Play disabled exactly like a missing
+    file, never treated as playable just because SOME file happens to
+    exist at that location on disk.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        # Case 1: no audio row at all yet.
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is None, "fixture sanity: nothing synthesized yet"
+        assert pane.query_one("#artifacts-play-button", Button).disabled is True
+
+        # Case 2: a row exists with `file_path` NULL (e.g. a `failed` row,
+        # or the dedicated voice-resolution-failure row that never gets
+        # one -- `briefing_audio._record_voice_resolution_failure`).
+        db.update_briefing_audio(
+            db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
+            status="failed",
+            error="boom",
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio is not None
+        assert pane.script_audio.get("file_path") is None
+        assert pane.query_one("#artifacts-play-button", Button).disabled is True
+
+        # Case 3: a row claims a `file_path`, but the file has since been
+        # deleted from disk.
+        missing_file = briefing_audio.briefing_audio_dir() / "deleted.wav"
+        assert not missing_file.exists()
+        db.update_briefing_audio(
+            db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
+            status="complete",
+            file_path=str(missing_file),
+            duration_seconds=5.0,
+            turn_count=1,
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio["file_path"] == str(missing_file)
+        assert pane.query_one("#artifacts-play-button", Button).disabled is True
+
+        # Case 4 (Qodo review round 1, FIX B): a row claims a `file_path`
+        # OUTSIDE `briefing_audio_dir()` -- a tampered/corrupted row -- even
+        # though a real file exists right there on disk.
+        outside_file = tmp_path / "outside" / "clip.wav"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_bytes(b"RIFF....WAVEfmt ")
+        db.update_briefing_audio(
+            db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
+            status="complete",
+            file_path=str(outside_file),
+            duration_seconds=5.0,
+            turn_count=1,
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio["file_path"] == str(outside_file)
+        assert pane.query_one("#artifacts-play-button", Button).disabled is True
+
+        # Positive control: a REAL file, INSIDE briefing_audio_dir(), makes
+        # Play enabled.
+        real_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+        real_file.write_bytes(b"RIFF....WAVEfmt ")
+        db.update_briefing_audio(
+            db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
+            status="complete",
+            file_path=str(real_file),
+            duration_seconds=5.0,
+            turn_count=1,
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.query_one("#artifacts-play-button", Button).disabled is False
+
+
+# --- Path validation (Qodo review round 1, FIX B) -----------------------------
+#
+# `audio_file_path_is_safe`/`_audio_file_is_playable` must confirm a row's
+# `file_path` resolves inside `briefing_audio_dir()` BEFORE any `.exists()`
+# call or playback -- the DB row is trusted today, but CLAUDE.md requires
+# every file path to go through `Utils/path_validation.py`, and a tampered
+# or corrupted row must not let this screen probe or play an arbitrary
+# path.
+
+
+def test_audio_file_path_is_safe_rejects_a_path_outside_the_audio_dir(
+    monkeypatch, tmp_path
+) -> None:
+    """A `file_path` that is a plain, unrelated absolute path (not even
+    disguised as an in-directory path) must be rejected -- the baseline
+    "obviously outside" case the traversal and in-dir tests below
+    contrast against."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+
+    assert audio_file_path_is_safe("/etc/passwd") is False
+
+
+def test_audio_file_path_is_safe_rejects_a_traversal_path(monkeypatch, tmp_path) -> None:
+    """A path that is textually rooted at `briefing_audio_dir()` but
+    escapes it via `..` segments must still be rejected -- a naive
+    "starts with the audio dir string" check would wrongly accept this,
+    since the check must resolve the path, not just prefix-match it."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    audio_dir = briefing_audio.briefing_audio_dir()
+
+    traversal = str(audio_dir / ".." / ".." / "etc" / "passwd")
+
+    assert audio_file_path_is_safe(traversal) is False
+
+
+def test_audio_file_path_is_safe_accepts_a_normal_in_dir_path(
+    monkeypatch, tmp_path
+) -> None:
+    """The control case: a genuine, well-formed path inside
+    `briefing_audio_dir()` must be accepted -- proving the two rejection
+    tests above are pinning a real boundary and not a check so strict it
+    rejects everything."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    audio_dir = briefing_audio.briefing_audio_dir()
+    in_dir_path = audio_dir / "script-1-audio-1.wav"
+
+    assert audio_file_path_is_safe(str(in_dir_path)) is True
+
+
+def test_audio_file_is_playable_never_probes_the_filesystem_for_an_unsafe_path(
+    monkeypatch, tmp_path
+) -> None:
+    """The safety check must run BEFORE `.exists()`: an unsafe path must
+    never even reach a filesystem probe. Wrapping the real `Path.exists`
+    (rather than registering a callback) catches a call regardless of which
+    `Path` instance makes it.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    calls: list[Path] = []
+    original_exists = Path.exists
+
+    def _spy_exists(self, *args, **kwargs):
+        calls.append(self)
+        return original_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", _spy_exists)
+
+    row = {"file_path": "/etc/passwd", "status": "complete"}
+
+    assert _audio_file_is_playable(row) is False
+    assert calls == [], "an unsafe path must never be probed with .exists()"
+
+
+def test_audio_file_is_playable_true_for_a_real_in_dir_file(monkeypatch, tmp_path) -> None:
+    """Positive control: `_audio_file_is_playable` still works for the
+    ordinary case once path validation is in place."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    real_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+    real_file.write_bytes(b"RIFF....WAVEfmt ")
+
+    row = {"file_path": str(real_file), "status": "complete"}
+
+    assert _audio_file_is_playable(row) is True
+
+
+@pytest.mark.asyncio
+async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_or_playback(
+    monkeypatch, tmp_path
+) -> None:
+    """Defense in depth: even if Play were somehow pressed with a row whose
+    `file_path` fails validation -- a race, or a directly-set screen state
+    bypassing the disabled button -- `handle_play_audio_requested` must
+    refuse it itself, exactly like the "no file at all" case: silently, no
+    toast, no exception, and never handing the path to the player.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    play_calls: list[Path] = []
+    monkeypatch.setattr(
+        screen_module, "play_audio_file", lambda path: play_calls.append(path)
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen._loaded_script_audio = {
+            "file_path": "/etc/passwd",
+            "status": "complete",
+        }
+        screen.handle_play_audio_requested(PlayAudioRequested())
+        await pilot.pause()
+
+        assert play_calls == [], "an unsafe path must never reach the player"
+        assert not app.notify.called, (
+            "an unsafe path is treated exactly like a missing file: silent, "
+            "not a toast"
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
+    monkeypatch, tmp_path
+) -> None:
+    """The normal case must keep working once the guard is in place."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    audio_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+    audio_file.write_bytes(b"RIFF....WAVEfmt ")
+
+    play_calls: list[Path] = []
+    monkeypatch.setattr(
+        screen_module, "play_audio_file", lambda path: play_calls.append(path)
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen._loaded_script_audio = {
+            "file_path": str(audio_file),
+            "status": "complete",
+        }
+        screen.handle_play_audio_requested(PlayAudioRequested())
+        await pilot.pause()
+
+        assert play_calls == [audio_file]
+
+
+# --- Task 1 (phase 3): exporting a briefing as markdown --------------------
+#
+# `ArtifactsPane`'s Export button lives in the EXISTING `#artifacts-toolbar`
+# (no new `Horizontal` -- see that compose()-site comment); its disabled
+# state, the `FileSave` push it triggers, and the write-path's honest
+# toasts are exercised below. `_write_briefing_export_file` is called
+# directly for the write-path tests, the same directness `library_screen`'s
+# own `_write_library_note_export_file` tests use -- it is a plain async
+# method the `FileSave` callback resolves to, not something that needs a
+# real dialog driven through the UI to exercise.
+
+
+def _seed_complete_briefing(app, watchlist_id: int, *, body: str = "Body text") -> int:
+    """A `complete` briefing with a real body, seeded directly (no fake
+    chat needed -- these tests are about the export flow, not generation).
+    """
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(
+        briefing_id,
+        status="complete",
+        body_markdown=body,
+        covers_from_ts="2026-07-25T00:00:00+00:00",
+        covers_through_item_id=5,
+    )
+    return briefing_id
+
+
+@pytest.mark.asyncio
+async def test_export_button_is_disabled_without_a_complete_selection():
+    """Export starts disabled with nothing selected, stays disabled for a
+    `failed` row, and enables only once a `complete` briefing is selected.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    failed_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(failed_id, status="failed", error="boom")
+    complete_id = _seed_complete_briefing(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_button = pane.query_one("#artifacts-export-button", Button)
+        assert export_button.disabled is True, "no selection -> disabled"
+        assert export_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+
+        pane.select_briefing_by_id(str(failed_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert (
+            pane.query_one("#artifacts-export-button", Button).disabled is True
+        ), "a failed briefing has no body worth exporting"
+
+        pane.select_briefing_by_id(str(complete_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert (
+            pane.query_one("#artifacts-export-button", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default_filename(
+    monkeypatch,
+):
+    """Pressing Export posts `ExportBriefingRequested`, which the screen's
+    handler answers by pushing a `FileSave` dialog pre-filled with a
+    sanitized default filename -- proven here by its only observable
+    effect (the push), the same way `test_presets_button_opens_the_preset_
+    manager` proves `ManagePresetsRequested` through ITS handler's effect
+    rather than by intercepting the message object.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        # `host` (the `DestinationHarness`) is the real Textual `App`
+        # subclass driving this pilot -- `screen.app` resolves to IT, not
+        # to the `app` (`TldwCli`) fixture, which this screen only reads
+        # as `self.app_instance` (see `_notify_watchlists`). The dialog
+        # must be patched on the object `self.app.push_screen` actually
+        # resolves through.
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert push_screen_mock.await_count == 1, "Export must push exactly one dialog"
+    args, kwargs = push_screen_mock.call_args
+    dialog = args[0]
+    assert isinstance(dialog, FileSave)
+    briefing_row = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    expected_filename = default_briefing_filename(
+        {**briefing_row, "watchlist_name": "Morning AI Brief"},
+        watchlist_name="Morning AI Brief",
+    )
+    assert dialog._default_file == expected_filename
+    assert callable(kwargs.get("callback"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
+async def test_a_second_export_press_while_the_dialog_is_open_is_refused_then_rearms(
+    monkeypatch, tmp_path, resolve_via,
+):
+    """Review round 1 (Important #1): an earlier draft argued Textual
+    "refuses to stack" a second `FileSave`. A live repro of two rapid
+    presses disproved that -- the screen stack ended up
+    `['FileSave', 'FileSave']`, two live dialogs, not one refused.
+
+    Two presses in one tick (before either worker has run -- `run_worker`
+    only schedules) must push exactly ONE dialog and refuse the second
+    with a toast. Then, once the first dialog resolves -- exercised here
+    BOTH via a real path and via a cancel (`resolve_via`) -- a LATER press
+    must work again: the re-arm assertion that catches a flag stuck
+    `True` forever, which would be worse than the bug being fixed (a
+    cancelled export permanently wedging Export shut).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Two presses in the same tick: `Button.press()` only POSTS
+        # `Button.Pressed` (Textual's message queue is FIFO and each
+        # message is handled to completion before the next is dequeued),
+        # so the first press's handler -- which claims the guard
+        # synchronously, on the UI thread, before `run_worker` -- has
+        # already set `_briefing_export_in_flight` by the time the second
+        # press's `ExportBriefingRequested` is handled.
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_button = pane.query_one("#artifacts-export-button", Button)
+        export_button.press()
+        export_button.press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "two rapid presses must push exactly one dialog, not stack two"
+        )
+        refusals = [
+            call
+            for call in app.notify.call_args_list
+            if "already in progress" in str(call.args[0])
+        ]
+        assert len(refusals) == 1, "the second press must be refused with a toast"
+
+        # Resolve the FIRST press's dialog -- the callback it was given --
+        # either via a real chosen path or via `None` (cancelled).
+        _, first_kwargs = push_screen_mock.call_args
+        callback = first_kwargs["callback"]
+        if resolve_via == "a real path":
+            await callback(tmp_path / "export.md")
+        else:
+            await callback(None)
+
+        # The guard must have re-armed: a THIRD press now pushes ANOTHER
+        # real dialog rather than being refused.
+        push_screen_mock.reset_mock()
+        app.notify.reset_mock()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "Export must be usable again once the first dialog resolved"
+        )
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_writes_the_document_and_toasts_success(
+    tmp_path,
+):
+    """The write-path (bypassing the dialog UI, exercised separately above)
+    writes `briefing_markdown_document`'s output and notifies on success,
+    with `markup=False` since the destination's own filename is
+    interpolated into the toast.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id, body="Body text")
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        await screen._write_briefing_export_file(destination, briefing)
+
+    written = destination.read_text(encoding="utf-8")
+    assert "Body text" in written
+    assert "Morning AI Brief" in written
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "exported successfully" in args[0]
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_cancelled_writes_nothing():
+    """A `None` path (the user cancelled the dialog) writes nothing and
+    toasts a cancellation, not an error. There is no destination to check
+    for a stray write against -- `None` means the dialog never returned
+    one -- so this only pins the toast.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._write_briefing_export_file(None, briefing)
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "cancelled" in args[0].lower()
+    assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_rejects_an_invalid_path(monkeypatch, tmp_path):
+    """A `FileSave`-returned path that fails `validate_path_simple` is
+    rejected with a quiet warning toast -- no write, no crash -- rather
+    than trusting the dialog's returned path unconditionally.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _reject_path(*_args, **_kwargs):
+        raise ValueError("rejected for test")
+
+    monkeypatch.setattr(screen_module, "validate_path_simple", _reject_path)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Rejected export path" in args[0]
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_write_failure_toasts_the_exception_type(
+    monkeypatch, tmp_path
+):
+    """An `OSError` from the write itself toasts `type(exc).__name__` --
+    never the briefing body, never a raw traceback -- and leaves no file
+    behind.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _boom)
+            await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "OSError" in args[0]
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_unicode_encode_error_toasts_the_exception_type(
+    monkeypatch, tmp_path
+):
+    """Review round 1 (Important #2): the write's `except` previously
+    caught only `OSError`, narrower than both the brief and the
+    `library_screen` precedent it claims to mirror. A live repro
+    confirmed a `UnicodeEncodeError` -- entirely plausible from model- or
+    feed-derived body text -- escaped uncaught: no toast, no
+    notification, a silent failure. Broadened to `except Exception`
+    (still logging by type only, never the body).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _boom(*_args, **_kwargs):
+        raise UnicodeEncodeError("ascii", "x", 0, 1, "boom")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _boom)
+            await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "UnicodeEncodeError" in args[0]
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
+    monkeypatch, tmp_path
+):
+    """`asyncio.CancelledError` must never be reported as a failed export
+    -- a cancelled worker is not the same thing as a write that failed,
+    and the broadened `except Exception` above must not accidentally
+    swallow it (review round 1, Important #2's own caveat).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _cancel(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _cancel)
+            with pytest.raises(asyncio.CancelledError):
+                await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_not_called()
+
+
+# --- Task 5 (phase 3): exporting a watchlist's podcast feed directory ------
+#
+# `ArtifactsPane`'s Export Feed button lives in `#artifacts-toolbar` (no
+# new `Horizontal` -- see that compose()-site comment) -- the SAME
+# watchlist-scoped toolbar Generate/Refresh/Task 1's markdown Export
+# already live in, which renders unconditionally once a watchlist is in
+# scope. Review round 1, Important #1: an earlier draft placed it in
+# `#artifacts-audio-toolbar` instead, which only renders once a SCRIPT is
+# selected -- but the feed export is WATCHLIST-scoped, so that button was
+# unreachable without first selecting some unrelated script. Its disabled
+# state, the `SelectDirectory` push it triggers, and the write-path's
+# honest toasts (including an honest, capped partial-export count) are
+# exercised below. Mirrors the Task 1 markdown-export section immediately
+# above in almost every respect -- same guard shape, same push-then-
+# callback split, same re-arm discipline -- so most docstrings below only
+# name what is DIFFERENT for the feed flow rather than repeating the full
+# rationale.
+
+
+def _seed_exportable_audio_episode(
+    app, watchlist_id: int, *, filename: str = "clip.wav"
+) -> tuple[int, int, int, Path]:
+    """A `complete` briefing -> `complete` script -> `complete`, file-
+    backed `briefing_audio` row -- everything `list_watchlist_audio_
+    episodes` (and so `ArtifactsPane.has_audio_episodes`/`export_feed_
+    directory`) requires to treat this as one exportable episode.
+
+    Callers must already have redirected `briefing_audio_dir()` into a
+    temp directory (`_patch_audio_dir`, above) before calling this, so the
+    file this seeds lands somewhere `audio_file_path_is_safe` accepts.
+
+    Returns:
+        `(briefing_id, script_id, audio_id, audio_file_path)`.
+    """
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    audio_file = briefing_audio.briefing_audio_dir() / filename
+    audio_file.write_bytes(b"RIFF....WAVEfmt ")
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(
+        audio_id,
+        status="complete",
+        file_path=str(audio_file),
+        duration_seconds=12.3,
+        turn_count=1,
+    )
+    return briefing_id, script_id, audio_id, audio_file
+
+
+@pytest.mark.asyncio
+async def test_export_feed_button_is_disabled_without_any_complete_audio_episode(
+    monkeypatch, tmp_path
+):
+    """Export Feed starts disabled with no audio anywhere in the
+    watchlist, and enables once a complete, file-backed episode exists
+    ANYWHERE in it -- a dead control offering to export nothing is a spec
+    violation (phase 2b shipped a disabled Play for exactly this reason).
+
+    Deliberately watchlist-scoped, not script-scoped: no briefing or
+    script is ever selected in this test, proving the button's disabled
+    state depends only on the watchlist's own audio, never on a
+    selection this pane may or may not have.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
+        assert export_feed_button.disabled is True, "no audio anywhere -> disabled"
+        assert export_feed_button.compact, (
+            "a bordered button costs 3 rows in a height:1 strip"
+        )
+
+        db = app.watchlist_bundle_service.db
+        audio_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+        audio_file.write_bytes(b"RIFF....WAVEfmt ")
+        audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+        db.update_briefing_audio(
+            audio_id,
+            status="complete",
+            file_path=str(audio_file),
+            duration_seconds=1.0,
+            turn_count=1,
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert (
+            pane.query_one("#artifacts-export-feed-button", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_feed_button_is_visible_and_enabled_with_no_script_selected(
+    monkeypatch, tmp_path
+):
+    """Review round 1, Important #1: pins the discoverability property
+    directly. The feed export is WATCHLIST-scoped -- it exports every
+    complete episode in the watchlist -- so it must be reachable with
+    NOTHING selected at all, not just once a user has happened to click
+    into some unrelated script. `#artifacts-toolbar` (where this button
+    now lives) renders unconditionally once a watchlist is in scope,
+    unlike `#artifacts-audio-toolbar` (gated on `selected_script is not
+    None`), where an earlier draft wrongly placed it -- a user could not
+    have found it there without first selecting a script that has
+    nothing to do with the export.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        assert screen._selected_briefing is None, (
+            "the fixture must start with nothing selected"
+        )
+        assert screen._selected_script is None
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_briefing is None
+        assert pane.selected_script is None
+        export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
+        assert export_feed_button.disabled is False, (
+            "Export Feed must be reachable without selecting a briefing "
+            "or script first"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_workbench_rebuild_does_not_reset_has_audio_episodes(
+    monkeypatch, tmp_path
+):
+    """`_build_detail_pane` is a factory the workbench calls on every
+    region rebuild -- a freshly built `ArtifactsPane`'s reactives start at
+    their class defaults unless the factory explicitly reseeds them from
+    screen state, exactly like every sibling field it already seeds
+    (`briefings`, `scripts_with_audio`, ...). Missing that one line would
+    silently disable Export Feed the moment a user toggled any OTHER
+    region (e.g. the rail), even with real exportable audio still on the
+    watchlist. Mirrors `test_tree_highlight_survives_a_section_switch_
+    and_a_rail_toggle`'s own mechanism (`action_toggle_left_rail` rebuilds
+    the whole workbench) for driving a real rebuild rather than a direct,
+    unmounted factory call.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+        assert screen._watchlist_has_audio_episodes is True
+
+        screen.action_toggle_left_rail()
+        await pilot.pause()
+        screen.action_toggle_left_rail()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.has_audio_episodes is True, (
+            "a workbench rebuild must not silently disable Export Feed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_export_feed_pushes_a_select_directory_dialog(
+    monkeypatch, tmp_path
+):
+    """Pressing Export Feed posts `ExportFeedRequested`, which the
+    screen's handler answers by pushing a `SelectDirectory` dialog --
+    proven here by its only observable effect (the push), the same way
+    Task 1's own `test_pressing_export_pushes_a_file_save_dialog...`
+    proves `ExportBriefingRequested` through ITS handler's effect.
+
+    Deliberately selects nothing (review round 1, Important #1): the
+    button lives in the watchlist-scoped `#artifacts-toolbar`, reachable
+    the moment a watchlist is in scope, not gated on any briefing/script
+    selection.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.has_audio_episodes, "the fixture needs an exportable episode"
+        pane.query_one("#artifacts-export-feed-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert push_screen_mock.await_count == 1, "Export Feed must push exactly one dialog"
+    args, kwargs = push_screen_mock.call_args
+    dialog = args[0]
+    assert isinstance(dialog, SelectDirectory)
+    assert callable(kwargs.get("callback"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
+async def test_a_second_export_feed_press_while_the_dialog_is_open_is_refused_then_rearms(
+    monkeypatch, tmp_path, resolve_via,
+):
+    """Mirrors Task 1's own `test_a_second_export_press_while_the_dialog_
+    is_open_is_refused_then_rearms`: two presses in one tick must push
+    exactly ONE dialog and refuse the second with a toast; a LATER press,
+    after the first dialog resolves (exercised both via a real path and
+    via a cancel), must work again -- the re-arm assertion that catches a
+    flag stuck `True` forever.
+
+    Deliberately selects nothing (review round 1, Important #1) -- see
+    `test_pressing_export_feed_pushes_a_select_directory_dialog`'s own
+    note.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
+        # Two presses in the same tick, mirroring Task 1's own reasoning:
+        # `Button.press()` only POSTS `Button.Pressed`, and the first
+        # press's handler claims the guard synchronously, on the UI
+        # thread, before `run_worker` -- so by the time the second
+        # press's `ExportFeedRequested` is handled, `_feed_export_in_
+        # flight` is already `True`.
+        export_feed_button.press()
+        export_feed_button.press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "two rapid presses must push exactly one dialog, not stack two"
+        )
+        refusals = [
+            call
+            for call in app.notify.call_args_list
+            if "already in progress" in str(call.args[0])
+        ]
+        assert len(refusals) == 1, "the second press must be refused with a toast"
+
+        _, first_kwargs = push_screen_mock.call_args
+        callback = first_kwargs["callback"]
+        if resolve_via == "a real path":
+            destination = tmp_path / "export_dest"
+            destination.mkdir()
+            await callback(destination)
+        else:
+            await callback(None)
+
+        # The guard must have re-armed: a THIRD press now pushes ANOTHER
+        # real dialog rather than being refused.
+        push_screen_mock.reset_mock()
+        app.notify.reset_mock()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-feed-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "Export Feed must be usable again once the first dialog resolved"
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_writes_episodes_and_toasts_the_count(
+    monkeypatch, tmp_path
+):
+    """The write-path (bypassing the dialog UI, exercised separately
+    above) exports the feed via the REAL service and notifies the episode
+    count on success, with `markup=False` since the destination's own
+    directory name is interpolated into the toast.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, _script_id, _audio_id, audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+
+    assert (destination / "feed.xml").exists()
+    assert len(list(destination.glob("*.wav"))) == 1, (
+        "the one exportable episode's audio must have been copied in"
+    )
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Exported 1 episode" in args[0]
+    assert "of" not in args[0], "a full export must not read like a partial one"
+    assert kwargs.get("severity") == "information"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_cancelled_writes_nothing(monkeypatch, tmp_path):
+    """A `None` path (the user cancelled the dialog) writes nothing and
+    toasts a cancellation, not an error.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, _script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(db, watchlist_id, "Morning AI Brief", None)
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "cancelled" in args[0].lower()
+    assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_partial_export_toasts_the_honest_count(
+    monkeypatch, tmp_path
+):
+    """A partial export (one episode skipped because its source file has
+    since vanished) toasts "N of M episodes exported" -- never a plain
+    success -- per `FeedExportResult.skipped`'s own named invariant
+    (`briefing_export.py`'s module docstring, decision 3).
+
+    Review round 1, Minor #2: the inlined reason must read as plain
+    prose, not a raw `audio {id}:` prefix that means nothing to a user --
+    `export_feed_directory` writes reasons naming an internal `audio_id`
+    for support/debugging, but the TOAST strips that id
+    (`_user_facing_skip_reasons`).
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    # A second, complete audio row whose source file has since vanished --
+    # `export_feed_directory` skips it (module docstring, decision 3)
+    # rather than failing the whole export.
+    missing_file = briefing_audio.briefing_audio_dir() / "missing.wav"
+    missing_audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(
+        missing_audio_id,
+        status="complete",
+        file_path=str(missing_file),
+        duration_seconds=1.0,
+        turn_count=1,
+    )
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Exported 1 of 2 episodes" in args[0]
+    assert "successfully" not in args[0], "a partial export must never claim success"
+    assert "source file no longer exists" in args[0], (
+        "the reason itself must still read as plain prose"
+    )
+    assert re.search(r"audio \d+:", args[0]) is None, (
+        "the internal `audio {id}:` prefix must never reach the user-facing toast"
+    )
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_partial_export_caps_inlined_reasons(
+    monkeypatch, tmp_path
+):
+    """Review round 1, Minor #2: five skipped episodes must not produce a
+    toast quoting all five -- `export_feed_directory` can skip
+    arbitrarily many, and a toast that inlines every one of them is
+    unreadable well before it gets there. Only the first `_MAX_INLINE_
+    SKIP_REASONS` (3) are shown, followed by an honest "…and N more"
+    trailer; the headline "N of M" count itself is never capped or
+    approximated.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    # Five more complete audio rows whose source files were never written
+    # -- each one skipped by `export_feed_directory` with its own "source
+    # file no longer exists" reason, naming a distinct `audio_id`.
+    for index in range(5):
+        missing_file = briefing_audio.briefing_audio_dir() / f"missing-{index}.wav"
+        missing_audio_id = db.create_briefing_audio(
+            script_id, voice_snapshot_json="[]"
+        )
+        db.update_briefing_audio(
+            missing_audio_id,
+            status="complete",
+            file_path=str(missing_file),
+            duration_seconds=1.0,
+            turn_count=1,
+        )
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Exported 1 of 6 episodes" in args[0], (
+        "the headline count is never capped, only the inlined reasons are"
+    )
+    assert args[0].count("source file no longer exists") == 3, (
+        "only the first 3 reasons are inlined"
+    )
+    assert "…and 2 more" in args[0]
+    assert re.search(r"audio \d+:", args[0]) is None
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_rejects_an_invalid_destination(
+    monkeypatch, tmp_path
+):
+    """A destination that fails `export_feed_directory`'s own `validate_
+    path_simple(..., require_exists=True)` -- e.g. one that does not exist
+    -- is rejected with a quiet warning toast, no write, no crash.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, _script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "does_not_exist"
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Rejected export destination" in args[0]
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_press_survives_an_os_error_from_the_service(
+    monkeypatch, tmp_path
+):
+    """Sibling of `test_a_database_error_during_synthesis_does_not_exit_
+    the_app`: drives the REAL press -> real `SelectDirectory` -> callback
+    path (never a patched picker, and never a direct method call) so an
+    escaping exception would actually have to survive Textual's own
+    message-pump dispatch of the dismiss callback, not merely a bare
+    coroutine call. `export_feed_directory` deliberately lets an `OSError`
+    from the atomic `feed.xml` write propagate (that function's own
+    module docstring), so `_export_feed_directory`'s broad `except
+    Exception` is what stands between it and the whole app going down --
+    exactly the phase-2b app-death lesson (an unwrapped worker with the
+    default `exit_on_error=True` took the app down for real, once).
+
+    Deliberately selects nothing (review round 1, Important #1) -- see
+    `test_pressing_export_feed_pushes_a_select_directory_dialog`'s own
+    note.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(screen_module, "export_feed_directory", _boom)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-feed-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(host.screen_stack[-1], SelectDirectory), (
+            "the real vendored picker must be the one actually pushed"
+        )
+        host.screen_stack[-1].dismiss(destination)
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert host.is_running, "a callback failure must not exit the application"
+        assert host.screen_stack[-1] is screen, "the screen must still be standing"
+        assert screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+
+    assert not (destination / "feed.xml").exists()
+    app.notify.assert_called()
+    args, kwargs = app.notify.call_args
+    assert "OSError" in args[0]
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False
+
+    # The guard is genuinely re-armed, not merely toasting identically
+    # while stuck -- mirrors `test_a_database_error_during_synthesis_
+    # does_not_exit_the_app`'s own follow-up assertion.
+    assert screen._feed_export_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_cancelled_error_propagates_uncaught(
+    monkeypatch, tmp_path
+):
+    """`asyncio.CancelledError` must never be reported as a failed export
+    -- mirrors Task 1's own `test_write_briefing_export_file_cancelled_
+    error_propagates_uncaught`.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, _script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    def _cancel(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(screen_module, "export_feed_directory", _cancel)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        with pytest.raises(asyncio.CancelledError):
+            await screen._export_feed_directory(
+                db, watchlist_id, "Morning AI Brief", destination
+            )
+
+    assert not (destination / "feed.xml").exists()
+    app.notify.assert_not_called()

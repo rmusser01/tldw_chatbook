@@ -92,7 +92,7 @@ class AppFooterStatus(Widget):
             "Tokens: --", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
-        # task-1640: labels are spelled in the readout itself now; the
+        # task-1714: labels are spelled in the readout itself now; the
         # tooltip only adds the "local database file sizes" context.
         self._db_status_display.tooltip = "Local database file sizes"
         #: TASK-451: last known footer width, so a content change (new shortcut

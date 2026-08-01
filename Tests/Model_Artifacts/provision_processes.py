@@ -138,12 +138,8 @@ def provision_signal_on_phase(
 
     import asyncio
 
-    from tldw_chatbook.Model_Artifacts import ArtifactRef, closure_fingerprint
-    from tldw_chatbook.Model_Artifacts.acquisition import (
-        AcquisitionConsent,
-        ArtifactAcquisitionService,
-        resolve_catalog_closure,
-    )
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
     from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
     descriptors = {}
@@ -162,9 +158,6 @@ def provision_signal_on_phase(
 
     catalog = DictCatalog(descriptors)
     root = ArtifactRef(*root_ref)
-    closure = resolve_catalog_closure(root, catalog)
-    fingerprint = closure_fingerprint(root, (item.reference for item in closure))
-    consent = AcquisitionConsent(closure_fingerprint=fingerprint)
 
     core = ModelArtifactService(Path(root_dir))
     svc = ArtifactAcquisitionService(
@@ -172,6 +165,22 @@ def provision_signal_on_phase(
         free_bytes_probe=lambda _p: 10**12,
         trusted_origins=frozenset({trusted_origin}),
     )
+    # TASK-1720 (PR-1165 review, P1): the consent fingerprint now folds in
+    # every resolved per-file source URL, including each single-file
+    # descriptor's own `source_url` fallback -- a hand-built
+    # `AcquisitionConsent(closure_fingerprint=closure_fingerprint(root,
+    # deps))` no longer matches what `provision()` recomputes. Grant
+    # through `ArtifactAcquisitionService._aggregate_closure` (the same
+    # pure, network-free aggregation `preflight()` wraps with a gating
+    # probe) rather than the real `preflight()` call: this child process is
+    # timing-sensitive (the parent freezes it via SIGKILL at an exact
+    # progress event), and a real gating HEAD probe against the fixture
+    # server here would add a non-deterministic extra request before that
+    # timing-critical section even starts.
+    _closure, report, _gating_targets, _resolved_sources = svc._aggregate_closure(
+        root, catalog, None
+    )
+    consent = report.grant()
 
     hold = threading.Event()  # never set -- the parent SIGKILLs us instead
 

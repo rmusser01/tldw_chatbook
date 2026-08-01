@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
@@ -17,6 +17,7 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 
@@ -27,21 +28,6 @@ if TYPE_CHECKING:
         _AdmittedTTSOperation,
         _OperationCapacityReservation,
     )
-
-_AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
-_VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
-_LEGACY_MODEL_OVERRIDES = {
-    "elevenlabs": "elevenlabs",
-    "kokoro": "kokoro",
-    "chatterbox": "chatterbox",
-    "alltalk": "alltalk",
-}
-_LEGACY_FORMAT_OVERRIDES = {
-    "elevenlabs": "mp3",
-    "kokoro": "wav",
-    "chatterbox": "wav",
-    "alltalk": "wav",
-}
 
 
 class _WriterPreferredGate:
@@ -360,38 +346,18 @@ def _legacy_request(
     text: str,
     voice: str | None,
 ) -> tuple[OpenAISpeechRequest, str]:
-    if voice is None:
-        raise ValueError("Legacy TTS providers require an exact voice")
+    """Adapt the app-wide preferences snapshot into an explicit builder call.
 
-    provider_id = preferences.provider_id
-    request_model = _LEGACY_MODEL_OVERRIDES.get(provider_id, model_id).lower()
-    requested_format = _LEGACY_FORMAT_OVERRIDES.get(
-        provider_id,
-        preferences.response_format,
-    )
-    normalized_format = requested_format.lower().strip()
-    if normalized_format not in _VALID_AUDIO_FORMATS:
-        normalized_format = "wav"
-
-    request = OpenAISpeechRequest(
-        model=request_model,
-        input=text,
-        voice=voice.lower(),
-        response_format=cast(_AudioFormat, normalized_format),
+    This is a thin adapter over
+    :func:`tldw_chatbook.TTS.legacy_request_builder.build_legacy_speech_request`,
+    which holds the actual id/override derivation logic. All behaviour lives
+    there; this function only reads the relevant fields off ``preferences``.
+    """
+    return build_legacy_speech_request(
+        provider_id=preferences.provider_id,
+        model_id=model_id,
+        voice=voice or "",
+        text=text,
+        response_format=preferences.response_format,
         speed=preferences.speed,
     )
-    if provider_id == "openai":
-        internal_model_id = f"openai_official_{request.model}"
-    elif provider_id == "elevenlabs":
-        internal_model_id = f"elevenlabs_{request.model}"
-    elif provider_id == "kokoro":
-        internal_model_id = "local_kokoro_default_onnx"
-    elif provider_id == "chatterbox":
-        internal_model_id = "local_chatterbox_default"
-    elif provider_id == "higgs":
-        internal_model_id = "local_higgs_v2"
-    elif provider_id == "alltalk":
-        internal_model_id = "alltalk_default"
-    else:
-        internal_model_id = request.model
-    return request, internal_model_id

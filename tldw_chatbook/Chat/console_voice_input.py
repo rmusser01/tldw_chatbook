@@ -14,8 +14,10 @@ from __future__ import annotations
 # `monkeypatch.setattr(cvi.sys, "platform", ...)` both mutate the real module
 # objects, which the detection helpers then read).
 import importlib.util  # noqa: F401 - patched seam; see comment above
+import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -187,6 +189,20 @@ def probe() -> Availability:
 
 DEFAULT_LANGUAGE = "en"
 
+#: The provider `resolve()` picks a dictation-specific fast model for when
+#: `dictation.model` is unset -- see `_dictation_model_override` and the
+#: `model` block in `resolve()` below.
+DICTATION_FAST_MODEL_PROVIDER = "faster-whisper"
+#: Measured on real hardware (a loaded machine, one short "console stop" WAV):
+#: the transcription stack's own default faster-whisper model,
+#: `distil-large-v3`, took 11.47s to transcribe it -- dead on arrival for a
+#: spoken command, and with zero feedback while it ran (see
+#: `VoiceSegmentTranscribing`). `base` measured 1.43s on the identical WAV,
+#: transcribing it correctly. `dictation.model`, when set, always wins over
+#: this; this is only the *unset* default for a dictation capture, and it
+#: never changes what the transcription stack itself uses elsewhere.
+DICTATION_FAST_MODEL_DEFAULT = "base"
+
 
 @dataclass(frozen=True)
 class EffectiveConfig:
@@ -197,6 +213,63 @@ class EffectiveConfig:
     language: str
     configured_provider: str
     was_overridden: bool
+    #: True when `model` is NOT what `transcription.default_model` would have
+    #: produced -- an explicit `dictation.model` override; (when that key is
+    #: unset and `provider` resolved to `DICTATION_FAST_MODEL_PROVIDER`) the
+    #: dictation-specific fast default; or (when that key is unset and
+    #: `provider` resolved to anything else) `configured_model` naming
+    #: something that is being deliberately discarded in favor of `None` --
+    #: see the `model` block in `resolve()`: a non-faster-whisper provider
+    #: never inherits `transcription.default_model`, since that value may
+    #: name a model belonging to an entirely different provider (a Whisper
+    #: model handed to parakeet-mlx 404s trying to load it as a HuggingFace
+    #: repo). Mirrors `was_overridden`'s provenance role, scoped to the model
+    #: rather than the provider: `was_overridden` means "the configured
+    #: provider wasn't available," this means "dictation chose a different
+    #: model than the transcription stack on purpose," which is a distinct
+    #: reason and never itself a failure.
+    model_overridden_for_dictation: bool = False
+    #: `transcription.default_model`'s raw configured value, independent of
+    #: what `model` ended up being -- the transcription stack's own answer to
+    #: "what model would this be without dictation's fast-default policy."
+    #: `None` when nothing is configured there.
+    configured_model: str | None = None
+    #: True only for the fast-default branch specifically (unset
+    #: `dictation.model`, `provider` resolved to `DICTATION_FAST_MODEL_PROVIDER`)
+    #: AND `configured_model` names something other than
+    #: `DICTATION_FAST_MODEL_DEFAULT` -- i.e. the fast default actually
+    #: displaced a value the user configured elsewhere, not merely a bare
+    #: default winning over an equally-unconfigured slot. False for an
+    #: explicit `dictation.model` override (the user's own deliberate choice
+    #: needs no advisory) and false when there was nothing configured to
+    #: displace. Drives `VoiceDictationModelDefaulted` (review finding L1).
+    fast_default_displaced_configured_model: bool = False
+
+
+def _dictation_model_override() -> str | None:
+    """Read `dictation.model`, the dictation-specific model override.
+
+    Same warn+fallback shape as this module's other config readers (see
+    `command_prefix()`/`warm_before_capture_enabled()`): a blank or
+    whitespace-only value is treated as unset, not an error, and a non-string
+    value is logged and ignored rather than propagated as a confusing type
+    into `EffectiveConfig.model`.
+
+    Returns:
+        The configured model name, stripped, or `None` when unset, blank, or
+        not a string.
+    """
+    raw = get_cli_setting("dictation", "model", None)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        logger.warning(
+            "dictation.model must be a string (got {!r}); ignoring",
+            raw,
+        )
+        return None
+    value = raw.strip()
+    return value or None
 
 
 def resolve() -> EffectiveConfig | None:
@@ -214,6 +287,27 @@ def resolve() -> EffectiveConfig | None:
     module's catalogue grew to seven while the service's allowlist stayed at
     three -- the Console warmed and announced one model, then transcribed with
     another. Both now read `Utils/local_stt_providers.LOCAL_STT_PROVIDERS`.
+
+    Model resolution is provider-scoped and never inherits
+    `transcription.default_model` across providers: `dictation.model` wins
+    when set (for any provider); failing that, a `DICTATION_FAST_MODEL_PROVIDER`
+    (`faster-whisper`) resolution defaults to `DICTATION_FAST_MODEL_DEFAULT`
+    rather than inheriting whatever (potentially much slower) model the
+    transcription stack is configured with (see `_dictation_model_override`'s
+    docstring for the measured numbers behind that default); and every other
+    provider gets `None`, letting that provider's own transcription path load
+    its own default. `transcription.default_model` is a single, provider-
+    agnostic config key, so its value belongs to whichever provider the
+    transcription stack itself is configured for -- handing that name to a
+    *different* resolved provider is not a fallback, it is a wrong argument:
+    parakeet-mlx asked to load a Whisper model name (e.g. `distil-large-v3`)
+    tries to fetch it as a HuggingFace repo and 404s, which previously killed
+    the capture outright (live-reproduced). `None` flows through
+    `warm_transcription_model()`/`LazyLiveDictationService` to
+    `TranscriptionService.transcribe_buffer()`/`create_streaming_transcriber()`
+    unchanged -- both already do `model or <their own default>`, which is
+    exactly the "no model given" case they use for direct calls, so this
+    needs no matching change on that side.
 
     Returns:
         The settings to run with, or None when no local provider is installed.
@@ -244,15 +338,55 @@ def resolve() -> EffectiveConfig | None:
                 provider,
             )
 
-    model = get_cli_setting("transcription", "default_model", None)
+    # `dictation.model` (when set) always wins; failing that, a
+    # `faster-whisper` resolution gets a dictation-specific fast default
+    # rather than inheriting `transcription.default_model` (typically
+    # distil-large-v3, measured ~11.5s per short segment on a loaded machine
+    # -- see `DICTATION_FAST_MODEL_DEFAULT`). Every OTHER provider gets
+    # `None`: `transcription.default_model` is not scoped to any particular
+    # provider, so it may well name a model that belongs to a provider other
+    # than the one that just resolved (see the `model` docstring block above
+    # `resolve()` and `EffectiveConfig.model_overridden_for_dictation`).
+    #
+    # Read once, up front: needed both to decide whether the `else` branch's
+    # `None` is itself a displacement (`model_overridden_for_dictation`) and,
+    # in the fast-default branch, to tell "displaced a value the user
+    # actually configured" apart from "there was nothing there to displace"
+    # (`fast_default_displaced_configured_model`, review finding L1).
+    configured_model_raw = get_cli_setting("transcription", "default_model", None)
+    configured_model = str(configured_model_raw) if configured_model_raw else None
+
+    dictation_model = _dictation_model_override()
+    fast_default_displaced_configured_model = False
+    if dictation_model is not None:
+        model = dictation_model
+        model_overridden_for_dictation = True
+    elif provider == DICTATION_FAST_MODEL_PROVIDER:
+        model = DICTATION_FAST_MODEL_DEFAULT
+        model_overridden_for_dictation = True
+        fast_default_displaced_configured_model = bool(
+            configured_model and configured_model != DICTATION_FAST_MODEL_DEFAULT
+        )
+    else:
+        # Not `configured_model`: see the provider-scoping note above. `None`
+        # lets the provider's own transcription path pick its own default
+        # (`TranscriptionService.transcribe_buffer()`/
+        # `create_streaming_transcriber()` both already do
+        # `model or <their own default>`).
+        model = None
+        model_overridden_for_dictation = configured_model is not None
+
     language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
 
     return EffectiveConfig(
         provider=provider,
-        model=str(model) if model else None,
+        model=model,
         language=str(language or DEFAULT_LANGUAGE),
         configured_provider=configured,
         was_overridden=bool(configured) and provider != configured,
+        model_overridden_for_dictation=model_overridden_for_dictation,
+        configured_model=configured_model,
+        fast_default_displaced_configured_model=fast_default_displaced_configured_model,
     )
 
 
@@ -279,6 +413,66 @@ class VoiceFinal:
 
 
 @dataclass(frozen=True)
+class VoiceSegmentTranscribing:
+    """The silence gate closed a segment; its transcription is starting or done.
+
+    Recognizer-driven, exactly like `VoicePartial`: fired from
+    `LazyLiveDictationService._transcribe_segment_audio`, on the processing
+    thread, TWICE per segment -- `done=False` right before the call that can
+    take seconds, `done=True` right after it returns, unconditionally
+    (`dictation_service_lazy.py`'s module docstring has the measured
+    latencies, and `_transcribe_segment_audio`'s docstring has the
+    unconditional-completion rationale). Under the segment-at-silence
+    architecture there is otherwise no signal at all in that gap -- no live
+    partial text, nothing -- so without the `done=False` half a multi-second
+    pause between the silence pause and the next `VoiceFinal`/`VoiceCommand`
+    looks identical to a dead capture.
+
+    The `done=True` half exists for a narrower but load-bearing reason
+    (review finding M1): a segment that transcribes to blank/whitespace --
+    routine for room noise or a too-short VAD sliver -- fires neither
+    `VoicePartial` nor `VoiceFinal`, so without an unconditional completion
+    signal a consumer that shows a transcribing indication on `done=False`
+    and clears it on the next final/command/state-change would have nothing
+    to clear it on; the indication would stick for the rest of the capture,
+    claiming work is in flight when it is not. Consumers therefore clear the
+    indication on `done=True` OR on the next final/command/state-change,
+    whichever comes first; see `ConsoleComposerBar.set_voice_segment_transcribing`.
+
+    Carries no payload beyond `done` -- there is nothing else to say.
+
+    Not proof the recognizer produced anything: it only proves the silence
+    gate fired (and, for `done=True`, that the transcription call returned).
+    `ConsoleStreamingDictationSession._handle_event` deliberately does NOT
+    set `_heard_recognizer_output` for either half of this event -- see that
+    method's docstring for why the distinction matters for the silent-capture
+    messaging in `stop_and_transcribe()`.
+
+    Attributes:
+        done: False for the "started" signal, True for the "completed"
+            signal (fired unconditionally, blank result or not).
+    """
+
+    done: bool = False
+
+
+@dataclass(frozen=True)
+class VoiceCommand:
+    """A finalized segment that matched the spoken-command grammar.
+
+    Kept as dumb as its `VoiceFinal`/`VoicePartial` siblings: it will later
+    cross a thread boundary through the same `post_message` wrappers, so it
+    carries nothing beyond the resolved command name.
+
+    Attributes:
+        name: One of `COMMAND_PHRASES`' values (e.g. `"send"`,
+            `"new-paragraph"`).
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
 class VoiceStateChanged:
     """The controller's state machine transitioned to `state`."""
 
@@ -296,6 +490,31 @@ class VoiceFailed:
 @dataclass(frozen=True)
 class VoiceProviderOverridden:
     """The `configured` provider was unavailable; `effective` is what ran instead."""
+
+    configured: str
+    effective: str
+
+
+@dataclass(frozen=True)
+class VoiceDictationModelDefaulted:
+    """Dictation's fast-model default (`effective`) displaced `configured`.
+
+    Emitted only when `EffectiveConfig.fast_default_displaced_configured_model`
+    is True: `dictation.model` was unset, the resolved provider is
+    `DICTATION_FAST_MODEL_PROVIDER`, and the transcription stack has its own
+    `transcription.default_model` configured to something else. A user who
+    deliberately set that value otherwise gets `DICTATION_FAST_MODEL_DEFAULT`
+    with no runtime signal at all (review finding L1) -- the only prior
+    disclosure was a comment in the config guide. Mirrors
+    `VoiceProviderOverridden`'s shape and its two-tier once-per-run latch
+    (per-controller `_model_default_announced`, app-instance
+    `_console_dictation_model_default_notified`).
+
+    Attributes:
+        configured: `transcription.default_model`'s raw configured value.
+        effective: The model dictation is actually using instead
+            (`DICTATION_FAST_MODEL_DEFAULT`).
+    """
 
     configured: str
     effective: str
@@ -336,6 +555,28 @@ class VoiceModelWarmupFailed:
 
 
 @dataclass(frozen=True)
+class VoiceVadUnavailable:
+    """The capture started, but the recorder's voice-activity detection did not.
+
+    Dictation itself still works -- the recorder falls back to forwarding
+    every frame -- but a segment then only finalizes when the capture stops,
+    so a command spoken mid-capture (see `COMMAND_PHRASES`) can never fire.
+    """
+
+
+#: Shown once per app run when `VoiceVadUnavailable` fires (see
+#: `ConsoleVoiceInputController._maybe_report_vad_unavailable`). Not spoken:
+#: the microphone is open when this would need to be said, and speaking over
+#: an open mic is exactly what `spoken_feedback` avoids everywhere else.
+VAD_UNAVAILABLE_MESSAGE = (
+    "Voice input is degraded: voice-activity detection (webrtcvad) is not "
+    "installed in this Python environment. NOTHING will appear until you "
+    "press stop, and voice commands will not fire. Run the app from a "
+    "Python with the speech_recording extras installed."
+)
+
+
+@dataclass(frozen=True)
 class CaptureOutcome:
     """What the dictation service reported about a finished capture.
 
@@ -352,6 +593,155 @@ class CaptureOutcome:
 
     captured_bytes: int | None = None
     transcription_complete: bool = True
+
+
+# --- Spoken-command grammar -------------------------------------------------
+#
+# A finalized segment is either a command ("Console, send.") or dictated text
+# -- there is no third option, and an ambiguous segment always resolves to
+# text. Whole-segment match only, against the *normalized* segment: matching
+# on a substring or a prefix would make "Console send button is broken" (a
+# sentence a user might actually dictate) fire the send command.
+DEFAULT_COMMAND_PREFIX = "console"
+
+#: Normalized phrase (after `normalize_spoken`, prefix stripped) -> command
+#: name. Command names are kebab-case, independent of the spoken phrasing.
+COMMAND_PHRASES: dict[str, str] = {
+    "new paragraph": "new-paragraph",
+    "new line": "new-line",
+    "stop": "stop",
+    "send": "send",
+    "discard": "discard",
+    "read that back": "read-that-back",
+    "new session": "new-session",
+}
+
+#: Recognizer mis-hearings observed on real hardware, mapped to the phrase
+#: the speaker actually said. Consulted ONLY after an exact `COMMAND_PHRASES`
+#: match fails, and only for the whole prefix-stripped remainder -- so the
+#: fail-open rule ("ambiguous resolves to text") still governs everything not
+#: literally in this table. Every entry must name the incident that earned
+#: it; do not add speculative homophones, each one widens what can no longer
+#: be dictated as text.
+MISHEARD_PHRASES: dict[str, str] = {
+    # parakeet-mlx, live 2026-07-31: the user's spoken "stop" repeatedly
+    # transcribed as "dot" ("Console dot.").
+    "dot": "stop",
+    # parakeet-mlx, live 2026-07-31 (app run): spoken "console stop" heard as
+    # "console dot", then parakeet's LM auto-completed the familiar pattern to
+    # "Console.com" -- which normalizes to "console com". "stop"'s false-fire
+    # cost is low (it just ends the capture), unlike e.g. "send".
+    "dot com": "stop",
+    "com": "stop",
+}
+
+#: Mis-heard prefix variants, same evidence rule as `MISHEARD_PHRASES`.
+#: parakeet-mlx, live 2026-07-31: "console" transcribed as "consoles"
+#: ("Consoles. Stop.").
+MISHEARD_PREFIXES: tuple[str, ...] = ("consoles",)
+
+
+def normalize_spoken(text: str) -> str:
+    """Fold recognizer output down to the shape the grammar matches against.
+
+    Lowercases, removes ALL punctuation, and collapses whitespace.
+    Punctuation is stripped entirely rather than just trimmed from the ends:
+    recognizers commonly emit an internal comma after the command prefix
+    ("Console, send."), and preserving it would mean that -- the single most
+    natural phrasing -- could never match.
+
+    "All punctuation" means every character whose `unicodedata.category`
+    starts with `"P"` (the Unicode punctuation categories: Po, Pc, Pd, Ps,
+    Pe, Pi, Pf), plus everything in ASCII `string.punctuation` as a belt.
+    The two are not the same set: several ASCII punctuation characters
+    (`$+<=>^`|~`) are Unicode Symbol characters (category `S`), not
+    Punctuation, so `unicodedata` alone would miss them. Conversely, plain
+    `string.punctuation` alone would miss the Unicode marks Whisper-family
+    recognizers actually emit -- right single quote U+2019, em dash U+2014,
+    ellipsis U+2026 -- so a hesitant "Console… send" or a curly-quoted
+    "Console, 'send'" would fail open to text and the command would silently
+    never fire.
+
+    Args:
+        text: Raw recognizer output for one finalized segment.
+
+    Returns:
+        The normalized text, e.g. `"Console, send."` -> `"console send"`,
+        `"Console… send"` -> `"console send"`.
+    """
+    lowered = text.lower()
+    # Punctuation becomes a SPACE, never plain deletion: parakeet's inverse
+    # text normalization writes patterns like "Console.com" with no spaces
+    # (live 2026-07-31, spoken "console stop"), and deleting the period glued
+    # the words into "consolecom" -- a token no grammar entry or mis-hear
+    # alias could ever match. Splitting on the space and re-collapsing keeps
+    # every previously-matching form matching.
+    kept = [
+        " "
+        if (unicodedata.category(ch).startswith("P") or ch in string.punctuation)
+        else ch
+        for ch in lowered
+    ]
+    return " ".join("".join(kept).split())
+
+
+def command_prefix() -> str:
+    """Return the configured wake phrase that precedes every voice command.
+
+    Reads `dictation.command_prefix`. A blank (empty or whitespace-only)
+    value is treated the same as unset, since it would otherwise make every
+    normalized segment match every command phrase.
+
+    Returns:
+        The configured prefix, lowercased and stripped, or
+        `DEFAULT_COMMAND_PREFIX` when unset or blank.
+    """
+    configured = get_cli_setting("dictation", "command_prefix", None)
+    prefix = str(configured or "").strip().lower()
+    return prefix or DEFAULT_COMMAND_PREFIX
+
+
+def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
+    """Classify one finalized segment as a spoken command or dictated text.
+
+    Matches only the whole normalized segment against
+    `f"{command_prefix()} {phrase}"` for each phrase in `COMMAND_PHRASES`.
+    Anything else -- including a correctly prefixed typo, or the prefix
+    followed by unrelated words -- fails open to `VoiceFinal` with the
+    original, unmodified text, since misrecognizing dictated text as a
+    command silently discards what the user said.
+
+    Exact matches are tried first. When none hits, the whole segment is
+    retried against `MISHEARD_PHRASES`/`MISHEARD_PREFIXES` -- curated,
+    incident-backed recognizer mis-hearings ("Console dot." for "console
+    stop") -- still whole-segment-only, so ordinary prose can no more match
+    an alias than it could match the real phrase.
+
+    Args:
+        text: Raw recognizer output for one finalized segment.
+
+    Returns:
+        A `VoiceCommand` when the segment matches the grammar exactly,
+        otherwise a `VoiceFinal` carrying `text` unchanged.
+    """
+    normalized = normalize_spoken(text)
+    configured_prefix = command_prefix()
+    prefixes = (configured_prefix, *(
+        alias for alias in MISHEARD_PREFIXES if configured_prefix == DEFAULT_COMMAND_PREFIX
+    ))
+    for prefix in prefixes:
+        marker = f"{prefix} "
+        if not normalized.startswith(marker):
+            continue
+        remainder = normalized[len(marker):]
+        name = COMMAND_PHRASES.get(remainder)
+        if name is None:
+            corrected = MISHEARD_PHRASES.get(remainder)
+            if corrected is not None:
+                name = COMMAND_PHRASES.get(corrected)
+        if name is not None:
+            return VoiceCommand(name)
+    return VoiceFinal(text)
 
 
 #: (provider, model) pairs already warmed *in this process*. Only drives which
@@ -508,10 +898,22 @@ class ConsoleVoiceInputController:
     def __init__(
         self,
         *,
-        emit: Callable[[Any], None],
+        emit: Callable[..., None],
         spawn: Callable[[Callable[[], None]], None],
         service_factory: Callable[..., Any] = default_service_factory,
     ) -> None:
+        """Build the controller.
+
+        Args:
+            emit: Called for every controller event. Most calls pass just the
+                event; the three recognizer-driven closures `_run_begin()`
+                wires (`on_partial_transcript`, `on_final_transcript`, and,
+                via `_report_service_error`, `on_error`) also pass this
+                attempt's capture-generation token as a second, optional
+                argument -- see `start()`'s `capture_generation` parameter.
+            spawn: Runs a thunk off the UI thread.
+            service_factory: Builds the dictation service.
+        """
         self._emit = emit
         self._spawn = spawn
         self._service_factory = service_factory
@@ -519,6 +921,16 @@ class ConsoleVoiceInputController:
         self._state = STATE_IDLE
         self._state_lock = threading.Lock()
         self._override_announced = False
+        # Same shape as `_override_announced`, for `VoiceDictationModelDefaulted`
+        # (review finding L1) -- see that event's docstring for the two-tier
+        # scheme.
+        self._model_default_announced = False
+        # Same shape as `_override_announced`: latches `VoiceVadUnavailable`
+        # to once per controller instance. `_handle_console_dictation_event`
+        # (chat_screen.py) latches it a second time on `self.app_instance`,
+        # the same two-tier scheme `VoiceProviderOverridden` uses, since a
+        # fresh controller is built on every new dictation session.
+        self._vad_unavailable_announced = False
         self.save_audio_requested = False
         # One-way latch: once `abandon()` has run, an in-flight `_begin()`
         # (still building/starting a service on another thread, a cold model
@@ -535,6 +947,15 @@ class ConsoleVoiceInputController:
         # attempt in `start()`; read by the caller to tell a silent microphone
         # apart from a transcription that never finished.
         self._last_capture_outcome = CaptureOutcome()
+        # The caller's opaque capture-generation token for the attempt
+        # `start()` is about to begin, set alongside the other per-attempt
+        # state under `_state_lock`. `_run_begin()` reads it once into a
+        # local before wiring `on_partial_transcript`/`on_final_transcript`/
+        # `on_error`, so those closures bind *this* attempt's token even if a
+        # later `start()` overwrites this attribute before an orphaned
+        # processing thread from THIS attempt finally calls one of them (see
+        # `start()`'s `capture_generation` parameter).
+        self._pending_capture_generation: int | None = None
 
     @property
     def state(self) -> str:
@@ -561,17 +982,74 @@ class ConsoleVoiceInputController:
         self._state = state
         self._emit(VoiceStateChanged(state))
 
-    def _fail(self, reason: str, remedy: str = "") -> None:
+    def _emit_capture_event(self, event: Any, generation: int | None = None) -> None:
+        """Forward a recognizer-driven event, adding the generation only when known.
+
+        `emit` (the caller-supplied callback, e.g.
+        `ConsoleStreamingDictationSession._handle_event`) is called with just
+        the event whenever `generation` is `None` -- preserving the original
+        single-argument contract every non-Console caller and every existing
+        test double still relies on -- and with `(event, generation)` only
+        when a real token is in play (a capture wired through
+        `ConsoleStreamingDictationSession`, whose `start()` always supplies
+        one). This is what lets `on_partial_transcript`/`on_final_transcript`
+        (in `_run_begin()`) and `_fail()`'s `VoiceFailed` emit unconditionally
+        pass whatever `capture_generation` they were bound with, including
+        `None`, without changing `emit`'s call arity for every caller that
+        never opted into generation tracking.
+
+        Args:
+            event: The event to forward.
+            generation: This attempt's capture-generation token, or `None`.
+        """
+        if generation is None:
+            self._emit(event)
+        else:
+            self._emit(event, generation)
+
+    def _fail(
+        self,
+        reason: str,
+        remedy: str = "",
+        *,
+        generation: int | None = None,
+    ) -> None:
         # Mutate first so a throwing `emit` cannot leave the machine wedged,
         # but keep VoiceFailed ahead of VoiceStateChanged(idle): the UI clears
         # its pending-send on the failure and fires it on the idle transition,
         # so reversing these would send the message on a failed dictation.
+        #
+        # `generation` is only ever non-`None` when this came from
+        # `_report_service_error()`'s delayed, capture-bound path (see its
+        # docstring): every other caller is synchronous within the current
+        # attempt's own call chain and passes nothing, which
+        # `ConsoleStreamingDictationSession._handle_event` treats as "always
+        # current" -- there is no orphaned thread to be stale relative to.
+        # The paired `VoiceStateChanged(idle)` never carries one: Task 3's
+        # screen-side session-identity/state guards already cover a stale
+        # idle transition, and `_handle_event` does not gate that event type.
         self._state = STATE_IDLE
-        self._emit(VoiceFailed(reason=reason, remedy=remedy))
+        self._emit_capture_event(VoiceFailed(reason=reason, remedy=remedy), generation)
         self._emit(VoiceStateChanged(STATE_IDLE))
 
-    def start(self) -> None:
-        """Begin capture. Rejected unless currently idle and never abandoned."""
+    def start(self, *, capture_generation: int | None = None) -> None:
+        """Begin capture. Rejected unless currently idle and never abandoned.
+
+        Args:
+            capture_generation: The caller's opaque token for this attempt.
+                Stored so `_run_begin()` can read it once, before wiring
+                `on_partial_transcript`/`on_final_transcript`/`on_error`, and
+                bind it into those specific closures -- the ones a real
+                orphaned processing thread can still call after a *later*
+                capture has already reassigned `self._pending_capture_generation`.
+                Reading `self._pending_capture_generation` dynamically inside
+                those closures instead would report whichever capture is
+                current at call time, not the one that produced the event,
+                defeating the whole point. `None` (the default, and every
+                caller except `ConsoleStreamingDictationSession`) means the
+                caller does not distinguish captures, in which case nothing
+                downstream is gated.
+        """
         with self._state_lock:
             if self._abandoned or self._state != STATE_IDLE:
                 logger.debug(
@@ -582,6 +1060,7 @@ class ConsoleVoiceInputController:
                 return
             self._last_capture_outcome = CaptureOutcome()
             self._state = STATE_PREPARING
+            self._pending_capture_generation = capture_generation
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
         # Each `try` below covers only the call that can crash unexpectedly,
@@ -622,6 +1101,18 @@ class ConsoleVoiceInputController:
                     )
                 )
 
+            if (
+                effective.fast_default_displaced_configured_model
+                and not self._model_default_announced
+            ):
+                self._model_default_announced = True
+                self._emit(
+                    VoiceDictationModelDefaulted(
+                        configured=effective.configured_model or "",
+                        effective=effective.model or "",
+                    )
+                )
+
             self._spawn(lambda: self._begin(effective))
         except Exception as exc:  # noqa: BLE001 - override-announce/spawn must not wedge preparing
             logger.opt(exception=True).warning("Console dictation could not be spawned")
@@ -655,6 +1146,14 @@ class ConsoleVoiceInputController:
         # `_report_service_error`), and a latch left over from an earlier
         # failed attempt would silence this attempt's fallback report.
         self._error_reported = False
+        # Read once, into a local, before `on_partial_transcript`/
+        # `on_final_transcript`/`on_error` are wired below: those three
+        # closures bind `capture_generation` as an early-evaluated default
+        # argument, so a later `start()` overwriting
+        # `self._pending_capture_generation` cannot change what an already
+        # orphaned processing thread from THIS attempt reports when it
+        # finally calls one of them.
+        capture_generation = self._pending_capture_generation
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -678,10 +1177,19 @@ class ConsoleVoiceInputController:
 
         try:
             started = service.start_dictation(
-                on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
-                on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
+                on_partial_transcript=lambda text, _gen=capture_generation: (
+                    self._emit_capture_event(VoicePartial(text), _gen)
+                ),
+                on_final_transcript=lambda text, _gen=capture_generation: (
+                    self._emit_capture_event(classify_segment(text), _gen)
+                ),
+                on_segment_transcribing=lambda done, _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
+                ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
-                on_error=self._report_service_error,
+                on_error=lambda error, _gen=capture_generation: self._report_service_error(
+                    error, generation=_gen
+                ),
                 save_audio=self.save_audio_requested,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
@@ -720,7 +1228,8 @@ class ConsoleVoiceInputController:
             self._fail_not_started()
             return
 
-        self._enter_listening()
+        if self._enter_listening():
+            self._maybe_report_vad_unavailable(service)
 
     def _prepare_speech_model(self, service: Any, effective: EffectiveConfig) -> bool:
         """Load the speech model while still in `preparing`, before capture.
@@ -874,7 +1383,7 @@ class ConsoleVoiceInputController:
         """Phrase a warm-up failure as a model problem, never a microphone one."""
         return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
 
-    def _report_service_error(self, error: Any) -> None:
+    def _report_service_error(self, error: Any, *, generation: int | None = None) -> None:
         """Turn a service-reported error into a failure, recording that we did.
 
         `LazyLiveDictationService` reports through this callback
@@ -886,9 +1395,38 @@ class ConsoleVoiceInputController:
         cause from here, then `_fail_not_started()`'s generic one, which
         arrives *last* and buries the actionable diagnostic in the UI.
 
+        This is also the path an orphaned processing thread uses to report a
+        recognizer error long after its own capture's `stop_dictation()` join
+        gave up. Fix round 1 (Finding, HIGH): tagging the eventual `VoiceFailed`
+        emit with `generation` is not enough on its own -- `_claim_service()`/
+        `_release()` below reach for `self._service`, i.e. whatever capture is
+        CURRENTLY live, not the one that produced this report, and `_fail()`
+        unconditionally flips the FSM to `idle`. Left unchecked, a stale call
+        would rip the microphone out from under a live capture 2 and silently
+        idle the controller, while the session's own generation gate in
+        `ConsoleStreamingDictationSession._handle_event` only swallows the
+        *notification* -- the screen would show "Rec ●" over a dead
+        microphone with no toast at all, worse than doing nothing. So the
+        check happens here, first, before the latch, before any claim/release,
+        before `_fail()` ever runs: a stale call is a no-op start to finish.
+
         Args:
             error: The exception the service reported.
+            generation: This attempt's capture-generation token, bound at
+                `on_error`'s creation time in `_run_begin()`. `None` when the
+                caller does not distinguish captures. Compared against
+                `self._pending_capture_generation` -- the token the most
+                recent `start()` recorded -- which is exactly what changed if
+                a newer capture has begun since this callback was wired.
         """
+        if generation is not None and generation != self._pending_capture_generation:
+            logger.debug(
+                "Console dictation ignoring a stale service error (generation "
+                "{}, current generation {})",
+                generation,
+                self._pending_capture_generation,
+            )
+            return
         # Set before `_fail()`, which emits and can therefore raise: the
         # report has happened either way, and the service's own
         # `_notify_error()` only logs whatever escapes this callback.
@@ -905,7 +1443,7 @@ class ConsoleVoiceInputController:
         service = self._claim_service()
         if service is not None:
             self._release(service)
-        self._fail(str(error))
+        self._fail(str(error), generation=generation)
 
     def _fail_not_started(self) -> None:
         """Report that `start_dictation()` returned `False`.
@@ -926,7 +1464,7 @@ class ConsoleVoiceInputController:
             return
         self._fail("Could not start the microphone.")
 
-    def _enter_listening(self) -> None:
+    def _enter_listening(self) -> bool:
         """Atomically transition to `listening`, re-checking abandonment.
 
         Between claiming the service above (under `_state_lock`) and this
@@ -936,12 +1474,49 @@ class ConsoleVoiceInputController:
         returned the machine to idle. Re-checking `_abandoned` here, under
         the same lock, closes that window instead of stomping the state back
         to `listening` with no service behind it.
+
+        Returns:
+            True once the transition to `listening` actually happened; False
+            when `abandon()` won the race and the machine is idle instead.
+            The caller uses this to skip work (e.g. the VAD-unavailable
+            check) that only makes sense for a capture that is actually live.
         """
         with self._state_lock:
             if self._abandoned:
-                return
+                return False
             self._state = STATE_LISTENING
         self._emit(VoiceStateChanged(STATE_LISTENING))
+        return True
+
+    def _maybe_report_vad_unavailable(self, service: Any) -> None:
+        """Emit `VoiceVadUnavailable` once per controller instance.
+
+        Voice commands rely on the recorder's own VAD to gate mid-capture
+        finalization (`LazyLiveDictationService.SILENCE_THRESHOLD_SECONDS`'s
+        docstring has the mechanism); without it the recorder forwards every
+        frame and a segment only finalizes when the capture stops, so a
+        command spoken mid-capture never fires. That degrade path is
+        otherwise silent, so this tells the user once.
+
+        `service._audio_service` is read with the same defensive
+        `getattr`-only pattern `_release()` uses: a fake or a service that
+        has not populated the attribute yet reports neither `True` nor
+        `False` from the inner `getattr`, and only an explicit `False` (VAD
+        was requested and did not come up) counts as degraded.
+
+        Args:
+            service: The dictation service this capture just started on.
+        """
+        if self._vad_unavailable_announced:
+            return
+        audio = getattr(service, "_audio_service", None)
+        if getattr(audio, "use_vad", None) is False:
+            self._vad_unavailable_announced = True
+            logger.warning(
+                "Console dictation started without VAD; voice commands "
+                "cannot finalize mid-capture this session"
+            )
+            self._emit(VoiceVadUnavailable())
 
     def stop(self) -> None:
         """End capture and commit. No-op unless currently listening."""

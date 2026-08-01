@@ -1,5 +1,5 @@
 ---
-id: task-1661
+id: TASK-1661
 title: 'Rail avatar sized to the rail; holder hugs its content'
 status: Done
 assignee:

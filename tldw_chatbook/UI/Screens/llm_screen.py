@@ -9,6 +9,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from ...Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 from ..Lab_Modules.lab_server_status import (
     LabServerRow,
     read_server_rows,
@@ -42,7 +43,8 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Models",
         (
-            ("local-models", "Local Models"),
+            ("curated", "Curated"),
+            ("installed", "Installed"),
             ("download-models", "Download Models"),
         ),
     ),
@@ -75,6 +77,9 @@ class LLMScreen(LabScreen):
         #: body -- so it already survives the teardown; starting a second
         #: one alongside it would be a real leak.
         self._status_poll_started = False
+        self._model_install_active = False
+        self._model_install_phase: str | None = None
+        self._model_install_succeeded: bool | None = None
         #: Server rows snapshotted for the duration of one
         #: ``refresh_lab_status`` pass; None outside one. See
         #: :meth:`_current_server_rows`.
@@ -127,13 +132,47 @@ class LLMScreen(LabScreen):
         )
 
     def lab_status_chips(self) -> tuple[LabStatusChip, ...]:
-        """Return the running-server chip.
+        """Return server and managed-install status chips.
 
         Returns:
-            A single chip summarising how many local servers are alive.
+            Chips summarising local servers and managed-model installation.
         """
         rows = self._current_server_rows()
-        return (LabStatusChip(chip_id="servers", text=servers_chip_text(rows)),)
+        if self._model_install_active:
+            phase = {
+                "fetch": "downloading",
+                "pre-verify": "checking",
+                "verify-install": "installing",
+                "activate": "activating",
+            }.get(self._model_install_phase or "", "starting")
+        elif self._model_install_succeeded is False:
+            phase = "failed"
+        else:
+            phase = "idle"
+        return (
+            LabStatusChip(chip_id="servers", text=servers_chip_text(rows)),
+            LabStatusChip(
+                chip_id="model-install",
+                text=f"Model install: {phase}",
+            ),
+        )
+
+    @on(InstallProgressed)
+    def _model_install_progressed(self, event: InstallProgressed) -> None:
+        """Keep the Lab chip current while a Curated install runs."""
+        self._model_install_active = True
+        self._model_install_phase = event.progress.phase
+        self._model_install_succeeded = None
+        self.refresh_lab_status()
+
+    @on(InstallStatusChanged)
+    def _model_install_status_changed(self, event: InstallStatusChanged) -> None:
+        """Reflect managed-install start and completion in the Lab header."""
+        self._model_install_active = event.active
+        self._model_install_succeeded = event.succeeded
+        if not event.active:
+            self._model_install_phase = None
+        self.refresh_lab_status()
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""

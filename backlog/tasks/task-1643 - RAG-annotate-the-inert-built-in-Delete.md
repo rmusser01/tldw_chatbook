@@ -1,5 +1,5 @@
 ---
-id: task-1643
+id: TASK-1643
 title: 'RAG: annotate the inert built-in Delete'
 status: Done
 assignee:

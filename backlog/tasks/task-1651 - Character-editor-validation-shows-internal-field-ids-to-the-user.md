@@ -1,5 +1,5 @@
 ---
-id: task-1651
+id: TASK-1651
 title: 'Character editor: validation messages show internal field ids to the user'
 status: To Do
 assignee: []

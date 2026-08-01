@@ -156,6 +156,7 @@ audio = [
     "yt-dlp",
     "numpy",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
     # ship it there rather than leaving the preferred engine uninstalled: the
     # preference could never engage on a normal macOS install, and audio ingest
@@ -208,6 +209,7 @@ local_tts = [
     "nltk",
     "pyaudio",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "transformers",  # For tokenization
     "torch",  # For PyTorch-based models
     "onnxruntime",  # For ONNX models
@@ -244,7 +246,7 @@ nemo = [
 speech_recording = [
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
-    "webrtcvad>=2.0.10",  # Voice activity detection
+    "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
 ]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
@@ -351,9 +353,10 @@ all-tools = [
     "scipy",
     "yt-dlp",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "pyaudio>=0.2.14",
     "sounddevice>=0.4.6",
-    "webrtcvad>=2.0.10",
+    "webrtcvad-wheels>=2.0.14",  # drop-in `webrtcvad` fork; see speech_recording extra note
     "librosa",
     
     # === TTS (Text-to-Speech) ===

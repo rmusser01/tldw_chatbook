@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, replace
 import asyncio
 from functools import partial
 import inspect
+import logging
 import os
 from pathlib import Path
 import re
@@ -183,13 +184,18 @@ from ...Chat.console_voice_input import (
     STATE_LISTENING,
     TRANSCRIPTION_INCOMPLETE_REASON,
     TRANSCRIPTION_INCOMPLETE_REMEDY,
+    VAD_UNAVAILABLE_MESSAGE,
     ConsoleVoiceInputController,
+    VoiceCommand,
+    VoiceDictationModelDefaulted,
     VoiceFailed,
     VoiceFinal,
     VoiceModelPreparing,
     VoiceModelWarmupFailed,
     VoicePartial,
     VoiceProviderOverridden,
+    VoiceSegmentTranscribing,
+    VoiceVadUnavailable,
     default_service_factory,
 )
 from ...Chat.console_display_state import (
@@ -302,6 +308,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.persistent_diagnostics import persist_event
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
@@ -321,6 +328,7 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleCitationSourcesModal,
     ConsoleComposerBar,
+    ConsoleComposerUndoHistory,
     ConsoleDraftStash,
     ConsoleControlBar,
     ConsoleEditMessageModal,
@@ -619,8 +627,9 @@ class ConsoleDictationEvent(Message):
         Args:
             session: The session that emitted it, so the screen can drop
                 events from a session it has already discarded.
-            event: The `VoicePartial` / `VoiceFinal` / `VoiceFailed` /
-                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
+            event: The `VoicePartial` / `VoiceSegmentTranscribing` /
+                `VoiceFinal` / `VoiceFailed` / `VoiceStateChanged` /
+                `VoiceProviderOverridden` instance.
         """
         super().__init__()
         self.session = session
@@ -655,6 +664,79 @@ class ConsoleDictationLimitSignal(Message):
         self.session = session
 
 
+#: `VoiceCommand.name` -> the literal break text `ConsoleStreamingDictationSession`
+#: appends to `_segments` in its place. These two are the only command names
+#: this adapter acts on itself; the rest of `COMMAND_PHRASES` (`stop`, `send`,
+#: `discard`, `read-that-back`, `new-session`) end the capture and are Task
+#: 3's to route -- this adapter only keeps them out of `_segments` and counts
+#: them via `commands_consumed`.
+_INLINE_BREAK_COMMANDS: dict[str, str] = {
+    "new-paragraph": "\n\n",
+    "new-line": "\n",
+}
+
+
+#: Acknowledgements for the voice paths that decline to do what was asked.
+#: Each is used verbatim for both the toast and the spoken ack, so the two
+#: can never drift into telling the user two different things.
+_VOICE_ACK_SESSION_CHANGED = "Session changed — not sent."
+_VOICE_ACK_NOT_SENT = "Not sent."
+_VOICE_ACK_TOO_LATE_TO_DISCARD = "Too late to discard — text inserted."
+_VOICE_ACK_NOTHING_TO_INSERT = "Nothing to insert."
+
+
+def _voice_command_chip_ack(name: str) -> str:
+    """Return the short chip acknowledgement for a recognized voice command.
+
+    A break command has no words to echo, so it acks with the pilcrow every
+    editor uses for one. Everything else acks with its own name, de-kebabed
+    (`read-that-back` -> "read that back") so the chip reads as the phrase the
+    user actually said. Derived rather than tabulated: a future command name
+    then gets a sensible ack without a second list to keep in step.
+
+    Args:
+        name: `VoiceCommand.name`, as `classify_segment` produced it.
+
+    Returns:
+        Chip-sized plain text. Never markup -- the chip writes through
+        `Content` -- and never empty, so an ack is always visible.
+    """
+    if name in _INLINE_BREAK_COMMANDS:
+        return "¶"
+    return name.replace("-", " ")
+
+
+def _join_segments(segments: list[str]) -> str:
+    """Join transcript segments with single spaces, without padding breaks.
+
+    A plain `" ".join(segments)` would sandwich an inline `new-paragraph`/
+    `new-line` break entry between two spaces -- `"para. \\n\\n para"` --
+    which reads as a blank line with a stray leading and trailing space
+    rather than a clean paragraph break. A break entry is recognized as
+    exactly `"\\n"` or `"\\n\\n"` (the only values
+    `ConsoleStreamingDictationSession` ever appends for an inline command)
+    and is concatenated directly, trimming any trailing space the previous
+    segment left behind first.
+
+    Args:
+        segments: Finalized transcript text and inline-command break entries,
+            in the order the recognizer produced them.
+
+    Returns:
+        The joined transcript: dictated segments separated by single spaces,
+        breaks concatenated without surrounding padding.
+    """
+    out = ""
+    for segment in segments:
+        if segment in ("\n", "\n\n"):
+            out = out.rstrip(" ") + segment
+        elif out and not out.endswith((" ", "\n")):
+            out += " " + segment
+        else:
+            out += segment
+    return out
+
+
 class ConsoleStreamingDictationSession:
     """Drive `ConsoleVoiceInputController` through the one-shot session port.
 
@@ -683,6 +765,15 @@ class ConsoleStreamingDictationSession:
     `stop_and_transcribe()` returns one transcript at the instant the
     controller reaches `idle`. That preserves the shipping insertion contract:
     the draft is written once, at the caret, and never mid-capture.
+
+    A finalized segment that matched the spoken-command grammar arrives as a
+    `VoiceCommand` instead of a `VoiceFinal` (see `classify_segment`). Two
+    command names -- `new-paragraph` and `new-line` -- are this adapter's to
+    act on: they become break entries in `_segments` (see `_join_segments`),
+    never dictated text. Every other command name ends the capture and is
+    Task 3's to route; this class only keeps it out of `_segments`, counts it
+    in `commands_consumed`, and forwards it to `on_event` unchanged, exactly
+    like any other event.
     """
 
     def __init__(
@@ -706,9 +797,27 @@ class ConsoleStreamingDictationSession:
         self._on_event = on_event
         self._lock = threading.Lock()
         self._segments: list[str] = []
+        #: Finalized commands seen this capture -- inline (`new-paragraph`,
+        #: `new-line`) and capture-ending alike. Read by `stop_and_transcribe`
+        #: to tell a capture that was only ever spoken commands apart from a
+        #: genuinely silent one, since both join down to an empty (or
+        #: whitespace-only) transcript.
+        self.commands_consumed: int = 0
         self._failure = ""
         self._in_blocking_call = False
         self._heard_recognizer_output = False
+        # Bumped by every `start()`. This session object is reused across
+        # captures (only a failure or an explicit cancel drops it -- see
+        # `_notify_console_dictation_error`/`_request_console_dictation_cancel`
+        # on the screen), so when `stop_and_transcribe()`'s join times out
+        # (point 3 below) the orphaned processing thread's tail flush is
+        # still bound to the SAME controller and the SAME `_handle_event`.
+        # `_handle_event` compares the generation the event's callback closure
+        # captured at wiring time (see `ConsoleVoiceInputController.start`'s
+        # `capture_generation` parameter) against this counter's CURRENT
+        # value and drops anything that no longer matches, before it can
+        # mutate `_segments`/`commands_consumed` or reach the screen.
+        self._capture_generation: int = 0
         self._service_factory = service_factory
         self._max_buffer_bytes = max_buffer_bytes
         self._on_buffer_limit: Callable[[], None] | None = None
@@ -737,7 +846,7 @@ class ConsoleStreamingDictationSession:
             kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
         return self._service_factory(**kwargs)
 
-    def _handle_event(self, event: Any) -> None:
+    def _handle_event(self, event: Any, generation: int | None = None) -> None:
         """Record what the screen cannot see, then forward. Never raises.
 
         A raise here would land in the recognizer's callback -- or, for a
@@ -747,8 +856,31 @@ class ConsoleStreamingDictationSession:
 
         Args:
             event: The controller event being emitted.
+            generation: The capture generation `ConsoleVoiceInputController`
+                bound into this event's callback closure at wiring time (see
+                `start()`'s `capture_generation` parameter and `_run_begin()`
+                in `console_voice_input.py`). `None` for events that are
+                always emitted synchronously within the current capture's own
+                blocking call (state changes, advisory notices) and therefore
+                need no check. A mismatch against `self._capture_generation`
+                means an orphaned processing thread from a capture
+                `stop_and_transcribe()` already gave up joining (see its
+                docstring, point 3) has only now delivered its tail flush --
+                after a LATER capture reused this same session object and
+                bumped the generation. The event is dropped before it can
+                mutate `_segments`/`commands_consumed` or reach the screen;
+                this is what closes the race for all four variants a stale
+                delivery can take: command, final, partial, and failed.
         """
         try:
+            if generation is not None and generation != self._capture_generation:
+                logger.debug(
+                    "Dropping stale console dictation event (generation {}, "
+                    "current generation {})",
+                    generation,
+                    self._capture_generation,
+                )
+                return
             forward = True
             if isinstance(event, VoiceFinal):
                 text = event.text.strip()
@@ -760,6 +892,21 @@ class ConsoleStreamingDictationSession:
                     self._heard_recognizer_output = True
                     if text:
                         self._segments.append(text)
+            elif isinstance(event, VoiceCommand):
+                # A command proves the recognizer ran, same as a `VoiceFinal`
+                # above. `_INLINE_BREAK_COMMANDS` is this adapter's own to
+                # act on -- its break text joins `_segments` in place of
+                # dictated text. Every other command name (the
+                # capture-ending ones `stop`/`send`/`discard`/
+                # `read-that-back`/`new-session`) is deliberately left out of
+                # `_segments` and just forwarded below, unchanged, for the
+                # screen to route in Task 3.
+                break_text = _INLINE_BREAK_COMMANDS.get(event.name)
+                with self._lock:
+                    self._heard_recognizer_output = True
+                    if break_text is not None:
+                        self._segments.append(break_text)
+                    self.commands_consumed += 1
             elif isinstance(event, VoicePartial):
                 if event.text.strip():
                     with self._lock:
@@ -816,10 +963,13 @@ class ConsoleStreamingDictationSession:
         self._on_buffer_limit = on_buffer_limit
         with self._lock:
             self._segments.clear()
+            self.commands_consumed = 0
             self._failure = ""
             self._heard_recognizer_output = False
+            self._capture_generation += 1
+            generation = self._capture_generation
         with self._blocking_call():
-            self._controller.start()
+            self._controller.start(capture_generation=generation)
         failure = self._take_failure()
         if failure:
             raise RuntimeError(failure)
@@ -834,15 +984,22 @@ class ConsoleStreamingDictationSession:
         Blocks until the controller reaches `idle`, so the screen inserts
         exactly once, with the whole transcript, at that moment.
 
-        Never returns an empty transcript, matching the one-shot backend this
-        replaced (`Audio/console_dictation.py`): it raised rather than hand
-        back nothing, and the screen's insertion has no empty case -- an empty
-        transcript still pads to a stray space at the caret, silently, and gets
-        persisted to the session draft.
+        Never returns an empty transcript for an ordinary capture, matching
+        the one-shot backend this replaced (`Audio/console_dictation.py`): it
+        raised rather than hand back nothing, and the screen's insertion has
+        no empty case for dictated text -- an empty transcript still pads to
+        a stray space at the caret, silently, and gets persisted to the
+        session draft. The one deliberate exception is a capture made of
+        nothing but spoken commands (`self.commands_consumed > 0` -- e.g.
+        "Console, new paragraph." alone, or "Console, stop." with nothing
+        dictated first): the segments still join down to `""` or pure
+        whitespace, but that is not a silent microphone, so this returns
+        `""` rather than raising it as one. The caller must treat that empty
+        return as "nothing to insert," not as the empty case above.
 
-        An empty transcript has three genuinely different causes, and this
-        reports each as itself rather than blaming the microphone for all
-        three:
+        An empty transcript with no commands consumed has three genuinely
+        different causes, and this reports each as itself rather than
+        blaming the microphone for all three:
 
         1. The recorder delivered no bytes -- a real capture or permission
            problem. Keeps the one-shot backend's wording verbatim.
@@ -858,11 +1015,16 @@ class ConsoleStreamingDictationSession:
         recognizer-output flag is the fallback, exactly as before.
 
         Returns:
-            The accumulated segments, space-joined. Never empty.
+            The accumulated segments, joined by `_join_segments` (so an
+            inline command's break lands unpadded). Empty only when the
+            capture consisted solely of spoken commands; an ordinary
+            dictated capture is never empty.
 
         Raises:
-            RuntimeError: The controller failed while finishing, nothing was
-                transcribed, or the transcription never completed.
+            RuntimeError: The controller failed while finishing, or the
+                capture was genuinely silent (`self.commands_consumed == 0`
+                and nothing was transcribed, or the transcription never
+                completed).
         """
         with self._blocking_call():
             self._controller.stop()
@@ -870,10 +1032,13 @@ class ConsoleStreamingDictationSession:
         if failure:
             raise RuntimeError(failure)
         with self._lock:
-            transcript = " ".join(self._segments)
+            transcript = _join_segments(self._segments)
             heard = self._heard_recognizer_output
-        if transcript:
+            commands_consumed = self.commands_consumed
+        if transcript.strip():
             return transcript
+        if commands_consumed > 0:
+            return ""
         outcome = self._controller.last_capture_outcome
         if not outcome.transcription_complete:
             raise RuntimeError(
@@ -892,6 +1057,7 @@ class ConsoleStreamingDictationSession:
         self._controller.abandon()
         with self._lock:
             self._segments.clear()
+            self.commands_consumed = 0
             self._failure = ""
 
 
@@ -942,6 +1108,11 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Enter", "send"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
+            ("Ctrl+Z", "undo the last draft edit"),
+            (
+                "Ctrl+Shift+Z / Ctrl+Y",
+                "redo (Ctrl+Y also works where the terminal can't send Ctrl+Shift+Z)",
+            ),
             ("Alt+V", "paste an image from the clipboard"),
             (
                 "Attach",
@@ -1123,6 +1294,16 @@ def _character_session_prompt_seed(
     Joins the card's prompt-bearing fields into the Console session's system
     prompt and picks the seeded greeting from ``first_message``.
 
+    task-1744: the join itself (field order, labels, and macro resolution)
+    is ``Character_Chat_Lib.compose_character_card_text`` -- the same
+    function the character-probe eval engine uses
+    (``Evals.character_probe.prompt.compose_system_prompt``), so a probe run
+    predicts exactly what this seeds into a real Console session. This
+    includes ``message_example`` and ``post_history_instructions``, which
+    Console did not send before task-1744; that is a deliberate,
+    user-visible change to every character session's system prompt, not an
+    incidental refactor.
+
     Args:
         card: The character card record.
         name_hint: Fallback display name when the card has none.
@@ -1133,21 +1314,35 @@ def _character_session_prompt_seed(
     # Local import matches this module's existing convention of deferring
     # Character_Chat submodule imports (they pull in Pillow and
     # CharactersRAGDB) rather than importing them at module scope.
-    from ...Character_Chat.Character_Chat_Lib import replace_placeholders
+    from ...Character_Chat.Character_Chat_Lib import (
+        compose_character_card_text,
+        replace_placeholders,
+    )
 
     name = str(card.get("name") or name_hint or "").strip() or "Character"
-    parts = [
-        str(card.get(key) or "").strip()
-        for key in ("system_prompt", "personality", "description", "scenario")
-    ]
-    joined = "\n".join(p for p in parts if p)
-    # Cards are written against SillyTavern-style macros; resolve
-    # {{char}}/{{user}} (and aliases) before the text reaches session
-    # settings, or they leak verbatim into every provider payload
+    # Cards are written against SillyTavern-style macros; compose_character_card_text
+    # resolves {{char}}/{{user}} (and aliases) before the text reaches
+    # session settings, or they leak verbatim into every provider payload
     # (task-1530). "User" matches the greeting-display substitution used
-    # across the Personas surfaces.
+    # across the Personas surfaces. A card with no prompt-bearing text at
+    # all falls back to a fixed instruction -- Console, not the shared
+    # composer, owns that fallback, since it is not meaningful to the eval
+    # engine's own empty-card handling (an intentionally blank system
+    # message, see compose_system_prompt).
     system_prompt = (
-        replace_placeholders(joined, name, "User") if joined else "Stay in character."
+        compose_character_card_text(
+            name=name,
+            system_prompt=str(card.get("system_prompt") or ""),
+            personality=str(card.get("personality") or ""),
+            description=str(card.get("description") or ""),
+            scenario=str(card.get("scenario") or ""),
+            message_example=str(card.get("message_example") or ""),
+            post_history_instructions=str(
+                card.get("post_history_instructions") or ""
+            ),
+            user_name="User",
+        )
+        or "Stay in character."
     )
     greeting = replace_placeholders(
         str(card.get("first_message") or ""), name, "User"
@@ -2809,6 +3004,18 @@ class ChatScreen(BaseAppScreen):
         self._console_conversation_browser_total: int | None = None
         self._console_conversation_browser_error = ""
         self._console_visible_draft_session_id: str | None = None
+        # TASK-1281: composer undo/redo history, scoped per Console session.
+        # Exported (`ConsoleComposerBar.export_undo_history`) on switch-away
+        # and restored on switch-in inside `_sync_console_session_draft`, so
+        # Ctrl+Z/Ctrl+Shift+Z in one session's tab never sees or touches
+        # another session's edits. Entries are dropped when a tab is
+        # explicitly closed (see the `console-close-session-tab-` button
+        # handler); a session that goes away some other way (e.g. a full
+        # `restore_state` rehydration) leaves a stale, unreachable entry
+        # here rather than being actively pruned -- bounded by how many
+        # distinct session ids this screen instance has ever shown a
+        # composer for, same tradeoff as the other per-session caches above.
+        self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_dictation_session: Any | None = None
         self._console_dictation_state: Literal[
             "idle", "starting", "recording", "transcribing"
@@ -2825,6 +3032,23 @@ class ChatScreen(BaseAppScreen):
         #: is superseded by the next one or by its segment's final, and must
         #: never reach the draft.
         self._console_dictation_partial = ""
+        #: Task 3: the single action a capture-ending `VoiceCommand` (`send`,
+        #: `new-session`, `read-that-back`) queued for AFTER the stop path
+        #: (`_stop_console_dictation`) finishes successfully -- never in the
+        #: same tick as the stop request, so it always runs on the capture's
+        #: own inserted transcript. A single field, not one bool per command:
+        #: the grammar is one capture-ending command per capture, so at most
+        #: one of these is ever pending at a time. `_notify_console_dictation_error`
+        #: clears it without acting -- a failed dictation must never ship the
+        #: message, open a new tab, or speak a reply.
+        self._console_pending_voice_action: str | None = None
+        #: A spoken "discard" that arrived too late to abort anything (the
+        #: capture was already `transcribing`). Toasted at once, but the
+        #: SPOKEN ack has to wait for `idle` -- `_speak_status` refuses to
+        #: talk over an open microphone -- so it is deferred to
+        #: `_stop_console_dictation`'s tail, where it replaces the ordinary
+        #: "Capture ended." rather than doubling up with it.
+        self._console_dictation_late_discard_ack = False
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -4952,6 +5176,38 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.tick_voice_elapsed()
 
+    def _speak_status(self, text: str) -> None:
+        """Speak a status/ack/error via TTS when spoken feedback is on and idle.
+
+        Posts `TTSRequestEvent(text)` iff `dictation.spoken_feedback` is
+        truthy (default `false`) AND the microphone is not open right now
+        (`_console_dictation_state == "idle"`). The state check is the hard
+        microphone/speaker mutual-exclusion rule (spec): speech overlapping a
+        live capture would be picked up by the recognizer and transcribed
+        straight into the user's own draft, so this must never fire
+        mid-capture regardless of the toggle.
+
+        "Capture started" is deliberately never routed through this method --
+        see `_request_console_dictation_start`'s unconditional
+        `TTSPlaybackEvent(stop)`, which handles the opposite direction
+        (silencing speech *before* a capture opens) instead.
+
+        Args:
+            text: The plain-text status, command acknowledgement, or error
+                reason to speak -- the same copy the corresponding toast uses.
+        """
+        if self._console_dictation_state != "idle":
+            return
+        if not coerce_bool_setting(
+            get_cli_setting("dictation.spoken_feedback", False), False
+        ):
+            return
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSRequestEvent,
+        )
+
+        self.app_instance.post_message(TTSRequestEvent(text=text))
+
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
@@ -4959,8 +5215,36 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""
+        # A spoken "send"/"new session"/"read that back" queued its action
+        # for after a successful stop -- this is every failure exit, so the
+        # queued action must be dropped here rather than surviving to fire
+        # on whatever capture succeeds next.
+        self._console_pending_voice_action = None
+        # Likewise a deferred late-discard ack: the failure reason below is
+        # the better thing to say, and two spoken acks for one capture is
+        # worse than either alone.
+        self._console_dictation_late_discard_ack = False
         self._set_console_dictation_state("idle")
-        self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
+        reason = f"Dictation failed: {exc}"
+        # Persist the failure: this branch's runtime log is admission-filtered
+        # to `tldw_chatbook.diagnostics.*`, so a toast the user reads was the
+        # ONLY record a dictation failure left anywhere -- four live-gate
+        # rounds were spent reconstructing failures from paraphrased toasts
+        # (2026-08-01). `exc_type` is the class name only; the message can
+        # carry user paths or audio filenames and is deliberately not
+        # persisted here (the loguru line below keeps it for a verbose run).
+        try:
+            persist_event(
+                "dictation",
+                "dictation_failed",
+                level=logging.ERROR,
+                exception_type=type(exc).__name__,
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never break dictation
+            logger.opt(exception=True).debug("Could not persist dictation failure")
+        logger.warning("Console dictation failed: {}", exc)
+        self.app_instance.notify(reason, severity="error")
+        self._speak_status(reason)
 
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
         """Hand a controller event to the UI thread. Safe from any thread.
@@ -5006,12 +5290,84 @@ class ChatScreen(BaseAppScreen):
                 if composer is not None:
                     composer.set_voice_partial(event.text)
             return
+        if isinstance(event, VoiceSegmentTranscribing):
+            # The silence gate closed a segment and its (potentially
+            # seconds-long) transcription just started (`event.done` False)
+            # or just ended (`event.done` True) -- otherwise zero signal
+            # under the segment-at-silence architecture. Same staleness
+            # guard as `VoicePartial` just above: only while THIS capture is
+            # still actually recording. The indication reverts on whichever
+            # comes first: this event's own `done=True` (review finding M1 --
+            # a segment that transcribes to blank fires neither a final nor a
+            # command, so this is sometimes the ONLY revert signal a capture
+            # ever gets), `set_voice_partial` (called by both the
+            # `VoiceFinal` and `VoiceCommand` branches below), or any
+            # `sync_dictation_state` lifecycle transition.
+            if self._console_dictation_state == "recording":
+                composer = self._console_composer_or_none()
+                if composer is not None:
+                    composer.set_voice_segment_transcribing(not event.done)
+            return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.
             self._console_dictation_partial = ""
             composer = self._console_composer_or_none()
             if composer is not None:
                 composer.set_voice_partial("")
+            return
+        if isinstance(event, VoiceCommand):
+            # `new-paragraph`/`new-line` DO reach here too -- the adapter's
+            # `forward` default is True for every `VoiceCommand`, inline or
+            # capture-ending alike; `_INLINE_BREAK_COMMANDS` only keeps them
+            # out of `_segments` (Task 2), it does not stop them being
+            # forwarded. The `if`/`elif` chain below stays an explicit
+            # allowlist rather than a dict lookup or a trailing `else` --
+            # deliberately, so an inline name (or any future, not-yet-routed
+            # command name) falls through as a no-op instead of a future
+            # maintainer's catch-all accidentally acting on it.
+            #
+            # Review fix round 1 (Finding 1): a command draining after ITS
+            # OWN capture already returned to `idle` is NOT caught by the
+            # session-identity check above -- `_start_console_dictation`
+            # reuses `self._console_dictation_session` whenever it is still
+            # set, which it is after every ordinary successful stop (only a
+            # failure or an explicit cancel nulls it). A late command from
+            # capture 1 therefore carries the exact same session object as a
+            # live capture 2, and would otherwise queue an action (or fire
+            # stop/discard) against whichever capture is live NOW, not the
+            # one that actually spoke it. `transcribing` stays admitted
+            # alongside `recording`: a genuinely-current command that only
+            # finalizes once ITS OWN capture's stop-and-transcribe is
+            # already running (e.g. the wall timer beat the recognizer to
+            # it) is not stale, and must still reach `_stop_console_dictation`'s
+            # success tail.
+            if self._console_dictation_state not in ("recording", "transcribing"):
+                return
+            # The command is itself a finalized segment, so its own utterance
+            # ("console send") is the last thing sitting in the chip -- but
+            # clearing it to empty leaves an inline command with no feedback
+            # whatsoever, and the chip acknowledgement is the stated
+            # mitigation for the accepted staccato false-fire (a fired
+            # command has to be *visible* to be caught). Overwrite it with a
+            # short ack instead: the next partial replaces it, and the chip
+            # collapses at capture end. Written here, before dispatch below
+            # changes the dictation state out from under `set_voice_partial`'s
+            # own recording-only guard.
+            ack = _voice_command_chip_ack(event.name)
+            self._console_dictation_partial = ack
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                composer.set_voice_partial(ack)
+            if event.name == "stop":
+                self._request_console_dictation_stop()
+            elif event.name == "discard":
+                self._request_console_dictation_cancel()
+            elif event.name in ("send", "new-session", "read-that-back"):
+                # Queued, not acted on immediately: `_stop_console_dictation`
+                # runs it once the capture's own transcript has actually
+                # landed (see `_console_pending_voice_action`'s docstring).
+                self._console_pending_voice_action = event.name
+                self._request_console_dictation_stop()
             return
         if isinstance(event, VoiceModelPreparing):
             # The speech model is loading, before the microphone opens. On a
@@ -5077,6 +5433,51 @@ class ChatScreen(BaseAppScreen):
                     f"using '{escape_markup(event.effective)}' instead.",
                     severity="warning",
                 )
+            return
+        if isinstance(event, VoiceDictationModelDefaulted):
+            # Same two-tier latch as `VoiceProviderOverridden` just above,
+            # for the same reason -- see `VoiceDictationModelDefaulted`'s own
+            # docstring. This is a deliberate latency policy, not a failure
+            # (unlike the provider case), so it stays "information" rather
+            # than "warning".
+            if not getattr(
+                self.app_instance,
+                "_console_dictation_model_default_notified",
+                False,
+            ):
+                self.app_instance._console_dictation_model_default_notified = True
+                # `event.effective` is `DICTATION_FAST_MODEL_DEFAULT`, a
+                # closed constant this code controls -- but `event.configured`
+                # traces back to the user's own `transcription.default_model`
+                # TOML setting, unvalidated free text, so both go through
+                # `escape_markup` for the same reason the provider notice
+                # above does.
+                self.app_instance.notify(
+                    f"Dictation uses the fast '{escape_markup(event.effective)}' "
+                    f"model for low latency (configured model: "
+                    f"'{escape_markup(event.configured)}') — set dictation.model "
+                    f"to change.",
+                    severity="information",
+                )
+            return
+        if isinstance(event, VoiceVadUnavailable):
+            # Same two-tier latch as `VoiceProviderOverridden` just above,
+            # and for the same reason: the controller's own
+            # `_vad_unavailable_announced` only covers this one controller
+            # instance, and a fresh one is built on every new dictation
+            # session. The user only needs telling once per app run. The
+            # controller already logged this (see
+            # `_maybe_report_vad_unavailable`), so only the toast lives here.
+            if not getattr(
+                self.app_instance, "_console_dictation_vad_unavailable_notified", False
+            ):
+                self.app_instance._console_dictation_vad_unavailable_notified = True
+                # Not spoken (`spoken_feedback` never applies here): the
+                # microphone is open by the time this fires, and speaking
+                # over an open mic is exactly what that setting exists to
+                # avoid everywhere else in this file.
+                self.app_instance.notify(VAD_UNAVAILABLE_MESSAGE, severity="warning")
+            return
 
     def _on_console_dictation_buffer_limit(self, session: Any) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread.
@@ -5548,13 +5949,39 @@ class ChatScreen(BaseAppScreen):
         cursor: int,
         transcript: str,
     ) -> str:
-        """Return transcript text padded only where adjacent text needs spacing."""
+        """Return transcript text padded only where adjacent text needs spacing.
+
+        Trims only `" "` and `"\\t"` from the ends, not a full `.strip()`: the
+        recognizer never produces a leading/trailing newline on its own, so
+        an ordinary dictated transcript behaves identically either way -- but
+        an inline `new-paragraph`/`new-line` command at the very start or end
+        of a capture (`_join_segments`) does produce one, and a full strip
+        used to discard it silently, along with everything after it looking
+        like the command was never spoken.
+
+        For the same reason, the caret-context padding below never adds a
+        space next to a leading or trailing newline: the break is already
+        the separator the padding exists to provide.
+
+        Args:
+            draft: The composer's current text.
+            cursor: The insertion point, an offset into `draft`.
+            transcript: The capture's transcript, as returned by
+                `ConsoleStreamingDictationSession.stop_and_transcribe`.
+
+        Returns:
+            `transcript` trimmed of edge spaces/tabs (edge newlines kept),
+            padded with a single space on whichever side abuts non-space
+            text in `draft` and does not itself start or end with a newline.
+        """
         cursor = max(0, min(cursor, len(draft)))
-        insertion = transcript.strip()
-        if cursor and not draft[cursor - 1].isspace():
-            insertion = " " + insertion
-        if cursor < len(draft) and not draft[cursor].isspace():
-            insertion += " "
+        insertion = transcript.strip(" \t")
+        if not insertion.startswith("\n"):
+            if cursor and not draft[cursor - 1].isspace():
+                insertion = " " + insertion
+        if not insertion.endswith("\n"):
+            if cursor < len(draft) and not draft[cursor].isspace():
+                insertion += " "
         return insertion
 
     def _insert_console_dictation(
@@ -5586,6 +6013,22 @@ class ChatScreen(BaseAppScreen):
             draft = store.session_draft(origin_session_id)
             insertion = self._dictation_insertion(draft, len(draft), transcript)
             store.set_session_draft(origin_session_id, draft + insertion)
+            # TASK-1281 review F5: this session's composer isn't the live
+            # one, so nothing records this mutation into its banked undo/
+            # redo history -- correct on its own (a background session's
+            # history must not be touched by a mutation its own composer
+            # never saw), but it leaves that banked history stale relative
+            # to the store draft it will be re-paired with on switch-in.
+            # Left alone, the banked top entry predates BOTH this dictated
+            # text and whatever was in the draft before it, so a single
+            # Ctrl+Z after switching back in would destroy both in one
+            # step (reproduced: history top = pre-"hello", store draft =
+            # "hello dictated words", one undo -> ""). Dropping the banked
+            # history instead makes the dictated text simply not undoable
+            # via history (consistent with "history records composer
+            # mutations, not store writes") rather than undoable in a way
+            # that silently corrupts the draft.
+            self._console_undo_histories.pop(origin_session_id, None)
         except KeyError:
             self.app_instance.notify(
                 "Dictation finished, but its original Console session is gone.",
@@ -5627,13 +6070,145 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_dictation_session is not session:
             return
-        self._insert_console_dictation(
-            origin_session_id=origin_session_id,
-            transcript=transcript,
-        )
+        # A command-only capture (Task 2's `commands_consumed` early-return
+        # in `stop_and_transcribe`) returns "" here rather than raising --
+        # that is not a silent-microphone failure, but it is also nothing to
+        # insert. `_dictation_insertion` would otherwise pad it to a stray
+        # space at the caret and persist that to the draft.
+        if transcript:
+            self._insert_console_dictation(
+                origin_session_id=origin_session_id,
+                transcript=transcript,
+            )
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
+        late_discard, self._console_dictation_late_discard_ack = (
+            self._console_dictation_late_discard_ack,
+            False,
+        )
+        if not transcript:
+            # A command-only capture ("Console, new paragraph." alone, or
+            # "Console, stop." with nothing dictated first). Not an error --
+            # `stop_and_transcribe` returns "" for it deliberately -- but the
+            # user's break IS silently dropped here, and saying nothing at all
+            # is indistinguishable from a capture that did land.
+            self.app_instance.notify(
+                _VOICE_ACK_NOTHING_TO_INSERT, severity="information"
+            )
+        if late_discard:
+            # A spoken "discard" that arrived too late to abort anything. It
+            # explains the outcome better than "Capture ended." does, so it
+            # takes that slot rather than adding a second spoken ack.
+            self._speak_status(_VOICE_ACK_TOO_LATE_TO_DISCARD)
+        elif self._console_pending_voice_action is None:
+            # A plain stop -- no capture-ending command queued anything
+            # further. The command acks below speak in its place, so this
+            # and they never double up on the same capture.
+            self._speak_status(
+                "Capture ended." if transcript else _VOICE_ACK_NOTHING_TO_INSERT
+            )
+        await self._run_pending_console_voice_action(origin_session_id)
+
+    async def _run_pending_console_voice_action(
+        self, origin_session_id: str | None
+    ) -> None:
+        """Fire the action a capture-ending `VoiceCommand` queued, if any.
+
+        Only ever reached from `_stop_console_dictation`'s success tail --
+        after the transcript (if any) has already been inserted and dictation
+        is back at `idle` -- never from the exception branch above, which
+        routes through `_notify_console_dictation_error` and drops the
+        pending action instead of acting on it. This is what keeps `send`
+        from ever shipping a message for a capture that failed to transcribe.
+
+        Args:
+            origin_session_id: The session the capture began in, and therefore
+                the only session whose draft `send` may ship. The transcript
+                was inserted there (`_insert_console_dictation`), while Send
+                acts on whatever session is ACTIVE -- so if the user switched
+                tabs during the transcribe window, pressing Send would ship a
+                different session's half-written draft.
+        """
+        pending_action, self._console_pending_voice_action = (
+            self._console_pending_voice_action,
+            None,
+        )
+        if pending_action == "send":
+            store = self._ensure_console_chat_store()
+            if origin_session_id and store.active_session_id != origin_session_id:
+                # Refuse rather than send the wrong draft. Toasted
+                # unconditionally: this is a refusal the user did not ask for
+                # and cannot otherwise see, and the dictated text is sitting
+                # safely in the origin session's draft either way.
+                self.app_instance.notify(
+                    _VOICE_ACK_SESSION_CHANGED, severity="warning"
+                )
+                self._speak_status(_VOICE_ACK_SESSION_CHANGED)
+                return
+            try:
+                send_button = self.query_one("#console-send-message", Button)
+            except QueryError:
+                logger.debug(
+                    "Console voice send skipped; the send button is not mounted"
+                )
+                return
+            # Awaited through the real handler rather than `Button.press()`:
+            # a press only posts a message, so its outcome is unknowable here,
+            # and the dispatch refuses on several reachable paths (empty
+            # draft, send-blocked, a run already in progress, a `/`-command
+            # dispatch) -- each with its own toast. Speaking "Sent." over any
+            # of those is a straight lie about whether the message went out.
+            sent = await self.handle_console_send_message(Button.Pressed(send_button))
+            self._speak_status("Sent." if sent else _VOICE_ACK_NOT_SENT)
+        elif pending_action == "new-session":
+            self.action_new_console_tab()
+            self._speak_status("New session.")
+        elif pending_action == "read-that-back":
+            await self._console_read_last_response_back()
+
+    async def _console_read_last_response_back(self) -> None:
+        """Speak the last completed assistant reply for "Console, read that back."
+
+        Mirrors `handle_console_message_action`'s "speak" branch (task-559)
+        exactly rather than inventing a second TTS path: post
+        `TTSRequestEvent`, track the message as the one currently driving
+        speech, and resync so the transcript's action row reflects it. Only
+        the completed target selection and the two ack cases are new here.
+        """
+        # Own-guard for the microphone/speaker mutual-exclusion invariant.
+        # The one caller already reaches here at `idle`, so this is defensive
+        # rather than load-bearing -- but this method is the only dictation
+        # path that speaks UNCONDITIONALLY (an explicit request, not ambient
+        # feedback, so it deliberately bypasses `_speak_status`'s toggle), and
+        # therefore the only one whose own idle check is not inherited.
+        if self._console_dictation_state != "idle":
+            return
+        if self._console_run_active():
+            self.app_instance.notify("Still responding.", severity="warning")
+            self._speak_status("Still responding.")
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        message = None
+        if session_id:
+            for candidate in reversed(store.messages_for_session(session_id)):
+                if candidate.role == "assistant" and candidate.status == "complete":
+                    message = candidate
+                    break
+        if message is None:
+            self.app_instance.notify("Nothing to read yet.", severity="warning")
+            self._speak_status("Nothing to read yet.")
+            return
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSRequestEvent,
+        )
+
+        self.app_instance.post_message(
+            TTSRequestEvent(text=message.content, message_id=message.id)
+        )
+        self._console_speaking_message_id = message.id
+        await self._sync_native_console_chat_ui()
 
     def _request_console_dictation_stop(self) -> None:
         if self._console_dictation_state != "recording":
@@ -5670,9 +6245,15 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Console dictation could not be cancelled cleanly"
             )
+        # Spoken only now, not by the caller: the release above holds the
+        # microphone for up to ~1.5 s after the UI is already back at `idle`,
+        # and `_speak_status`'s state check cannot see that -- so acking from
+        # the caller talks straight into a still-open mic. Its check is still
+        # what refuses if the user has opened a NEW capture in the meantime.
+        self._speak_status("Discarded.")
 
     def _request_console_dictation_cancel(self) -> None:
-        """Abandon a capture that is still preparing, without waiting for it.
+        """Abandon a capture that is `starting` or `recording`, without waiting.
 
         The `starting` phase now covers a speech-model load, which is a
         multi-gigabyte download on a fresh machine. `abandon()` returns
@@ -5685,8 +6266,40 @@ class ChatScreen(BaseAppScreen):
         toast on its way out. The release itself is handed to a worker: the UI
         is already back at idle by then, so nothing the user can see is waiting
         on the audio backend letting go of the device.
+
+        Task 3: also the target for a spoken "Console, discard." mid-capture --
+        the body below has never depended on which of the two states it is
+        torn down from (both stop the same two timers and hand the same
+        session to the same worker), so `recording` needed no separate path,
+        only this guard admitting it. The manual mic button still never
+        reaches this method for `recording` (it routes there to
+        `_request_console_dictation_stop`, which inserts); only the spoken
+        command does.
+
+        Review fix round 1 (Finding 1): a spoken "discard" can also arrive
+        while `transcribing` -- the `VoiceCommand` branch admits that state
+        so a genuinely-current trailing command is not mistaken for a stale
+        one. This method cannot itself abort an in-flight stop-and-transcribe
+        (nothing here is cancelable at that point, so the guard below still
+        refuses), but the clear immediately below still applies regardless:
+        "Console, send." then "Console, discard." inside that same window
+        must drop the queued `send` even though the capture finishes normally.
         """
-        if self._console_dictation_state != "starting":
+        # Unconditional, ahead of the guard below, for exactly that reason.
+        self._console_pending_voice_action = None
+        if self._console_dictation_state not in ("starting", "recording"):
+            if self._console_dictation_state == "transcribing":
+                # A spoken "discard" the guard above cannot honor: the capture
+                # is already being transcribed and will insert. Silently
+                # doing nothing here reads as the command having been missed,
+                # when in fact it was heard and refused -- and the user is
+                # about to watch text appear that they just asked to throw
+                # away. The spoken half waits for `idle` (see the field's
+                # docstring); the toast does not.
+                self._console_dictation_late_discard_ack = True
+                self.app_instance.notify(
+                    _VOICE_ACK_TOO_LATE_TO_DISCARD, severity="warning"
+                )
             return
         session = self._console_dictation_session
         self._cancel_console_dictation_timer()
@@ -5696,12 +6309,17 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
         if session is not None:
+            # The worker speaks "Discarded." once the microphone is actually
+            # released; see `_discard_console_dictation_session`.
             self.run_worker(
                 self._discard_console_dictation_session(session),
                 group="console-dictation-cancel",
                 exit_on_error=False,
             )
         self.app_instance.notify("Dictation cancelled.", severity="information")
+        if session is None:
+            # Nothing to release, so nothing to wait for.
+            self._speak_status("Discarded.")
 
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
@@ -5715,7 +6333,26 @@ class ChatScreen(BaseAppScreen):
         store = self._ensure_console_chat_store()
         self._console_dictation_origin_session_id = store.active_session_id
         self._console_dictation_partial = ""
+        # Defensive (review fix round 1, Finding 1): the `VoiceCommand`
+        # branch's own state guard is what actually stops a stale command
+        # from queuing here, but a fresh capture starting with nothing
+        # pending is the correct state regardless of how one might have
+        # leaked in, so it is reset again on this end too.
+        self._console_pending_voice_action = None
+        self._console_dictation_late_discard_ack = False
         self._set_console_dictation_state("starting")
+        # Unconditional -- not gated on the spoken-feedback toggle: a status
+        # ack or a "read that back" reply can be playing even with feedback
+        # off, and the single-slot TTS player only stops the PREVIOUS clip
+        # when a NEW one starts -- opening a microphone plays nothing, so it
+        # would never stop this on its own. Posted here, before the worker
+        # below ever reaches the recorder, so an in-flight clip cannot bleed
+        # into the recognizer and get transcribed into this capture's draft.
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSPlaybackEvent,
+        )
+
+        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
         self.run_worker(
             self._start_console_dictation(),
             exclusive=True,
@@ -5875,10 +6512,23 @@ class ChatScreen(BaseAppScreen):
                 store.set_session_draft(visible_session_id, save_text)
             except KeyError:
                 pass
+            # TASK-1281: this composer is about to start showing a DIFFERENT
+            # session's draft -- bank its undo/redo history under the
+            # session it actually belongs to before the swap below discards
+            # it, so a later switch back can restore it.
+            self._console_undo_histories[visible_session_id] = (
+                composer.export_undo_history()
+            )
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
             composer.clear_draft()
+        # TASK-1281: restore (or start fresh) BEFORE re-inserting any
+        # settle-window keystrokes below, so those keystrokes land in --
+        # and are recorded onto -- the session they actually typed into.
+        composer.restore_undo_history(
+            self._console_undo_histories.get(active_session_id)
+        )
         if typed_suffix:
             composer.insert_text(typed_suffix)
         self._console_visible_draft_session_id = active_session_id
@@ -14457,6 +15107,21 @@ class ChatScreen(BaseAppScreen):
         composer_reflects_session = (
             composer is not None and controller.store.active_session_id == session_id
         )
+        # TASK-1281 review NEW-5: `clear_draft`/`clear_history` below must
+        # only ever touch the composer when it PROVABLY shows this exact
+        # session's draft right now, not merely when the store's active
+        # session id happens to match -- `composer_reflects_session` above
+        # is Task 3b's pre-existing (looser) check, kept as-is for
+        # `restore_stashed_draft` below, but during the TASK-339
+        # session-switch settle window `active_session_id` can already
+        # equal `session_id` while the composer still visibly shows a
+        # DIFFERENT session (see F1) -- clearing on that weaker guard would
+        # wipe the wrong session's on-screen draft. Unified with
+        # `_on_console_submission_accepted`'s own guard shape.
+        composer_visible_for_session = (
+            composer is not None
+            and self._console_visible_draft_session_id == session_id
+        )
         stash = self._console_inflight_send_stashes.pop(session_id, None)
         if not result.accepted and stash is not None and composer_reflects_session:
             # Controller-level refusal of a keyboard send: the composer was
@@ -14465,12 +15130,25 @@ class ChatScreen(BaseAppScreen):
             composer.restore_stashed_draft(stash)
         if (
             result.should_clear_draft
-            and composer_reflects_session
+            and composer_visible_for_session
             and inflight_stash is None
         ):
             # Stashed sends were cleared at the keypress — clearing again
             # here would eat keystrokes typed after Enter (the next draft).
             composer.clear_draft()
+            # TASK-1281 review F2: send is a history barrier -- see
+            # `_on_console_submission_accepted`'s identical comment. This
+            # site covers the same "content is genuinely gone" moment for
+            # sends that reach here without an inflight keypress stash
+            # (e.g. the mouse-click Send path).
+            composer.clear_history()
+        if result.accepted:
+            # TASK-1281 review NEW-5: only an ACCEPTED send makes this
+            # session's pre-send history genuinely stale -- a refusal
+            # (blocked/failed/canceled) sent nothing, so a background
+            # session's banked undo/redo history must survive it exactly
+            # as it would have survived never attempting the send at all.
+            self._console_undo_histories.pop(session_id, None)
         if (
             result.accepted
             and controller.run_state.status is ConsoleRunStatus.COMPLETED
@@ -14522,6 +15200,23 @@ class ChatScreen(BaseAppScreen):
             self._console_inflight_send_stashes.pop(session_id, None)
         elif composer is not None and active_session_id == session_id:
             composer.clear_draft()
+        # TASK-1281 review F2: this hook fires ONLY once submit_draft has
+        # confirmed the turn actually proceeds (never for a blocked/refused
+        # send -- see the docstring above), so every call here represents a
+        # draft that is genuinely, irrevocably gone. Clearing just the
+        # draft text (above) is not enough: the mutations that PRODUCED it
+        # stay reachable on the undo stack either way (a `clear_draft()`
+        # with no `record_history=True` records nothing, so it doesn't
+        # cover them), and Ctrl+Z would resurrect already-sent content back
+        # into the composer -- and, via the undo/redo re-persist, right
+        # back into the store as the "live" draft for a message that has
+        # already shipped. Drops the banked history unconditionally (a sent
+        # session can never be usefully switched back into with anything
+        # from before the send), and the composer's own live stacks too
+        # when it still shows this exact session.
+        self._console_undo_histories.pop(session_id, None)
+        if composer is not None and self._console_visible_draft_session_id == session_id:
+            composer.clear_history()
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
         # first poll after it). The composer clears here at acceptance, so
@@ -14603,13 +15298,33 @@ class ChatScreen(BaseAppScreen):
             return attachment_reason
         return ""
 
-    async def handle_console_send_message(self, event: Button.Pressed) -> None:
-        """Route the Console composer send action through the native controller."""
-        event.stop()
-        await self._send_console_message_from_visible_action()
+    async def handle_console_send_message(self, event: Button.Pressed) -> bool:
+        """Route the Console composer send action through the native controller.
 
-    async def _send_console_message_from_visible_action(self) -> None:
-        """Route the visible Console send action through the native controller."""
+        Args:
+            event: The Send button press. Stopped here, so a synthesized
+                `Button.Pressed` from a programmatic caller behaves the same
+                as a real one.
+
+        Returns:
+            Whether the draft was actually queued as a user turn. The button
+            path discards this; the spoken-command path (`Console, send.`)
+            needs it, because every refusal below returns without sending and
+            an ack that says otherwise is simply wrong.
+        """
+        event.stop()
+        return await self._send_console_message_from_visible_action()
+
+    async def _send_console_message_from_visible_action(self) -> bool:
+        """Route the visible Console send action through the native controller.
+
+        Returns:
+            True once the draft has been queued as a user turn; False on every
+            refusal -- an empty draft with no attachment, a `/`-command or
+            unknown-command dispatch (which never sends by design), and every
+            gate inside `_dispatch_console_draft_send`. Each refusal has
+            already shown its own toast or system row.
+        """
         # TASK-340: a keyboard send captured its payload at the Enter
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
@@ -14624,7 +15339,7 @@ class ChatScreen(BaseAppScreen):
             if composer is not None:
                 composer.restore_stashed_draft(stash)
             self._focus_console_composer_if_needed(force=True)
-            return
+            return False
         self._dismiss_console_guidance()
 
         # Command parsing runs before any readiness/blocked gating: a
@@ -14653,7 +15368,7 @@ class ChatScreen(BaseAppScreen):
                 composer.restore_stashed_draft(stash)
             self._console_unknown_send_armed = None
             await self._dispatch_console_command(parse)
-            return
+            return False
 
         if parse.kind == KIND_UNKNOWN:
             # Fold-in (Task 9 fix-wave review; hard removal Task 4 -- there
@@ -14675,7 +15390,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 if composer is not None:
                     composer.restore_stashed_draft(stash)
-                return
+                return False
             if self._console_unknown_send_armed == draft:
                 # Second consecutive Enter on the *same* unmodified draft:
                 # disarm and fall through to a normal send below.
@@ -14687,9 +15402,9 @@ class ChatScreen(BaseAppScreen):
                 await self._append_native_console_system_message(
                     self._console_unknown_command_hint(parse.name)
                 )
-                return
+                return False
 
-        await self._dispatch_console_draft_send(draft, stash=stash)
+        return await self._dispatch_console_draft_send(draft, stash=stash)
 
     async def _dispatch_console_draft_send(
         self, draft: str, stash: "ConsoleDraftStash | None" = None
@@ -15054,14 +15769,32 @@ class ChatScreen(BaseAppScreen):
             return False
         if replace:
             composer.clear_draft()
+            composer.insert_text_as_paste(text)
         elif composer.draft_text():
             # Appending onto an existing draft must never mash the two
             # payloads together with no boundary between them. The composer
             # caret is editable now, so seek the end first to keep this an
-            # append rather than a mid-draft splice.
+            # append rather than a mid-draft splice. TASK-1281 review N1:
+            # the separator and the body are inserted as ONE
+            # `insert_text_as_paste` call (rather than a separate
+            # `insert_text("\n")` followed by the paste) so they also
+            # record as a single undo entry -- previously one Ctrl+Z only
+            # removed the pasted body and left a stray blank line behind.
+            #
+            # Review NEW-4 (known, deliberately unfixed): when `text` is
+            # long enough to collapse, the leading "\n" lands INSIDE that
+            # one collapsed segment, so the collapsed token itself carries
+            # no visible boundary marker between "existing draft" and the
+            # pasted body (canonical text is still correct either way).
+            # Splitting this back into two calls to restore a literal,
+            # always-visible separator would reintroduce the exact N1 bug
+            # this comment describes (two undo entries, a stray blank line
+            # surviving one Ctrl+Z) -- not a trivial fix, so left as a
+            # documented display-only limitation rather than reverted.
             composer.move_cursor_end()
-            composer.insert_text("\n")
-        composer.insert_text_as_paste(text)
+            composer.insert_text_as_paste(f"\n{text}")
+        else:
+            composer.insert_text_as_paste(text)
         return True
 
     async def _consume_pending_console_prompt_insert(self) -> None:
@@ -17858,6 +18591,94 @@ class ChatScreen(BaseAppScreen):
             self._build_console_control_state(self._pending_console_launch_context)
         )
 
+    def _console_composer_history_session_synced(self) -> bool:
+        """Return whether the composer's visible session matches the active one.
+
+        TASK-1281 review F1 (HIGH): mirrors the guard `_insert_console_
+        dictation` already carries for exactly this reason. During the
+        session-switch settle window (TASK-339) -- `controller.switch_
+        session(...)` runs synchronously and `store.active_session_id`
+        changes immediately, but `_console_visible_draft_session_id` only
+        catches up later, inside `_sync_console_session_draft`, once the
+        deferred sync actually runs -- the composer can still be showing
+        session A's draft while the store already considers session B
+        active. Undo/redo must never run while that window is open: doing
+        so would apply session A's history against the composer, then
+        (via the re-persist below) write A's resulting text into the STORE
+        under session B's id -- permanently destroying B's own draft the
+        moment the deferred swap finally lands.
+
+        Returns:
+            True only when the composer is not None, an active session
+            exists, and the composer is provably showing that exact
+            session's draft right now.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return False
+        store = self._ensure_console_chat_store()
+        return (
+            store.active_session_id is not None
+            and self._console_visible_draft_session_id == store.active_session_id
+        )
+
+    def _persist_console_composer_draft_after_history_navigation(
+        self, composer: ConsoleComposerBar
+    ) -> None:
+        """Re-sync store + Workbench state after an undo/redo mutates the draft.
+
+        Mirrors `_insert_console_dictation`'s own re-persist (TASK-1281):
+        undo/redo mutate the composer directly, bypassing every other
+        draft-mutation call site's own `store.set_session_draft` follow-up,
+        so without this the store and the visible composer would split-brain
+        the instant a session switch (or app restore) next reads the store's
+        copy instead of the live widget.
+
+        Callers must have already confirmed
+        `_console_composer_history_session_synced()` before mutating the
+        composer at all (F1) -- this method persists to whatever session is
+        CURRENTLY active, trusting that check rather than re-deriving it,
+        so it must never be called from a stale window.
+        """
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            try:
+                store.set_session_draft(store.active_session_id, composer.draft_text())
+            except KeyError:
+                pass
+        self._sync_console_workbench_actions_from_draft()
+
+    def _console_composer_undo(self) -> None:
+        """Undo the most recent Console composer draft mutation (TASK-1281).
+
+        A no-op composer-side and here when there is nothing to undo -- no
+        store write, no Workbench resync, matching the "silent no-op" AC.
+        Also a no-op, with the composer left entirely untouched, while the
+        session-switch settle window is open (F1) -- applying an undo in
+        that window at all (not just skipping the persist) would leave the
+        composer showing content that belongs to neither the session it
+        still visibly reflects nor the one the store now considers active.
+        """
+        if not self._console_composer_history_session_synced():
+            return
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.undo():
+            return
+        self._persist_console_composer_draft_after_history_navigation(composer)
+
+    def _console_composer_redo(self) -> None:
+        """Redo a Console composer draft mutation that was just undone (TASK-1281).
+
+        See `_console_composer_undo` -- the same settle-window guard (F1)
+        applies here.
+        """
+        if not self._console_composer_history_session_synced():
+            return
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.redo():
+            return
+        self._persist_console_composer_draft_after_history_navigation(composer)
+
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""
         if self._pending_console_delete_message_id is None:
@@ -18099,6 +18920,25 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
+        # Vertical caret movement differs from every neighbor above: those
+        # always consume the key (there is always somewhere to move -- even
+        # at a boundary, left/right/home/end land on a valid, if unchanged,
+        # offset). `move_cursor_up`/`move_cursor_down` instead return False
+        # on the first/last visual row, and the composer moves nothing at
+        # all -- so the event must fall through UNCONSUMED in that case,
+        # preserving whatever up/down would otherwise do on this screen
+        # (nothing today; a future transcript scroll or default focus
+        # behavior must not be silently swallowed by a no-op composer move).
+        if event.key == "up":
+            if composer.move_cursor_up():
+                event.stop()
+                event.prevent_default()
+                return
+        if event.key == "down":
+            if composer.move_cursor_down():
+                event.stop()
+                event.prevent_default()
+                return
         if event.key == "home":
             composer.move_cursor_home()
             event.stop()
@@ -18170,8 +19010,44 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "ctrl+u":
-            composer.clear_draft()
+            # TASK-1281: this is the one call site that opts into undo --
+            # an accidental full clear is exactly what undo exists for.
+            composer.clear_draft(record_history=True)
             self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+z":
+            self._console_composer_undo()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key in {"ctrl+shift+z", "ctrl+shift+Z"}:
+            # TASK-1281: both tokens are real Textual key strings for this
+            # chord depending on how the terminal (or its keyboard protocol)
+            # reports the shifted keycap's codepoint -- verified against
+            # `textual._xterm_parser.XTermParser._parse_extended_key` with
+            # synthetic Kitty CSI-u sequences: codepoint 122 ('z') + shift+
+            # ctrl modifiers yields "ctrl+shift+z", while codepoint 90 ('Z')
+            # with the same modifiers yields "ctrl+shift+Z". `Pilot.press()`
+            # (and this project's existing `ctrl+shift+p/c/a` bindings) use
+            # the lowercase form, which is the primary/expected token; the
+            # uppercase alias is defensive.
+            self._console_composer_redo()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+y":
+            # TASK-1733: terminals without the Kitty keyboard protocol
+            # (Terminal.app, stock iTerm2) collapse ctrl+shift+z to plain
+            # ctrl+z at the wire, making redo unreachable there. ctrl+y is
+            # the C0 control EM (0x19) -- textual's `_ansi_sequences` maps
+            # it to "ctrl+y" unconditionally, Kitty or not, so it survives
+            # every terminal. Same composer-owns-keystroke conditions and
+            # same always-consume shape as ctrl+shift+z above (including on
+            # an empty redo stack, where `_console_composer_redo` is a
+            # silent no-op) -- an addition alongside it, not a replacement.
+            self._console_composer_redo()
             event.stop()
             event.prevent_default()
             return
@@ -19104,6 +19980,9 @@ class ChatScreen(BaseAppScreen):
 
                 async def _do_close() -> None:
                     self._ensure_console_chat_controller().close_session(session_id)
+                    # TASK-1281: drop the closed session's undo/redo history
+                    # too -- it can never be switched back into.
+                    self._console_undo_histories.pop(session_id, None)
                     _evict_closing_session_images()
                     await self._sync_native_console_chat_ui()
 
@@ -19117,6 +19996,7 @@ class ChatScreen(BaseAppScreen):
                 self.app.push_screen(dialog)
             else:
                 self._ensure_console_chat_controller().close_session(session_id)
+                self._console_undo_histories.pop(session_id, None)
                 _evict_closing_session_images()
                 await self._sync_native_console_chat_ui()
             return

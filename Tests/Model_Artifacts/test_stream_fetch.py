@@ -1,10 +1,9 @@
 """TASK-595 Task 3: streaming guarded fetch."""
 
-from urllib.parse import urlparse
-
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from tldw_chatbook.Model_Artifacts.fetch import (
     FetchRestartRequired,
@@ -14,22 +13,6 @@ from tldw_chatbook.Model_Artifacts.fetch import (
 )
 
 BODY = b"0123456789" * 1000  # 10 KB
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server, in egress's real format.
-
-    ``tldw_chatbook.Utils.egress._normalize_trusted`` / ``_post_resolution``
-    key membership on the bare, lowercased HOSTNAME (e.g. ``"127.0.0.1"``),
-    not a scheme+host+port URL string -- confirmed by reading
-    ``egress._pre_resolution``/``_post_resolution`` and by the convention
-    already used across ``Tests/Image_Generation/test_http_client.py`` and
-    ``Tests/Utils/test_egress.py`` (``frozenset({"127.0.0.1"})``). The
-    fixture server binds to the loopback IP literal, which classifies as
-    "private" under ``_classify_ip`` and would otherwise be egress-blocked;
-    listing it here is what lets policy allow it.
-    """
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 @pytest.mark.asyncio

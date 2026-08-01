@@ -48,6 +48,15 @@ RUNTIME_MIGRATION_PATHS = {
     CITATION_MIGRATION_PATH,
     CHARACTER_AUTHORITY_MIGRATION_PATH,
 }
+_PRIVATE_CHILD_BASELINE_ENV_KEYS = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+)
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -59,6 +68,24 @@ import os
 import sys
 import time
 import tomllib
+
+
+def is_sensitive_environment_name(name):
+    normalized = name.upper()
+    return "PROXY" in normalized or any(
+        marker in normalized
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+
+
+assert not any(is_sensitive_environment_name(name) for name in os.environ)
 
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 excluded_source_roots = (
@@ -111,6 +138,15 @@ from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+
+
+def deny_server_client_construction(_self):
+    raise AssertionError("installed probe attempted server client construction")
+
+
+RuntimeServerContextProvider.build_client = deny_server_client_construction
+
 from tldw_chatbook.app import TldwCli, get_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -459,6 +495,11 @@ def service_identities(app):
             "citation_artifact_ownership_coordinator",
             "media_reading_scope_service",
             "sync_scope_service",
+            "server_sync_service",
+            "local_first_sync_service",
+            "manual_sync_control_service",
+            "sync_v2_dataset_keys",
+            "sync_state_repository",
         )
     )
 
@@ -501,6 +542,22 @@ def assert_service_graph(app):
         app.citation_artifact_ownership_coordinator.artifact_store
         is app.local_chatbook_service
     )
+    assert app.server_sync_service.client is None
+    assert app.server_sync_service.client_provider is app.server_context_provider
+    assert app.server_sync_service.state_repository is app.sync_state_repository
+    assert app.sync_scope_service.server_service is app.server_sync_service
+    assert app.sync_scope_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.server_service is app.server_sync_service
+    assert app.local_first_sync_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.local_store is None
+    assert app.local_first_sync_service.dataset_keys is app.sync_v2_dataset_keys
+    assert app.sync_v2_dataset_keys == {}
+    assert (
+        app.manual_sync_control_service.local_first_sync_service
+        is app.local_first_sync_service
+    )
+    assert app.manual_sync_control_service.state_repository is app.sync_state_repository
+    assert app.manual_sync_control_service.dataset_keys is app.sync_v2_dataset_keys
 
 
 app = get_app()
@@ -555,6 +612,7 @@ asyncio.run(exercise_production_app())
 assert wiring_calls == expected_wiring_calls
 assert_service_identities(app, initial_service_identities)
 assert_service_graph(app)
+assert app.server_context_provider._cached_client is None
 
 loaded_package_paths = []
 for module_name, module in tuple(sys.modules.items()):
@@ -731,6 +789,29 @@ def _target_hashes(target: Path) -> dict[str, str]:
     }
 
 
+def _is_sensitive_environment_name(name: str) -> bool:
+    """Return whether an environment name can carry credentials or proxy data.
+
+    Args:
+        name: Environment-variable name to classify.
+
+    Returns:
+        True when the name belongs to a credential or proxy category.
+    """
+    normalized = name.upper()
+    return "PROXY" in normalized or any(
+        marker in normalized
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+
+
 def _private_child_env(
     state_root: Path,
     target: Path,
@@ -749,14 +830,17 @@ def _private_child_env(
     config_path.write_text(
         '[general]\ndefault_tab = "home"\n\n'
         "[first_run]\nsetup_completed = true\n\n"
-        "[splash_screen]\nenabled = false\n",
+        "[splash_screen]\nenabled = false\n\n"
+        "[model_catalog]\nauto_refresh_enabled = false\n",
         encoding="utf-8",
     )
     config_path.chmod(0o600)
 
-    env = os.environ.copy()
-    for name in ("TLDW_TEST_CONFIG_ROOT", "TLDW_TEST_CONFIG_ROOT_OWNER"):
-        env.pop(name, None)
+    env = {
+        name: value
+        for name in _PRIVATE_CHILD_BASELINE_ENV_KEYS
+        if (value := os.environ.get(name)) and not _is_sensitive_environment_name(name)
+    }
     env.update(
         {
             "HOME": str(state_root),
@@ -770,6 +854,7 @@ def _private_child_env(
             "TEMP": str(temp_root),
             "TMP": str(temp_root),
             "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "PYTHONPATH": str(target),
             "EXPECTED_TARGET": str(target),
             "CHECKOUT_ROOT": str(checkout_root),
@@ -780,6 +865,45 @@ def _private_child_env(
         }
     )
     return env
+
+
+def test_private_child_env_excludes_host_credentials_and_proxy_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Retain safe process baselines while excluding host secrets and proxies.
+
+    Args:
+        monkeypatch: Pytest environment-isolation fixture.
+        tmp_path: Private filesystem root for the child-process fixture.
+    """
+    state_root = tmp_path / "state"
+    target = tmp_path / "target"
+    build_source_root = tmp_path / "build-source"
+    for path in (state_root, target, build_source_root):
+        path.mkdir()
+    credential_name = "TASK1601_TEST_API_KEY"
+    proxy_name = "HTTPS_PROXY"
+    monkeypatch.setenv(credential_name, "test-only-value")
+    monkeypatch.setenv(proxy_name, "http://127.0.0.1:9")
+    safe_baseline = {
+        "PATH": "/task1601/bin",
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "SYSTEMROOT": "/task1601/windows",
+        "WINDIR": "/task1601/windows",
+        "COMSPEC": "/task1601/windows/cmd.exe",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+    for name, value in safe_baseline.items():
+        monkeypatch.setenv(name, value)
+
+    env = _private_child_env(state_root, target, build_source_root)
+
+    assert credential_name not in env
+    assert proxy_name not in env
+    assert {name: env.get(name) for name in safe_baseline} == safe_baseline
+    assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 
 def _run_child(

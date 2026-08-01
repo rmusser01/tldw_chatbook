@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 from rich.markup import escape as escape_markup
 from textual.app import App
-from textual.widgets import Button, Input, Select, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -38,6 +38,7 @@ from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals import sample_bench
 from tldw_chatbook.UI.Evals.bench_editor import (
+    CAPTURE_CONTINUATIONS_LABEL,
     CLASSIC_TASK_DEFERRAL_SENTENCE,
     PREFIX_FIELD_LABEL,
     SYSTEM_PROMPT_FIELD_LABEL,
@@ -983,6 +984,144 @@ async def test_estimate_shows_call_count_and_time_and_no_cost_for_local_targets(
             assert estimate_widget.region.height > 0
 
 
+@pytest.fixture
+def bench_with_capture_continuations_on_raw(evals_db: EvalsDB) -> str:
+    """task-1710 T2: a raw-mode bench with the opt-in ON -- 2 targets x a
+    10-sample dataset, chosen so the arithmetic is easy to hand-verify:
+    20 measured calls, +20 for the per-cell continuation (one genuinely
+    separate raw-mode request per cell -- see ``capture_with_
+    continuation``'s own docstring, task-1710 T1), 40 total."""
+    target_a = _make_model(evals_db, "raw-target-a")
+    target_b = _make_model(evals_db, "raw-target-b")
+    dataset_id = evals_db.create_dataset(
+        name="continuation-cost-raw",
+        format="custom",
+        source_path="inline:continuation-cost-raw",
+        metadata={"sample_count": 10},
+    )
+    config = BenchConfig(
+        name="continuation cost raw v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_a, target_b),
+        capture_continuations=True,
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def bench_with_capture_continuations_off_raw(evals_db: EvalsDB) -> str:
+    """The flag-off sibling of ``bench_with_capture_continuations_on_raw``
+    -- same shape (2 targets x a 10-sample dataset), so the ONLY variable
+    between the two fixtures' own Estimate call counts is the flag."""
+    target_a = _make_model(evals_db, "raw-target-a")
+    target_b = _make_model(evals_db, "raw-target-b")
+    dataset_id = evals_db.create_dataset(
+        name="continuation-cost-raw-off",
+        format="custom",
+        source_path="inline:continuation-cost-raw-off",
+        metadata={"sample_count": 10},
+    )
+    config = BenchConfig(
+        name="continuation cost raw off v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_a, target_b),
+        capture_continuations=False,
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def bench_with_capture_continuations_on_chat(evals_db: EvalsDB) -> str:
+    """task-1710 T2: a CHAT-mode bench with the opt-in ON -- same 2 x 10
+    shape as the raw-mode fixtures above, but the flag must add NOTHING
+    here: chat mode salvages the continuation off the measurement
+    response already made (``_resolve_continuation``'s own docstring),
+    so 20 calls stays 20, never 40. Proves the Estimate does not just
+    blindly double whenever the flag is on."""
+    target_a = _make_model(evals_db, "chat-target-a")
+    target_b = _make_model(evals_db, "chat-target-b")
+    dataset_id = evals_db.create_dataset(
+        name="continuation-cost-chat",
+        format="custom",
+        source_path="inline:continuation-cost-chat",
+        metadata={"sample_count": 10},
+    )
+    config = BenchConfig(
+        name="continuation cost chat v1",
+        prompt_mode="chat",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_a, target_b),
+        capture_continuations=True,
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.mark.asyncio
+async def test_estimate_reflects_doubled_calls_when_capture_continuations_is_on_in_raw_mode(
+    evals_app, bench_with_capture_continuations_on_raw
+):
+    """task-1710 AC: "with it on, the Estimate reflects the added calls
+    before the run starts." Raw mode's per-cell continuation is one
+    genuinely separate extra request per cell, so 2 targets x 10 samples
+    (20 measured calls) becomes 40, not 20 -- pinned as the exact leading
+    token, the same anchoring convention `test_estimate_shows_call_count_
+    and_time_and_no_cost_for_local_targets` above uses, so a bug computing
+    e.g. 120 could not slip past a bare substring check."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_on_raw)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        calls_line = screen.query_one("#evals-inspector-estimate-calls")
+        calls_text = str(calls_line.renderable)
+        assert calls_text.startswith("40 calls"), calls_text
+
+
+@pytest.mark.asyncio
+async def test_estimate_is_unchanged_when_capture_continuations_is_off_in_raw_mode(
+    evals_app, bench_with_capture_continuations_off_raw
+):
+    """The flag-off sibling of the test above -- task-1710 AC: "with it
+    off, request count per cell is unchanged from today." Same 2 x 10
+    shape, flag off: 20 calls, not 40."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_off_raw)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        calls_line = screen.query_one("#evals-inspector-estimate-calls")
+        calls_text = str(calls_line.renderable)
+        assert calls_text.startswith("20 calls"), calls_text
+
+
+@pytest.mark.asyncio
+async def test_estimate_is_unchanged_when_capture_continuations_is_on_in_chat_mode(
+    evals_app, bench_with_capture_continuations_on_chat
+):
+    """Chat mode salvages the continuation from the measurement response
+    already made -- the flag must NOT double the estimate here, unlike
+    raw mode. Without this test, a formula that always doubles whenever
+    the flag is on (ignoring `prompt_mode` entirely) would still pass the
+    raw-mode test above while silently lying to a chat-mode bench author
+    about a cost they will never actually pay."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_on_chat)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        calls_line = screen.query_one("#evals-inspector-estimate-calls")
+        calls_text = str(calls_line.renderable)
+        assert calls_text.startswith("20 calls"), calls_text
+
+
 @pytest.mark.asyncio
 async def test_estimate_cost_line_is_not_no_cost_for_a_paid_target(
     evals_app, paid_target_bench
@@ -1797,7 +1936,17 @@ async def test_duplicate_add_is_rejected_inline_with_the_pinned_text(
         assert not screen.query("#evals-bench-target-1")
 
         # And a save persists exactly what was there before the rejected
-        # add, not a duplicate.
+        # add, not a duplicate. task-1710: the per-cell continuation
+        # checkbox added one row to this form, and the error callout
+        # above already pushes this pane close to `#evals-bench-editor`'s
+        # own documented scroll threshold at a realistic 160x45 viewport
+        # (see that id's CSS comment) -- `scroll_visible` first, the same
+        # convention this file's own inspector-pane geometry tests use,
+        # rather than assume Save always fits one screenful below an
+        # error callout.
+        save_button = screen.query_one("#evals-bench-save", Button)
+        save_button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#evals-bench-save")
         await pilot.pause()
         saved = load_bench(evals_db, task_id)
@@ -2033,6 +2182,19 @@ async def test_create_target_with_a_prefix_stages_a_row_and_save_persists_the_pr
 
         screen.query_one("#evals-target-name", Input).value = "steered-raw"
         screen.query_one("#evals-target-prefix", Input).value = "Continue the story: "
+        # task-1710: the per-cell continuation checkbox added one row to
+        # this form, pushing the mini-form's own Create button right to
+        # `#evals-bench-editor`'s own documented scroll threshold at a
+        # realistic 160x45 viewport with BOTH the Add picker and the
+        # mini-form present (see that id's CSS comment) -- `scroll_
+        # visible` first rather than assume it still fits unscrolled;
+        # `pilot.click` silently returns `False` (no exception) for a
+        # widget whose computed screen position is not actually painted,
+        # which is exactly what made this failure mode look like nothing
+        # happened rather than an out-of-bounds error.
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        create_button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#evals-bench-create-target")
         await pilot.pause()
 
@@ -2049,6 +2211,9 @@ async def test_create_target_with_a_prefix_stages_a_row_and_save_persists_the_pr
         assert screen.query_one("#evals-target-name", Input).value == ""
         assert screen.query_one("#evals-target-prefix", Input).value == ""
 
+        save_button = screen.query_one("#evals-bench-save", Button)
+        save_button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#evals-bench-save")
         await pilot.pause()
         assert not screen.query_one("#evals-bench-form-error").display
@@ -2158,7 +2323,20 @@ async def test_blank_target_name_auto_names_uniquely_across_repeated_creates(
         await pilot.pause()
         screen = evals_app_configured.screen
 
+        # task-1710: the per-cell continuation checkbox added one row to
+        # this form; the SECOND create (after the first has already
+        # staged a target row, pushing the mini-form's own Create button
+        # one row further down) is what actually crosses `#evals-bench-
+        # editor`'s own documented scroll threshold at this file's
+        # realistic 160x45 viewport -- `scroll_visible` before each click
+        # rather than assume either still fits unscrolled.
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        create_button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        create_button.scroll_visible(animate=False)
         await pilot.pause()
         await pilot.click("#evals-bench-create-target")
         await pilot.pause()
@@ -2216,6 +2394,17 @@ async def test_create_target_duplicate_name_notifies_and_stages_nothing(
         screen = evals_app_configured.screen
 
         screen.query_one("#evals-target-name", Input).value = "dup-target"
+        # task-1710: the pre-seeded "dup-target" row above means
+        # `llama_targets()` is non-empty, so the Add picker ALSO renders
+        # alongside the mini-form (unlike the genuinely-zero-models
+        # fixture other create-target tests use) -- combined with the
+        # per-cell continuation checkbox's own added row, this pushes the
+        # Create button past `#evals-bench-editor`'s own documented
+        # scroll threshold at a realistic 160x45 viewport; `scroll_
+        # visible` first rather than assume it still fits unscrolled.
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        create_button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#evals-bench-create-target")
         await pilot.pause()
 
@@ -2692,3 +2881,449 @@ async def test_is_dirty_is_false_when_the_widget_never_composed_a_form(evals_app
         EvalsViewModel(None), "does-not-exist", id="evals-bench-editor-standalone"
     )
     assert editor.is_dirty() is False
+
+
+# ---------------------------------------------------------------------------
+# task-1710 T2: the per-cell continuation opt-in checkbox itself -- reflects
+# the loaded config, saves, flips `is_dirty()`, and survives a targeted
+# targets-section rebuild. `bench_with_capture_continuations_on_raw` (above,
+# in the Estimate section) already covers the checkbox=True load case, reused
+# here rather than duplicated.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_checkbox_reflects_the_loaded_config(
+    evals_app, bench_with_mixed_readiness, bench_with_capture_continuations_on_raw
+):
+    """The checkbox's initial `value` (set in `compose()` from `config.
+    capture_continuations`) must match whatever was actually persisted --
+    both directions, off (`bench_with_mixed_readiness`, never set, so
+    defaults `False`) and on (`bench_with_capture_continuations_on_raw`)."""
+    task_id_off, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.select(kind="bench", id=task_id_off)
+        await pilot.pause()
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is False
+        )
+
+        screen.select(kind="bench", id=bench_with_capture_continuations_on_raw)
+        await pilot.pause()
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is True
+        )
+
+
+def test_capture_continuations_label_states_the_per_cell_request_cost():
+    """task-1710's own instruction: "labelled honestly ... the label/
+    tooltip should say that plainly (e.g. that it adds one request per
+    cell)." A pure string assertion against the pinned constant, no app
+    needed -- mirrors this file's other verbatim-label pins (e.g.
+    `PREFIX_FIELD_LABEL`)."""
+    assert "request" in CAPTURE_CONTINUATIONS_LABEL
+    assert "cell" in CAPTURE_CONTINUATIONS_LABEL
+
+
+@pytest.mark.asyncio
+async def test_save_without_touching_the_checkbox_preserves_capture_continuations_flag(
+    evals_app, evals_db, bench_with_capture_continuations_on_raw
+):
+    """THE regression task-1710 T1's own report flagged by name:
+    `_on_save_pressed` used to thread `concurrency=loaded.concurrency`
+    through its `BenchConfig(...)` construction with no equivalent for
+    `capture_continuations` at all, so saving ANY existing bench through
+    this editor silently reset the flag back to its dataclass default
+    (`False`) -- destroying a run's own recorded cost/content commitment
+    on an UNRELATED edit that never touched this checkbox. Saves a
+    `capture_continuations=True` bench after editing an unrelated field
+    (Description) and WITHOUT touching the checkbox at all; the flag must
+    still read `True` afterward."""
+    task_id = bench_with_capture_continuations_on_raw
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is True
+        )
+        screen.query_one("#evals-bench-description", Input).value = "edited elsewhere"
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.capture_continuations is True
+        assert saved.description == "edited elsewhere"
+
+
+@pytest.mark.asyncio
+async def test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """The opt-IN itself, end to end: a bench loaded with the flag off
+    (`bench_with_mixed_readiness`'s default), the checkbox flipped on via
+    the UI, Save -- the flag must persist as `True`, proving the checkbox
+    is genuinely wired to `BenchConfig(...)`'s own construction, not just
+    read back its own unchanged initial value (which the preservation
+    test above alone could not rule out)."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        assert checkbox.value is False
+        checkbox.value = True
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.capture_continuations is True
+
+
+@pytest.mark.asyncio
+async def test_toggling_capture_continuations_checkbox_flips_is_dirty(
+    evals_app, bench_with_mixed_readiness
+):
+    """Part of the form's dirty contract like every other field (task-1610)
+    -- a background run/sample-bench worker completing while this is
+    toggled-but-unsaved must degrade to a toast, not silently recompose
+    and discard the flip (`evals_screen.py`'s `_selection_unmoved_since_
+    launch`, which queries `is_dirty()`). Toggling on flips it true;
+    toggling back to the loaded value (off) reads clean again -- proves
+    the comparison is against `loaded.capture_continuations`, not merely
+    "has this checkbox ever been touched"."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        assert editor.is_dirty() is False
+
+        checkbox.value = True
+        assert editor.is_dirty() is True
+
+        checkbox.value = False
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_checkbox_survives_a_targeted_targets_section_rebuild(
+    evals_app, bench_with_available_add_target
+):
+    """The checkbox lives OUTSIDE `#evals-bench-targets-section` (yielded
+    earlier in `compose()`, right after the probes field) -- an Add-target
+    press only ever tears down and rebuilds that one child
+    (`_refresh_targets_section`'s own docstring), so a toggled-but-unsaved
+    checkbox must survive it exactly like Name/Description/Top-K/Probes
+    already do, not just happen to survive because no test ever checked."""
+    task_id, existing_id, addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        checkbox.value = True
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = addable_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        # The rebuild genuinely happened (a new row exists) -- otherwise
+        # this test would trivially pass by never exercising the rebuild
+        # at all.
+        assert screen.query_one("#evals-bench-target-1")
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is True
+        )
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_checkbox_survives_a_prompt_mode_flip_rebuild(
+    evals_app, bench_with_mixed_readiness
+):
+    """Review Minor: sibling of `test_capture_continuations_checkbox_
+    survives_a_targeted_targets_section_rebuild` above, but for the OTHER
+    trigger of the SAME targeted `_refresh_targets_section` rebuild -- a
+    prompt-mode flip (`_on_prompt_mode_changed`). The checkbox lives
+    outside `#evals-bench-targets-section` regardless of which handler
+    triggers the rebuild, so this is mechanistically the identical
+    guarantee the Add-target test above pins -- but nothing pinned THIS
+    specific trigger directly until now. Also re-confirms, in the SAME
+    flip, that a typed Name/Probes edit survives alongside the checkbox
+    (already covered on its own by `test_mode_flip_swaps_the_steering_
+    field_and_preserves_typed_state`; repeated here so this test stands
+    alone rather than relying on a sibling test for that half of the
+    claim)."""
+    task_id, _ = bench_with_mixed_readiness  # raw mode
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        checkbox.value = True
+        screen.query_one("#evals-bench-name", Input).value = "typed-but-unsaved-name"
+        screen.query_one("#evals-bench-probes", TextArea).text = "typed probe"
+
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        await pilot.pause()
+
+        # The rebuild genuinely happened (the steering field swapped) --
+        # otherwise this test would trivially pass by never exercising
+        # the rebuild at all.
+        assert not screen.query("#evals-target-prefix")
+        assert screen.query_one("#evals-target-system-prompt", Input)
+
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is True
+        )
+        assert (
+            screen.query_one("#evals-bench-name", Input).value
+            == "typed-but-unsaved-name"
+        )
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "typed probe"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL, live-verification: the checkbox could not actually be toggled
+# through the real UI at all (see `_evals.tcss`'s own `#evals-bench-capture-
+# continuations:focus` comment for the full two-part root cause). Every test
+# above that touches this checkbox sets/reads `.value` PROGRAMMATICALLY --
+# none of them drive a real click or keypress and then assert the value
+# flipped, which is precisely the gap that let this ship. These do.
+# ---------------------------------------------------------------------------
+
+
+def _rendered_row_text(app, y: int) -> str:
+    """Joins one compositor row's segment text into a single string --
+    what was ACTUALLY painted at that screen row, not `Static.renderable`
+    (which stays the same `Content` object regardless of focus; the
+    invisible-while-focused bug this section guards against was a pure
+    compositor-level effect -- a focus `outline`/`border` painting OVER
+    the label -- that `.renderable` alone would never catch). Mirrors
+    `test_lab_mode_strip.py`'s own `_rendered_text` helper (this Textual
+    version has no `App.export_text()`), scoped to one row rather than
+    the whole screen so an assertion here cannot be satisfied by the
+    label appearing somewhere else entirely."""
+    strip = app.screen._compositor.render_strips()[y]
+    return "".join(segment.text for segment in strip)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (160, 45)], ids=["235x52", "160x45"])
+async def test_real_click_toggles_the_checkbox_and_the_flip_survives_save(
+    evals_app, evals_db, bench_with_available_add_target, size
+):
+    """The headline regression test: a REAL `pilot.click` (MouseDown ->
+    MouseUp -> Click, the same synthetic sequence a real terminal's mouse
+    driver produces -- see `Pilot._post_mouse_events`) on the checkbox,
+    not a direct `.value =` assignment, must (1) flip `.value` to `True`,
+    (2) flip `is_dirty()` to `True`, (3) leave the checkbox's own label
+    genuinely painted while it holds focus (the invisible-while-focused
+    half of the bug -- asserted against the compositor's real output, not
+    geometry alone), (4) survive a REAL click on Save and land in the
+    persisted `BenchConfig` read back through `load_bench` (never the
+    widget), and (5) leave the targets section's Add picker AND "+ New
+    target" mini-form still reachable inside the pane afterward -- the
+    documented prior regression (`CAPTURE_CONTINUATIONS_LABEL`'s own
+    docstring) this fix must not reintroduce. `bench_with_available_add_
+    target` gives BOTH the Add picker (an addable target exists) and the
+    mini-form (always rendered) to check.
+
+    Parametrized over 235x52 (the size live verification used) and
+    160x45 (this file's own default "realistic" size, and the size the
+    prior regression was measured at)."""
+    task_id, existing_id, _addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        app = evals_app
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        assert checkbox.value is False
+
+        clicked = await pilot.click("#evals-bench-capture-continuations")
+        await pilot.pause()
+        assert clicked, "the click did not land on the checkbox itself"
+        assert checkbox.value is True
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        # Painted content, not just geometry: the label must genuinely be
+        # ON SCREEN while the checkbox holds focus (it does, right after
+        # a click).
+        assert checkbox.has_focus is True
+        assert checkbox.region.height == 1, (
+            "the checkbox grew taller than its own fixed height while "
+            f"focused: {checkbox.region}"
+        )
+        row_text = _rendered_row_text(app, checkbox.region.y)
+        assert CAPTURE_CONTINUATIONS_LABEL in row_text, (
+            f"the checkbox's own label is not painted at its row while "
+            f"focused -- got {row_text!r}"
+        )
+
+        save_button = screen.query_one("#evals-bench-save", Button)
+        save_clicked = await pilot.click(save_button)
+        await pilot.pause()
+        assert save_clicked, "the click did not land on the Save button"
+        assert not screen.query_one("#evals-bench-form-error").display
+
+        saved = load_bench(evals_db, task_id)
+        assert saved.capture_continuations is True
+        assert set(saved.target_ids) == {existing_id}
+
+        # The targets section's Add picker AND "+ New target" mini-form
+        # must both be REACHABLE afterward -- but "reachable" for this
+        # specific single-target/single-addable-target shape at 160x45
+        # means "via #evals-bench-editor's own established scroll", not
+        # "both fit in one screenful unscrolled": confirmed live (a
+        # throwaway diagnostic script, plain Save, no checkbox touched at
+        # all) that the Add picker fits unscrolled while the mini-form's
+        # own Create button sits exactly ONE row past this pane's clip
+        # rectangle (`max_scroll_y == 1`) at 160x45, BEFORE this session's
+        # own checkbox fix and unrelated to it -- the SEVERE prior
+        # regression `CAPTURE_CONTINUATIONS_LABEL`'s docstring documents
+        # was the create-target control pushed OFF THE SCROLLABLE RANGE
+        # ENTIRELY (unreachable even scrolled to `max_scroll_y`), not "one
+        # row of scroll needed", and this fix must not reintroduce THAT.
+        # Mirrors `test_target_rows_stay_reachable_at_4_and_8_targets`'s
+        # own established "reachable via this pane's one scroll level"
+        # convention rather than asserting a stricter "always fits
+        # unscrolled" claim this exact section has never actually made.
+        detail_pane = screen.query_one("#evals-detail-pane")
+        editor = screen.query_one("#evals-bench-editor")
+        add_button = screen.query_one("#evals-bench-add-target-button")
+        create_button = screen.query_one("#evals-bench-create-target")
+
+        assert add_button.region.width > 0 and add_button.region.height > 0
+        assert detail_pane.region.contains_region(add_button.region), (
+            f"Add picker button at {add_button.region} escapes the detail "
+            f"pane's clip region {detail_pane.region} after a real "
+            f"checkbox click+Save at {size}"
+        )
+
+        editor.scroll_to(y=editor.max_scroll_y, animate=False)
+        await pilot.pause()
+        create_button = screen.query_one("#evals-bench-create-target")
+        assert create_button.region.width > 0 and create_button.region.height > 0
+        assert detail_pane.region.contains_region(create_button.region), (
+            f"scrolling to the editor's own end never brought the "
+            f"create-target button at {create_button.region} into the "
+            f"detail pane's clip region {detail_pane.region} at {size} "
+            f"-- THIS is the severe prior regression (unreachable even "
+            f"scrolled), not merely 'needs a scroll'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_toggle_key_flips_the_checkbox_value(
+    evals_app, bench_with_mixed_readiness
+):
+    """The keyboard half of the same real-interaction gap: focusing the
+    checkbox and sending the actual toggle key (`ToggleButton.BINDINGS`:
+    ``"enter,space"``) -- via `pilot.press`, a real key event, never
+    `.value =` -- must flip `.value`, exactly like a real click does."""
+    task_id, _ = bench_with_mixed_readiness  # raw mode
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        checkbox.focus()
+        await pilot.pause()
+        assert checkbox.has_focus is True
+        assert checkbox.value is False
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert checkbox.value is True
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        # The other bound key (`enter`) toggles it back -- both halves of
+        # `ToggleButton.BINDINGS` genuinely wired, not just one.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+async def test_create_target_control_stays_hit_testable_across_many_staged_targets(
+    evals_app_configured, evals_db, bench_with_zero_llama_models
+):
+    """TASK-1764 regression: pressing "+ New target" repeatedly must leave
+    ``#evals-bench-create-target`` HIT-TESTABLE, not merely present in the
+    DOM -- ``Screen.get_widget_at`` resolving its own region's center to
+    itself, the exact check `pilot.click` (and a real mouse) performs
+    before a press does anything.
+
+    Every row `stage_target`/`_on_add_target_pressed` mints lands ABOVE
+    this mini-form (see `_keep_create_control_in_view`'s own docstring),
+    pushing the button just pressed further down each time. This pane's
+    history is three separate regressions of exactly that shape, each
+    previously "fixed" by finding one more row of vertical slack
+    elsewhere in the pane -- which only holds for however many targets
+    happen to fit, and silently breaks again the next time a row is
+    added anywhere above it (task-1710's checkbox was the third: see
+    `_keep_create_control_in_view`'s docstring). A slack-based fix passes
+    at whatever target count the fix author tried and no further; this
+    drives SIX presses -- well past the two
+    `test_evals_steering_e2e.py::
+    test_two_ui_authored_targets_one_steered_light_up_column_mode_delta`
+    (this bug's own closing E2E) exercises -- at the SAME realistic
+    160x45 viewport every other reachability check in this module uses,
+    to prove the fix is viewport/count-independent rather than re-tuned
+    slack.
+    """
+    task_id = bench_with_zero_llama_models
+    async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app_configured.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app_configured.screen
+
+        for i in range(6):
+            screen.query_one("#evals-target-name", Input).value = f"target {i}"
+            await pilot.click("#evals-bench-create-target")
+            await pilot.pause()
+
+            control = screen.query_one("#evals-bench-create-target", Button)
+            center = control.region.center
+            hit, _ = screen.get_widget_at(int(center[0]), int(center[1]))
+            assert hit is control, (
+                f"create-target control not hit-testable after {i + 1} staged "
+                f"target(s) -- landed on {hit!r} instead"
+            )
+
+        models = evals_db.list_models(provider="llama_cpp")
+        assert len(models) == 6, "each reachable press must mint one additional row"

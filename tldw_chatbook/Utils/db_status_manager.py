@@ -64,7 +64,7 @@ class DBStatusManager:
             }
 
             # Format status string
-            # task-1640: spell the labels -- single letters decoded only by a
+            # task-1714: spell the labels -- single letters decoded only by a
             # hover tooltip fail keyboard-first/low-vision users (critique r4).
             status_string = f"Prompts: {db_sizes['prompts']} | Chats/Notes: {db_sizes['chachanotes']} | Media: {db_sizes['media']}"
             logger.debug(

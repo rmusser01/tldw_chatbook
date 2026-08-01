@@ -4,6 +4,7 @@ Status: Accepted
 Date: 2026-07-28
 Related Tasks:
 [TASK-1538](../tasks/task-1538%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
+[TASK-1601](../tasks/task-1601%20-%20Bind-application-Sync-graph-to-the-runtime-server-context-provider.md)
 
 ## Decision
 
@@ -20,6 +21,19 @@ server selection, credential, client-cache, invalidation, and shutdown owner
 as the other provider-backed application services. The public
 `ServerWritingService.from_config(...)` compatibility constructor remains
 available outside application composition.
+
+The app-composed `ServerSyncService` also resolves through the application's
+long-lived `server_context_provider` while retaining the exact app-owned
+`sync_state_repository`. The public `ServerSyncService.from_config(...)`
+compatibility constructor remains available outside application composition.
+Sync owns no client or close hook; the application provider remains the sole
+client-cache invalidation and shutdown owner.
+
+`LocalFirstSyncService` and `ManualSyncControlService` retain the same
+process-memory-only dataset-key mapping even when it is initially empty. Keys
+are not persisted, serialized, logged, or projected into diagnostics. The
+production local apply store remains unavailable until TASK-1602 defines its
+data-owner, transaction, tombstone, conflict, and privacy contracts.
 
 Scope services receive dependencies that already exist at their construction
 boundary. `ChatConversationScopeService` and `MediaReadingScopeService`
@@ -57,6 +71,14 @@ private provider is outside the app's established shutdown boundary. The
 private provider also retains the configuration mapping captured during
 startup instead of following the active runtime server context.
 
+After TASK-1538, application Sync still used
+`ServerSyncService.from_config(...)`, creating a private compatibility
+provider outside the application's runtime rebind and shutdown boundary. The
+provider-aware factory did not forward `sync_state_repository`. In addition,
+`LocalFirstSyncService` replaced an explicitly supplied empty dataset-key
+mapping, so later key loads could become visible to manual preview but not to
+execution.
+
 `_wire_watchlists_and_notifications_services()` creates `sync_scope_service`.
 Before this decision, the Media scope is constructed first without Sync; the
 helper's later reconciliation loop mutates Media to attach the newly created
@@ -76,6 +98,13 @@ There are additional app call sites that use `Server*Service.from_config(...)`.
 TASK-1538 records that inventory as separate follow-up work. Correcting every
 provider and shutdown contract in the same change would turn a verified
 single-pass repair into an application-wide lifecycle migration.
+
+On TASK-1601's final reviewed `origin/dev` baseline, the executable AST
+inventory contained 32 application-level `Server*Service.from_config(...)`
+calls: one Sync call plus 31 residual calls. This narrow migration removes the
+Sync call, leaving 31. The residual inventory remains subject to separate
+semantic migrations and is re-derived after rebases rather than treated as a
+repository-wide constant.
 
 ## Alternatives Considered
 
@@ -97,7 +126,11 @@ single-pass repair into an application-wide lifecycle migration.
   construction.
 - Writing follows the active server-context provider and its existing cached
   client shutdown.
+- App-composed Sync follows the active runtime server and the application's
+  existing cached-client shutdown.
 - Chat and Media Sync operations start with the real application Sync owner.
+- Sync transport, scope, Local-first, and manual control retain one repository
+  and one memory-only key-cache owner.
 - Regression coverage remains focused on the verified call sites and the real
   production app.
 - The repair does not add a service locator or speculative lifecycle
@@ -112,11 +145,17 @@ single-pass repair into an application-wide lifecycle migration.
   declared graph-safe by this decision.
 - Other `Server*Service.from_config(...)` application call sites remain for a
   separate audited migration.
+- Manual Sync remains explicitly blocked because no production local apply
+  store exists; TASK-1602 owns that design.
+- The other AST-verified app-level compatibility-provider calls remain for
+  separate semantic migrations, and their count is re-derived after rebases.
 - Writing local-service failure remains represented by an unavailable local
   backend; the accidental second construction attempt is removed.
 
 ## Links
 
 - [TASK-1538 design](../../Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md)
+- [TASK-1601 design](../../Docs/superpowers/specs/2026-07-31-application-sync-runtime-provider-design.md)
+- [TASK-1602: Define production local apply-store ownership](../tasks/task-1602%20-%20Define-production-local-apply-store-ownership-for-manual-Sync-v2.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
 - [ADR-032: Immutable Installed Distribution Assets](032-immutable-installed-distribution-assets.md)

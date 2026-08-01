@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 #
 # 3rd-Party Imports
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -38,6 +39,7 @@ from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     server_is_active,
 )
 from ..Utils.log_widget_manager import LogWidgetManager
+from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -249,6 +251,8 @@ class LLMManagementWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._async_presentation_generations: dict[str, int] = {}
+        self._managed_install_active = False
+        self._managed_install_progress = None
 
         # Map navigation button IDs to view IDs
         self.view_mapping = {
@@ -259,7 +263,8 @@ class LLMManagementWindow(Container):
             "onnx": "llm-view-onnx",
             "transformers": "llm-view-transformers",
             "mlx-lm": "llm-view-mlx-lm",
-            "local-models": "llm-view-local-models",
+            "curated": "llm-view-curated",
+            "installed": "llm-view-installed",
             "download-models": "llm-view-download-models",
         }
 
@@ -897,11 +902,29 @@ class LLMManagementWindow(Container):
                     classes="log_output_large",
                 )
 
-            # Local Models View (preserved unchanged)
-            with Container(id="llm-view-local-models", classes="llm-view"):
-                from ..Widgets.HuggingFace import LocalModelsWidget
+            # Curated and Installed stay idle until their rail row is selected.
+            with Container(id="llm-view-curated", classes="llm-view"):
+                from .Screens.model_curated_view import CuratedView
 
-                yield LocalModelsWidget(self.app_instance, id="local-models-widget")
+                yield CuratedView(id="curated-models-view")
+
+            with Container(id="llm-view-installed", classes="llm-view"):
+                from .Screens.model_installed_view import InstalledView
+
+                legacy_dir = None
+                app_config = getattr(self.app_instance, "app_config", {})
+                if isinstance(app_config, dict):
+                    configured = app_config.get("llm_management", {}).get(
+                        "model_download_dir"
+                    )
+                    if configured:
+                        from pathlib import Path
+
+                        legacy_dir = Path(str(configured)).expanduser()
+                yield InstalledView(
+                    legacy_dir=legacy_dir,
+                    id="installed-models-view",
+                )
 
             # Download Models View (preserved unchanged)
             with Container(id="llm-view-download-models", classes="llm-view"):
@@ -910,6 +933,38 @@ class LLMManagementWindow(Container):
                 yield HuggingFaceModelBrowser(
                     self.app_instance, id="huggingface-model-browser"
                 )
+
+    @on(InstallProgressed)
+    def _managed_install_progressed(self, event: InstallProgressed) -> None:
+        """Mirror Curated progress into the persistent Installed view."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = True
+        self._managed_install_progress = event.progress
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(event.progress, active=True)
+
+    @on(InstallStatusChanged)
+    def _managed_install_status_changed(self, event: InstallStatusChanged) -> None:
+        """Synchronize install lifecycle state and refresh completed inventory."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = event.active
+        if not event.active:
+            self._managed_install_progress = None
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(
+            self._managed_install_progress,
+            active=event.active,
+        )
+        if not event.active:
+            installed.ensure_loaded(force=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route allowlisted actions inside this destination."""
@@ -1057,6 +1112,18 @@ class LLMManagementWindow(Container):
         that -- a live request to huggingface.co on arrival, for users who
         never open Download Models (task-887).
         """
+        if view_name in {"curated", "installed"}:
+            try:
+                managed_view = view_widget.query_one(
+                    "#curated-models-view"
+                    if view_name == "curated"
+                    else "#installed-models-view"
+                )
+            except QueryError:
+                logger.debug(f"{view_name.title()} view is unavailable; skipped.")
+                return
+            managed_view.ensure_loaded()
+            return
         if view_name != "download-models":
             return
         # Local import: this module is on the Models mount path, and the

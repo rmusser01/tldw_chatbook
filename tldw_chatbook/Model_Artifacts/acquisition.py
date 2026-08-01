@@ -8,7 +8,6 @@ import functools
 import hashlib
 import json
 import os
-import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import (
@@ -26,7 +25,12 @@ import httpx
 
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise_async
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise_async,
+    origin_of,
+    same_origin,
+)
 
 from .fetch import (
     FetchRestartRequired,
@@ -41,16 +45,24 @@ from .service import (
     ACQUISITION_SESSION_LEASE_KEY,
     NONBLOCKING_LEASE_TIMEOUT_SECONDS,
     ArtifactConflictError,
+    ArtifactDescriptorValidationError,
     ArtifactError,
     ArtifactIntegrityError,
     ArtifactPathError,
     ArtifactRef,
     ArtifactStateError,
+    ProvenanceClass,
+    _validate_url,
     closure_fingerprint,
 )
 
 if TYPE_CHECKING:
-    from .service import ArtifactDescriptor, ArtifactFile, ModelArtifactService
+    from .service import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ModelArtifactService,
+        _ManagedDownloadStage,
+    )
 
 
 # Constants per spec (Docs/superpowers/specs/2026-07-30-managed-model-acquisition-design.md)
@@ -76,40 +88,44 @@ _CoreCallResult = TypeVar("_CoreCallResult")
 # these same names: HUGGINGFACE_API_KEY, then HF_TOKEN, then config.
 _CREDENTIAL_ENV_HINT = "HUGGINGFACE_API_KEY (or HF_TOKEN)"
 
-# The fetch-state sidecar's filename SUFFIX when addressed as a sibling of
-# its staging directory (see _fetch_sidecar_path). Mirrors
-# service.py's _MANAGED_FETCH_SIDECAR_SUFFIX (private there, used by the
-# staging GC classifier) -- a drift-guard test in
-# test_reconcile_staging_gc.py fails if the two ever diverge, the same
-# pattern fetch.py's _STRIP_HEADERS uses against egress.py's.
-_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
+# TASK-1694: the fetch-state sidecar's filename, addressed inside a
+# ``state/`` directory that is a SIBLING of the download stage's
+# ``payload/`` subtree (see ``_fetch_sidecar_path`` and
+# ``ModelArtifactService._download_stage_for``/``_finalize_download_stage``
+# in service.py). This supersedes the pre-1694 design, where the sidecar
+# lived as a sibling FILE of the (then bare) staging directory
+# (``<variant>.fetch-state.json``, named via the now-removed
+# ``_FETCH_SIDECAR_SUFFIX``): that convention existed only to keep resume
+# metadata out of what ``core.install(..., consume_source=True)``
+# validated and promoted. The service-owned download stage makes that
+# workaround unnecessary -- ``state/`` is never part of the ``payload/``
+# subtree ``_finalize_download_stage`` renames into the immutable
+# destination, so resume metadata cannot end up inside a promoted
+# artifact by construction, regardless of what acquisition.py names it or
+# where inside ``state/`` it puts it. See
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1.
+_FETCH_STATE_FILENAME = "fetch-state.json"
 
 
 def _fetch_sidecar_path(staging_dir: Path) -> Path:
-    """Sibling fetch-state sidecar path for a managed staging directory.
-
-    TASK-595 final-review P2: the sidecar used to live INSIDE the payload
-    directory it describes (``staging_dir / "fetch-state.json"``) --
-    ``core.install``'s payload-tree validation rejects any file it
-    doesn't declare, so ``_install_artifact`` had to delete the sidecar
-    before every install attempt, destroying the only resumable state on
-    ANY install failure (including a merely transient, retryable one).
-    Living OUTSIDE the payload tree instead -- a sibling FILE named after
-    the staging directory, not a child of it -- means ``core.install``
-    never sees it at all, so nothing needs deleting before the call, and
-    a failed install leaves the sidecar (and the staged bytes it
-    describes) exactly where a later ``provision()`` attempt can resume
-    from.
+    """Fetch-state sidecar path for a download stage's payload directory.
 
     Args:
-        staging_dir: The ``staging/managed/<id>/<rev>/<variant>`` payload
-            directory for one artifact.
+        staging_dir: A download stage's ``payload/`` directory (i.e.
+            ``_ManagedDownloadStage.payload``, or -- for the standalone
+            unit tests that exercise ``_fetch_artifact``/
+            ``_preverify_artifact`` directly without a real stage -- any
+            directory whose parent also owns a sibling ``state/``
+            directory this call may create).
 
     Returns:
-        The sidecar path, a sibling of ``staging_dir`` (same parent
-        directory, name ``<variant>.fetch-state.json``).
+        ``staging_dir.parent / "state" / "fetch-state.json"`` -- inside
+        the stage's ``state/`` subtree, never inside ``staging_dir``
+        itself (which is exactly what gets promoted on a successful
+        finalize).
     """
-    return staging_dir.parent / f"{staging_dir.name}{_FETCH_SIDECAR_SUFFIX}"
+    return staging_dir.parent / "state" / _FETCH_STATE_FILENAME
 
 
 # Error hierarchy: all subclass ArtifactError
@@ -186,6 +202,33 @@ class ArtifactCatalog(Protocol):
             KeyError: If the reference is not found.
         """
         ...
+
+
+# TASK-1695: an artifact's declared relative file path -> its absolute,
+# credential-free download URL, for every not-yet-installed artifact in a
+# closure. Supplied by the CALLER of preflight()/provision() (a future
+# catalog/adapter layer, out of this task's scope -- see
+# EnvConfigCredentialResolver's docstring for the analogous "adapter, not
+# catalog framework" boundary) so per-file URLs never need to enter the
+# frozen ArtifactFile/ArtifactDescriptor schema. See
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md, "3. Per-file source URLs", for why this contract wins
+# over extending that schema (TASK-1693, closed as superseded).
+#
+# A plain nested Mapping, not a dataclass: ArtifactRef is already used as a
+# dict key elsewhere in this module (resolve_catalog_closure's `resolved`
+# dict) and in service.py, so this is the lowest-ceremony shape a caller can
+# hand over directly as a dict literal, e.g. ``{ref: {"a.bin": url_a}}``.
+# A dataclass wrapper would add construction/equality machinery this
+# contract has no use for: every entry's completeness and credential-free
+# shape is validated by ``_resolve_file_sources`` at ``preflight()``/
+# ``provision()`` time regardless of how the caller assembled the mapping --
+# there is no invariant a dataclass could usefully enforce at construction
+# that isn't already enforced, once, at the one place these values are
+# consumed. Read-only by contract (never mutated after being passed in);
+# ``Mapping`` (not ``dict``) says so in the type itself without needing a
+# runtime-enforced frozen wrapper.
+ArtifactSourceMap = Mapping[ArtifactRef, Mapping[str, str]]
 
 
 @runtime_checkable
@@ -282,6 +325,7 @@ class ArtifactPreflightEntry:
     total_bytes: int
     file_count: int
     already_installed: bool
+    provenance: tuple[ProvenanceClass, ...]
 
 
 @dataclass(frozen=True)
@@ -289,6 +333,29 @@ class AcquisitionConsent:
     """Consent to acquire a resolved closure."""
 
     closure_fingerprint: str
+
+
+@dataclass(frozen=True)
+class _GatingTarget:
+    """One bounded gating-probe target: an actual fetch URL, its repository, and origin-binding source.
+
+    PR-1165 review (P2): probes the URL ``provision()`` will ACTUALLY
+    fetch, not just the descriptor's own ``source_url`` -- a caller-mapped
+    per-file URL (TASK-1695) can live on a different origin (a CDN, a
+    mirror) than the descriptor's own repository, so probing only
+    ``source_url`` both lets a gated mapped file through undetected (its
+    own origin is never probed) and lets a gated ``source_url`` block
+    consent for a closure whose real per-file URLs are all public (the
+    descriptor URL is probed even though nothing will ever be fetched from
+    it). ``source_url`` is carried alongside ``url`` so the probe binds
+    credentials to it exactly like the real fetch does (``_auth_headers``):
+    a probe against a cross-origin mapped URL never carries the
+    repository's token, matching the P0 fix.
+    """
+
+    url: str
+    repository: str
+    source_url: str
 
 
 @dataclass(frozen=True)
@@ -457,32 +524,156 @@ def resolve_catalog_closure(
     return tuple(resolved[ref] for ref in sorted(resolved))
 
 
-def _require_single_file(descriptor: ArtifactDescriptor) -> None:
-    """Raise ``CatalogError`` unless ``descriptor`` declares exactly one file.
+def _closure_fingerprint_with_sources(
+    root: ArtifactRef,
+    dependencies: Iterable[ArtifactRef],
+    resolved_sources: Mapping[ArtifactRef, Mapping[str, str]],
+) -> str:
+    """Extend ``closure_fingerprint`` to also cover every resolved source identity.
 
-    Per-file source URLs are undefined until the catalog work
-    (TASK-596/1301) specifies them (see ``_file_url``). Shared by
-    ``_aggregate_closure`` -- so a not-yet-installed multi-file descriptor
-    fails ``preflight()`` itself, before any report or consent exists --
-    and ``_fetch_artifact`` (defense-in-depth: a descriptor's shape could in
-    principle change between ``preflight()`` and ``provision()``'s
-    independent catalog re-walk).
+    TASK-1695: the design spec requires the consent fingerprint to cover
+    "credential-free source identities", not just the closure's set of
+    references -- otherwise a caller could grant consent to a plan, swap a
+    source URL, and have ``provision()`` silently fetch from a different
+    origin under the same consent. This wraps (rather than modifies)
+    ``service.closure_fingerprint``: that function is also used by
+    readiness records and installed-manifest verification, which know
+    nothing about source maps and must not change shape for this task.
+
+    TASK-1720 (PR-1165 review, P1): folds in EVERY entry of
+    ``resolved_sources`` -- not just ``(ref, path)`` pairs the caller
+    actually named in a ``sources`` argument. The original TASK-1695
+    version only covered caller-supplied entries, which left a real
+    consent hole: a not-yet-installed, single-file descriptor with NO
+    explicit source map at all resolves its file's URL from
+    ``descriptor.source_url`` alone (the single-file fallback -- see
+    ``_resolve_file_sources``), and that fallback-resolved URL was
+    excluded from the fingerprint entirely. A dynamic ``ArtifactCatalog``
+    (mirror rotation, CDN rebalancing -- the protocol guarantees no
+    immutability) could then change ``descriptor.source_url`` between
+    ``preflight()`` and ``provision()`` and have the new URL fetched under
+    stale consent, exactly the hole this function exists to close for the
+    caller-supplied case. Folding in every resolved entry, fallback
+    included, closes it uniformly.
+
+    This is no longer back-compatible with the bare
+    ``closure_fingerprint(root, dependencies)`` for any closure containing
+    a not-yet-installed entry (see
+    ``test_source_map.py::test_single_file_fallback_fingerprint_differs_from_plain_closure_fingerprint``):
+    a caller that hand-builds an ``AcquisitionConsent`` from that bare
+    function must switch to ``PreflightReport.grant()`` instead, which
+    always reflects the real, current formula.
 
     Args:
-        descriptor: The descriptor to check.
+        root: The closure's root reference.
+        dependencies: Every reference in the closure (root included or not
+            -- ``closure_fingerprint`` normalizes this the same way it
+            always has).
+        resolved_sources: ``{ref: {file_path: url}}``, the fully resolved
+            map ``_aggregate_closure`` already validated for every
+            not-yet-installed entry in the closure -- caller-supplied
+            ``sources`` entries AND single-file ``source_url`` fallback
+            entries alike; both fold in identically here.
 
-    Raises:
-        CatalogError: ``descriptor`` declares more than one file.
+    Returns:
+        Plain ``closure_fingerprint(root, dependencies)`` when
+        ``resolved_sources`` is empty (every closure entry already
+        installed); otherwise a hex SHA-256 digest combining that base
+        fingerprint with every resolved ``(ref, path, url)`` triple,
+        order-independent.
     """
 
-    if len(descriptor.files) != 1:
-        ref = descriptor.reference
+    triples = sorted(
+        (ref.artifact_id, ref.revision, ref.variant, path, url)
+        for ref, files in resolved_sources.items()
+        for path, url in files.items()
+    )
+    base = closure_fingerprint(root, dependencies)
+    if not triples:
+        return base
+    payload = json.dumps(triples, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(
+        f"{base}\0".encode("utf-8") + b"artifact-source-map-v1\0" + payload
+    ).hexdigest()
+
+
+def _resolve_file_sources(
+    descriptor: ArtifactDescriptor,
+    entries: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Resolve and validate the download URL for every file ``descriptor`` declares.
+
+    TASK-1695: every declared file must resolve to EXACTLY one absolute,
+    credential-free ``http(s)`` URL -- either an explicit entry in
+    ``entries`` (the caller's per-artifact slice of an
+    ``ArtifactSourceMap``), or -- ONLY when ``descriptor`` declares a single
+    file and ``entries`` supplies no entry for it -- ``descriptor.
+    source_url`` itself, preserving the pre-1695 single-file contract
+    exactly. A multi-file descriptor has no such fallback: per-file URLs
+    must come from ``entries``, or resolution fails loudly rather than
+    guessing a joined URL that could silently fetch the wrong bytes.
+
+    Shared by ``_aggregate_closure`` -- so a not-yet-installed artifact whose
+    files don't fully resolve fails ``preflight()`` itself, before any
+    report or consent exists -- and ``_fetch_artifact`` (defense-in-depth: a
+    descriptor's shape, or the caller's source map, could in principle
+    change between ``preflight()`` and ``provision()``'s independent catalog
+    re-walk; this call also front-loads validation before any staging
+    directory, sidecar, or network is touched).
+
+    Args:
+        descriptor: The descriptor whose declared files to resolve.
+        entries: This descriptor's slice of the caller-supplied
+            ``ArtifactSourceMap`` (typically ``sources.get(descriptor.
+            reference)``), or ``None``/empty when the caller supplied no
+            entries for this artifact at all.
+
+    Returns:
+        A ``{file.path: url}`` mapping covering every file ``descriptor``
+        declares, each an absolute, credential-free ``http(s)`` URL.
+
+    Raises:
+        CatalogError: ``entries`` names a file path ``descriptor`` does not
+            declare ("extra"); a declared file has no resolvable URL
+            ("missing"); or a resolved URL is not an absolute
+            credential-free ``http(s)`` URL -- wrong scheme, userinfo, a
+            query string, a fragment, whitespace, or otherwise invalid.
+            The message never quotes the offending URL text itself, only
+            the artifact and file path, so a credential-shaped value never
+            reaches an error message, log, or manifest.
+    """
+
+    ref = descriptor.reference
+    declared_paths = {file.path for file in descriptor.files}
+    provided: Mapping[str, str] = entries if entries is not None else {}
+
+    extra = sorted(set(provided) - declared_paths)
+    if extra:
         raise CatalogError(
-            f"{ref.artifact_id}@{ref.revision} declares "
-            f"{len(descriptor.files)} files, but per-file source URLs "
-            "are undefined until the catalog work (TASK-596/1301) "
-            "specifies them"
+            f"{ref.artifact_id}@{ref.revision} source map names file "
+            f"path(s) not declared by the descriptor: {extra!r}"
         )
+
+    resolved: dict[str, str] = {}
+    for file in descriptor.files:
+        url = provided.get(file.path)
+        if url is None and len(descriptor.files) == 1:
+            url = descriptor.source_url
+        if url is None:
+            raise CatalogError(
+                f"{ref.artifact_id}@{ref.revision} has no source URL for "
+                f"declared file '{file.path}': supply one in the artifact "
+                "source map"
+            )
+        try:
+            _validate_url(
+                f"{ref.artifact_id}@{ref.revision} file '{file.path}' source URL",
+                url,
+            )
+        except ArtifactDescriptorValidationError as error:
+            raise CatalogError(str(error)) from error
+        resolved[file.path] = url
+    return resolved
 
 
 class ArtifactAcquisitionService:
@@ -546,8 +737,10 @@ class ArtifactAcquisitionService:
         # running loop on Python >= 3.10.
         self._lock = asyncio.Lock()
 
-    def _auth_headers(self, repository: str) -> dict[str, str] | None:
-        """Resolve an ``Authorization`` header for ``repository``, or ``None``.
+    def _auth_headers(
+        self, repository: str, *, url: str, source_url: str
+    ) -> dict[str, str] | None:
+        """Resolve an ``Authorization`` header for ``repository``, bound to ``source_url``'s origin.
 
         The single seam every credentialed request in this service goes
         through -- the preflight gating HEAD probe (``_probe_gating``) and
@@ -558,15 +751,34 @@ class ArtifactAcquisitionService:
         need to describe what's being fetched use ``repository`` or the
         file path, never this return value's contents.
 
+        PR-1165 review (P0): a resolved token is attached ONLY when ``url``
+        (the actual request target) shares ``source_url``'s origin (scheme,
+        host, port) -- see ``CredentialResolver``'s own docstring, which
+        already promised this. Before this fix, ``url`` was never
+        considered at all: a per-file URL resolved from a caller-supplied
+        source map (TASK-1695) pointing at a DIFFERENT origin than the
+        descriptor's own ``source_url`` (e.g. a third-party CDN) still
+        received the repository's bearer token on its very first request --
+        not just a redirect hop, which is the only cross-origin case
+        ``fetch.stream_fetch`` independently strips credentials from
+        regardless of what this method returns.
+
         Args:
             repository: The upstream repository identifier to resolve a
                 credential for.
+            url: The actual URL this credential (if any) would be attached
+                to requesting.
+            source_url: The descriptor's own ``source_url`` -- the
+                repository's trusted origin a credential is scoped to.
 
         Returns:
             ``{"Authorization": "Bearer <token>"}`` when a resolver is
-            configured and returns a truthy token for ``repository``, else
-            ``None`` (no header attached -- the request goes out anonymous).
+            configured, returns a truthy token for ``repository``, AND
+            ``url`` shares ``source_url``'s origin; ``None`` otherwise (no
+            header attached -- the request goes out anonymous).
         """
+        if not same_origin(url, source_url):
+            return None
         if self._credential_resolver is None:
             return None
         token = self._credential_resolver.resolve(repository)
@@ -574,8 +786,14 @@ class ArtifactAcquisitionService:
             return None
         return {"Authorization": f"Bearer {token}"}
 
-    async def preflight(self, root: ArtifactRef, catalog: ArtifactCatalog) -> PreflightReport:
-        """Aggregate space, staged-credit, and repository-gating checks.
+    async def preflight(
+        self,
+        root: ArtifactRef,
+        catalog: ArtifactCatalog,
+        *,
+        sources: ArtifactSourceMap | None = None,
+    ) -> PreflightReport:
+        """Aggregate space, staged-credit, source-resolution, and gating checks.
 
         Walks the full dependency closure from catalog descriptors (not the
         core's installed-manifest walk -- dependencies may not exist on disk
@@ -588,6 +806,16 @@ class ArtifactAcquisitionService:
         Args:
             root: The root artifact reference to resolve and preflight.
             catalog: Catalog supplying descriptors for the closure walk.
+            sources: TASK-1695: an optional ``ArtifactSourceMap`` supplying
+                per-file download URLs for not-yet-installed artifacts in
+                the closure. ``None`` (the default) behaves exactly as
+                before this task existed: every not-yet-installed
+                descriptor must declare exactly one file, resolved from its
+                own ``source_url``. Every declared file of every not-yet-
+                installed artifact must resolve to exactly one URL --
+                either an entry here or (single-file descriptors only) the
+                ``source_url`` fallback -- or this call raises
+                ``CatalogError`` before any report or consent exists.
 
         Returns:
             A frozen ``PreflightReport``; call ``.grant()`` on it to obtain
@@ -596,10 +824,13 @@ class ArtifactAcquisitionService:
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
                 cycle, a conflicting-revision closure, or a not-yet-
-                installed entry declaring more than one file (see
-                ``_require_single_file``).
+                installed entry whose declared files don't fully resolve to
+                credential-free ``http(s)`` URLs (see
+                ``_resolve_file_sources``).
         """
-        _closure, report, gating_targets = self._aggregate_closure(root, catalog)
+        _closure, report, gating_targets, _resolved_sources = self._aggregate_closure(
+            root, catalog, sources
+        )
         gating_errors = await self._probe_gating(gating_targets.values())
         return replace(report, gating_errors=tuple(gating_errors))
 
@@ -607,8 +838,14 @@ class ArtifactAcquisitionService:
         self,
         root: ArtifactRef,
         catalog: ArtifactCatalog,
-    ) -> tuple[tuple[ArtifactDescriptor, ...], PreflightReport, dict[str, ArtifactPreflightEntry]]:
-        """Resolve the catalog closure and aggregate space/staged-credit math.
+        sources: ArtifactSourceMap | None = None,
+    ) -> tuple[
+        tuple[ArtifactDescriptor, ...],
+        PreflightReport,
+        dict[tuple[str, tuple[str, str, int] | None], _GatingTarget],
+        dict[ArtifactRef, dict[str, str]],
+    ]:
+        """Resolve the catalog closure and aggregate space/staged-credit/source math.
 
         Pure and network-free: the only I/O is ``core.list_installed()`` and
         ``core.disk_usage()`` (or the injected ``free_bytes_probe``), the
@@ -625,22 +862,34 @@ class ArtifactAcquisitionService:
         Args:
             root: The root artifact reference to resolve and aggregate.
             catalog: Catalog supplying descriptors for the closure walk.
+            sources: TASK-1695: an optional ``ArtifactSourceMap``; see
+                ``preflight()``'s ``Args`` for the resolution contract.
 
         Returns:
             A tuple of: the closure descriptors in stable sorted order; a
             ``PreflightReport`` with ``gating_errors`` deliberately left
-            empty (the caller decides whether and how to probe); and the
-            per-repository gating-probe targets, for a caller that wants to
-            hand them to ``_probe_gating``.
+            empty (the caller decides whether and how to probe); the
+            gating-probe targets (PR-1165 review, P2: one per distinct
+            ``(repository, origin)`` pair actually resolved for a not-yet-
+            installed entry -- see ``_GatingTarget`` -- not one per
+            repository's bare ``descriptor.source_url``, which a caller's
+            per-file source map may never even be fetched from), for a
+            caller that wants to hand them to ``_probe_gating``; and the
+            resolved per-file source map (``{ref: {file_path: url}}``)
+            covering every not-yet-installed artifact in the closure, for a
+            caller (``provision()``) that needs the exact URLs this same
+            aggregation validated, without re-deriving them from ``sources``
+            a second time.
 
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
                 cycle, a conflicting-revision closure, or a not-yet-
-                installed entry declaring more than one file (see
-                ``_require_single_file``).
+                installed entry whose declared files don't fully resolve to
+                credential-free ``http(s)`` URLs (see
+                ``_resolve_file_sources``).
         """
         closure = resolve_catalog_closure(root, catalog)
-        fingerprint = closure_fingerprint(root, (descriptor.reference for descriptor in closure))
+        source_map: ArtifactSourceMap = sources if sources is not None else {}
 
         installed = self._core.list_installed()
         installed_refs = {
@@ -664,9 +913,15 @@ class ArtifactAcquisitionService:
         entries: list[ArtifactPreflightEntry] = []
         download_bytes = 0
         already_staged_bytes = 0
-        # First not-installed entry per repository, in stable closure order --
-        # the representative whose URL gets the one bounded gating probe.
-        gating_targets: dict[str, ArtifactPreflightEntry] = {}
+        # PR-1165 review (P2): one representative target per distinct
+        # (repository, origin) pair actually RESOLVED for a not-yet-
+        # installed entry, in stable closure order -- bounded (one probe
+        # per distinct source, per spec) without probing the descriptor's
+        # own source_url when nothing will ever be fetched from it.
+        gating_targets: dict[tuple[str, tuple[str, str, int] | None], _GatingTarget] = {}
+        # TASK-1695: resolved per-file source URLs, not-yet-installed
+        # entries only -- see _aggregate_closure's Returns docstring.
+        resolved_sources: dict[ArtifactRef, dict[str, str]] = {}
         for descriptor in closure:
             ref = descriptor.reference
             already_installed = ref in installed_refs
@@ -681,19 +936,20 @@ class ArtifactAcquisitionService:
                 total_bytes=descriptor.expected_installed_bytes,
                 file_count=len(descriptor.files),
                 already_installed=already_installed,
+                provenance=descriptor.provenance,
             )
             entries.append(entry)
             if not already_installed:
                 # Fail loudly here, not just later in _fetch_artifact: a
-                # multi-file descriptor that still needs fetching is a
-                # catalog-contract problem (per-file URLs are undefined --
-                # see _require_single_file), and the spec requires catalog
-                # problems to surface at preflight, before any report or
-                # consent exists. An ALREADY-installed multi-file
+                # not-yet-installed descriptor whose files don't fully
+                # resolve to credential-free URLs is a catalog-contract
+                # problem (see _resolve_file_sources), and the spec
+                # requires catalog problems to surface at preflight, before
+                # any report or consent exists. An ALREADY-installed
                 # descriptor never reaches provision()'s fetch phase (the
                 # per-artifact loop skips installed entries outright), so
-                # it is deliberately not checked here.
-                _require_single_file(descriptor)
+                # its source map entry is deliberately not resolved here.
+                resolved_sources[ref] = _resolve_file_sources(descriptor, source_map.get(ref))
                 # Clamp per entry: a stale/corrupt sidecar claiming more
                 # bytes than this artifact's own declared total must not
                 # inflate the credit shown on the consent screen.
@@ -709,14 +965,37 @@ class ArtifactAcquisitionService:
                 # over-claimed credit silently offset another entry's real
                 # download cost instead of just clamping its own.
                 download_bytes += max(entry.total_bytes - staged, 0)
-                gating_targets.setdefault(entry.repository, entry)
+                for url in resolved_sources[ref].values():
+                    key = (entry.repository, origin_of(url))
+                    gating_targets.setdefault(
+                        key,
+                        _GatingTarget(
+                            url=url,
+                            repository=entry.repository,
+                            source_url=entry.source_url,
+                        ),
+                    )
 
-        # consume_source install() moves staged bytes into the immutable
-        # store (os.replace, or copy+delete of the SAME bytes on EXDEV) --
-        # there is no second on-disk copy of the payload to budget for. The
-        # field survives at 0 so a future copy-based install path (or a
-        # policy change back to consume_source=False) has somewhere honest
-        # to report real overhead without an API/signature break.
+        # TASK-1695: computed AFTER the loop above (not right after the
+        # closure walk, as closure_fingerprint() alone was) -- the source
+        # component needs resolved_sources, which the loop just built and
+        # validated. A raise from _resolve_file_sources inside that loop
+        # aborts this whole call before this line is ever reached, so no
+        # fingerprint is ever computed over a partially-resolved closure.
+        fingerprint = _closure_fingerprint_with_sources(
+            root,
+            (descriptor.reference for descriptor in closure),
+            resolved_sources,
+        )
+
+        # TASK-1694: _install_artifact finalizes a download stage by
+        # RENAMING its payload subtree into the immutable destination
+        # (core._finalize_download_stage) -- fetched bytes never leave the
+        # service's own same-filesystem staging until that single rename,
+        # so there is no second on-disk copy of the payload to budget for.
+        # The field survives at 0 so a future copy-based finalization path
+        # has somewhere honest to report real overhead without an
+        # API/signature break.
         staging_overhead_bytes = 0
 
         retained_bytes = (
@@ -751,7 +1030,7 @@ class ArtifactAcquisitionService:
             sufficient_space=free_bytes >= required_bytes,
             gating_errors=(),
         )
-        return closure, report, gating_targets
+        return closure, report, gating_targets, resolved_sources
 
     async def provision(
         self,
@@ -759,6 +1038,7 @@ class ArtifactAcquisitionService:
         consent: AcquisitionConsent,
         catalog: ArtifactCatalog,
         *,
+        sources: ArtifactSourceMap | None = None,
         progress: Callable[[AcquisitionProgress], None] | None = None,
     ) -> ArtifactRef:
         """Acquire and activate one consented closure, resuming idempotently.
@@ -809,6 +1089,13 @@ class ArtifactAcquisitionService:
                 makes the fingerprint drift check meaningful, and the
                 freshly resolved descriptors supply the file URLs the
                 fetch phase needs.
+            sources: TASK-1695: an optional ``ArtifactSourceMap``, re-walked
+                and re-validated here exactly like ``catalog`` -- so a URL
+                swapped since ``preflight()`` changes the recomputed
+                closure fingerprint (see ``_closure_fingerprint_with_sources``)
+                and is caught by the ``ConsentMismatchError`` check below,
+                not silently fetched from a different origin under stale
+                consent.
             progress: Optional sink for ``AcquisitionProgress`` events
                 emitted by every phase: real byte detail for ``fetch`` and
                 ``pre-verify``, indeterminate per-artifact events for
@@ -869,7 +1156,9 @@ class ArtifactAcquisitionService:
                         await acquire_future
                     raise
 
-                closure, report, _gating_targets = self._aggregate_closure(root, catalog)
+                closure, report, _gating_targets, resolved_sources = self._aggregate_closure(
+                    root, catalog, sources
+                )
                 if report.closure_fingerprint != consent.closure_fingerprint:
                     raise ConsentMismatchError(
                         "closure fingerprint changed since consent was granted; "
@@ -901,21 +1190,46 @@ class ArtifactAcquisitionService:
                 for descriptor in closure:
                     if descriptor.reference in installed_refs:
                         continue
-                    staging_dir = (
-                        self._core.staging_path
-                        / "managed"
-                        / descriptor.reference.artifact_id
-                        / descriptor.reference.revision
-                        / descriptor.reference.variant
+                    # TASK-1694: a service-owned, marked download stage
+                    # replaces the old bare
+                    # ``staging/managed/<id>/<rev>/<variant>`` directory.
+                    # ``stage.payload`` is where fetch/pre-verify write and
+                    # read declared files -- the exact subtree
+                    # ``_install_artifact`` (via
+                    # ``core._finalize_download_stage``) verifies and
+                    # RENAMES into the immutable destination. Resume
+                    # metadata (the fetch-state sidecar) is written under
+                    # ``stage.state`` -- a sibling of ``payload``, never
+                    # promoted -- see ``_fetch_sidecar_path``.
+                    stage = await self._run_core_call(
+                        "stage",
+                        descriptor.reference,
+                        functools.partial(
+                            self._core._download_stage_for, descriptor, create=True
+                        ),
                     )
-                    await self._fetch_artifact(descriptor, staging_dir, progress_state)
-                    await self._preverify_artifact(descriptor, staging_dir, progress_state)
-                    await self._install_artifact(descriptor, staging_dir)
-                    # _install_artifact's signature is frozen at
-                    # (descriptor, staging_dir) -- no progress_state -- so
-                    # the per-artifact "verify-install" event is emitted
-                    # here, by the caller that already has it, immediately
-                    # after the phase it describes actually completes.
+                    # create=True always returns a stage (never None); the
+                    # Optional return type only covers the create=False
+                    # lookup path (see _staged_bytes_for).
+                    assert stage is not None
+                    # TASK-1695: this descriptor's slice of the closure-wide
+                    # resolved source map -- already validated (complete,
+                    # credential-free) by the _aggregate_closure call above,
+                    # for both this artifact's fetch AND its pre-verify
+                    # phase's own internal refetch-on-mismatch path.
+                    file_sources = resolved_sources.get(descriptor.reference)
+                    await self._fetch_artifact(
+                        descriptor, stage.payload, progress_state, file_sources
+                    )
+                    await self._preverify_artifact(
+                        descriptor, stage.payload, progress_state, file_sources
+                    )
+                    await self._install_artifact(descriptor, stage)
+                    # _install_artifact's signature is (descriptor, stage)
+                    # -- no progress_state -- so the per-artifact
+                    # "verify-install" event is emitted here, by the caller
+                    # that already has it, immediately after the phase it
+                    # describes actually completes.
                     self._emit_indeterminate_progress(
                         progress_state, "verify-install", descriptor.reference
                     )
@@ -934,6 +1248,7 @@ class ArtifactAcquisitionService:
         descriptor: ArtifactDescriptor,
         staging_dir: Path,
         progress_state: _ProvisionProgressState,
+        resolved_sources: Mapping[str, str] | None = None,
     ) -> None:
         """Stream every declared file into durable staging with resume support.
 
@@ -961,22 +1276,34 @@ class ArtifactAcquisitionService:
 
         Args:
             descriptor: The artifact whose declared files to fetch.
-            staging_dir: The durable ``staging/managed/<id>/<rev>/<variant>``
-                directory for this artifact.
+            staging_dir: The service-owned stage's ``payload/`` directory
+                (resume metadata lives in its sibling ``state/`` subtree, so
+                it can never be promoted with the payload).
             progress_state: Closure-wide progress accounting to read and
                 update as bytes stream in.
+            resolved_sources: TASK-1695: this descriptor's slice of a
+                closure-wide resolved source map (``{file_path: url}``),
+                typically ``provision()``'s own ``resolved_sources.get(
+                descriptor.reference)``. ``None`` (the default) is the
+                legacy/direct-call shape: resolution then falls back to
+                ``descriptor.source_url`` for a single declared file, or
+                fails (see ``Raises``) for more than one -- this is what
+                lets every existing single-file direct call to this method
+                keep working unchanged.
 
         Raises:
-            CatalogError: ``descriptor`` declares more than one file --
-                per-file source URLs are undefined until the catalog work
-                (TASK-596/1301) specifies them (see ``_file_url``). Raised
-                before touching staging, the sidecar, or the network: a
-                catalog-contract problem, not a transfer failure.
-                ``_aggregate_closure`` already rejects this same shape for
-                a not-yet-installed entry at ``preflight()`` time; this is
-                defense-in-depth for a descriptor that changed shape
-                between ``preflight()`` and ``provision()``'s independent
-                catalog re-walk.
+            CatalogError: A declared file's URL doesn't resolve -- no
+                ``resolved_sources`` entry for it, and (for a multi-file
+                descriptor) no single-file fallback either -- or a
+                ``resolved_sources`` entry names a file path this
+                descriptor doesn't declare (see ``_resolve_file_sources``).
+                Raised before touching staging, the sidecar, or the
+                network: a catalog-contract problem, not a transfer
+                failure. ``_aggregate_closure`` already resolves and
+                validates this same closure-wide map at ``preflight()``
+                time; this is defense-in-depth for a descriptor or source
+                map that changed between ``preflight()`` and
+                ``provision()``'s independent catalog re-walk.
             TransferError: A file failed to fetch -- network/transport
                 failure, disk I/O failure (e.g. ENOSPC), an egress-policy
                 block, or a response body exceeding the file's declared
@@ -989,7 +1316,12 @@ class ArtifactAcquisitionService:
                 polling).
         """
 
-        _require_single_file(descriptor)
+        # TASK-1695: resolve (and validate) every declared file's URL up
+        # front, before touching staging, the sidecar, or the network --
+        # the same "before any side effect" property _aggregate_closure
+        # already gives preflight(), reproduced here for a caller that
+        # invokes this method directly (see the docstring's Raises entry).
+        resolved = _resolve_file_sources(descriptor, resolved_sources)
 
         staging_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = _fetch_sidecar_path(staging_dir)
@@ -1003,54 +1335,39 @@ class ArtifactAcquisitionService:
         try:
             for file in descriptor.files:
                 await self._fetch_one_file(
-                    descriptor, file, staging_dir, sidecar, sidecar_path, progress_state, client
+                    descriptor,
+                    file,
+                    staging_dir,
+                    sidecar,
+                    sidecar_path,
+                    progress_state,
+                    client,
+                    resolved,
                 )
         finally:
             if owns_client:
                 await client.aclose()
 
-    def _file_url(self, descriptor: ArtifactDescriptor, file: ArtifactFile) -> str:
-        """Resolve one declared file's download URL.
+    @staticmethod
+    def _file_url(resolved: Mapping[str, str], file: ArtifactFile) -> str:
+        """Look up one declared file's already-resolved download URL.
 
-        ``ArtifactDescriptor.source_url`` is the only fetchable location
-        this schema carries today (Task 596/1301's catalog work owns
-        richer per-file source metadata); when a descriptor declares
-        exactly one file -- the only shape exercised end-to-end so far --
-        ``source_url`` IS that file's URL directly, matching how
-        ``_probe_gating`` already treats it (a bare GET/HEAD target, never
-        joined with anything).
-
-        ``ArtifactDescriptor`` permits more than one declared file, but
-        nothing upstream of this task defines what a multi-file
-        descriptor's per-file URLs actually are -- guessing a joined
-        ``source_url`` + ``file.path`` URL here would silently fetch the
-        WRONG bytes for every file whenever that guess doesn't match
-        reality, with no signal to the caller that anything went wrong.
-        Failing loudly is safer than guessing quietly: see ``Raises``.
+        TASK-1695: ``_fetch_artifact`` resolves and validates every declared
+        file's URL up front via ``_resolve_file_sources``, so by the time
+        this is called ``resolved`` is guaranteed to carry an entry for
+        every ``file`` it's called with -- this is a plain lookup, not a
+        second resolution pass.
 
         Args:
-            descriptor: The artifact descriptor supplying ``source_url``.
-            file: The declared file whose URL to resolve.
+            resolved: The ``{file.path: url}`` mapping ``_fetch_artifact``
+                already resolved for this descriptor.
+            file: The declared file whose URL to look up.
 
         Returns:
             The absolute URL to GET this file's bytes from.
-
-        Raises:
-            CatalogError: ``descriptor`` declares more than one file --
-                per-file source URLs are undefined until the catalog work
-                (TASK-596/1301) specifies them.
         """
 
-        if len(descriptor.files) != 1:
-            ref = descriptor.reference
-            raise CatalogError(
-                f"{ref.artifact_id}@{ref.revision} declares "
-                f"{len(descriptor.files)} files, but per-file source URLs "
-                "are undefined until the catalog work (TASK-596/1301) "
-                "specifies them -- refusing to guess a URL for "
-                f"'{file.path}'"
-            )
-        return descriptor.source_url
+        return resolved[file.path]
 
     @staticmethod
     def _load_fetch_sidecar(sidecar_path: Path) -> dict:
@@ -1115,6 +1432,7 @@ class ArtifactAcquisitionService:
         sidecar_path: Path,
         progress_state: _ProvisionProgressState,
         client: httpx.AsyncClient,
+        resolved_sources: Mapping[str, str],
     ) -> None:
         """Fetch (or skip, or resume, or restart) one declared file.
 
@@ -1129,6 +1447,9 @@ class ArtifactAcquisitionService:
             progress_state: Closure-wide progress accounting.
             client: The shared ``httpx.AsyncClient`` for this artifact's
                 fetch phase.
+            resolved_sources: The ``{file.path: url}`` mapping
+                ``_fetch_artifact`` already resolved for this descriptor
+                (see ``_file_url``).
 
         Raises:
             TransferError: See ``_fetch_artifact``.
@@ -1196,8 +1517,12 @@ class ArtifactAcquisitionService:
             recorded_done if recorded_done and validators is not None and validators.strong else 0
         )
 
-        url = self._file_url(descriptor, file)
-        headers = self._auth_headers(descriptor.upstream_repository)
+        url = self._file_url(resolved_sources, file)
+        headers = self._auth_headers(
+            descriptor.upstream_repository,
+            url=url,
+            source_url=descriptor.source_url,
+        )
 
         def on_chunk(count: int) -> None:
             progress_state.bytes_done += count
@@ -1334,6 +1659,7 @@ class ArtifactAcquisitionService:
         descriptor: ArtifactDescriptor,
         staging_dir: Path,
         progress_state: _ProvisionProgressState,
+        resolved_sources: Mapping[str, str] | None = None,
     ) -> None:
         """Streaming-verify every staged file's SHA-256 before install.
 
@@ -1353,6 +1679,10 @@ class ArtifactAcquisitionService:
                 files.
             progress_state: Closure-wide progress accounting to read and
                 update as bytes are verified.
+            resolved_sources: TASK-1695: this descriptor's slice of the
+                resolved source map, forwarded unchanged to a mismatch
+                refetch's ``_fetch_artifact`` call (see ``_fetch_artifact``
+                for the ``None`` fallback contract).
 
         Raises:
             TransferError: A staged file still fails its declared SHA-256
@@ -1362,7 +1692,9 @@ class ArtifactAcquisitionService:
         """
 
         for file in descriptor.files:
-            await self._preverify_one_file(descriptor, file, staging_dir, progress_state)
+            await self._preverify_one_file(
+                descriptor, file, staging_dir, progress_state, resolved_sources
+            )
 
     async def _preverify_one_file(
         self,
@@ -1370,6 +1702,7 @@ class ArtifactAcquisitionService:
         file: ArtifactFile,
         staging_dir: Path,
         progress_state: _ProvisionProgressState,
+        resolved_sources: Mapping[str, str] | None = None,
     ) -> None:
         """Hash one staged file, refetching once via ``_fetch_artifact`` on mismatch.
 
@@ -1379,6 +1712,8 @@ class ArtifactAcquisitionService:
             staging_dir: The durable staging directory holding the fetched
                 files.
             progress_state: Closure-wide progress accounting.
+            resolved_sources: TASK-1695: forwarded unchanged to the
+                mismatch-recovery ``_fetch_artifact`` call below.
 
         Raises:
             TransferError: See ``_preverify_artifact``.
@@ -1411,7 +1746,7 @@ class ArtifactAcquisitionService:
             sidecar = self._load_fetch_sidecar(sidecar_path)
             if sidecar["files"].pop(file.path, None) is not None:
                 atomic_write_json(sidecar_path, sidecar)
-            await self._fetch_artifact(descriptor, staging_dir, progress_state)
+            await self._fetch_artifact(descriptor, staging_dir, progress_state, resolved_sources)
 
     @staticmethod
     def _hash_staged_file(
@@ -1486,90 +1821,74 @@ class ArtifactAcquisitionService:
     async def _install_artifact(
         self,
         descriptor: ArtifactDescriptor,
-        staging_dir: Path,
+        stage: _ManagedDownloadStage,
     ) -> None:
-        """Promote one pre-verified staged directory into the immutable store.
+        """Finalize one pre-verified download stage into the immutable store.
 
-        The fetch-state sidecar lives OUTSIDE ``staging_dir`` (see
-        ``_fetch_sidecar_path``) -- a SIBLING file, never a child of the
-        payload directory ``core.install`` validates -- so it is left
-        completely untouched here until AFTER a successful install. This
-        is deliberately NOT the same as the earlier design, which deleted
-        an in-tree sidecar before every attempt (required then, since
-        ``install``'s payload-tree validation rejects any file it doesn't
-        declare): that pre-deletion destroyed the only resumable state on
-        ANY install failure, including a merely transient, retryable one
-        -- a "retryable" error that also destroys what it would resume
-        from is not actually retryable. With the sidecar out of the
-        payload tree, ``core.install`` never even sees it, so a failed
-        attempt leaves both the sidecar and the staged bytes it describes
-        exactly where a later ``provision()`` call can resume from.
+        TASK-1694: retargets this phase at
+        ``core._finalize_download_stage`` -- the service-owned payload-
+        subtree finalization seam ported from the parallel TASK-595
+        implementation (see
+        Docs/superpowers/reviews/2026-08-01-task-595-duplicate-
+        implementation-reconciliation.md, item 1) -- instead of
+        ``core.install(..., consume_source=True)``. ``stage.payload`` (what
+        ``_fetch_artifact``/``_preverify_artifact`` wrote and verified) is
+        the ONLY subtree the core renames into the immutable destination;
+        ``stage.marker``/``stage.state`` (the fetch-state sidecar's home,
+        see ``_fetch_sidecar_path``) never enter it, so resume metadata
+        cannot end up inside a promoted artifact by construction -- this
+        is what makes the OLD sibling-sidecar workaround unnecessary and
+        structurally eliminates the "retryable install failure destroys
+        the resumable download" bug class: finalization never moves any
+        bytes out of ``stage.payload`` until every verification and lease
+        has already succeeded, and a failure at any step before that final
+        rename leaves ``stage`` -- payload, state, and marker -- completely
+        untouched for a later ``provision()`` attempt to resume from.
 
-        ``core.install(..., consume_source=True)`` is synchronous core
-        surface (file moves, lease acquisition, manifest writes), so it
-        runs in the default executor like every other core call this
-        service makes. On success, ``consume_source`` has moved every
-        declared file out of ``staging_dir`` into the immutable store;
-        the now-empty directory tree AND its sibling sidecar are both
-        removed so a later ``reconcile()`` staging GC sees nothing left
-        to classify for this artifact -- an empty leftover directory (or
-        a stale sidecar with no matching payload) would otherwise look
-        identical to an abandoned partial download.
+        On success, ``core._finalize_download_stage`` also retires the
+        whole stage operation directory (payload having been promoted,
+        plus the marker and state subtree) so a later ``reconcile()``
+        staging GC sees nothing left to classify for this artifact; this
+        phase does not need its own cleanup step.
 
         Args:
             descriptor: The artifact to install.
-            staging_dir: The durable staging directory holding the verified
-                files.
+            stage: The service-owned download stage holding the verified
+                payload (obtained via ``core._download_stage_for`` earlier
+                in ``provision()``'s per-artifact loop).
 
         Raises:
-            TransferError: ``core.install`` raised ``ArtifactIntegrityError``,
-                ``ArtifactConflictError``, ``ArtifactPathError``, or
-                ``ArtifactStateError`` -- wrapped by ``_run_core_call``
-                with ``retryable`` set accordingly (see there). Only a
-                SUCCESSFUL install triggers the ``staging_dir``/sidecar
-                cleanup above -- on failure both are left in place (though
-                ``consume_source`` may already have moved the payload's
-                declared files into the core's own, separately-cleaned-up
-                staging by the time the failure surfaces, so an empty
-                leftover payload directory is not itself proof anything
-                is wrong; the sidecar's checkpoint is what a resumed
-                fetch actually trusts).
+            TransferError: ``core._finalize_download_stage`` raised
+                ``ArtifactIntegrityError``, ``ArtifactConflictError``,
+                ``ArtifactPathError``, or ``ArtifactStateError`` --
+                wrapped by ``_run_core_call`` with ``retryable`` set
+                accordingly (see there). On failure, ``stage`` is left
+                completely in place for a resumed ``provision()`` attempt.
         """
 
-        sidecar_path = _fetch_sidecar_path(staging_dir)
-
         await self._run_core_call(
-            "install",
+            "finalize",
             descriptor.reference,
-            functools.partial(
-                self._core.install, descriptor, staging_dir, consume_source=True
-            ),
+            functools.partial(self._core._finalize_download_stage, descriptor, stage),
         )
-
-        # Only reached on a SUCCESSFUL install -- both the (now-consumed)
-        # payload directory and its sibling sidecar are cleaned up
-        # together; a failure raised above skips this entirely, leaving
-        # both in place for a resumed provision() attempt.
-        try:
-            sidecar_path.unlink()
-        except FileNotFoundError:
-            pass
-        shutil.rmtree(staging_dir, ignore_errors=True)
 
     async def _run_core_call(
         self,
-        operation: Literal["install", "activate"],
+        operation: Literal["stage", "finalize", "activate"],
         ref: ArtifactRef,
         func: Callable[[], _CoreCallResult],
     ) -> _CoreCallResult:
         """Run one synchronous core call in the executor, never trapping raw.
 
-        ``core.install`` and ``core.activate`` are the two core entry
-        points this service reaches via a bare executor hop; both can raise
-        the core's own ``ArtifactError`` subclasses (integrity, conflict,
-        path safety, or lease/state contention), which would otherwise
-        escape ``provision()`` untouched -- breaking the spec's never-trap
-        rule that every acquisition-surfaced failure is a typed, retryable-
+        ``core._download_stage_for``, ``core._finalize_download_stage``
+        (TASK-1694: replaces the old ``core.install(...,
+        consume_source=True)`` call this wrapping originally covered), and
+        ``core.activate`` are the core entry points this service reaches
+        via a bare executor hop; all three can raise the core's own
+        ``ArtifactError`` subclasses (integrity, conflict, path safety, or
+        lease/state contention), which would otherwise escape
+        ``provision()`` untouched -- breaking the spec's never-trap rule
+        that every acquisition-surfaced failure is a typed, retryable-
         flagged ``AcquisitionError``. ``ArtifactIntegrityError``,
         ``ArtifactConflictError``, and ``ArtifactPathError`` are not
         retryable: the same staged content, the same conflicting
@@ -1643,6 +1962,14 @@ class ArtifactAcquisitionService:
         are only ever a hint surfaced on the consent screen ("up to N bytes
         already fetched") -- ``provision()`` independently re-validates
         against the server's current validators before trusting any of it.
+        TASK-1694: the sidecar now lives under a service-owned download
+        stage's ``state/`` subtree (see ``_fetch_sidecar_path``), so this
+        looks the stage up via ``core._download_stage_for(descriptor,
+        create=False)`` rather than computing a bare
+        ``staging/managed/<id>/<rev>/<variant>`` path directly. A stage
+        that does not exist, or one whose marker/layout fails the core's
+        own validation, reads as zero credit -- same best-effort contract
+        as a missing or corrupt sidecar file always had.
 
         Each declared file's credit is capped by THREE independent limits:
         the sidecar's own recorded ``bytes_done``, the file's declared
@@ -1659,18 +1986,20 @@ class ArtifactAcquisitionService:
         something ``provision()`` will never look at.
 
         Args:
-            descriptor: The artifact descriptor whose staging directory and
+            descriptor: The artifact descriptor whose download stage and
                 declared files to inspect.
 
         Returns:
-            The sum of capped per-file credit, or 0 for a missing or
-            unparseable sidecar.
+            The sum of capped per-file credit, or 0 for a missing,
+            invalid, or unparseable stage/sidecar.
         """
-        ref = descriptor.reference
-        staging_dir = (
-            self._core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
-        )
-        sidecar = _fetch_sidecar_path(staging_dir)
+        try:
+            stage = self._core._download_stage_for(descriptor, create=False)
+        except ArtifactError:
+            return 0
+        if stage is None:
+            return 0
+        sidecar = _fetch_sidecar_path(stage.payload)
         try:
             payload = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1693,22 +2022,32 @@ class ArtifactAcquisitionService:
             ):
                 continue
             try:
-                actual_size = (staging_dir / file_path).stat().st_size
+                actual_size = (stage.payload / file_path).stat().st_size
             except OSError:
                 actual_size = 0
             total += min(bytes_done, actual_size, declared_sizes[file_path])
         return total
 
-    async def _probe_gating(self, targets: Iterable[ArtifactPreflightEntry]) -> list[str]:
-        """Bounded HEAD probe per repository; collect 401/403s.
+    async def _probe_gating(self, targets: Iterable[_GatingTarget]) -> list[str]:
+        """Bounded HEAD probe per distinct resolved source; collect 401/403s.
+
+        PR-1165 review (P2): probes each target's actual ``url`` (the URL
+        ``provision()`` will really fetch), not a descriptor's bare
+        ``source_url`` -- see ``_GatingTarget`` and
+        ``_aggregate_closure``'s gating-targets construction for why.
 
         Anonymous unless a ``credential_resolver`` is configured AND
-        resolves a token for the entry's repository, in which case the
-        probe carries the same ``Authorization`` header the real fetch
-        would use (``_auth_headers``) -- a working credential clears
-        gating here exactly as it would clear the real transfer, instead
-        of preflight reporting a repository gated that provision() would
-        actually be able to reach.
+        resolves a token for the target's repository AND ``url`` shares
+        ``source_url``'s origin, in which case the probe carries the same
+        ``Authorization`` header the real fetch would use
+        (``_auth_headers``) -- a working credential clears gating here
+        exactly as it would clear the real transfer, instead of preflight
+        reporting a repository gated that provision() would actually be
+        able to reach. A mapped file on a different origin is always
+        probed anonymously, matching the real fetch (P0): if it genuinely
+        requires auth, no credential this service holds could ever satisfy
+        it, so surfacing that as a gating error here (rather than a
+        transfer failure later) is the earlier, more useful signal.
 
         Any other outcome -- 2xx/3xx/other 4xx/5xx, timeout, connection
         failure, or an egress-policy block -- is silently non-fatal here:
@@ -1716,7 +2055,8 @@ class ArtifactAcquisitionService:
         Only an explicit auth-required status is a gating signal.
 
         Args:
-            targets: One representative entry per unique repository.
+            targets: One representative target per distinct
+                ``(repository, origin)`` pair actually resolved.
 
         Returns:
             Gating-error messages naming the repository and the credential
@@ -1732,20 +2072,24 @@ class ArtifactAcquisitionService:
         assert client is not None
         errors: list[str] = []
         try:
-            for entry in targets:
+            for target in targets:
                 try:
                     await check_url_or_raise_async(
-                        entry.source_url, trusted_origins=self._trusted_origins
+                        target.url, trusted_origins=self._trusted_origins
                     )
                     response = await client.head(
-                        entry.source_url,
+                        target.url,
                         timeout=_PREFLIGHT_PROBE_TIMEOUT_SECONDS,
-                        headers=self._auth_headers(entry.repository),
+                        headers=self._auth_headers(
+                            target.repository,
+                            url=target.url,
+                            source_url=target.source_url,
+                        ),
                         # Explicit regardless of the client's own default:
                         # client_factory is a public seam, and an injected
                         # client configured to follow redirects would
                         # otherwise both bypass this app's own egress check
-                        # for the redirect target (only entry.source_url is
+                        # for the redirect target (only target.url is
                         # checked above) and carry the bearer token
                         # cross-origin.
                         follow_redirects=False,
@@ -1754,7 +2098,7 @@ class ArtifactAcquisitionService:
                     continue
                 if response.status_code in (401, 403):
                     errors.append(
-                        f"repository '{entry.repository}' requires credentials "
+                        f"repository '{target.repository}' requires credentials "
                         f"(HTTP {response.status_code}); set {_CREDENTIAL_ENV_HINT} and retry"
                     )
         finally:

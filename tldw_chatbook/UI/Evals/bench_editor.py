@@ -59,7 +59,8 @@ docstring for why this module cannot create the row itself.
 Task-1610: ``BenchEditor.is_dirty()`` reports whether the mounted form (the
 five fields above, the staged target list, and -- task-1611 T2 fix round
 1 -- the "+ New target" mini-form's own typed-but-not-yet-created Name/
-steering text) differs from ``self._loaded_config`` -- read by
+steering text; task-1710 adds a sixth field, the per-cell continuation
+opt-in checkbox) differs from ``self._loaded_config`` -- read by
 ``evals_screen.py``'s ``_selection_unmoved_since_launch`` so a run/sample-
 bench worker completing while this editor holds unsaved edits degrades to
 a toast instead of calling ``select()``, which would otherwise recompose
@@ -121,6 +122,20 @@ convention, reusing ``snippet_editor.render_snippet_cell``) or
 `` · system prompt set`` -- so a bench with multiple, differently-steered
 variants of the same underlying model can actually be told apart at a
 glance; an unsteered row's label is unchanged.
+
+TASK-1764: pressing "+ New target" a SECOND time minted no row -- the
+first create's own rebuild grows the targets section by a row (and, once
+a real ``llama_cpp`` model exists, ``_build_target_add_control``'s Add
+picker row too), both mounted ABOVE the mini-form, pushing the just-
+pressed button down and out of ``#evals-bench-editor``'s viewport; the
+next click landed on nothing reachable. This is the THIRD time a row
+added above this mini-form has pushed it out of reach (see
+``_keep_create_control_in_view``'s own docstring for the first two, both
+during this same mini-form's task-1611 T2 development) -- each prior fix
+bought back exactly one row of slack, which holds only until the next
+row. Fixed generally instead: ``_keep_create_control_in_view`` scrolls
+the mini-form back into view after any rebuild that grows the targets
+list, independent of target count or viewport size.
 """
 
 from __future__ import annotations
@@ -134,7 +149,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.word_bench.models import BenchConfig, PreflightResult, Target
@@ -155,6 +170,43 @@ CLASSIC_TASK_DEFERRAL_SENTENCE = "Running classic tasks is not available in this
 #: sub-1 top-K value -- asserted exactly by
 #: ``test_top_k_parse_failure_renders_the_pinned_callout``.
 TOP_K_ERROR_TEXT = "Top-K must be a whole number of 1 or more."
+
+#: Verbatim. The per-cell continuation opt-in's own ``Checkbox`` label
+#: (task-1710) -- pinned by
+#: ``test_capture_continuations_checkbox_reflects_the_loaded_config``.
+#: States the cost plainly, in the label itself (task-1710's own
+#: instruction: "the label/tooltip should say that plainly (e.g. that it
+#: adds one request per cell)") rather than hiding it behind a hover-only
+#: tooltip a keyboard-only user would never see -- the fuller nuance
+#: (chat mode is free, this is stored with the run and shown for a
+#: focused cell, off by default) lives in ``CAPTURE_CONTINUATIONS_
+#: TOOLTIP`` for a mouse user, never as the ONLY place the cost is
+#: stated. Kept to ONE short sentence, mounted ``compact=True`` (see
+#: ``compose()`` below) -- this targets section's own docstring already
+#: documents this pane's small, fixed vertical budget at a realistic
+#: viewport (``_build_create_target_control``'s "maximally-compact
+#: shape" paragraph); a bordered, multi-row checkbox plus a second,
+#: separate cost sub-line was tried first and pushed the targets
+#: section's own Add/Create controls off the bottom of a 160x45 terminal,
+#: confirmed live, not merely reasoned about.
+CAPTURE_CONTINUATIONS_LABEL = "Capture a continuation per cell (raw mode: +1 request/cell)"
+
+#: Verbatim tooltip, the fuller cost/content explanation for a mouse user
+#: hovering the checkbox -- never the ONLY place this cost is stated (see
+#: ``CAPTURE_CONTINUATIONS_LABEL``'s own docstring: the label itself
+#: already names the raw-mode cost). Mirrors ``dataset_static``'s own
+#: tooltip precedent above (a fuller explanation of a field's own always-
+#: visible claim) and this module's other verbatim-string convention.
+CAPTURE_CONTINUATIONS_TOOLTIP = (
+    "When on, every measured cell also captures a short sample of what "
+    "the model says after this snippet, recorded with the run and shown "
+    "for a focused cell. Raw mode issues one separate, extra request per "
+    "cell (snippets × targets), roughly doubling this run's call count "
+    "and time -- that request never perturbs the measured distribution. "
+    "Chat mode salvages the continuation from the response already made, "
+    "at no extra cost. Off by default so an existing bench's cost never "
+    "changes without being explicitly turned on."
+)
 
 #: Verbatim. The raw-mode steering field's label in the "+ New target"
 #: mini-form (task-1611 T2) -- pinned exactly by
@@ -429,16 +481,18 @@ class BenchEditor(Vertical):
         that module's ``_selection_unmoved_since_launch``, which queries
         this method defensively).
 
-        Computed on demand by re-reading the same five widgets
-        ``_on_save_pressed`` reads and comparing each to what ``compose()``
-        loaded -- no field here posts a live ``Changed`` message (see the
-        module docstring's "display-only until Save" paragraph), so there
-        is no watcher to drive this reactively instead. Probes go through
-        ``_parse_probes_text``, the exact same helper Save itself uses, so
-        the two can never disagree about what counts as an edit. Target
-        edits are staged directly onto ``self._staged_target_ids`` (Task
-        6's Add/Remove handlers) rather than read from a widget, so that
-        list is compared to ``loaded.target_ids`` verbatim.
+        Computed on demand by re-reading the same widgets
+        ``_on_save_pressed`` reads (task-1710: now six, the five fields
+        plus the per-cell continuation checkbox) and comparing each to
+        what ``compose()`` loaded -- no field here posts a live
+        ``Changed`` message (see the module docstring's "display-only
+        until Save" paragraph), so there is no watcher to drive this
+        reactively instead. Probes go through ``_parse_probes_text``, the
+        exact same helper Save itself uses, so the two can never disagree
+        about what counts as an edit. Target edits are staged directly
+        onto ``self._staged_target_ids`` (Task 6's Add/Remove handlers)
+        rather than read from a widget, so that list is compared to
+        ``loaded.target_ids`` verbatim.
 
         Task-1611 T2 (fix round 1): the "+ New target" mini-form's own
         typed-but-not-yet-created Name/steering text ALSO counts -- a user
@@ -506,6 +560,14 @@ class BenchEditor(Vertical):
         if top_k != loaded.top_k:
             return True
         if _parse_probes_text(probes_text) != tuple(loaded.probes):
+            return True
+        try:
+            capture_continuations = self.query_one(
+                "#evals-bench-capture-continuations", Checkbox
+            ).value
+        except QueryError:
+            return True
+        if capture_continuations != loaded.capture_continuations:
             return True
         if tuple(self._staged_target_ids) != tuple(loaded.target_ids):
             return True
@@ -613,6 +675,25 @@ class BenchEditor(Vertical):
                 "(no probes yet)", id="evals-bench-probes-preview-empty"
             )
         yield TextArea("\n".join(config.probes), id="evals-bench-probes")
+
+        # task-1710: opt into a per-cell continuation. Part of the form
+        # like every field above -- saved via Save, covered by
+        # `is_dirty()` (see that method's own added check), and rebuilt
+        # (not discarded) by the targeted `#evals-bench-targets-section`
+        # rebuilds Add/Remove/a prompt-mode flip trigger, since it lives
+        # OUTSIDE that container entirely (see `_refresh_targets_section`
+        # -- it only ever tears down and rebuilds that one child).
+        # `compact=True`: see `CAPTURE_CONTINUATIONS_LABEL`'s own
+        # docstring -- a bordered, default `Checkbox` measured 2 rows here
+        # (`ToggleButton`'s own DEFAULT_CSS border), real vertical budget
+        # this pane's targets section, below, does not have to spare.
+        yield Checkbox(
+            CAPTURE_CONTINUATIONS_LABEL,
+            value=config.capture_continuations,
+            id="evals-bench-capture-continuations",
+            tooltip=CAPTURE_CONTINUATIONS_TOOLTIP,
+            compact=True,
+        )
 
         # The `.ds-recovery-callout` CLASS is deliberately withheld here
         # and added only by `_show_form_error` on an actual failure -- not
@@ -952,6 +1033,57 @@ class BenchEditor(Vertical):
         await section.mount_all(self._build_targets_section())
         self._clear_form_error()
 
+    def _keep_create_control_in_view(self) -> None:
+        """Scrolls ``#evals-bench-create-target-form`` back into
+        ``#evals-bench-editor``'s viewport after a rebuild that GREW the
+        targets list (TASK-1764) -- called by ``stage_target`` and
+        ``_on_add_target_pressed``, the two paths that add a row ABOVE this
+        mini-form and so push it down by one.
+
+        Without this, pressing "+ New target" moves the very button just
+        pressed out from under the pointer: the new target row (and, on the
+        first create, `_build_target_add_control`'s Add picker, which only
+        renders once a `llama_cpp` row exists at all) both land above it.
+        This pane's own history says that is not a hypothetical -- the
+        create control has now been pushed out of reach THREE separate
+        times by a row added above it (twice while task-1611 T2 was being
+        written, see `_build_create_target_control`'s own docstring, and
+        again by task-1710's checkbox, the TASK-1764 regression). Each of
+        those was answered by finding one more row of vertical slack, which
+        buys exactly one more feature; this scrolls instead, so the control
+        stays reachable at ANY target count and ANY viewport rather than
+        only while the arithmetic happens to work out.
+
+        `call_after_refresh`, not a direct call: `_refresh_targets_section`
+        has only just `mount_all`ed the new rows, so the mini-form's own
+        `region` is still the pre-rebuild one until Textual's next layout
+        pass -- scrolling against that stale geometry computes the wrong
+        offset (or, when the section grew, no offset at all).
+
+        Deliberately NOT called from `_on_remove_target_pressed` (the list
+        SHRANK -- nothing was pushed anywhere) or `_on_prompt_mode_changed`
+        (the user is at the TOP of the form, at the prompt-mode `Select`;
+        yanking the viewport to the bottom of the targets section would
+        move a control they are still reading).
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        def _scroll() -> None:
+            try:
+                control = self.query_one("#evals-bench-create-target-form", Horizontal)
+            except QueryError:
+                # Defensive only: this mini-form renders unconditionally
+                # (see `_build_create_target_control`), but a rebuild that
+                # raced an unmount must not crash the handler that queued
+                # this callback.
+                return
+            # `animate=False`: the very next thing a user does here is press
+            # this button again, and an in-flight scroll animation would
+            # leave the button under the pointer only after it lands.
+            self.scroll_to_widget(control, animate=False)
+
+        self.call_after_refresh(_scroll)
+
     def _capture_pending_target_form(self) -> None:
         """Stashes whatever is currently typed into the "+ New target"
         mini-form's Name/steering ``Input``s onto ``self._pending_target_
@@ -1025,6 +1157,7 @@ class BenchEditor(Vertical):
         self._staged_target_ids.append(target_id)
         self._reset_pending_target_form()
         await self._refresh_targets_section()
+        self._keep_create_control_in_view()
 
     def _show_form_error(self, message: str) -> None:
         """Renders ``message`` in ``#evals-bench-form-error`` IN PLACE --
@@ -1087,6 +1220,7 @@ class BenchEditor(Vertical):
         self._staged_target_ids.append(target_id)
         self._capture_pending_target_form()
         await self._refresh_targets_section()
+        self._keep_create_control_in_view()
 
     @on(Button.Pressed, ".evals-bench-target-remove")
     async def _on_remove_target_pressed(self, event: Button.Pressed) -> None:
@@ -1192,6 +1326,9 @@ class BenchEditor(Vertical):
         prompt_mode = self.query_one("#evals-bench-prompt-mode", Select).value
         top_k_raw = self.query_one("#evals-bench-top-k", Input).value
         probes_text = self.query_one("#evals-bench-probes", TextArea).text
+        capture_continuations = self.query_one(
+            "#evals-bench-capture-continuations", Checkbox
+        ).value
 
         try:
             top_k = int(top_k_raw.strip())
@@ -1227,6 +1364,17 @@ class BenchEditor(Vertical):
                 target_ids=tuple(self._staged_target_ids),
                 probes=probes,
                 concurrency=loaded.concurrency,
+                # task-1710 T1 review flag: this used to be the ONE
+                # `BenchConfig` field with no passthrough here at all --
+                # saving ANY existing bench through this editor silently
+                # reset `capture_continuations` back to its dataclass
+                # default (`False`), regardless of what was loaded or
+                # what the checkbox above showed. Read fresh from the
+                # checkbox (task-1710 T2's own opt-in control), exactly
+                # like every other editable field above, not carried
+                # verbatim from `loaded` the way `concurrency` still is
+                # (that field has no UI control of its own yet).
+                capture_continuations=capture_continuations,
             )
         except ValueError as exc:
             self._show_form_error(str(exc))
