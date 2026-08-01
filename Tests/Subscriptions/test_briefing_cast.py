@@ -26,6 +26,7 @@ do for an async, thread-hopping caller).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sqlite3
 import threading
 
@@ -319,8 +320,15 @@ async def test_generate_script_snapshot_embeds_the_resolved_character_name(tmp_p
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["generating", "empty", "failed"])
 async def test_generate_script_refuses_when_the_briefing_is_not_complete(
-    tmp_path, status
-):
+    tmp_path: Path,
+    status: str,
+) -> None:
+    """Refuse every incomplete briefing state without creating a script.
+
+    Args:
+        tmp_path: Private root for the real file-backed subscriptions database.
+        status: Incomplete briefing status exercised by this parametrized case.
+    """
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = db.insert_briefing(watchlist)

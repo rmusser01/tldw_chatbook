@@ -48,6 +48,15 @@ RUNTIME_MIGRATION_PATHS = {
     CITATION_MIGRATION_PATH,
     CHARACTER_AUTHORITY_MIGRATION_PATH,
 }
+_PRIVATE_CHILD_BASELINE_ENV_KEYS = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+)
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -780,6 +789,29 @@ def _target_hashes(target: Path) -> dict[str, str]:
     }
 
 
+def _is_sensitive_environment_name(name: str) -> bool:
+    """Return whether an environment name can carry credentials or proxy data.
+
+    Args:
+        name: Environment-variable name to classify.
+
+    Returns:
+        True when the name belongs to a credential or proxy category.
+    """
+    normalized = name.upper()
+    return "PROXY" in normalized or any(
+        marker in normalized
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+
+
 def _private_child_env(
     state_root: Path,
     target: Path,
@@ -805,26 +837,33 @@ def _private_child_env(
     config_path.chmod(0o600)
 
     env = {
-        "HOME": str(state_root),
-        "USERPROFILE": str(state_root),
-        "APPDATA": str(data_root),
-        "LOCALAPPDATA": str(data_root),
-        "XDG_CONFIG_HOME": str(config_root),
-        "XDG_DATA_HOME": str(data_root),
-        "TLDW_CONFIG_PATH": str(config_path),
-        "TMPDIR": str(temp_root),
-        "TEMP": str(temp_root),
-        "TMP": str(temp_root),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-        "PYTHONPATH": str(target),
-        "EXPECTED_TARGET": str(target),
-        "CHECKOUT_ROOT": str(checkout_root),
-        "BUILD_SOURCE_ROOT": str(build_source_root),
-        "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
-        "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
-        "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
+        name: value
+        for name in _PRIVATE_CHILD_BASELINE_ENV_KEYS
+        if (value := os.environ.get(name)) and not _is_sensitive_environment_name(name)
     }
+    env.update(
+        {
+            "HOME": str(state_root),
+            "USERPROFILE": str(state_root),
+            "APPDATA": str(data_root),
+            "LOCALAPPDATA": str(data_root),
+            "XDG_CONFIG_HOME": str(config_root),
+            "XDG_DATA_HOME": str(data_root),
+            "TLDW_CONFIG_PATH": str(config_path),
+            "TMPDIR": str(temp_root),
+            "TEMP": str(temp_root),
+            "TMP": str(temp_root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "PYTHONPATH": str(target),
+            "EXPECTED_TARGET": str(target),
+            "CHECKOUT_ROOT": str(checkout_root),
+            "BUILD_SOURCE_ROOT": str(build_source_root),
+            "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
+            "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
+            "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
+        }
+    )
     return env
 
 
@@ -832,6 +871,12 @@ def test_private_child_env_excludes_host_credentials_and_proxy_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Retain safe process baselines while excluding host secrets and proxies.
+
+    Args:
+        monkeypatch: Pytest environment-isolation fixture.
+        tmp_path: Private filesystem root for the child-process fixture.
+    """
     state_root = tmp_path / "state"
     target = tmp_path / "target"
     build_source_root = tmp_path / "build-source"
@@ -841,11 +886,23 @@ def test_private_child_env_excludes_host_credentials_and_proxy_config(
     proxy_name = "HTTPS_PROXY"
     monkeypatch.setenv(credential_name, "test-only-value")
     monkeypatch.setenv(proxy_name, "http://127.0.0.1:9")
+    safe_baseline = {
+        "PATH": "/task1601/bin",
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "SYSTEMROOT": "/task1601/windows",
+        "WINDIR": "/task1601/windows",
+        "COMSPEC": "/task1601/windows/cmd.exe",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+    for name, value in safe_baseline.items():
+        monkeypatch.setenv(name, value)
 
     env = _private_child_env(state_root, target, build_source_root)
 
     assert credential_name not in env
     assert proxy_name not in env
+    assert {name: env.get(name) for name in safe_baseline} == safe_baseline
     assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 

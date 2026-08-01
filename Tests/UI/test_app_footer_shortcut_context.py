@@ -80,9 +80,14 @@ async def test_footer_renders_workbench_shortcuts():
 
 @pytest.mark.asyncio
 async def test_footer_db_size_stats_use_readable_labels_and_context_tooltip(
-    monkeypatch,
-):
-    """The production widget spells out labels; its tooltip adds local context."""
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spell out production DB labels and describe their local context.
+
+    Args:
+        monkeypatch: Pytest fixture used to bind the production manager to the
+            production footer function under test.
+    """
     footer = AppFooterStatus(id="footer")
     manager = DBStatusManager(app=object())
     monkeypatch.setattr(manager, "_get_db_status_widget", lambda: footer)

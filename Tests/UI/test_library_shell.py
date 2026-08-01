@@ -9611,12 +9611,16 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
 
 @pytest.mark.asyncio
 async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
     """Per-type options panels stay expanded across recomposes.
 
     The canvas posts ``OptionPanelToggled`` messages; the screen persists the
     user's choice in ``expanded_type_groups`` and reads it back on recompose.
+
+    Args:
+        tmp_path: Private root for the real file-backed media database and
+            ingestion source.
     """
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-type-group")
     source = tmp_path / "note.txt"
@@ -11667,13 +11671,16 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
 
 
 def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
     """A saved zip with a failed registry write warns but remains successful.
 
     Exercise the two production functions directly: zip-first service execution
     and UI-thread outcome application. No surrogate Textual application is needed
     for this function contract.
+
+    Args:
+        tmp_path: Private root for the generated export destination.
     """
     service = _FakeLibraryExportService(
         export_result={

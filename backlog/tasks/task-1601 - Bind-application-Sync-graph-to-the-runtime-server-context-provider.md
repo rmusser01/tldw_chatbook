@@ -1,11 +1,11 @@
 ---
 id: TASK-1601
 title: Bind application Sync graph to the runtime server context provider
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-31 14:02'
-updated_date: '2026-08-01 11:07'
+updated_date: '2026-08-01 15:34'
 labels:
   - architecture
   - sync
@@ -35,9 +35,9 @@ Make the app-composed Sync graph follow the application-owned runtime server sel
 - [x] #2 SyncScopeService, LocalFirstSyncService, and ManualSyncControlService retain the exact application-owned server service, repository, local-first service, and initially empty dataset-key cache identities required by their contracts.
 - [x] #3 Sync operations resolve clients lazily through the shared provider without a service-local client cache, and application shutdown remains the sole owner of provider client cleanup.
 - [x] #4 The missing production local apply store remains explicitly blocked and is not replaced with an in-memory or test-only implementation in this provider-ownership tranche.
-- [x] #5 Focused source checks, real production TldwCli tests, and an offline installed-wheel production-app probe verify the ownership graph without a test, surrogate, simplified, or locally redefined application.
+- [ ] #5 Focused source checks, real production TldwCli tests, and an offline installed-wheel production-app probe verify the ownership graph without a test, surrogate, simplified, or locally redefined application.
 - [x] #6 ADR-036 and the provider-migration audit use a numeric-safe semantic and AST inventory and record the verified residual app-level compatibility-provider count, expected to be 31 on the reviewed baseline and re-derived after rebases.
-- [x] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
+- [ ] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,6 +53,7 @@ Reason: TASK-1601 changes application runtime-provider ownership, a public Sync 
 4. Add a RED late-key-mutation test and retain the exact initially empty application dataset-key cache.
 5. Add narrow source, real TldwCli lifecycle, and offline installed-wheel sentinels; switch only app-composed Sync to server_context_provider; reconcile the residual audit inventory.
 6. Run focused, RuntimePolicy, ProductionApp, Packaging, installed-wheel, static, full-suite, rebase, and post-rebase gates; self-review and close the Backlog task only with exact evidence.
+7. For PR review remediation, preserve a safe non-secret OS/runtime environment baseline in installed-wheel child processes, bring every cited touched test callable up to the requested annotation/docstring standard, rerun the affected gates, reply to and resolve every review thread, then rebase onto the latest dev and repeat the post-rebase smoke.
 
 Detailed executable plan: Docs/superpowers/plans/2026-07-31-application-sync-runtime-provider-ownership.md
 <!-- SECTION:PLAN:END -->
@@ -75,13 +76,13 @@ Core modified files: `tldw_chatbook/app.py`, both Sync services, focused Sync/Pr
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [x] #1 All acceptance criteria are checked.
+- [ ] #1 All acceptance criteria are checked.
 - [x] #2 Implementation follows the approved plan or documents deviations.
-- [x] #3 Focused and full automated verification passes.
-- [x] #4 Ruff lint and format checks pass for changed Python files.
-- [x] #5 ADR-036, migration audit, task notes, and relevant documentation are current.
-- [x] #6 Self-review finds no unresolved correctness, privacy, lifecycle, packaging, or test-contract issue.
+- [ ] #3 Focused and full automated verification passes.
+- [ ] #4 Ruff lint and format checks pass for changed Python files.
+- [ ] #5 ADR-036, migration audit, task notes, and relevant documentation are current.
+- [ ] #6 Self-review finds no unresolved correctness, privacy, lifecycle, packaging, or test-contract issue.
 - [x] #7 No regression introduces a test, surrogate, simplified, or locally redefined application.
-- [x] #8 Diff hygiene and installed-distribution verification pass.
-- [x] #9 Task status is set to Done only after all preceding items are complete.
+- [ ] #8 Diff hygiene and installed-distribution verification pass.
+- [ ] #9 Task status is set to Done only after all preceding items are complete.
 <!-- DOD:END -->

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
@@ -152,8 +154,13 @@ def _repo_with_profile(
 
 
 async def test_local_first_sync_service_observes_key_added_to_empty_shared_cache(
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
+    """Retain an empty shared key cache so later key loads reach Sync.
+
+    Args:
+        tmp_path: Private root for the real file-backed Sync repository.
+    """
     dataset_key = generate_dataset_key()
     repo = _repo_with_profile(tmp_path)
     server = FakeLocalFirstServer()

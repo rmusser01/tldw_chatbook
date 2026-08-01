@@ -510,7 +510,10 @@ def test_server_sync_service_re_resolves_provider_without_service_local_client_c
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_from_config_returns_provider_backed_service():
+async def test_server_sync_service_from_config_returns_provider_backed_service() -> (
+    None
+):
+    """Keep public config construction provider-backed and clean it up."""
     service = ServerSyncService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
