@@ -175,3 +175,23 @@ def test_preflight_result_maps_to_contract_status_label():
     assert degenerate.status_label == "Ready"
     assert degenerate.is_warned is True
     assert ok.is_warned is False
+
+
+# ---------------------------------------------------------------------------
+# task-1691 -- PreflightResult.continuation: additive, defaults empty
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_result_continuation_defaults_to_empty_string():
+    """Additive field: every pre-existing call site (and every historical
+    snapshot lacking the key) must keep constructing without supplying it."""
+    result = PreflightResult(state="ok", k_returned=20, canary="pass")
+    assert result.continuation == ""
+
+
+def test_preflight_result_continuation_can_be_set_explicitly():
+    result = PreflightResult(
+        state="ok", k_returned=20, canary="degenerate",
+        continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
+    )
+    assert result.continuation == "<|channel><|channel>thought\n<channel|>The sky is **blue"

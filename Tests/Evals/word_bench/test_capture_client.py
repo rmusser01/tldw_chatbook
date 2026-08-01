@@ -413,6 +413,214 @@ async def test_aclose_releases_the_pooled_client_and_is_safe_to_call_twice():
     await client.aclose()
 
 
+##############################################################################
+# task-1691 -- preflight captures a short continuation per target
+##############################################################################
+
+
+@pytest.mark.asyncio
+async def test_preflight_captures_a_continuation_in_raw_mode():
+    """Raw mode's canary is deliberately max_tokens: 1 (see module docstring
+    and preflight's own docstring) -- a real continuation needs a genuinely
+    separate request, never a lengthened canary. That second request must
+    actually happen and its text must land on the result."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)  # the canary capture
+        return httpx.Response(200, json={"choices": [{"text": " blue skies ahead", "index": 0}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert len(calls) == 2, "one canary request, one separate continuation request"
+    assert calls[0]["max_tokens"] == 1, "the canary request itself must stay untouched"
+    assert calls[1]["max_tokens"] > 1, "the continuation request must ask for more than one token"
+    assert result.continuation == " blue skies ahead"
+
+
+@pytest.mark.asyncio
+async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_request():
+    """Chat mode's canary already requests CHAT_TOKEN_WINDOW tokens and
+    discards the generated text today -- that discard is a genuine salvage
+    opportunity (unlike raw mode's single token), so capturing it must not
+    cost a second request."""
+    calls = []
+    payload = {
+        "choices": [{
+            "message": {"role": "assistant", "content": "<|channel>thought The sky is blue"},
+            "logprobs": {"content": [
+                {"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01,
+                 "top_logprobs": [{"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01}]},
+                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
+                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
+            ]},
+        }]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "chat", 5)
+
+    assert len(calls) == 1, (
+        "chat mode's continuation must be salvaged from the canary response, "
+        "never a second request"
+    )
+    assert result.state == "ok"
+    assert result.canary == "pass"
+    assert result.continuation == "<|channel>thought The sky is blue"
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_request_in_raw_mode_carries_the_target_prefix():
+    """Readiness (and its continuation) is a property of what the run will
+    actually send -- the same steering contract preflight's own docstring
+    already states for the canary applies equally here."""
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if len(seen) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(200, json={"choices": [{"text": " continues", "index": 0}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: ")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert seen[1]["prompt"] == f"Note: {CANARY_PROMPT}"
+    assert result.continuation == " continues"
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_in_chat_mode_reflects_system_prompt_steering():
+    seen = []
+    payload = {
+        "choices": [{
+            "message": {"role": "assistant", "content": "steered output"},
+            "logprobs": {"content": [
+                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
+                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
+            ]},
+        }]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m",
+                     system_prompt="Be careful.")
+    result = await _client(handler).preflight(target, "chat", 5)
+
+    assert seen[0]["messages"][0] == {"role": "system", "content": "Be careful."}
+    assert result.continuation == "steered output"
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_degrades_to_empty_string_when_the_canary_itself_fails():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nope")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.state == "unreachable"
+    assert result.continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_degrades_to_empty_string_when_the_continuation_request_fails():
+    """The canary succeeds (state stays 'ok') but the SEPARATE continuation
+    request fails -- must degrade to "" without raising and without touching
+    the already-resolved state/canary verdict."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        raise httpx.ConnectError("continuation endpoint down")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.state == "ok"
+    assert result.continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_is_empty_string_when_chat_response_has_no_message_content():
+    payload = {
+        "choices": [{
+            "logprobs": {"content": [
+                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
+                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
+            ]},
+            # no "message" key at all
+        }]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "chat", 5)
+
+    assert result.state == "ok"
+    assert result.continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_preflight_continuation_is_capped_to_a_bounded_length():
+    calls = []
+    long_text = "x" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(200, json={"choices": [{"text": long_text}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert 0 < len(result.continuation) < len(long_text), (
+        "the stored continuation must be capped to a bounded window, "
+        "not the full generated text"
+    )
+    assert long_text.startswith(result.continuation)
+
+
+@pytest.mark.asyncio
+async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_capture():
+    """Approach (a) was chosen: the continuation is a separate request/
+    response that is never passed through normalize_logprobs, so the canary
+    verdict must be identical to what it was before continuation capture
+    existed -- regardless of what the continuation request returns, even
+    when it errors outright."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)  # canary: top token " much", not Paris
+        return httpx.Response(500, text="boom")  # continuation request fails outright
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.canary == "degenerate"
+    assert result.state == "ok"
+    assert result.k_returned == 5
+    assert result.continuation == ""
+
+
 @pytest.mark.asyncio
 async def test_used_as_an_async_context_manager_closes_on_exit():
     def handler(request: httpx.Request) -> httpx.Response:

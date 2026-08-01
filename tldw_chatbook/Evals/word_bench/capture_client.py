@@ -41,6 +41,33 @@ CHAT_TOKEN_WINDOW = CONTENT_TOKEN_WINDOW
 CANARY_PROMPT = "The capital of France is"
 CANARY_EXPECT = (" Paris", "Paris")
 
+#: task-1691: how many tokens the SEPARATE raw-mode continuation request
+#: (see `_capture_raw_continuation`) asks for. Long enough that chat-template
+#: scaffolding a heavily chat-tuned model emits in raw mode (the motivating
+#: UAT: `'<|channel><|channel>thought\n<channel|>The sky is **blue'`, several
+#: control tokens before any real content) reliably clears into legible text
+#: rather than stopping mid-scaffolding; short enough that this one extra
+#: per-TARGET preflight request (never per-cell -- see this module's and
+#: `preflight`'s own docstrings) stays cheap.
+CONTINUATION_MAX_TOKENS = 24
+
+#: task-1691: upper bound on what a captured continuation is STORED as, in
+#: characters. This is a storage cap on the run snapshot, not a display cap --
+#: the UI is free to preview an even shorter window of this.
+CONTINUATION_CHAR_CAP = 200
+
+
+def _cap_continuation(text: str) -> str:
+    """Bound what preflight stores for a continuation preview.
+
+    Args:
+        text: The raw generated continuation text.
+
+    Returns:
+        ``text`` truncated to ``CONTINUATION_CHAR_CAP`` characters.
+    """
+    return text[:CONTINUATION_CHAR_CAP]
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -272,28 +299,50 @@ class WordBenchCaptureClient:
             a ``CellError`` describing why the cell could not be measured
             (never raised).
         """
+        result, _payload = await self._capture_with_payload(snippet, target, mode, top_k)
+        return result
+
+    async def _capture_with_payload(
+        self, snippet: str, target: Target, mode: PromptMode, top_k: int
+    ) -> tuple[CellCapture | CellError, Optional[dict[str, Any]]]:
+        """Same behaviour as ``capture()``, but also hands back the raw
+        decoded response body (or ``None`` on any failure).
+
+        Exists so ``preflight`` can read the actual generated text off the
+        SAME response it uses for the canary verdict, in chat mode, without
+        a second request -- see ``_resolve_continuation``. ``capture()``
+        itself is unchanged behaviourally; this is a pure factoring split,
+        not a new code path for the cell-measurement contract.
+
+        Returns:
+            ``(result, payload)`` -- ``payload`` is the decoded JSON body
+            when one was successfully received and parsed (even if
+            ``normalize_logprobs`` then failed on its shape), or ``None``
+            when the request itself never produced a body (transport
+            failure, non-2xx status, or an undecodable body).
+        """
         url, payload = self._build_request(snippet, target, mode, top_k)
         try:
             data = await self._post(url, payload)
         except httpx.HTTPStatusError as exc:
-            return CellError(reason="http_error", detail=f"{exc.response.status_code}")
+            return CellError(reason="http_error", detail=f"{exc.response.status_code}"), None
         except httpx.HTTPError as exc:
-            return CellError(reason="unreachable", detail=str(exc))
+            return CellError(reason="unreachable", detail=str(exc)), None
         except ValueError as exc:
             # response.json() raises a ValueError (json.JSONDecodeError) when
             # the body isn't JSON at all -- e.g. a proxy returning an HTML
             # error page with a 200 status. One malformed response must not
             # abort an entire multi-hundred-cell run.
-            return CellError(reason="bad_response", detail=f"invalid JSON body: {exc}")
+            return CellError(reason="bad_response", detail=f"invalid JSON body: {exc}"), None
 
         try:
             tokens, offset = normalize_logprobs(data, want_content_token=(mode == "chat"))
         except NormalizerError as exc:
-            return CellError(reason=exc.code, detail=str(exc))
+            return CellError(reason=exc.code, detail=str(exc)), data
         except (KeyError, TypeError) as exc:
             # A malformed top_logprobs entry (missing "token"/"logprob", or a
             # value of the wrong type) must not raise past this call either.
-            return CellError(reason="bad_response", detail=f"malformed entry: {exc!r}")
+            return CellError(reason="bad_response", detail=f"malformed entry: {exc!r}"), data
 
         return CellCapture(
             prompt_mode=mode,
@@ -303,7 +352,7 @@ class WordBenchCaptureClient:
             top_k=tuple(tokens),
             canary="unchecked",
             captured_at=_utcnow(),
-        )
+        ), data
 
     async def preflight(
         self, target: Target, mode: PromptMode, top_k: int
@@ -335,18 +384,26 @@ class WordBenchCaptureClient:
         Returns:
             A ``PreflightResult`` carrying the resolved ``state`` (see
             ``models._STATUS_LABELS`` for how it maps to a UI label),
-            ``k_returned``, and ``canary`` verdict. Never raises -- a failed
-            canary capture becomes a non-``"ok"`` ``state``, not an
-            exception.
+            ``k_returned``, ``canary`` verdict, and (task-1691) a short,
+            best-effort ``continuation`` -- a generated continuation of
+            ``CANARY_PROMPT`` through this same steering/mode, meant to make
+            a degenerate canary's behaviour (e.g. chat-template scaffolding
+            leaking into raw mode) legible as text rather than only as a
+            distribution. Never raises -- a failed canary capture becomes a
+            non-``"ok"`` ``state``, not an exception, and a failed or empty
+            continuation capture becomes ``""``, exactly like the canary's
+            own "never raises" contract.
         """
-        result = await self.capture(CANARY_PROMPT, target, mode, top_k)
+        result, canary_payload = await self._capture_with_payload(
+            CANARY_PROMPT, target, mode, top_k
+        )
         checked_at = _utcnow()
 
         if isinstance(result, CellError):
             state = _preflight_state_for_error(result)
             return PreflightResult(
                 state=state, k_returned=None, canary="unchecked",
-                detail=result.detail, checked_at=checked_at,
+                detail=result.detail, checked_at=checked_at, continuation="",
             )
 
         observed = {tok.token for tok in result.top_k}
@@ -358,7 +415,124 @@ class WordBenchCaptureClient:
                 CANARY_PROMPT,
                 [t.token for t in result.top_k[:3]],
             )
+        continuation = await self._resolve_continuation(target, mode, canary_payload)
         return PreflightResult(
             state="ok", k_returned=result.k_returned, canary=canary,
-            checked_at=checked_at,
+            checked_at=checked_at, continuation=continuation,
         )
+
+    async def _resolve_continuation(
+        self, target: Target, mode: PromptMode, canary_payload: Optional[dict[str, Any]]
+    ) -> str:
+        """A short, best-effort continuation for the readiness surface.
+
+        Chosen approach (task-1691's option (a), separate-request): chat
+        mode's canary call above already asked for ``CHAT_TOKEN_WINDOW``
+        tokens and this method's caller (``preflight``) already has that
+        response's raw payload in hand, discarded until now -- salvaging the
+        generated text from it costs nothing extra. Raw mode's canary is
+        deliberately ``max_tokens: 1`` (see this class's ``NEUTRAL_SAMPLER``/
+        module docstring and ``preflight``'s own docstring), so there is no
+        free text to salvage there; a real continuation needs a genuinely
+        separate request (``_capture_raw_continuation``), issued and parsed
+        entirely independently of the canary response already used to
+        compute ``canary`` above -- it can never perturb that verdict, no
+        matter what it returns or how it fails, because nothing it produces
+        is ever passed through ``normalize_logprobs``.
+
+        Never raises: any failure (transport, HTTP status, malformed body,
+        missing/non-string text field) degrades to ``""``, matching the
+        canary capture's own "never raises" contract.
+
+        Args:
+            target: The column being checked, steered exactly as ``preflight``
+                steered its own canary request.
+            mode: ``"raw"`` or ``"chat"`` -- selects salvage vs. a fresh
+                request, same as everywhere else in this class.
+            canary_payload: The decoded JSON body from ``preflight``'s own
+                canary request, or ``None`` if that request never produced
+                one. Only consulted in chat mode.
+
+        Returns:
+            The captured continuation, capped by ``_cap_continuation``, or
+            ``""``.
+        """
+        if mode == "chat":
+            return _extract_chat_continuation(canary_payload)
+        return await self._capture_raw_continuation(target)
+
+    async def _capture_raw_continuation(self, target: Target) -> str:
+        """Issue the SEPARATE, continuation-only raw completion request.
+
+        Deliberately built from scratch rather than through
+        ``_build_request``/``_capture_with_payload``: this request never
+        requests ``logprobs`` at all (only generated text is wanted) and its
+        response is never handed to ``normalize_logprobs``, so it is
+        structurally incapable of influencing the canary verdict computed
+        from the separate ``max_tokens: 1`` canary request.
+
+        Steered identically to the canary request (``target.prefix``
+        prepended, same as ``_build_request``'s raw-mode branch) -- see
+        ``preflight``'s docstring: readiness, and now its continuation, are
+        properties of what the run will actually send.
+
+        Never raises: any failure (transport, HTTP status, malformed body,
+        missing/non-string ``text``) degrades to ``""``.
+
+        Args:
+            target: The column being checked; only ``model_id`` and
+                ``prefix`` are used.
+
+        Returns:
+            The captured continuation, capped by ``_cap_continuation``, or
+            ``""``.
+        """
+        prompt = f"{target.prefix}{CANARY_PROMPT}" if target.prefix else CANARY_PROMPT
+        payload: dict[str, Any] = {
+            "model": target.model_id,
+            **NEUTRAL_SAMPLER,
+            "prompt": prompt,
+            "max_tokens": CONTINUATION_MAX_TOKENS,
+        }
+        url = f"{self._base_url}/v1/completions"
+        try:
+            data = await self._post(url, payload)
+        except httpx.HTTPError:
+            return ""
+        except ValueError:
+            # response.json() raises ValueError (json.JSONDecodeError) for a
+            # non-JSON 200 body (e.g. an HTML proxy error page) -- same
+            # failure class _capture_with_payload guards against.
+            return ""
+
+        try:
+            text = data["choices"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            return ""
+        if not isinstance(text, str):
+            return ""
+        return _cap_continuation(text)
+
+
+def _extract_chat_continuation(payload: Optional[dict[str, Any]]) -> str:
+    """Salvage the generated continuation text out of a chat-mode canary
+    response, never raising.
+
+    Args:
+        payload: The decoded JSON body from a chat-mode canary request, or
+            ``None``.
+
+    Returns:
+        The message content, capped by ``_cap_continuation``, or ``""`` if
+        ``payload`` is ``None``, unrecognized, or carries no string
+        ``message.content``.
+    """
+    if not payload:
+        return ""
+    try:
+        text = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    if not isinstance(text, str):
+        return ""
+    return _cap_continuation(text)
