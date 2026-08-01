@@ -536,7 +536,7 @@ async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_detai
         assert "Full destination ref: refs/heads/session-notes" in copy
         assert "Transport: HTTPS" in copy
         assert "application process" in copy
-        assert "configured SSH or credential helpers may run" in copy
+        assert "existing SSH agent or an approved credential helper may run" in copy
         assert "Terminal prompts are disabled" in copy
         assert "checks the destination and does not push" in copy
 
@@ -739,6 +739,9 @@ async def test_push_authorization_dialog_brackets_ipv6_endpoint_summary() -> Non
             "Endpoint: ssh · git@[2001:db8::1]:22 · /team/notes.git"
             in copy
         )
+        assert "strict snapshotted host trust" in copy
+        assert "existing SSH agent only" in copy
+        assert "identity files are disabled" in copy
 
 
 @pytest.mark.asyncio

@@ -1810,9 +1810,9 @@ class LibraryFileNotesGitPanel(Vertical):
                 "prompts disabled"
                 if destination.certificate_verification_required
                 else (
-                    "Secure transport: SSH with host-key verification; "
-                    "existing noninteractive authentication only; terminal "
-                    "prompts disabled"
+                    "Secure transport: SSH with strict snapshotted host trust; "
+                    "existing SSH agent only; identity files disabled; "
+                    "terminal prompts disabled"
                 )
             ),
             "local-hooks": "Local pre-push hooks will not run",
@@ -3495,6 +3495,12 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         destination = self._authorization.destination
         transport = "HTTPS" if destination.scheme == "https" else "SSH"
+        ssh_policy_copy = (
+            "SSH uses strict snapshotted host trust, the existing SSH agent "
+            "only, and identity files are disabled.\n"
+            if destination.scheme == "ssh"
+            else ""
+        )
         with Container(id="file-notes-push-auth-dialog"):
             yield Static(
                 "Authorize configured destination",
@@ -3510,8 +3516,9 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
                         f"Transport: {transport}\n\n"
                         "Scope: authorization lasts only for this application "
                         "process and this exact configured destination.\n"
-                        "Existing configured SSH or credential helpers may run "
+                        "The existing SSH agent or an approved credential helper may run "
                         "after authorization. Terminal prompts are disabled.\n"
+                        f"{ssh_policy_copy}"
                         "This authorization checks the destination and does not push."
                     ),
                     id="file-notes-push-auth-copy",

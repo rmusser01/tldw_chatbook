@@ -74,6 +74,7 @@ _ERROR_MESSAGES: dict[NetworkContextErrorCode, str] = {
 }
 _HEX_256 = re.compile(r"[0-9a-f]{64}")
 _CREDENTIAL_HELPER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+_OPENSSH_OPTION_PATH = re.compile(r"/[A-Za-z0-9/._-]+")
 _GIT_BOOLEAN = frozenset(
     {"true", "false", "yes", "no", "on", "off", "1", "0"}
 )
@@ -81,8 +82,15 @@ _SSH_SECRET = object()
 _DIRECTORY_MODE = 0o700
 _READ_ONLY_DIRECTORY_MODE = 0o500
 _FILE_MODE = 0o600
+_HOST_TRUST_FILE_MODE = 0o400
 _CONTEXT_PREFIX = ".chatbook-network-git-"
 _ADAPTER_MODE = 0o700
+_SSH_TRUST_SOURCE_LIMIT_BYTES = 1 << 20
+_SSH_TRUST_COMBINED_LIMIT_BYTES = 4 << 20
+_SYSTEM_SSH_TRUST_PATHS = (
+    Path("/etc/ssh/ssh_known_hosts"),
+    Path("/etc/ssh/ssh_known_hosts2"),
+)
 _PLATFORM_CREDENTIAL_HELPERS: dict[str, frozenset[str]] = {
     "darwin": frozenset({"osxkeychain"}),
 }
@@ -91,7 +99,6 @@ _SSH_ROUTE_USER = "CHATBOOK_NETWORK_SSH_USER"
 _SSH_ROUTE_PORT = "CHATBOOK_NETWORK_SSH_PORT"
 _SSH_ROUTE_PATH = "CHATBOOK_NETWORK_SSH_PATH"
 _SSH_ROUTE_AGENT = "CHATBOOK_NETWORK_SSH_AGENT"
-_NO_AGENT = "none"
 _OPENSSH_FIXED_ARGUMENTS = (
     "-F",
     "none",
@@ -165,11 +172,41 @@ class _AuthorizedConfigFact:
 
 
 @dataclass(frozen=True, slots=True)
+class _SSHTrustSourceRecord:
+    kind: Literal["user", "system"]
+    path: Path = field(repr=False)
+    present: bool
+    identity: FileSystemIdentity | None
+    owner: int | None
+    group: int | None
+    mode: int | None
+    link_count: int | None
+    size: int | None
+    mtime_ns: int | None
+    ctime_ns: int | None
+    content_digest: str | None
+    payload: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _SSHNetworkPolicyRecord:
+    trust_sources: tuple[_SSHTrustSourceRecord, ...] = field(repr=False)
+    trust_payload: bytes = field(repr=False)
+    trust_digest: str
+    agent_socket: _PinnedSocket = field(repr=False)
+    agent_identity_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
 class _NetworkConfigRecord:
     configuration_fingerprint: str
     copy_fingerprint: str
     destination: PushDestinationProjection
     facts: tuple[_AuthorizedConfigFact, ...] = field(repr=False)
+    ssh_policy: _SSHNetworkPolicyRecord | None = field(
+        default=None,
+        repr=False,
+    )
 
 
 class NetworkConfigAuthorization:
@@ -243,6 +280,7 @@ def _validated_network_config_record(
     *,
     configuration_fingerprint: str,
     destination: PushDestinationProjection,
+    ssh_policy: _SSHNetworkPolicyRecord | None = None,
 ) -> _NetworkConfigRecord:
     """Authorize only an exact ordered set of safe copied Git config facts.
 
@@ -266,6 +304,8 @@ def _validated_network_config_record(
         type(facts) is not tuple
         or type(destination) is not PushDestinationProjection
         or not _is_hex_fingerprint(configuration_fingerprint)
+        or (destination.scheme == "ssh")
+        != (type(ssh_policy) is _SSHNetworkPolicyRecord)
     ):
         raise NetworkContextError("invalid_configuration")
     authorized: list[_AuthorizedConfigFact] = []
@@ -306,12 +346,14 @@ def _validated_network_config_record(
         tuple(authorized),
         configuration_fingerprint,
         destination,
+        ssh_policy,
     )
     record = _NetworkConfigRecord(
         configuration_fingerprint,
         copy_fingerprint,
         destination,
         tuple(authorized),
+        ssh_policy,
     )
     return record
 
@@ -321,6 +363,8 @@ def _authorize_network_config_snapshot(
     *,
     configuration_fingerprint: str,
     destination: PushDestinationProjection,
+    environment: Mapping[str, str] | None = None,
+    repository: RepositoryIdentity | None = None,
 ) -> NetworkConfigAuthorization:
     """Select supported credential facts from a proved complete snapshot.
 
@@ -350,10 +394,19 @@ def _authorize_network_config_snapshot(
         )
         else ()
     )
+    ssh_policy = None
+    if (
+        type(destination) is PushDestinationProjection
+        and destination.scheme == "ssh"
+    ):
+        if environment is None or type(repository) is not RepositoryIdentity:
+            raise NetworkContextError("invalid_configuration")
+        ssh_policy = _capture_ssh_network_policy(environment, repository)
     return _authorize_network_config_facts(
         selected,
         configuration_fingerprint=configuration_fingerprint,
         destination=destination,
+        ssh_policy=ssh_policy,
     )
 
 
@@ -439,11 +492,13 @@ def _make_authorization_registry():
         *,
         configuration_fingerprint: str,
         destination: PushDestinationProjection,
+        ssh_policy: _SSHNetworkPolicyRecord | None = None,
     ) -> NetworkConfigAuthorization:
         record = _validated_network_config_record(
             facts,
             configuration_fingerprint=configuration_fingerprint,
             destination=destination,
+            ssh_policy=ssh_policy,
         )
         authorization = object.__new__(NetworkConfigAuthorization)
         config_records[authorization] = record
@@ -761,6 +816,7 @@ class _PrivateLayout:
         parent: Path,
         *,
         ssh_adapter: bool,
+        ssh_host_trust: bool,
     ) -> _PrivateLayout:
         parent_entry = _capture_parent_entry(parent)
         relative_paths: tuple[
@@ -788,6 +844,11 @@ class _PrivateLayout:
             relative_paths = (
                 *relative_paths,
                 ("ssh-adapter", "executable", _ADAPTER_MODE),
+            )
+        if ssh_host_trust:
+            relative_paths = (
+                *relative_paths,
+                ("ssh-known-hosts", "file", _HOST_TRUST_FILE_MODE),
             )
         entries = tuple(
             _capture_known_entry(
@@ -852,7 +913,7 @@ class _PrivateLayout:
 
     def cleanup(self) -> bool:
         if not self.validate(
-            include_contents=False,
+            include_contents=True,
             allow_partial_cleanup=True,
         ):
             return False
@@ -883,7 +944,7 @@ class _PrivateLayout:
                     self.root,
                     path,
                     entry,
-                    include_contents=False,
+                    include_contents=True,
                 ):
                     return False
                 path.unlink()
@@ -925,15 +986,22 @@ class _LayoutBuilder:
         payload: bytes,
         *,
         executable: bool = False,
+        mode: int | None = None,
     ) -> Path:
         path = self.root / relative_path
-        mode = _ADAPTER_MODE if executable else _FILE_MODE
+        if mode is not None and executable:
+            raise NetworkContextError("unsafe_filesystem")
+        selected_mode = (
+            mode
+            if mode is not None
+            else (_ADAPTER_MODE if executable else _FILE_MODE)
+        )
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags, mode)
+        descriptor = os.open(path, flags, selected_mode)
         self._created.append((path, "file"))
         try:
-            os.fchmod(descriptor, mode)
+            os.fchmod(descriptor, selected_mode)
             view = memoryview(payload)
             while view:
                 written = os.write(descriptor, view)
@@ -1492,14 +1560,12 @@ class NetworkContextFactory:
                 transport_helper,
                 *dispatch_executables,
             )
+        ssh_policy = config_record.ssh_policy
         agent_socket = (
-            _pin_agent_socket(self._agent_socket_value)
-            if (
-                destination.scheme == "ssh"
-                and self._agent_socket_value is not None
-            )
-            else None
+            ssh_policy.agent_socket if ssh_policy is not None else None
         )
+        if agent_socket is not None and not agent_socket.validate():
+            raise NetworkContextError("invalid_context")
         python_executable = (
             _pin_executable(
                 self._python_executable_value,
@@ -1508,10 +1574,9 @@ class NetworkContextFactory:
             if destination.scheme == "ssh"
             else None
         )
-        openssh, ssh_executable = self._build_openssh(
+        ssh_executable = self._pin_openssh_executable(
             destination,
             ambient_search_path,
-            agent_socket,
         )
         network_executables = (
             self._git_executable,
@@ -1562,6 +1627,21 @@ class NetworkContextFactory:
                 ),
             )
             global_config = builder.file("global.gitconfig", b"")
+            private_host_trust = (
+                builder.file(
+                    "ssh-known-hosts",
+                    ssh_policy.trust_payload,
+                    mode=_HOST_TRUST_FILE_MODE,
+                )
+                if ssh_policy is not None
+                else None
+            )
+            openssh = self._build_openssh(
+                destination,
+                ssh_executable,
+                agent_socket,
+                private_host_trust,
+            )
             ssh_adapter = root / "ssh-adapter" if openssh is not None else None
             ssh_routing = (
                 ()
@@ -1607,6 +1687,7 @@ class NetworkContextFactory:
                 root,
                 parent,
                 ssh_adapter=ssh_adapter is not None,
+                ssh_host_trust=private_host_trust is not None,
             )
             if not layout.validate():
                 raise NetworkContextError("unsafe_filesystem")
@@ -1650,14 +1731,13 @@ class NetworkContextFactory:
                     pass
             raise NetworkContextError("unsafe_filesystem") from None
 
-    def _build_openssh(
+    def _pin_openssh_executable(
         self,
         destination: PushDestinationProjection,
         search_path: str,
-        agent_socket: _PinnedSocket | None,
-    ) -> tuple[OpenSSHInvocationSpec | None, _PinnedExecutable | None]:
+    ) -> _PinnedExecutable | None:
         if destination.scheme != "ssh":
-            return None, None
+            return None
         selected = (
             shutil.which("ssh", path=search_path)
             if self._ssh_executable_value is None
@@ -1665,20 +1745,48 @@ class NetworkContextFactory:
         )
         if selected is None or destination.ssh_user is None:
             raise NetworkContextError("invalid_openssh")
-        executable = _pin_executable(
+        return _pin_executable(
             selected,
             search_path,
         )
+
+    def _build_openssh(
+        self,
+        destination: PushDestinationProjection,
+        executable: _PinnedExecutable | None,
+        agent_socket: _PinnedSocket | None,
+        private_host_trust: Path | None,
+    ) -> OpenSSHInvocationSpec | None:
+        if destination.scheme != "ssh":
+            if any(
+                value is not None
+                for value in (executable, agent_socket, private_host_trust)
+            ):
+                raise NetworkContextError("invalid_openssh")
+            return None
+        if (
+            executable is None
+            or agent_socket is None
+            or private_host_trust is None
+            or destination.ssh_user is None
+            or not _safe_openssh_option_path(str(private_host_trust))
+            or not _safe_openssh_option_path(str(agent_socket.path))
+        ):
+            raise NetworkContextError("invalid_openssh")
         host = destination.host
         argv = (
             str(executable.path),
             *_OPENSSH_FIXED_ARGUMENTS,
             "-o",
-            (
-                "IdentityAgent=none"
-                if agent_socket is None
-                else f"IdentityAgent={agent_socket.path}"
-            ),
+            f"UserKnownHostsFile={private_host_trust}",
+            "-o",
+            "GlobalKnownHostsFile=none",
+            "-o",
+            "IdentityFile=none",
+            "-o",
+            "IdentitiesOnly=no",
+            "-o",
+            f"IdentityAgent={agent_socket.path}",
             "-o",
             f"HostName={host}",
             "-p",
@@ -1688,13 +1796,10 @@ class NetworkContextFactory:
             "--",
             host,
         )
-        return (
-            OpenSSHInvocationSpec(
-                _SSH_SECRET,
-                argv=argv,
-                executable=executable,
-            ),
-            executable,
+        return OpenSSHInvocationSpec(
+            _SSH_SECRET,
+            argv=argv,
+            executable=executable,
         )
 
 
@@ -1788,6 +1893,7 @@ def _build_context_environment(
             {
                 "GIT_SSH": str(ssh_adapter),
                 "GIT_SSH_VARIANT": "ssh",
+                "SSH_AUTH_SOCK": routing[_SSH_ROUTE_AGENT],
                 **routing,
             }
         )
@@ -1799,7 +1905,11 @@ def _ssh_runtime_routing(
     destination: PushDestinationProjection,
     agent_socket: _PinnedSocket | None,
 ) -> tuple[tuple[str, str], ...]:
-    if destination.scheme != "ssh" or destination.ssh_user is None:
+    if (
+        destination.scheme != "ssh"
+        or destination.ssh_user is None
+        or agent_socket is None
+    ):
         raise NetworkContextError("invalid_openssh")
     repository_path = (
         destination.repository_path
@@ -1813,11 +1923,7 @@ def _ssh_runtime_routing(
                 _SSH_ROUTE_USER: destination.ssh_user,
                 _SSH_ROUTE_PORT: str(destination.port),
                 _SSH_ROUTE_PATH: repository_path,
-                _SSH_ROUTE_AGENT: (
-                    _NO_AGENT
-                    if agent_socket is None
-                    else str(agent_socket.path)
-                ),
+                _SSH_ROUTE_AGENT: str(agent_socket.path),
             }.items()
         )
     )
@@ -1843,10 +1949,11 @@ def _config_copy_fingerprint(
     facts: tuple[_AuthorizedConfigFact, ...],
     configuration_fingerprint: str,
     destination: PushDestinationProjection,
+    ssh_policy: _SSHNetworkPolicyRecord | None,
 ) -> str:
     digest = hashlib.sha256()
     for value in (
-        "file-notes-network-config-v1",
+        "file-notes-network-config-v2",
         configuration_fingerprint,
         destination.scheme,
         destination.host,
@@ -1866,6 +1973,26 @@ def _config_copy_fingerprint(
         ),
     ):
         _digest_text(digest, value)
+    if ssh_policy is not None:
+        _digest_text(digest, ssh_policy.agent_identity_fingerprint)
+        _digest_text(digest, ssh_policy.trust_digest)
+        for source in ssh_policy.trust_sources:
+            for value in (
+                source.kind,
+                str(source.path),
+                "present" if source.present else "missing",
+                "" if source.identity is None else str(source.identity.device),
+                "" if source.identity is None else str(source.identity.inode),
+                "" if source.owner is None else str(source.owner),
+                "" if source.group is None else str(source.group),
+                "" if source.mode is None else str(source.mode),
+                "" if source.link_count is None else str(source.link_count),
+                "" if source.size is None else str(source.size),
+                "" if source.mtime_ns is None else str(source.mtime_ns),
+                "" if source.ctime_ns is None else str(source.ctime_ns),
+                source.content_digest or "",
+            ):
+                _digest_text(digest, value)
     return digest.hexdigest()
 
 
@@ -1939,7 +2066,6 @@ USER_KEY = {_SSH_ROUTE_USER!r}
 PORT_KEY = {_SSH_ROUTE_PORT!r}
 PATH_KEY = {_SSH_ROUTE_PATH!r}
 AGENT_KEY = {_SSH_ROUTE_AGENT!r}
-NO_AGENT = {_NO_AGENT!r}
 
 def digest_text(digest, value):
     encoded = value.encode("utf-8")
@@ -1995,18 +2121,25 @@ if send_protocol:
     child_environment["GIT_PROTOCOL"] = protocol
 elif protocol is not None:
     raise SystemExit(126)
-if agent_socket != NO_AGENT:
-    if os.environ.get("SSH_AUTH_SOCK") != agent_socket:
-        raise SystemExit(126)
-    child_environment["SSH_AUTH_SOCK"] = agent_socket
+if os.environ.get("SSH_AUTH_SOCK") != agent_socket:
+    raise SystemExit(126)
+child_environment["SSH_AUTH_SOCK"] = agent_socket
+host_trust = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)),
+    "ssh-known-hosts",
+)
 openssh_argv = (
     *OPENSSH_PREFIX,
     "-o",
-    (
-        "IdentityAgent=none"
-        if agent_socket == NO_AGENT
-        else f"IdentityAgent={{agent_socket}}"
-    ),
+    f"UserKnownHostsFile={{host_trust}}",
+    "-o",
+    "GlobalKnownHostsFile=none",
+    "-o",
+    "IdentityFile=none",
+    "-o",
+    "IdentitiesOnly=no",
+    "-o",
+    f"IdentityAgent={{agent_socket}}",
     "-o",
     f"HostName={{host}}",
     "-p",
@@ -2161,6 +2294,229 @@ def _pin_agent_socket(value: str) -> _PinnedSocket:
         stat.S_IMODE(metadata.st_mode),
         ancestors,
     )
+
+
+def _capture_ssh_network_policy(
+    environment: Mapping[str, str],
+    repository: RepositoryIdentity,
+) -> _SSHNetworkPolicyRecord:
+    """Capture exact standard host trust and one safe existing agent."""
+    _require_posix()
+    if not isinstance(environment, Mapping):
+        raise NetworkContextError("invalid_environment")
+    home_value = environment.get("HOME")
+    agent_value = environment.get("SSH_AUTH_SOCK")
+    if (
+        not _safe_environment_value("HOME", home_value)
+        or not isinstance(home_value, str)
+        or not isinstance(agent_value, str)
+    ):
+        raise NetworkContextError("invalid_environment")
+    home = Path(home_value)
+    if not home.is_absolute() or home != Path(os.path.abspath(home)):
+        raise NetworkContextError("invalid_environment")
+    agent_socket = _pin_agent_socket(agent_value)
+    source_specs = (
+        ("user", home / ".ssh" / "known_hosts"),
+        ("user", home / ".ssh" / "known_hosts2"),
+        *(("system", Path(path)) for path in _SYSTEM_SSH_TRUST_PATHS),
+    )
+    excluded_roots = (
+        Path(repository.worktree_root),
+        Path(repository.git_dir),
+        Path(repository.git_common_dir),
+    )
+    sources = tuple(
+        _capture_ssh_trust_source(
+            kind,
+            path,
+            excluded_roots=excluded_roots,
+        )
+        for kind, path in source_specs
+    )
+    if sum(len(source.payload) for source in sources) > (
+        _SSH_TRUST_COMBINED_LIMIT_BYTES
+    ):
+        raise NetworkContextError("unsafe_filesystem")
+    trust_payload = _combine_ssh_trust_payload(sources)
+    if len(trust_payload) > _SSH_TRUST_COMBINED_LIMIT_BYTES:
+        raise NetworkContextError("unsafe_filesystem")
+    trust_digest = hashlib.sha256(trust_payload).hexdigest()
+    agent_identity_fingerprint = _agent_socket_fingerprint(agent_socket)
+    return _SSHNetworkPolicyRecord(
+        sources,
+        trust_payload,
+        trust_digest,
+        agent_socket,
+        agent_identity_fingerprint,
+    )
+
+
+def _capture_ssh_trust_source(
+    kind: Literal["user", "system"],
+    path: Path,
+    *,
+    excluded_roots: tuple[Path, ...],
+) -> _SSHTrustSourceRecord:
+    """Read one present host-trust source once through a stable descriptor."""
+    if (
+        kind not in {"user", "system"}
+        or not path.is_absolute()
+        or path != Path(os.path.abspath(path))
+    ):
+        raise NetworkContextError("unsafe_filesystem")
+    try:
+        before = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return _SSHTrustSourceRecord(
+            kind,
+            path,
+            False,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            b"",
+        )
+    except OSError:
+        raise NetworkContextError("unsafe_filesystem") from None
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid not in {os.geteuid(), 0}
+        or before.st_nlink != 1
+        or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or before.st_size < 0
+        or before.st_size > _SSH_TRUST_SOURCE_LIMIT_BYTES
+        or any(_path_is_within(path, root) for root in excluded_roots)
+    ):
+        raise NetworkContextError("unsafe_filesystem")
+    _capture_safe_ancestors(path)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise NetworkContextError("unsafe_filesystem")
+    flags |= nofollow | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        raise NetworkContextError("unsafe_filesystem") from None
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_stable_file(before, opened):
+            raise NetworkContextError("unsafe_filesystem")
+        payload = bytearray()
+        while len(payload) <= _SSH_TRUST_SOURCE_LIMIT_BYTES:
+            try:
+                chunk = os.read(
+                    descriptor,
+                    min(
+                        64 * 1024,
+                        _SSH_TRUST_SOURCE_LIMIT_BYTES + 1 - len(payload),
+                    ),
+                )
+            except InterruptedError:
+                continue
+            if not chunk:
+                break
+            payload.extend(chunk)
+        finished = os.fstat(descriptor)
+    except OSError:
+        raise NetworkContextError("unsafe_filesystem") from None
+    finally:
+        os.close(descriptor)
+    try:
+        current = path.stat(follow_symlinks=False)
+    except OSError:
+        raise NetworkContextError("unsafe_filesystem") from None
+    frozen = bytes(payload)
+    if (
+        len(frozen) > _SSH_TRUST_SOURCE_LIMIT_BYTES
+        or len(frozen) != finished.st_size
+        or not _same_stable_file(opened, finished)
+        or not _same_stable_file(finished, current)
+    ):
+        raise NetworkContextError("unsafe_filesystem")
+    return _SSHTrustSourceRecord(
+        kind,
+        path,
+        True,
+        _filesystem_identity(finished),
+        finished.st_uid,
+        finished.st_gid,
+        stat.S_IMODE(finished.st_mode),
+        finished.st_nlink,
+        finished.st_size,
+        finished.st_mtime_ns,
+        finished.st_ctime_ns,
+        hashlib.sha256(frozen).hexdigest(),
+        frozen,
+    )
+
+
+def _same_stable_file(
+    first: os.stat_result,
+    second: os.stat_result,
+) -> bool:
+    return (
+        stat.S_ISREG(first.st_mode)
+        and stat.S_ISREG(second.st_mode)
+        and first.st_dev == second.st_dev
+        and first.st_ino == second.st_ino
+        and first.st_uid == second.st_uid
+        and first.st_gid == second.st_gid
+        and first.st_mode == second.st_mode
+        and first.st_nlink == second.st_nlink == 1
+        and first.st_size == second.st_size
+        and first.st_mtime_ns == second.st_mtime_ns
+        and first.st_ctime_ns == second.st_ctime_ns
+    )
+
+
+def _combine_ssh_trust_payload(
+    sources: tuple[_SSHTrustSourceRecord, ...],
+) -> bytes:
+    payload = bytearray()
+    for source in sources:
+        if not source.present or not source.payload:
+            continue
+        if payload and payload[-1] != ord("\n"):
+            payload.extend(b"\n")
+        payload.extend(source.payload)
+        if payload[-1] != ord("\n"):
+            payload.extend(b"\n")
+    return bytes(payload)
+
+
+def _agent_socket_fingerprint(agent: _PinnedSocket) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        "file-notes-network-ssh-agent-v1",
+        str(agent.path),
+        str(agent.identity.device),
+        str(agent.identity.inode),
+        str(agent.owner),
+        str(agent.group),
+        str(agent.mode),
+        *(
+            component
+            for ancestor in agent.ancestors
+            for component in (
+                str(ancestor.path),
+                str(ancestor.identity.device),
+                str(ancestor.identity.inode),
+                str(ancestor.owner),
+                str(ancestor.group),
+                str(ancestor.mode),
+            )
+        ),
+    ):
+        _digest_text(digest, value)
+    return digest.hexdigest()
 
 
 def _pin_executable(value: str, search_path: str) -> _PinnedExecutable:
@@ -2428,8 +2784,16 @@ def _safe_environment_value(name: str, value: object) -> bool:
             for component in value.split(os.pathsep)
         )
     if name == "SSH_AUTH_SOCK":
-        return "%" not in value and "$" not in value
+        return _safe_openssh_option_path(value)
     return True
+
+
+def _safe_openssh_option_path(value: object) -> bool:
+    """Reject OpenSSH option parsing, token expansion, and path lists."""
+    return (
+        isinstance(value, str)
+        and _OPENSSH_OPTION_PATH.fullmatch(value) is not None
+    )
 
 
 def _path_is_within(path: Path, parent: Path) -> bool:

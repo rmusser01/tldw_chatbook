@@ -783,6 +783,7 @@ class _DestinationPolicyCapture:
 
     candidate_capture: _PushCandidateCapture = field(repr=False)
     configuration_fingerprint: str = field(repr=False)
+    network_policy_fingerprint: str = field(repr=False)
     configured_remote_label: str = field(repr=False)
     configured_destination_identity: str = field(repr=False)
     destination: PushDestinationProjection
@@ -1585,6 +1586,7 @@ class FileNotesSessionOwner:
         candidate_capture: _PushCandidateCapture,
         *,
         configuration_fingerprint: str,
+        network_policy_fingerprint: str,
         configured_remote_label: str,
         configured_destination_identity: str,
         destination: PushDestinationProjection,
@@ -1594,6 +1596,7 @@ class FileNotesSessionOwner:
         """Bind exact local policy proof to the latest issued candidate."""
         fingerprints = (
             configuration_fingerprint,
+            network_policy_fingerprint,
             configured_destination_identity,
             included_paths_fingerprint,
         )
@@ -1628,6 +1631,7 @@ class FileNotesSessionOwner:
             observed = (
                 candidate_capture.candidate_generation,
                 configuration_fingerprint,
+                network_policy_fingerprint,
                 configured_remote_label,
                 configured_destination_identity,
                 candidate_tree_oid,
@@ -1646,6 +1650,7 @@ class FileNotesSessionOwner:
             capture = _DestinationPolicyCapture(
                 candidate_capture=candidate_capture,
                 configuration_fingerprint=configuration_fingerprint,
+                network_policy_fingerprint=network_policy_fingerprint,
                 configured_remote_label=configured_remote_label,
                 configured_destination_identity=configured_destination_identity,
                 destination=destination,

@@ -10,7 +10,8 @@ import stat
 import subprocess
 import sys
 import zlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from functools import lru_cache
 from pathlib import Path
@@ -490,6 +491,7 @@ def _network_authorizations(
     *,
     facts=(),
     object_format: str = "sha1",
+    environment: Mapping[str, str] | None = None,
 ):
     source_objects = Path(repository.git_common_dir) / "objects"
     source_authorization = git_network._authorize_source_object_directory(
@@ -497,10 +499,20 @@ def _network_authorizations(
         _filesystem_identity(source_objects),
         object_format,
     )
-    config_authorization = git_network._authorize_network_config_facts(
-        tuple(facts),
-        configuration_fingerprint="f" * 64,
-        destination=destination,
+    config_authorization = (
+        git_network._authorize_network_config_snapshot(
+            tuple(facts),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+            environment=environment,
+            repository=repository,
+        )
+        if destination.scheme == "ssh"
+        else git_network._authorize_network_config_facts(
+            tuple(facts),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
     )
     return source_authorization, config_authorization
 
@@ -575,6 +587,7 @@ def _create_network_context(
         repository,
         destination,
         facts=facts,
+        environment=environment,
     )
     factory = _network_factory(
         tmp_path,
@@ -612,6 +625,7 @@ def test_network_context_factory_rejects_explicit_empty_git_executable(
 
 def test_network_context_factory_rejects_explicit_empty_ssh_executable(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     repository = _network_repository(tmp_path)
     endpoint = _network_endpoint("git@push.example.test:team/notes.git")
@@ -619,16 +633,18 @@ def test_network_context_factory_rejects_explicit_empty_ssh_executable(
     source, configuration = _network_authorizations(
         repository,
         destination,
+        environment=isolated_ssh_environment,
     )
     parent = tmp_path / "network-contexts"
     parent.mkdir(mode=0o700)
     git_executable, git_exec_path = _test_git_installation()
     factory = git_network.NetworkContextFactory(
-        environment={"PATH": os.defpath},
+        environment=isolated_ssh_environment,
         temporary_parent=parent,
         git_executable=str(git_executable),
         git_exec_path=git_exec_path,
         ssh_executable="",
+        allow_ssh_agent=True,
     )
 
     with pytest.raises(git_network.NetworkContextError) as error:
@@ -973,14 +989,22 @@ def test_network_environment_preserves_ssh_agent_only_when_authorized(
 
 def test_network_environment_pins_authorized_owner_agent_socket(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "agent-pin-home"
+    home.mkdir(mode=0o700)
     agent_path = _short_agent_socket_path(tmp_path)
     original = _bound_agent_socket(agent_path)
     try:
         _repository, _destination, context = _create_network_context(
             tmp_path,
             endpoint="ssh://git@push.example.test:22/team/notes.git",
-            environment={"SSH_AUTH_SOCK": str(agent_path.resolve())},
+            environment={
+                "HOME": str(home.resolve()),
+                "PATH": os.defpath,
+                "SSH_AUTH_SOCK": str(agent_path.resolve()),
+            },
             ssh_executable=_fake_ssh_executable(tmp_path),
             allow_ssh_agent=True,
         )
@@ -1006,6 +1030,8 @@ def test_network_environment_pins_authorized_owner_agent_socket(
 def test_network_environment_rejects_non_socket_ssh_agent(
     tmp_path: Path,
 ) -> None:
+    home = tmp_path / "invalid-agent-home"
+    home.mkdir(mode=0o700)
     not_a_socket = tmp_path / "agent.sock"
     not_a_socket.write_text("not a socket\n", encoding="utf-8")
 
@@ -1013,7 +1039,11 @@ def test_network_environment_rejects_non_socket_ssh_agent(
         _create_network_context(
             tmp_path,
             endpoint="ssh://git@push.example.test:22/team/notes.git",
-            environment={"SSH_AUTH_SOCK": str(not_a_socket)},
+            environment={
+                "HOME": str(home.resolve()),
+                "PATH": os.defpath,
+                "SSH_AUTH_SOCK": str(not_a_socket),
+            },
             ssh_executable=_fake_ssh_executable(tmp_path),
             allow_ssh_agent=True,
         )
@@ -1036,7 +1066,11 @@ def test_https_network_context_ignores_invalid_ssh_agent(
 
 @pytest.mark.parametrize(
     "socket_path",
-    ["/private/agent-%h.sock", "/private/agent-${LC_ALL}.sock"],
+    [
+        "/private/agent-%h.sock",
+        "/private/agent-${LC_ALL}.sock",
+        "/private/agent socket",
+    ],
 )
 def test_network_environment_rejects_openssh_agent_token_expansion(
     socket_path: str,
@@ -1051,6 +1085,9 @@ def test_network_environment_rejects_agent_identity_substitution_at_command_seam
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "virtual-agent-home"
+    home.mkdir(mode=0o700)
     socket_path = Path.cwd() / ".chatbook-virtual-agent"
     identity = 1001
     original_stat = Path.stat
@@ -1084,7 +1121,11 @@ def test_network_environment_rejects_agent_identity_substitution_at_command_seam
     _repository, _destination, context = _create_network_context(
         tmp_path,
         endpoint="ssh://git@push.example.test:22/team/notes.git",
-        environment={"SSH_AUTH_SOCK": str(socket_path)},
+        environment={
+            "HOME": str(home.resolve()),
+            "PATH": os.defpath,
+            "SSH_AUTH_SOCK": str(socket_path),
+        },
         ssh_executable=_fake_ssh_executable(tmp_path),
         allow_ssh_agent=True,
     )
@@ -1351,7 +1392,11 @@ def test_network_context_config_copy_is_https_only() -> None:
         )
 
 
-def test_ssh_config_snapshot_omits_transport_irrelevant_credential_facts() -> None:
+def test_ssh_config_snapshot_omits_transport_irrelevant_credential_facts(
+    tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
+) -> None:
+    repository = _network_repository(tmp_path)
     destination = _network_destination(
         "ssh://git@push.example.test:22/team/notes.git"
     )
@@ -1371,11 +1416,15 @@ def test_ssh_config_snapshot_omits_transport_irrelevant_credential_facts() -> No
         ),
         configuration_fingerprint=fingerprint,
         destination=destination,
+        environment=isolated_ssh_environment,
+        repository=repository,
     )
-    empty_copy = git_network._authorize_network_config_facts(
+    empty_copy = git_network._authorize_network_config_snapshot(
         (),
         configuration_fingerprint=fingerprint,
         destination=destination,
+        environment=isolated_ssh_environment,
+        repository=repository,
     )
 
     assert snapshot.configuration_fingerprint == fingerprint
@@ -1487,6 +1536,492 @@ def _recording_ssh_executable(tmp_path: Path) -> tuple[Path, Path]:
     return executable, log_path
 
 
+def test_ssh_host_trust_snapshot_materializes_private_file_and_exact_openssh_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping any frozen trust or agent pin must make SSH context use fail."""
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint(
+        "ssh://git@push.example.test:2222/team/notes.git"
+    )
+    destination = endpoint.projection
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "isolated-home"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True, mode=0o700)
+    (ssh_directory / "known_hosts").write_bytes(b"first-host-key")
+    (ssh_directory / "known_hosts").chmod(0o600)
+    (ssh_directory / "known_hosts2").write_bytes(b"second-host-key\n")
+    (ssh_directory / "known_hosts2").chmod(0o600)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    executable = _fake_ssh_executable(tmp_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path),
+    }
+    source_objects = Path(repository.git_common_dir) / "objects"
+    source_authorization = git_network._authorize_source_object_directory(
+        source_objects,
+        _filesystem_identity(source_objects),
+        "sha1",
+    )
+    try:
+        configuration = git_network._authorize_network_config_snapshot(
+            (),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+            environment=environment,
+            repository=repository,
+        )
+        context = _network_factory(
+            tmp_path,
+            environment=environment,
+            ssh_executable=executable,
+            allow_ssh_agent=True,
+        ).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
+        invocation = context.openssh_invocation()
+        assert invocation is not None
+        trust_argument = next(
+            argument
+            for argument in invocation.argv
+            if argument.startswith("UserKnownHostsFile=")
+        )
+        private_trust = Path(trust_argument.partition("=")[2])
+
+        assert private_trust.read_bytes() == (
+            b"first-host-key\nsecond-host-key\n"
+        )
+        assert stat.S_IMODE(private_trust.stat().st_mode) == 0o400
+        assert private_trust.stat().st_nlink == 1
+        assert invocation.argv == (
+            str(executable.resolve()),
+            *git_network._OPENSSH_FIXED_ARGUMENTS,
+            "-o",
+            f"UserKnownHostsFile={private_trust}",
+            "-o",
+            "GlobalKnownHostsFile=none",
+            "-o",
+            "IdentityFile=none",
+            "-o",
+            "IdentitiesOnly=no",
+            "-o",
+            f"IdentityAgent={agent_path.resolve()}",
+            "-o",
+            "HostName=push.example.test",
+            "-p",
+            "2222",
+            "-l",
+            "git",
+            "--",
+            "push.example.test",
+        )
+        assert context.close() is True
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+def _isolated_system_ssh_trust_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    paths = (
+        tmp_path / "system-ssh" / "ssh_known_hosts",
+        tmp_path / "system-ssh" / "ssh_known_hosts2",
+    )
+    monkeypatch.setattr(
+        git_network,
+        "_SYSTEM_SSH_TRUST_PATHS",
+        paths,
+        raising=False,
+    )
+    return paths
+
+
+@contextmanager
+def _isolated_ssh_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, str]]:
+    """Retain one real agent and isolated standard trust set for a test."""
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "isolated-ssh-home"
+    home.mkdir(mode=0o700, exist_ok=True)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    try:
+        yield {
+            "HOME": str(home.resolve()),
+            "PATH": os.defpath,
+            "SSH_AUTH_SOCK": str(agent_path.resolve()),
+        }
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def isolated_ssh_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, str]]:
+    """Provide one real, cleanup-bound SSH authority for compatibility tests."""
+    with _isolated_ssh_environment(tmp_path, monkeypatch) as environment:
+        yield environment
+
+
+def _ssh_network_authorization(
+    repository: RepositoryIdentity,
+    destination,
+    environment: Mapping[str, str],
+):
+    return git_network._authorize_network_config_snapshot(
+        (),
+        configuration_fingerprint="f" * 64,
+        destination=destination,
+        environment=environment,
+        repository=repository,
+    )
+
+
+def _private_host_trust_path(
+    context: git_network.NetworkGitExecutionContext,
+) -> Path:
+    invocation = context.openssh_invocation()
+    assert invocation is not None
+    argument = next(
+        value
+        for value in invocation.argv
+        if value.startswith("UserKnownHostsFile=")
+    )
+    return Path(argument.partition("=")[2])
+
+
+def test_ssh_host_trust_missing_sources_make_empty_snapshot_and_distinct_fingerprint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Treating missing trust as an omitted fact would permit policy ABA."""
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint("git@push.example.test:team/notes.git")
+    destination = endpoint.projection
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "empty-home"
+    home.mkdir(mode=0o700)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path.resolve()),
+    }
+    source_objects = Path(repository.git_common_dir) / "objects"
+    source_authorization = git_network._authorize_source_object_directory(
+        source_objects,
+        _filesystem_identity(source_objects),
+        "sha1",
+    )
+    try:
+        missing = _ssh_network_authorization(
+            repository,
+            destination,
+            environment,
+        )
+        ssh_directory = home / ".ssh"
+        ssh_directory.mkdir(mode=0o700)
+        known_hosts = ssh_directory / "known_hosts"
+        known_hosts.write_bytes(b"host-key\n")
+        known_hosts.chmod(0o600)
+        present = _ssh_network_authorization(
+            repository,
+            destination,
+            environment,
+        )
+        context = _network_factory(
+            tmp_path,
+            environment=environment,
+            ssh_executable=_fake_ssh_executable(tmp_path),
+            allow_ssh_agent=True,
+        ).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=missing,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+        private_trust = _private_host_trust_path(context)
+        assert private_trust.read_bytes() == b""
+        assert stat.S_IMODE(private_trust.stat().st_mode) == 0o400
+        assert missing.copy_fingerprint != present.copy_fingerprint
+        assert context.close() is True
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+def test_ssh_host_trust_combined_limit_counts_inserted_newlines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The private payload, including separators, must remain at most 4 MiB."""
+    repository = _network_repository(tmp_path)
+    destination = _network_destination(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    system_paths = _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "full-trust-home"
+    user_paths = (
+        home / ".ssh" / "known_hosts",
+        home / ".ssh" / "known_hosts2",
+    )
+    for source in (*user_paths, *system_paths):
+        source.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        source.write_bytes(b"x" * (1 << 20))
+        source.chmod(0o600)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    try:
+        with pytest.raises(git_network.NetworkContextError) as error:
+            _ssh_network_authorization(
+                repository,
+                destination,
+                {
+                    "HOME": str(home.resolve()),
+                    "PATH": os.defpath,
+                    "SSH_AUTH_SOCK": str(agent_path.resolve()),
+                },
+            )
+
+        assert error.value.code == "unsafe_filesystem"
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "unsafe_kind",
+    ["symlink", "hardlink", "group_write", "unreadable", "unstable", "oversize"],
+)
+def test_ssh_host_trust_rejects_unsafe_present_source_before_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_kind: str,
+) -> None:
+    """Accepting an unsafe present source would turn local proof into live trust."""
+    repository = _network_repository(tmp_path)
+    destination = _network_destination(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "unsafe-home"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True, mode=0o700)
+    source = ssh_directory / "known_hosts"
+    source.write_bytes(b"host-key\n")
+    source.chmod(0o600)
+    if unsafe_kind == "symlink":
+        target = ssh_directory / "target"
+        source.rename(target)
+        source.symlink_to(target)
+    elif unsafe_kind == "hardlink":
+        os.link(source, ssh_directory / "second-link")
+    elif unsafe_kind == "group_write":
+        source.chmod(0o620)
+    elif unsafe_kind == "unreadable":
+        source.chmod(0o000)
+    elif unsafe_kind == "oversize":
+        source.write_bytes(b"x" * ((1 << 20) + 1))
+    else:
+        original_fstat = git_network.os.fstat
+        identity = _filesystem_identity(source)
+        matching_calls = 0
+
+        def unstable_fstat(descriptor: int):
+            nonlocal matching_calls
+            metadata = original_fstat(descriptor)
+            if (
+                metadata.st_dev == identity.device
+                and metadata.st_ino == identity.inode
+            ):
+                matching_calls += 1
+                if matching_calls > 1:
+                    values = list(metadata)
+                    values[8] += 1
+                    return os.stat_result(values)
+            return metadata
+
+        monkeypatch.setattr(git_network.os, "fstat", unstable_fstat)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    try:
+        with pytest.raises(git_network.NetworkContextError) as error:
+            _ssh_network_authorization(
+                repository,
+                destination,
+                {
+                    "HOME": str(home.resolve()),
+                    "PATH": os.defpath,
+                    "SSH_AUTH_SOCK": str(agent_path.resolve()),
+                },
+            )
+
+        assert error.value.code in {"unsafe_filesystem", "invalid_environment"}
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("agent_kind", ["missing", "regular_file"])
+def test_ssh_host_trust_requires_safe_existing_agent_during_local_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_kind: str,
+) -> None:
+    """Deferring missing-agent refusal to OpenSSH would cross the network boundary."""
+    repository = _network_repository(tmp_path)
+    destination = _network_destination(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "agentless-home"
+    home.mkdir(mode=0o700)
+    agent_path = tmp_path / "missing-agent.sock"
+    if agent_kind == "regular_file":
+        agent_path.write_bytes(b"not an agent")
+
+    with pytest.raises(git_network.NetworkContextError) as error:
+        _ssh_network_authorization(
+            repository,
+            destination,
+            {
+                "HOME": str(home.resolve()),
+                "PATH": os.defpath,
+                "SSH_AUTH_SOCK": str(agent_path.resolve()),
+            },
+        )
+
+    assert error.value.code == "invalid_environment"
+
+
+def test_https_authorization_does_not_read_ssh_host_trust_or_require_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Applying SSH-only local reads to HTTPS would reject an unrelated transport."""
+    repository = _network_repository(tmp_path)
+    destination = _network_destination()
+    unsafe_home = Path(repository.worktree_root) / "unsafe-home"
+    ssh_directory = unsafe_home / ".ssh"
+    ssh_directory.mkdir(parents=True)
+    target = ssh_directory / "target"
+    target.write_bytes(b"must-not-be-read")
+    (ssh_directory / "known_hosts").symlink_to(target)
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+
+    authorization = git_network._authorize_network_config_snapshot(
+        (),
+        configuration_fingerprint="f" * 64,
+        destination=destination,
+        environment={
+            "HOME": str(unsafe_home),
+            "SSH_AUTH_SOCK": str(tmp_path / "missing-agent.sock"),
+        },
+        repository=repository,
+    )
+
+    assert authorization.configuration_fingerprint == "f" * 64
+
+
+@pytest.mark.parametrize("tamper", ["content", "mode", "substitution"])
+def test_private_host_trust_tamper_invalidates_context_and_can_be_cleaned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    """Failing to pin private trust would let same-session drift reach OpenSSH."""
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    destination = endpoint.projection
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "trust-home"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True, mode=0o700)
+    source = ssh_directory / "known_hosts"
+    source.write_bytes(b"host-key\n")
+    source.chmod(0o600)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path.resolve()),
+    }
+    source_objects = Path(repository.git_common_dir) / "objects"
+    source_authorization = git_network._authorize_source_object_directory(
+        source_objects,
+        _filesystem_identity(source_objects),
+        "sha1",
+    )
+    try:
+        context = _network_factory(
+            tmp_path,
+            environment=environment,
+            ssh_executable=_fake_ssh_executable(tmp_path),
+            allow_ssh_agent=True,
+        ).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=_ssh_network_authorization(
+                repository,
+                destination,
+                environment,
+            ),
+            destination=destination,
+            endpoint=endpoint,
+        )
+        private_trust = _private_host_trust_path(context)
+        original = private_trust.read_bytes()
+        displaced = private_trust.with_suffix(".displaced")
+        if tamper == "content":
+            private_trust.chmod(0o600)
+            private_trust.write_bytes(b"replacement-key\n")
+            private_trust.chmod(0o400)
+        elif tamper == "mode":
+            private_trust.chmod(0o600)
+        else:
+            private_trust.rename(displaced)
+            private_trust.write_bytes(original)
+            private_trust.chmod(0o400)
+
+        with pytest.raises(git_network.NetworkContextError):
+            context.command_settings()
+        assert context.close() is False
+
+        if tamper == "substitution":
+            private_trust.unlink()
+            displaced.rename(private_trust)
+        else:
+            private_trust.chmod(0o600)
+            private_trust.write_bytes(original)
+            private_trust.chmod(0o400)
+        assert context.close() is True
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
 def _recording_git_dispatch_executable(
     path: Path,
     log_path: Path,
@@ -1545,98 +2080,141 @@ def _write_loose_blob(objects: Path, payload: bytes) -> str:
 
 def test_openssh_invocation_is_exact_literal_direct_argv(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executable = _fake_ssh_executable(tmp_path)
-    repository, destination, context = _create_network_context(
-        tmp_path,
-        endpoint="ssh://git@[2001:db8::1]:2222/team/notes.git",
-        ssh_executable=executable,
-        environment={"PATH": "/trusted/bin"},
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint(
+        "ssh://git@[2001:db8::1]:2222/team/notes.git"
+    )
+    destination = endpoint.projection
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "isolated-home"
+    home.mkdir(mode=0o700)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path.resolve()),
+    }
+    source_objects = Path(repository.git_common_dir) / "objects"
+    source_authorization = git_network._authorize_source_object_directory(
+        source_objects,
+        _filesystem_identity(source_objects),
+        "sha1",
+    )
+    try:
+        context = _network_factory(
+            tmp_path,
+            environment=environment,
+            ssh_executable=executable,
+            allow_ssh_agent=True,
+        ).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=_ssh_network_authorization(
+                repository,
+                destination,
+                environment,
+            ),
+            destination=destination,
+            endpoint=endpoint,
+        )
+        invocation = context.openssh_invocation()
+        assert invocation is not None
+        private_trust = _private_host_trust_path(context)
+        assert invocation.argv == (
+            str(executable.resolve()),
+            *git_network._OPENSSH_FIXED_ARGUMENTS,
+            "-o",
+            f"UserKnownHostsFile={private_trust}",
+            "-o",
+            "GlobalKnownHostsFile=none",
+            "-o",
+            "IdentityFile=none",
+            "-o",
+            "IdentitiesOnly=no",
+            "-o",
+            f"IdentityAgent={agent_path.resolve()}",
+            "-o",
+            "HostName=2001:db8::1",
+            "-p",
+            "2222",
+            "-l",
+            "git",
+            "--",
+            "2001:db8::1",
+        )
+        assert not any("AskPass" in argument for argument in invocation.argv)
+        assert "GIT_SSH_COMMAND" not in context.command_settings().environment
+        assert destination.host == "2001:db8::1"
+        assert repository.git_dir not in repr(invocation)
+        with pytest.raises(FrozenInstanceError):
+            invocation.argv = ()  # type: ignore[misc]
+        assert context.close() is True
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "unsafe_parent_name",
+    ["network-%h-contexts", "network space contexts"],
+)
+def test_openssh_invocation_rejects_tokenized_private_host_trust_path(
+    tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
+    unsafe_parent_name: str,
+) -> None:
+    """OpenSSH token expansion must not redirect the private trust snapshot."""
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+        environment=isolated_ssh_environment,
+    )
+    unsafe_parent = tmp_path / unsafe_parent_name
+    unsafe_parent.mkdir(mode=0o700)
+    git_executable, git_exec_path = _test_git_installation()
+    factory = git_network.NetworkContextFactory(
+        environment=isolated_ssh_environment,
+        temporary_parent=unsafe_parent,
+        git_executable=str(git_executable),
+        git_exec_path=git_exec_path,
+        ssh_executable=str(_fake_ssh_executable(tmp_path)),
+        allow_ssh_agent=True,
     )
 
-    invocation = context.openssh_invocation()
+    with pytest.raises(git_network.NetworkContextError) as error:
+        factory.create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
 
-    assert invocation is not None
-    assert invocation.argv == (
-        str(executable.resolve()),
-        "-F",
-        "none",
-        "-T",
-        "-o",
-        "SendEnv=GIT_PROTOCOL",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        "CheckHostIP=yes",
-        "-o",
-        "PreferredAuthentications=publickey",
-        "-o",
-        "PasswordAuthentication=no",
-        "-o",
-        "KbdInteractiveAuthentication=no",
-        "-o",
-        "ChallengeResponseAuthentication=no",
-        "-o",
-        "NumberOfPasswordPrompts=0",
-        "-o",
-        "ForwardAgent=no",
-        "-o",
-        "ForwardX11=no",
-        "-o",
-        "ClearAllForwardings=yes",
-        "-o",
-        "ProxyCommand=none",
-        "-o",
-        "ProxyJump=none",
-        "-o",
-        "CanonicalizeHostname=no",
-        "-o",
-        "ControlMaster=no",
-        "-o",
-        "ControlPath=none",
-        "-o",
-        "ControlPersist=no",
-        "-o",
-        "UpdateHostKeys=no",
-        "-o",
-        "KnownHostsCommand=none",
-        "-o",
-        "PermitLocalCommand=no",
-        "-o",
-        "RequestTTY=no",
-        "-o",
-        "IdentityAgent=none",
-        "-o",
-        "HostName=2001:db8::1",
-        "-p",
-        "2222",
-        "-l",
-        "git",
-        "--",
-        "2001:db8::1",
-    )
-    assert not any("IdentityFile=" in argument for argument in invocation.argv)
-    assert not any("AskPass" in argument for argument in invocation.argv)
-    assert "IdentityAgent=none" in invocation.argv
-    assert "GIT_SSH_COMMAND" not in context.command_settings().environment
-    assert destination.host == "2001:db8::1"
-    assert repository.git_dir not in repr(invocation)
-    with pytest.raises(FrozenInstanceError):
-        invocation.argv = ()  # type: ignore[misc]
-    assert context.close() is True
+    assert error.value.code == "invalid_openssh"
+    assert tuple(unsafe_parent.iterdir()) == ()
 
 
 def test_openssh_git_adapter_executes_only_exact_frozen_route_without_network(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     endpoint_value = "ssh://git@[2001:db8::1]:2222/team/notes.git"
     executable, log_path = _recording_ssh_executable(tmp_path)
     _repository, _destination, context = _create_network_context(
         tmp_path,
         endpoint=endpoint_value,
+        environment=isolated_ssh_environment,
         ssh_executable=executable,
+        allow_ssh_agent=True,
     )
     endpoint = push_contracts._freeze_push_endpoint(endpoint_value, BRANCH_REF)
     settings = context.command_settings()
@@ -1729,6 +2307,7 @@ def test_openssh_git_adapter_executes_only_exact_frozen_route_without_network(
 
 def test_openssh_git_adapter_accepts_actual_scp_push_receive_pack(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     endpoint_value = "git@push.example.test:team/notes.git"
     repository = _network_repository(tmp_path)
@@ -1741,11 +2320,14 @@ def test_openssh_git_adapter_accepts_actual_scp_push_receive_pack(
     source_authorization, configuration = _network_authorizations(
         repository,
         destination,
+        environment=isolated_ssh_environment,
     )
     executable, log_path = _recording_ssh_executable(tmp_path)
     context = _network_factory(
         tmp_path,
+        environment=isolated_ssh_environment,
         ssh_executable=executable,
+        allow_ssh_agent=True,
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -1781,6 +2363,7 @@ def test_openssh_git_adapter_accepts_actual_scp_push_receive_pack(
 
 def test_real_sha256_network_context_uses_alternate_for_query_and_push(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     root, parent_oid, candidate_oid = _real_candidate_repository(
         tmp_path,
@@ -1799,11 +2382,14 @@ def test_real_sha256_network_context_uses_alternate_for_query_and_push(
         repository,
         destination,
         object_format="sha256",
+        environment=isolated_ssh_environment,
     )
     executable, log_path = _recording_ssh_executable(tmp_path)
     context = _network_factory(
         tmp_path,
+        environment=isolated_ssh_environment,
         ssh_executable=executable,
+        allow_ssh_agent=True,
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -1898,37 +2484,9 @@ def test_real_sha256_network_context_uses_alternate_for_query_and_push(
 
 def test_network_context_crash_left_files_exclude_transient_routing(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
-    agent_path = Path.cwd() / ".chatbook-private-agent-canary"
-    original_stat = Path.stat
-    original_resolve = Path.resolve
-
-    def virtual_stat(path: Path, *args, **kwargs):
-        if path == agent_path:
-            return os.stat_result(
-                (
-                    stat.S_IFSOCK | 0o600,
-                    3001,
-                    16777231,
-                    1,
-                    os.geteuid(),
-                    os.getegid(),
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            )
-        return original_stat(path, *args, **kwargs)
-
-    def virtual_resolve(path: Path, *, strict: bool = False) -> Path:
-        if path == agent_path:
-            return agent_path
-        return original_resolve(path, strict=strict)
-
-    monkeypatch.setattr(Path, "stat", virtual_stat)
-    monkeypatch.setattr(Path, "resolve", virtual_resolve)
+    agent_path = Path(isolated_ssh_environment["SSH_AUTH_SOCK"])
     endpoint_value = (
         "private-user-canary@private-host-canary.example.test:"
         "private/repository-route-canary.git"
@@ -1937,7 +2495,7 @@ def test_network_context_crash_left_files_exclude_transient_routing(
         tmp_path,
         endpoint=endpoint_value,
         environment={
-            "SSH_AUTH_SOCK": str(agent_path),
+            **isolated_ssh_environment,
             "CHATBOOK_UNRELATED_STATE": "PRIVATE_ENV_CANARY",
         },
         ssh_executable=_fake_ssh_executable(tmp_path),
@@ -1978,12 +2536,15 @@ def test_https_network_context_has_no_openssh_invocation(
 
 def test_openssh_executable_substitution_invalidates_context_capability(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     executable = _fake_ssh_executable(tmp_path)
     _repository, _destination, context = _create_network_context(
         tmp_path,
         endpoint="ssh://git@push.example.test:22/team/notes.git",
+        environment=isolated_ssh_environment,
         ssh_executable=executable,
+        allow_ssh_agent=True,
     )
     displaced = executable.with_suffix(".displaced")
     executable.rename(displaced)
@@ -2396,6 +2957,7 @@ def test_network_context_rejects_source_repository_network_executables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     executable_kind: str,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     repository = _network_repository(tmp_path)
     source_root = Path(repository.worktree_root)
@@ -2406,9 +2968,15 @@ def test_network_context_rejects_source_repository_network_executables(
     )
     endpoint = _network_endpoint(endpoint_value)
     destination = endpoint.projection
+    environment = (
+        isolated_ssh_environment
+        if destination.scheme == "ssh"
+        else {"PATH": os.defpath}
+    )
     source_authorization, configuration = _network_authorizations(
         repository,
         destination,
+        environment=environment,
     )
     git_executable, installed_exec_path = _test_git_installation()
     selected_git = git_executable
@@ -2443,13 +3011,14 @@ def test_network_context_rejects_source_repository_network_executables(
     parent = tmp_path / "network-contexts"
     parent.mkdir(mode=0o700)
     factory = git_network.NetworkContextFactory(
-        environment={"PATH": os.defpath},
+        environment=environment,
         temporary_parent=parent,
         git_executable=str(selected_git),
         git_exec_path=selected_exec_path,
         ssh_executable=(
             None if selected_ssh is None else str(selected_ssh)
         ),
+        allow_ssh_agent=destination.scheme == "ssh",
     )
 
     with pytest.raises(git_network.NetworkContextError):
@@ -2728,6 +3297,7 @@ class _ControlledLocalProofRunner:
         git_exec_path: Path | None = None,
         head_oid: str = "d" * 40,
         parent_oid: str = "b" * 40,
+        push_url: str = "https://push.example.test/team/notes.git",
     ) -> None:
         self.repository = repository
         self.paths = paths
@@ -2755,7 +3325,7 @@ class _ControlledLocalProofRunner:
             ("branch.main.merge", BRANCH_REF),
             (
                 "remote.origin.pushurl",
-                "https://push.example.test/team/notes.git",
+                push_url,
             ),
             ("remote.origin.url", "https://fetch.example.test/team/notes.git"),
         )
@@ -2866,8 +3436,9 @@ class _ControlledPushPreflightRunner(_ControlledLocalProofRunner):
         self,
         repository: RepositoryIdentity,
         observation: GitCommandResult,
+        **local_proof_options,
     ) -> None:
-        super().__init__(repository)
+        super().__init__(repository, **local_proof_options)
         self.observation = observation
         self.network_calls: list[tuple[tuple[str | bytes, ...], dict[str, object]]] = []
 
@@ -2889,8 +3460,9 @@ class _ControlledExactPushRunner(_ControlledLocalProofRunner):
         observations: tuple[GitCommandResult, ...],
         push_result: GitCommandResult,
         launch_error: bool = False,
+        **local_proof_options,
     ) -> None:
-        super().__init__(repository)
+        super().__init__(repository, **local_proof_options)
         self.observations = list(observations)
         self.push_result = push_result
         self.launch_error = launch_error
@@ -3604,6 +4176,144 @@ async def test_push_authorization_revalidates_local_policy_before_context_or_que
     assert after.push_candidate is not None
     assert runner.network_calls == []
     assert list((tmp_path / "network-contexts").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_ssh_host_trust_unsafe_source_blocks_local_proof_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsafe trust must block before authorization, context, or network contact."""
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledPushPreflightRunner(
+        repository,
+        GitCommandResult(1, b"", b"must not run"),
+        push_url="ssh://git@push.example.test:22/team/notes.git",
+    )
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "unsafe-ssh-home"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True, mode=0o700)
+    known_hosts = ssh_directory / "known_hosts"
+    known_hosts.write_bytes(b"host-key\n")
+    known_hosts.chmod(0o620)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path.resolve()),
+    }
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment=environment,
+    )
+    try:
+        before = owner.snapshot(binding)
+
+        local = await service.start_push_review(binding)
+
+        after = owner.snapshot(binding)
+        assert local.state == "blocked"
+        assert runner.network_calls == []
+        assert after.destination_authorization_epoch == (
+            before.destination_authorization_epoch
+        )
+        assert service._push_destination_policy is None
+    finally:
+        await service.shutdown()
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_ssh_host_trust_source_replacement_before_confirm_revokes_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing trust with equal bytes must not preserve a reviewed command."""
+    owner, binding, repository = _candidate_owner(tmp_path)
+    parent_observation = GitCommandResult(
+        0,
+        b"b" * 40 + b"\t" + BRANCH_REF.encode() + b"\n",
+        b"",
+        owned_process_tree=True,
+        containment_proved=True,
+    )
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(parent_observation,),
+        push_result=GitCommandResult(0, b"", b""),
+        push_url="ssh://git@push.example.test:22/team/notes.git",
+    )
+    _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
+    home = tmp_path / "ssh-home"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True, mode=0o700)
+    known_hosts = ssh_directory / "known_hosts"
+    trust_payload = b"host-key\n"
+    known_hosts.write_bytes(trust_payload)
+    known_hosts.chmod(0o600)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    environment = {
+        "HOME": str(home.resolve()),
+        "PATH": os.defpath,
+        "SSH_AUTH_SOCK": str(agent_path.resolve()),
+    }
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment=environment,
+        network_context_factory=_network_factory(
+            tmp_path,
+            environment=environment,
+            ssh_executable=_fake_ssh_executable(tmp_path),
+            allow_ssh_agent=True,
+        ),
+    )
+    try:
+        assert (await service.start_push_review(binding)).state == "ready"
+        reviewed = await _authorize_current_push(service, binding)
+        assert reviewed.state == "review"
+        assert reviewed.handle is not None
+        snapshot = service._push_review_snapshots[reviewed.handle]
+        authorization = snapshot.authorization
+        replacement = ssh_directory / "known_hosts.next"
+        replacement.write_bytes(trust_payload)
+        replacement.chmod(0o600)
+        replacement.replace(known_hosts)
+        changed_network = _ssh_network_authorization(
+            repository,
+            snapshot.policy.configuration.transport.destination,
+            environment,
+        )
+        changed_policy = replace(
+            snapshot.policy,
+            network_configuration=changed_network,
+        )
+        settings = snapshot.context.command_settings()
+
+        assert service._push_command_policy_fingerprint(
+            changed_policy,
+            snapshot.context,
+            settings.environment_fingerprint,
+        ) != snapshot.command_policy_fingerprint
+        result = await service.start_push(binding, reviewed.handle)
+
+        assert result.state == "blocked"
+        assert len(runner.network_calls) == 1
+        assert not owner._destination_authorization_matches(
+            snapshot.policy.owner_capture,
+            authorization,
+        )
+    finally:
+        await service.shutdown()
+        agent.close()
+        agent_path.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio

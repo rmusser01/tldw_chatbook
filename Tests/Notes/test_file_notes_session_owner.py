@@ -450,6 +450,7 @@ def _capture_destination_policy(
     binding: SessionBinding,
     *,
     fingerprint: str = "1" * 64,
+    network_fingerprint: str = "4" * 64,
     destination_ref: str = "refs/heads/main",
 ):
     """Capture one exact candidate and bind one sanitized local policy."""
@@ -467,6 +468,7 @@ def _capture_destination_policy(
     capture = owner._capture_destination_policy_after_fresh_proof(
         candidate_capture,
         configuration_fingerprint=fingerprint,
+        network_policy_fingerprint=network_fingerprint,
         configured_remote_label="origin",
         configured_destination_identity="2" * 64,
         destination=parse_push_endpoint(
@@ -532,6 +534,7 @@ def test_destination_policy_requires_exact_candidate_and_policy_captures(
         owner._capture_destination_policy_after_fresh_proof(
             replace(candidate),
             configuration_fingerprint="1" * 64,
+            network_policy_fingerprint="4" * 64,
             configured_remote_label="origin",
             configured_destination_identity="2" * 64,
             destination=policy.destination,
@@ -560,6 +563,7 @@ def test_destination_configuration_value_aba_never_revives_authorization(
     changed = owner._capture_destination_policy_after_fresh_proof(
         candidate,
         configuration_fingerprint="4" * 64,
+        network_policy_fingerprint="4" * 64,
         configured_remote_label="backup",
         configured_destination_identity="5" * 64,
         destination=parse_push_endpoint(
@@ -573,6 +577,7 @@ def test_destination_configuration_value_aba_never_revives_authorization(
     restored = owner._capture_destination_policy_after_fresh_proof(
         candidate,
         configuration_fingerprint="1" * 64,
+        network_policy_fingerprint="4" * 64,
         configured_remote_label="origin",
         configured_destination_identity="2" * 64,
         destination=first.destination,
@@ -589,6 +594,52 @@ def test_destination_configuration_value_aba_never_revives_authorization(
     assert (
         final_snapshot.destination_authorization_epoch
         > first_snapshot.destination_authorization_epoch
+    )
+    assert not owner._destination_authorization_matches(first, authorization)
+    assert owner._authorize_destination_policy(restored) is not authorization
+
+
+def test_destination_network_policy_aba_never_revives_authorization(
+    tmp_path: Path,
+) -> None:
+    """Removing the network-copy fact would revive changed SSH trust authority."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, candidate, first = _capture_destination_policy(owner, binding)
+    assert first is not None
+    authorization = owner._authorize_destination_policy(first)
+    assert authorization is not None
+    before = owner.snapshot(binding)
+
+    changed = owner._capture_destination_policy_after_fresh_proof(
+        candidate,
+        configuration_fingerprint="1" * 64,
+        network_policy_fingerprint="5" * 64,
+        configured_remote_label="origin",
+        configured_destination_identity="2" * 64,
+        destination=first.destination,
+        candidate_tree_oid="e" * 40,
+        included_paths_fingerprint="3" * 64,
+    )
+    assert changed is not None
+    restored = owner._capture_destination_policy_after_fresh_proof(
+        candidate,
+        configuration_fingerprint="1" * 64,
+        network_policy_fingerprint="4" * 64,
+        configured_remote_label="origin",
+        configured_destination_identity="2" * 64,
+        destination=first.destination,
+        candidate_tree_oid="e" * 40,
+        included_paths_fingerprint="3" * 64,
+    )
+    assert restored is not None
+
+    after = owner.snapshot(binding)
+    assert after.destination_policy_generation >= (
+        before.destination_policy_generation + 2
+    )
+    assert after.destination_authorization_epoch > (
+        before.destination_authorization_epoch
     )
     assert not owner._destination_authorization_matches(first, authorization)
     assert owner._authorize_destination_policy(restored) is not authorization
@@ -812,6 +863,7 @@ def test_push_review_bound_drift_and_aba_require_fresh_authorization(
         changed = owner._capture_destination_policy_after_fresh_proof(
             candidate,
             configuration_fingerprint="6" * 64,
+            network_policy_fingerprint="4" * 64,
             configured_remote_label="backup",
             configured_destination_identity="7" * 64,
             destination=parse_push_endpoint(
@@ -825,6 +877,7 @@ def test_push_review_bound_drift_and_aba_require_fresh_authorization(
         replacement_policy = owner._capture_destination_policy_after_fresh_proof(
             candidate,
             configuration_fingerprint="1" * 64,
+            network_policy_fingerprint="4" * 64,
             configured_remote_label="origin",
             configured_destination_identity="2" * 64,
             destination=policy.destination,

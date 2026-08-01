@@ -4984,6 +4984,9 @@ class FileNotesGitService:
                     configuration_fingerprint=(
                         configuration.configuration_fingerprint
                     ),
+                    network_policy_fingerprint=(
+                        network_configuration.copy_fingerprint
+                    ),
                     configured_remote_label=configuration.tracking_remote,
                     configured_destination_identity=(
                         configuration.transport.configured_identity
@@ -5173,6 +5176,8 @@ class FileNotesGitService:
                     resolved.configuration_fingerprint
                 ),
                 destination=resolved.transport.destination,
+                environment=self._environment,
+                repository=repository,
             )
         except (NetworkContextError, PushContractError):
             return None
