@@ -11,6 +11,7 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -78,6 +79,7 @@ def reconcile_result_message(report: ReconcileReport) -> str:
         "Repair completed: "
         f"{report.readiness_created} readiness records restored · "
         f"{report.state_removed} stale state records removed · "
+        f"{len(report.staging_entries)} staging entries observed · "
         f"{len(report.staging_removed)} staging entries removed · "
         f"{len(report.corrupt_artifacts)} corrupt models found."
     )
@@ -216,12 +218,26 @@ class InstalledView(Widget):
             progress: Latest worker progress, when one has been emitted.
             active: Whether provisioning is still running.
         """
+        state_changed = active != self._install_active
         self._install_active = active
         if progress is not None:
             self._install_progress = progress
         if not active:
             self._install_progress = None
-        self.refresh(recompose=True)
+        if state_changed:
+            self.refresh(recompose=True)
+            return
+        try:
+            widget = self.query_one(
+                "#installed-model-install-progress",
+                ModelInstallProgress,
+            )
+        except NoMatches:
+            self.refresh(recompose=True)
+            return
+        widget.display = active
+        if progress is not None:
+            widget.update_progress(progress)
 
     def _row_widget(self, row: InventoryRow) -> Vertical:
         """Build one inventory row from pure render state."""

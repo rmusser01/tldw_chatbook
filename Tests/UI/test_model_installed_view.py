@@ -129,14 +129,15 @@ def test_repair_summary_reports_every_reconciliation_outcome(tmp_path: Path) -> 
         state_removed=3,
         corrupt_artifacts=(tmp_path / marker,),
         staging_entries=(tmp_path / "staged-a", tmp_path / "staged-b"),
-        staging_removed=("staged-a", "staged-b"),
+        staging_removed=(),
     )
 
     message = reconcile_result_message(report)
 
     assert "2 readiness" in message
     assert "3 stale state" in message
-    assert "2 staging" in message
+    assert "2 staging entries observed" in message
+    assert "0 staging entries removed" in message
     assert "1 corrupt model" in message
     assert marker not in message
 
@@ -233,6 +234,37 @@ async def test_empty_inventory_still_reports_managed_and_staging_space(
 
     assert "2.0 KiB staging" in text
     assert "4.0 KiB free" in text
+
+
+@pytest.mark.asyncio
+async def test_mounted_install_progress_updates_without_recomposing_inventory(
+    tmp_path: Path,
+) -> None:
+    """Frequent byte events mutate the progress widget, not every model row."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    progress = AcquisitionProgress(
+        "fetch",
+        reference,
+        "encoder.onnx",
+        512,
+        1024,
+    )
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+    async with app.run_test() as pilot:
+        view.set_install_state(None, active=True)
+        await pilot.pause()
+        view.refresh = MagicMock()
+        view.set_install_state(progress, active=True)
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in view.query("Static"))
+
+    view.refresh.assert_not_called()
+    assert "Downloading" in text
+    assert "encoder.onnx" in text
 
 
 def test_forced_refresh_queues_behind_an_inflight_inventory_load(tmp_path: Path) -> None:
