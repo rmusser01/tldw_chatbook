@@ -2,7 +2,7 @@
 id: TASK-1612
 title: >-
   Bench authoring copy polish batch
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-31 15:10'
 labels:

@@ -2,7 +2,7 @@
 id: TASK-1613
 title: >-
   Pin the zero-config create-target error path
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-31 15:10'
 labels:
