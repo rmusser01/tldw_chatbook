@@ -217,6 +217,24 @@ class StopAudioRequested(Message):
     """
 
 
+class ExportFeedRequested(Message):
+    """Posted when the user asks to export this watchlist's audio as a
+    podcast feed directory (spec #2 phase 3, Task 5).
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/
+    `SynthesizeAudioRequested` and for the same reason: the watchlist to
+    export is the screen's own scope (`_briefing_watchlist_id`), and
+    whether there is anything worth exporting is already mirrored onto
+    this pane's own `has_audio_episodes` reactive -- there is nothing this
+    message needs to carry that the screen does not already hold. Posted
+    from the button living in `#artifacts-audio-toolbar` (see the
+    module docstring's placement rationale on `compose`), NOT from a
+    watchlist-wide toolbar, even though the export itself is watchlist-
+    scoped rather than script-scoped -- the pane's height budget has no
+    room for a dedicated row of its own (phase 2b's own measured lesson).
+    """
+
+
 class CitationActivated(Message):
     """Posted when the user activates a citation under the briefing body.
 
@@ -525,6 +543,16 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
     #: inside `_load_briefings`.
     scripts_with_audio = reactive[dict[int, str]]({}, recompose=True)
+    #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
+    #: selected script -- has at least one export-ready audio episode
+    #: (`SubscriptionsDB.list_watchlist_audio_episodes`'s own `complete`
+    #: + `file_path IS NOT NULL` predicate). Screen-supplied, resolved
+    #: alongside the rest of `_load_briefings`'s watchlist-scoped reads --
+    #: never computed on this widget, which has no database handle of its
+    #: own. Gates the Export Feed button's disabled state: a dead control
+    #: offering to export nothing is a spec violation (phase 2b shipped a
+    #: disabled Play for exactly this reason).
+    has_audio_episodes = reactive(False, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -910,6 +938,28 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                         compact=True,
                         tooltip="Stop this script's audio playback.",
                     )
+                    # Task 5 (phase 3): watchlist-scoped, not script-scoped
+                    # -- disabled purely on `has_audio_episodes` (the
+                    # WHOLE watchlist's export-ready audio), regardless of
+                    # which script happens to be selected right now. Lives
+                    # in THIS toolbar rather than a new one because the
+                    # pane's height budget is pinned (see the module
+                    # docstring's Task 7 note and this method's own
+                    # comments above); adding a button to an EXISTING
+                    # `.destination-filter-strip` costs zero rows.
+                    yield Button(
+                        "Export Feed…",
+                        id="artifacts-export-feed-button",
+                        compact=True,
+                        disabled=not self.has_audio_episodes,
+                        tooltip=(
+                            "This watchlist has no complete audio episodes "
+                            "to export."
+                            if not self.has_audio_episodes
+                            else "Export this watchlist's audio episodes as "
+                            "a podcast feed directory."
+                        ),
+                    )
                 # No separate audio-detail `Static`: its status/duration/
                 # error is folded into `_script_detail_renderable`'s own
                 # render, right above -- see that method's own comment on
@@ -1183,6 +1233,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(PlayAudioRequested())
         elif button_id == "artifacts-stop-button":
             self.post_message(StopAudioRequested())
+        elif button_id == "artifacts-export-feed-button":
+            self.post_message(ExportFeedRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:
