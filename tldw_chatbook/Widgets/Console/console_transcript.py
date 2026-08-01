@@ -577,7 +577,7 @@ class ConsoleTranscript(VerticalScroll):
     BINDINGS = [
         ("down,j", "select_next", "Next message"),
         ("up,k", "select_previous", "Previous message"),
-        ("enter", "confirm_selection", "Show actions"),
+        ("enter", "confirm_selection", "Toggle message selection"),
         ("escape", "clear_selection", "Clear selection"),
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
@@ -950,7 +950,11 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self._notify_selection_changed)
 
     def toggle_message_selection(self, message_id: str) -> None:
-        """Toggle one message's contextual selection state."""
+        """Toggle one message's contextual selection state.
+
+        Args:
+            message_id: Identifier of the transcript message to select or clear.
+        """
         if self._message_by_id(message_id) is None:
             return
         if self.selected_message_id == message_id:
@@ -1018,6 +1022,7 @@ class ConsoleTranscript(VerticalScroll):
         self._select_relative(-1)
 
     def action_confirm_selection(self) -> None:
+        """Select the first message or clear the current transcript selection."""
         if self.selected_message_id is not None:
             self.toggle_message_selection(self.selected_message_id)
             return

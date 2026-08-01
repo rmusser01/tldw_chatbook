@@ -174,6 +174,15 @@ def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
     ]
 
 
+def test_console_transcript_enter_binding_describes_selection_toggle():
+    """Keep the visible Enter hint aligned with its select-or-clear behavior."""
+    enter_binding = next(
+        binding for binding in ConsoleTranscript.BINDINGS if binding[0] == "enter"
+    )
+
+    assert enter_binding[2] == "Toggle message selection"
+
+
 def test_console_transcript_renderable_uses_full_width_rules():
     transcript = ConsoleTranscript()
     transcript.set_messages(
