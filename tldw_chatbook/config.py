@@ -4496,6 +4496,23 @@ def get_cli_setting(
         parts = section.split(".", 1)
         section = parts[0]
         key = parts[1]
+    elif not default_was_given and not isinstance(key, str):
+        # 2-arg call on an UNDOTTED section whose second positional is a
+        # default, not a key -- `get_cli_setting("database", {})`. Keys are
+        # always strings, so a non-string here can only be a default. This
+        # shape never resolved anything (it returned the default and ignored
+        # config), and it must keep returning that default rather than
+        # reaching `dict.get()` with an unhashable key, which would raise
+        # TypeError -- turning a long-lived silent misread into a crash for
+        # callers like Helper_Scripts/Mass-Ingestion (found reviewing the
+        # TASK-1754 fix).
+        logger.warning(
+            "get_cli_setting({!r}, <{}>) has no key; returning the default. "
+            "Use get_cli_setting(section, key, default).",
+            section,
+            type(key).__name__,
+        )
+        return key
 
     # Flat lookup first: preserves every previously-working shape bit-for-bit
     # (a literal dotted top-level key, while impossible from TOML, wins).
@@ -4516,8 +4533,24 @@ def get_cli_setting(
                 return resolved_default
             node = node[part]
         return node
-    if isinstance(section_data, dict):
+    if isinstance(section_data, dict) and isinstance(key, str):
         return section_data.get(key, resolved_default)
+    # A non-string `key` reaches here from a caller that passed a whole default
+    # as the second positional argument while meaning "give me this section"
+    # -- e.g. `get_cli_setting("database", {})`. That shape never worked (it
+    # silently returned the default and ignored config), but it must not
+    # CRASH: `dict.get()` on an unhashable key raises TypeError, which would
+    # turn a long-standing silent misread into a hard failure in callers that
+    # have lived with it for a long time (Helper_Scripts/Mass-Ingestion, found
+    # in review of the TASK-1754 fix). Return the caller's default, exactly as
+    # before, and let the misuse stay visible in the warning below.
+    if not isinstance(key, str):
+        logger.warning(
+            "get_cli_setting({!r}, ...) was called with a non-string key ({}); "
+            "returning the default. Use get_cli_setting(section, key, default).",
+            section,
+            type(key).__name__,
+        )
     # If section is not a dict or not found, return default
     return resolved_default
 

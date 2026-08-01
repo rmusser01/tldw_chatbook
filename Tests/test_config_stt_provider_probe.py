@@ -383,3 +383,43 @@ def test_console_dictation_resolver_prefers_parakeet_mlx_on_fresh_darwin_install
         "configured_provider": "parakeet-mlx",
         "was_overridden": False,
     }
+
+
+def test_undotted_two_arg_call_returns_the_caller_default_without_crashing() -> None:
+    """A 2-arg call on an undotted section returns the default, never TypeError.
+
+    `get_cli_setting("database", {})` is a long-lived misuse shape: keys are
+    always strings, so the second positional can only be a default. It never
+    resolved config, but it also never crashed. The TASK-1754 sentinel change
+    briefly let it reach `dict.get()` with an unhashable key, which raised
+    `TypeError: unhashable type: 'dict'` and broke
+    `Helper_Scripts/Mass-Ingestion/mass_ingest.py` (found in PR review).
+
+    Returns:
+        None.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    sentinel: dict = {}
+    assert get_cli_setting("database", sentinel) is sentinel
+    assert get_cli_setting("no_such_section_at_all", sentinel) is sentinel
+    # A non-dict default of non-string type takes the same path.
+    assert get_cli_setting("database", 17) == 17
+
+
+def test_supported_call_shapes_still_resolve_configured_values() -> None:
+    """The shapes that must keep working after the misuse guard was added.
+
+    Guards against "fix the crash, break resolution": the dotted 2-arg form
+    and the canonical 3-arg form must still read real config values, and both
+    must still fall back to the caller's default for an absent key.
+
+    Returns:
+        None.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("transcription", "default_provider", "FB") != "FB"
+    assert get_cli_setting("transcription.default_provider", "FB") != "FB"
+    assert get_cli_setting("transcription", "definitely_absent_key", "FB") == "FB"
+    assert get_cli_setting("transcription.definitely_absent_key", "FB") == "FB"

@@ -78,6 +78,19 @@ class TestConfiguredProviderReachesBackend:
     def test_backend_config_reflects_transcription_section(
         self, tmp_path, monkeypatch
     ):
+        """The backend's config mirrors a real `[transcription]` section.
+
+        Pins TASK-1754 AC#1: before the accessor fix every one of these
+        fields read back as ``None``, so a user's configured provider,
+        model and language never reached media-ingest transcription.
+
+        Args:
+            tmp_path: pytest temp directory holding the generated config.
+            monkeypatch: pytest fixture used to point config loading at it.
+
+        Returns:
+            None.
+        """
         with _real_config(tmp_path, monkeypatch, CONFIGURED_TRANSCRIPTION_TOML):
             backend = _LegacyTranscriptionBackend()
 
@@ -125,6 +138,20 @@ class TestMediaIngestEndToEnd:
     def test_transcribe_dispatches_on_the_configured_provider(
         self, tmp_path, monkeypatch
     ):
+        """A configured provider is what `transcribe()` actually dispatches on.
+
+        Pins TASK-1754 AC#3/#4 end to end. Uses a deliberately nonexistent
+        provider id so the assertion is about routing rather than any real
+        engine: pre-fix the misread config silently fell through to a
+        different, dispatchable provider instead of failing on this one.
+
+        Args:
+            tmp_path: pytest temp directory holding the generated config.
+            monkeypatch: pytest fixture used to point config loading at it.
+
+        Returns:
+            None.
+        """
         configured_provider = "totally-bespoke-nonexistent-provider"
         with _real_config(
             tmp_path,
