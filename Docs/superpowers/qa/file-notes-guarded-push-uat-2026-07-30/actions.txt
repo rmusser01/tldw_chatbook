@@ -1,0 +1,34 @@
+SANITIZED ACTION LOG
+operator=agent-operated
+launch=python -m tldw_chatbook.app
+
+PRIMARY FULL-APP RUN (120x40 unless noted)
+1. Open Library -> Notes -> Files and link the disposable Git notes root.
+2. Select a frontmatter-bearing note, edit its body, and wait for Saved.
+3. Open Session Git; trust the exact local repository.
+4. Stage one session note and commit it through review/confirmation.
+5. Open Review push; Cancel authorization; externally verify zero connections.
+6. Reopen; authorize the configured destination; verify one read-only check.
+7. Inspect Details and the exact commit/ref/endpoint/lease/SSH policy.
+8. Drift live host trust; Confirm; verify a local block and zero receive calls.
+9. Restore trust, authorize again, and confirm one exact successful transition.
+10. Exercise delayed-operation leave/reopen behavior and continued note editing.
+11. Resize to 40x20; exercise Tab, Shift+Tab, Enter, Escape, PageDown, PageUp,
+    Details, and result actions.
+12. Run a divergent destination case; verify read-only block and no overwrite.
+
+REMEDIATION RUN (source 913d02fd7, 120x40)
+1. Open the unmodified app and File Notes through real terminal input.
+2. Make one body-only edit; observe Saved and Session Git (1).
+3. Stage the single session path and confirm the session-only commit.
+4. Authorize one read-only destination check and review the exact candidate.
+5. Enable the fixture's bounded receive delay and confirm push.
+6. Observe the original Uncertain result and query-only recovery action.
+7. Select Back to session; allow multiple normal poll/refresh cycles.
+8. Verify the Session Git list remains visible and no connection is added.
+9. Return to Files and explicitly reopen Session Git.
+10. Verify the same Uncertain copy and Check remote again — no push action
+    reappear, with the connection counter still unchanged.
+
+No retained action includes note content, raw endpoint details, credentials,
+host keys, agent paths, or fixture filesystem paths.
