@@ -567,6 +567,45 @@ async def test_resolve_rejects_malformed_or_oversized_shard_sets() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_rejects_huge_shard_count_without_expanding_warning() -> None:
+    """Catches expanding an attacker-declared shard count into an unbounded warning."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info([_lfs_file("model-00001-of-99999.gguf")]),
+            )
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert (raised.value.code, raised.value.details) == ("no_eligible_gguf", ())
+
+
+@pytest.mark.asyncio
+async def test_resolve_retains_only_twenty_valid_incomplete_shard_warnings() -> None:
+    """Catches retaining more than twenty bounded incomplete-shard warnings."""
+    siblings = [
+        _lfs_file(f"set-{index:02d}-00001-of-00002.gguf") for index in range(21)
+    ]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert raised.value.code == "no_eligible_gguf"
+    assert raised.value.details == tuple(
+        f"acme/model · set-{index:02d} missing 00002" for index in range(20)
+    )
+
+
+@pytest.mark.asyncio
 async def test_resolve_ignores_gguf_without_complete_lfs_metadata() -> None:
     """Catches unverified GGUF payload metadata becoming an acquisition candidate."""
     siblings = [

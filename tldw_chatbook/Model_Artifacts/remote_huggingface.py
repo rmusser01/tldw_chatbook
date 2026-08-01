@@ -425,6 +425,8 @@ def _gguf_candidates(
     warnings: list[str] = []
     for group_key in sorted(shard_groups):
         directory, stem, count = group_key
+        if group_key in invalid_groups or not 1 <= count <= _MAX_SHARDS:
+            continue
         members = shard_groups[group_key]
         valid_members = [member for member in members if member is not None]
         by_index: dict[int, RemoteGGUFFile] = {}
@@ -438,11 +440,10 @@ def _gguf_candidates(
                 duplicate = True
             by_index[index] = member
         missing = tuple(index for index in range(1, count + 1) if index not in by_index)
-        if missing:
+        if missing and len(warnings) < _MAX_ERROR_DETAILS:
             warnings.append(_incomplete_warning(repository, directory, stem, missing))
         if (
-            group_key in invalid_groups
-            or len(valid_members) != len(members)
+            len(valid_members) != len(members)
             or duplicate
             or missing
             or len(by_index) != count
