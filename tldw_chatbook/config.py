@@ -90,6 +90,28 @@ def _optional_package_available(module_name: str) -> bool:
         return False
 
 
+def _default_stt_provider_for_platform() -> str:
+    """Return the speech-to-text provider this platform prefers, unconfigured.
+
+    macOS prefers the Apple-Silicon-native engines when installed --
+    parakeet-mlx first, then lightning-whisper-mlx -- and every other
+    platform (and macOS with neither installed) falls back to
+    faster-whisper. This is the single source of truth for that
+    preference: `load_settings()` uses it for `STT_settings.default_stt_provider`,
+    and `CONFIG_TOML_CONTENT` is interpolated with it so the
+    `[transcription] default_provider` line a fresh install ships never
+    contradicts what this function computes (task-867 -- the template used
+    to hardcode "faster-whisper" unconditionally, so the darwin preference
+    could never engage on a normal install).
+    """
+    if sys.platform == "darwin":
+        if _optional_package_available("parakeet_mlx"):
+            return "parakeet-mlx"
+        if _optional_package_available("lightning_whisper_mlx"):
+            return "lightning-whisper-mlx"
+    return "faster-whisper"
+
+
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
@@ -965,22 +987,11 @@ def load_settings(force_reload: bool = False) -> Dict:
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider
-    default_stt_provider = "faster-whisper"
+    default_stt_provider = _default_stt_provider_for_platform()
     if sys.platform == "darwin":
-        if _optional_package_available("parakeet_mlx"):
-            default_stt_provider = "parakeet-mlx"
-            logger.debug(
-                "Detected parakeet-mlx available on macOS, setting as default STT provider"
-            )
-        elif _optional_package_available("lightning_whisper_mlx"):
-            default_stt_provider = "lightning-whisper-mlx"
-            logger.debug(
-                "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
-            )
-        else:
-            logger.debug(
-                "No macOS-specific STT providers found, using faster-whisper as default"
-            )
+        logger.debug(
+            f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
+        )
 
     config_dict = {
         # General App
@@ -3385,8 +3396,11 @@ temp_dir = ""  # Empty means use system temp
 [transcription]
 # Default transcription provider
 # Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
-# Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
-default_provider = "faster-whisper"
+# Resolved for this install when this file was first created: parakeet-mlx or
+# lightning-whisper-mlx on macOS when installed, otherwise faster-whisper.
+# Edit this line to pin a different provider yourself -- your choice always
+# wins over the platform preference.
+default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"
 
 # Default model for transcription
 # For faster-whisper: large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3,
@@ -3671,6 +3685,17 @@ title = "tldw chatbook"  # Title for the web page
 font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
 debug = false  # Enable debug mode for development
 """
+
+# Resolve the `[transcription] default_provider` placeholder to this platform's
+# preferred engine before the template is parsed or ever written to disk
+# (task-867). `CONFIG_TOML_CONTENT` feeds both `DEFAULT_CONFIG_FROM_TOML`
+# below -- the baseline every config load merges the user's file on top of --
+# and the literal bytes a fresh install writes to `config.toml`, so this one
+# substitution fixes both without any reader needing to special-case an
+# absent key.
+CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
+    "__DEFAULT_TRANSCRIPTION_PROVIDER__", _default_stt_provider_for_platform()
+)
 
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)
