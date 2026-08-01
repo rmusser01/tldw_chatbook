@@ -209,3 +209,55 @@ chats open. The marker and the chip are the protection against doing it by
 reflex; a confirmation dialog would contradict the feature's whole premise,
 nag on every quit, and train the user to dismiss it. Adding a prompt later is
 a small change if real use shows people losing work they wanted.
+
+## Sink audit (task 1)
+
+Ran the four searches below and read every hit, then traced the Console
+message-action row and composer menu in `chat_screen.py` by hand (the two
+known sinks — Generate Image and Save Chatbook — live there, and reading the
+surrounding dispatch table surfaced siblings the greps alone did not).
+
+```
+grep -rn "generate-image\|save-chatbook\|save_chatbook" tldw_chatbook/UI/Screens/chat_screen.py
+grep -rn "def .*write\|open(.*[\"']w\|\.write_bytes\|\.write_text\|save_image\|export" tldw_chatbook/Chat/ tldw_chatbook/Widgets/Console/
+grep -rn "index_conversation\|index_message\|embed\|add_to_index" tldw_chatbook/RAG_Search/ | grep -i "conversation\|chat"
+grep -rn "media_db\|Client_Media_DB" tldw_chatbook/Chat/attachment_core.py tldw_chatbook/UI/Screens/chat_screen.py
+```
+
+The second and fourth searches are scoped to `tldw_chatbook/Chat/` and
+`tldw_chatbook/Widgets/Console/`, which does not include
+`tldw_chatbook/UI/Screens/chat_screen.py` itself — that is where the actual
+`write_bytes`/DB-insert calls for the message-action row live, so they do
+not appear as direct grep hits. They were found by reading the dispatch
+table the first search's `save-chatbook` hit sits in
+(`chat_screen.py:1664`, `WorkbenchActionRequested` handling) and following
+its sibling action ids in the selected-message action row
+(`console_message_actions.py`, `_parse_console_message_action_button_id`).
+That row turned out to hide five more local-write sinks the design's known
+list did not name — this is exactly the residual risk the design called
+out ("Sink enumeration, not the gate, is the residual risk").
+
+| Sink | Reachable from a temporary chat? | Writes what | Decision |
+| --- | --- | --- | --- |
+| Generate Image (`generate-image`, composer menu → `/generate-image`) | Yes — composes from the in-memory draft/session | PNG file to the configured image save location | blocked |
+| Save Chatbook (`save-chatbook`, Workbench button, `chat_screen.py:1664`, `handle_console_save_chatbook:16230`) | Yes — Workbench action, no persisted conversation required to invoke | Chatbook export file | blocked |
+| Save Image (`save-image`, message-action row, `_save_console_message_image`, `chat_screen.py:16669-16800`) | Yes — reads the message's in-memory attachment bytes first, only falls back to a DB fetch when `persisted_message_id` is set (never true for a temporary chat) | Image bytes (`target.write_bytes`) to the configured save location | blocked (new) |
+| Save as Note (`save-as-note`, `_save_console_message_as_note`, `chat_screen.py:16807-16857`) | Yes — reads the message from the in-memory store only | Row in the local Notes database via `notes_scope_service.save_note` | blocked (new) |
+| Save as Media (`save-as-media`, `_save_console_message_as_media`, `chat_screen.py:16859-16912`) | Yes — same, in-memory message content only | Row in the local Media DB via `media_db.add_media_with_keywords` | blocked (new) |
+| Save as Prompt (`save-as-prompt`, `_save_console_message_as_prompt`, `chat_screen.py:16913-16986`) | Yes — same | Row in the local Prompts DB via `prompts_db.add_prompt` | blocked (new) |
+| Save as Chatbook, per-message (`save-as-chatbook`, `_save_console_message_as_chatbook`, `chat_screen.py:16987-17073`) | Yes — same; distinct from the Workbench-level Save Chatbook button | Chatbook artifact file via `local_chatbook_service.create_chatbook` | blocked (new) |
+| Save context snapshot (`save-context`, `#console-context-save` in `ConsoleContextModal`, `console_context_modal.py:287-302`, opened by `action_view_chat_context`, Ctrl+Shift+P) | Yes — dumps the live transcript and next-send payload of the active session, temporary or not | JSON file to `~/Downloads/chatbook_context_*.json` | blocked (new) |
+| RAG indexing of the chat's own content (`conversation_index_entry`/`conversation_document`, `ingestion_indexing.py:586-631`) | No — requires `conversation.get("id")`; a temporary chat has no `conversations` row for the indexer to read | Nothing, for a temporary chat | no-op (needs a conversation id) |
+| Legacy RAG-context/citation sidecar (`ChatConversationService.record_message_rag_context` / `_save_rag_context_store`, `chat_conversation_service.py:322-330,745-788`) | No — requires an already-persisted message row (`db.get_message_by_id`), and is not wired into `console_chat_controller.py` or `console_chat_store.py` at all (zero references) | JSON sidecar file, but only for non-Console flows | no-op (not reachable from Console) |
+| Generate Caption (`generate-caption`, composer menu, `_insert_console_caption_prompt`) | Yes | Nothing — appends a pre-canned prompt string to the in-memory draft | allowed (no write) |
+| Narrate Entire Conversation (`narrate-conversation`, composer menu) | Yes | Nothing — feature is unimplemented; the handler only shows an information toast | allowed (no write) |
+| Impersonate (`impersonate`, composer menu, `_run_console_impersonate`) | Yes | Nothing — drafts the user's next message via a model call and inserts it into the composer | allowed (no write) |
+| Attachment staging (`attachment_core.py`: `process_attachment_path`, `process_attachment_bytes`, `load_processed_file`) | Yes | Nothing — zero `write`/`save` call sites in the file; bytes are staged in memory and referenced from the original path | allowed (no write) |
+
+Six new rows extend `EPHEMERAL_BLOCKED_ACTIONS`: `save-image`,
+`save-as-note`, `save-as-media`, `save-as-prompt`, `save-as-chatbook`, and
+`save-context`. The blocked-action table in the UX-surface section above
+predates this audit and only lists the original two; the full, current list
+is `tldw_chatbook.Chat.console_ephemeral.EPHEMERAL_BLOCKED_ACTIONS`, and
+task 9's UI wiring is scoped to all eight entries, not just the original
+two.

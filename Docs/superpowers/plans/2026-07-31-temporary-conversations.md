@@ -1500,12 +1500,25 @@ conversation reads as a failure, not as 'already done'."
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_composer_menu_modal.py` (Generate Image)
 - Modify: `tldw_chatbook/Widgets/Console/console_workbench_state.py:16-95` (Save Chatbook)
-- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (pass the flag into `build_console_workbench_state`)
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (pass the flag into `build_console_workbench_state`; Save as Note/Media/Prompt/Chatbook destinations; Save Context button)
+- Modify: `tldw_chatbook/Chat/console_message_actions.py` (Save Image, task 1 audit addendum below)
+- Modify: `tldw_chatbook/Widgets/Console/console_context_modal.py` (Save Context, task 1 audit addendum below)
 - Test: `Tests/UI/test_console_composer_menu.py` (append)
+- Test: `Tests/Chat/test_console_message_actions.py` (append, task 1 audit addendum below)
+- Test: `Tests/UI/test_console_native_chat_flow.py` (append, task 1 audit addendum below)
+- Test: `Tests/UI/test_console_context_modal.py` (append, task 1 audit addendum below)
 
 **Interfaces:**
 - Consumes: `blocked_reason` (Task 1), `session.ephemeral` (Task 2).
 - Produces: `build_console_workbench_state(..., ephemeral: bool = False)`.
+
+**Scope note (task 1 audit):** the sink audit in Task 1 found six more
+local-write sinks beyond Generate Image and Save Chatbook —
+`EPHEMERAL_BLOCKED_ACTIONS` now has eight entries, not two. Steps 1-7 below
+(as originally planned) cover only the first two. Steps 8-10 below are the
+addendum that covers the other six: `save-image`, `save-as-note`,
+`save-as-media`, `save-as-prompt`, `save-as-chatbook`, `save-context`. This
+task is not complete until all eight are wired.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1651,6 +1664,83 @@ git commit -m "feat: block artifact-producing actions in a temporary chat
 Generate Image and Save Chatbook disable with the reason on the control,
 sourced from the single blocked-action registry so a new sink means one
 new row rather than a new hunt through call sites."
+```
+
+**Addendum (task 1 audit): the other six sinks**
+
+- [ ] **Step 8: Block Save Image (message-action row)**
+
+`ConsoleMessageActionService.available_actions` (`console_message_actions.py:116`)
+has no `ephemeral` parameter today; `_action_enabled` and
+`_action_disabled_reason` (lines 427, 444) are the two static methods that
+decide, per `action_id`, whether a row action is enabled and what its
+disabled reason is — the `"variant-previous"`/`"variant-next"` handling
+there is the existing pattern to extend, not replace.
+
+Write a failing test in `Tests/Chat/test_console_message_actions.py` that
+builds a message with an image attachment, calls `available_actions(...,
+ephemeral=True)`, and asserts the `"save-image"` entry has `enabled=False`
+and `disabled_reason == blocked_reason("save-image", ephemeral=True)`, plus
+the control: `ephemeral=False` (or omitted) leaves it enabled. Run it, watch
+it fail on the unexpected keyword, then thread `ephemeral: bool = False`
+through `available_actions` → `_action_enabled` → `_action_disabled_reason`,
+consulting `blocked_reason("save-image", ephemeral=ephemeral)` the same way
+`_action_disabled_reason` already special-cases `"regenerate"`. `chat_screen.py`
+calls `available_actions(...)` when building the message-action row; pass
+`ephemeral=self._console_active_session_is_ephemeral()` (Task 7's accessor)
+at that call site. Run the test again to confirm it passes.
+
+- [ ] **Step 9: Block the four Save as... destinations**
+
+`_console_save_as_destinations` (`chat_screen.py:16622`) builds
+`available_destinations`/`unavailable_save_reasons` keyed by label
+(`"Chatbook"`, `"Note"`, `"Media"`, `"Prompt"`) before constructing
+`ConsoleMessageActionService(...).save_as_destinations(message)`. In a
+temporary chat every destination is unavailable regardless of service
+readiness — write a failing test in `Tests/UI/test_console_native_chat_flow.py`
+(or wherever the existing save-as destination tests live; `grep -rn
+"save_as_destinations\|_console_save_as_destinations"` finds them) asserting
+that with an ephemeral session, all four destinations come back
+`available=False` with `reason == blocked_reason("save-as-<label
+lowercased>", ephemeral=True)` (e.g. `"save-as-note"` for `"Note"`), and the
+control: a non-ephemeral session with all three services wired still returns
+the pre-existing availability. Watch it fail, then in
+`_console_save_as_destinations`, when
+`self._console_active_session_is_ephemeral()` is true, skip the
+service-readiness checks and populate `unavailable_reasons` for all four
+labels from the registry instead (service readiness is moot if the write
+itself is blocked). Run the test again to confirm it passes.
+
+- [ ] **Step 10: Block Save Context**
+
+`ConsoleContextModal` (`console_context_modal.py`) has no `ephemeral`
+constructor argument; `_save_json` (line 287) is the handler behind the
+`#console-context-save` button. Write a failing test in
+`Tests/UI/test_console_context_modal.py` constructing the modal with
+`ephemeral=True` and asserting the save button is `disabled` with its
+`tooltip` equal to `blocked_reason("save-context", ephemeral=True)` (mirror
+the disabled-with-reason pattern the composer menu already uses for
+Generate Caption), plus the control: `ephemeral=False` leaves it enabled.
+Watch it fail, then add the `ephemeral: bool = False` constructor kwarg,
+apply it to the `#console-context-save` button in `compose()`, and pass
+`ephemeral=self._console_active_session_is_ephemeral()` from
+`action_view_chat_context` (`chat_screen.py:2009`) where the modal is
+constructed. Run the test again to confirm it passes.
+
+- [ ] **Step 11: Run the full addendum test set and commit**
+
+Run: `cd /private/tmp/ephemeral && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_ephemeral.py -q`
+Expected: PASS, no new failures.
+
+```bash
+cd /private/tmp/ephemeral
+git add tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_context_modal.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_context_modal.py
+git commit -m "feat: block the six sinks the task-1 audit added
+
+Save Image, the four Save as... destinations, and Save Context all
+disable with a reason in a temporary chat, closing the gap between the
+two originally-known sinks and the audited EPHEMERAL_BLOCKED_ACTIONS
+registry."
 ```
 
 ---
