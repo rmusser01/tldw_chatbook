@@ -1006,7 +1006,7 @@ def test_composer_undo_snaps_cursor_out_of_a_collapsed_restored_token():
 
 
 # ---------------------------------------------------------------------------
-# TASK-1500: Ctrl+Y as a Kitty-protocol-independent redo alias. Ctrl+Shift+Z
+# TASK-1733: Ctrl+Y as a Kitty-protocol-independent redo alias. Ctrl+Shift+Z
 # collapses to plain Ctrl+Z at the wire on terminals without the Kitty
 # keyboard protocol (Terminal.app, stock iTerm2), making redo unreachable
 # there. Ctrl+Y is the C0 control EM (0x19) -- textual's `_ansi_sequences`

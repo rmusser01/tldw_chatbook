@@ -56,7 +56,7 @@ UNDO_RECOLLAPSE_CHAR_THRESHOLD = 20,000 (perf guard, independent of the cosmetic
 collapse_large_pastes pref — a 200KB restore froze the UI 2.9s before this), cursor snapped off
 token interiors. Documented limitations: collapsed-token labels/display state are not carried
 through flat snapshots (50-20,000-char pastes restore literal, repaint <=36ms); non-Kitty terminals
-collapse ctrl+shift+z to ctrl+z at the wire level, so redo needs TASK-1500's ctrl+y alias.
+collapse ctrl+shift+z to ctrl+z at the wire level, so redo needs TASK-1733's ctrl+y alias.
 Review trail: .superpowers/sdd/2026-07-29-console-voice-control-v2/task-1281-{report,review}.md.
 41 tests in Tests/UI/test_console_composer_undo.py; dictation contract file byte-identical.
 <!-- SECTION:NOTES:END -->

@@ -1,5 +1,5 @@
 ---
-id: TASK-1500
+id: TASK-1733
 title: 'Composer redo needs a reachable key on non-Kitty terminals (ctrl+y alias)'
 status: Done
 assignee: []

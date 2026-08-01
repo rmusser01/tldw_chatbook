@@ -18643,7 +18643,7 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "ctrl+y":
-            # TASK-1500: terminals without the Kitty keyboard protocol
+            # TASK-1733: terminals without the Kitty keyboard protocol
             # (Terminal.app, stock iTerm2) collapse ctrl+shift+z to plain
             # ctrl+z at the wire, making redo unreachable there. ctrl+y is
             # the C0 control EM (0x19) -- textual's `_ansi_sequences` maps
