@@ -306,8 +306,11 @@ them from cross-origin redirect hops.
 
 ## License behavior
 
-If model metadata declares a non-empty license identifier, the identifier is
-shown. If it does not, the descriptor records `NOASSERTION`.
+The sole declared-license authority is `cardData.license` from the resolved
+repository response. A bounded non-empty string is shown and persisted as the
+license identifier. Missing or null `cardData`, a non-mapping `cardData`, a
+missing/null license value, or any non-string/empty/over-limit license value
+becomes `NOASSERTION`; tags and other fields are never treated as a license.
 
 `ArtifactDescriptor` requires a non-empty `license_url`, but repository metadata
 does not guarantee a pinned license-document URL. Remote descriptors therefore
@@ -318,6 +321,11 @@ The shared plan panel renders these as separate lines for every model:
 
 - `License: <identifier>` (or `Unknown / not declared` for `NOASSERTION`);
 - `Source review page: <URL>`.
+
+Its existing footer is also made capability-neutral:
+**Every declared file is checked against pinned sizes and SHA-256 digests before
+installation completes.** It must not say that installation makes a model
+usable.
 
 For `NOASSERTION`, the shared install modal accepts one optional required
 acknowledgment. Remote supplies: **No license was declared. I reviewed the
