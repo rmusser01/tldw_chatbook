@@ -28,6 +28,9 @@ and this project adheres to Some kind of Versioning
   standard nav/footer/status chrome and a live Loading/Error/Ready/Empty header badge.
 
 ### Removed
+- Rejected, unreachable dictation-history implementations removed:
+  `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
+  and `UI/Dictation_Window.py`.
 - Legacy navigation chrome retired (ADR-014, as amended on rebase): the permanently
   occluded `TitleBar` and the `TabBar`/`TabLinks`/`TabDropdown` legacy nav widgets are
   deleted, along with the dead `general.use_dropdown_navigation` /
@@ -41,6 +44,8 @@ and this project adheres to Some kind of Versioning
   `CodeRepoCopyPasteWindow` is unaffected.
 
 ### Changed
+- Unsupported direct imports of `get_user_database_path`, `USER_DB_DIR`, and
+  `USER_DB_PATH` have been removed.
 - Textual 8.x is now required (`>=8.0.0,<9`). This corrects the previously
   overstated Textual 3.3 compatibility range, which could crash when opening
   MCP because the screen uses Textual 8's `Select.NULL` API. Existing source

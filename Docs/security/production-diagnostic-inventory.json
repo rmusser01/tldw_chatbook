@@ -96,13 +96,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 11,
-      "diagnostic_digest": "e82c0cac036e5818748e",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Audio/transcription_history.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 208,
       "diagnostic_digest": "afc4ef6386cede7dd9fc",
       "owner": "TASK-494",
@@ -1874,13 +1867,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "51e27a4af4ec928d7f4d",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Dictation_Window.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 11,
       "diagnostic_digest": "0be60320be7d529aa164",
       "owner": "TASK-494",
@@ -2393,7 +2379,7 @@
     },
     {
       "call_count": 20,
-      "diagnostic_digest": "72b2883a5f938835997a",
+      "diagnostic_digest": "584eee182f6bcaba8d70",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/Utils.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2511,8 +2497,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "3b7f3cfb12c94fba9039",
+      "call_count": 6,
+      "diagnostic_digest": "a5cf9869b686d12bb88f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/paths.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2995,13 +2981,6 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "7035ecab68e29b52c39c",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/transcription_history_viewer.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 2,
       "diagnostic_digest": "409718196b014241641a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/voice_blend_dialog.py",
@@ -3210,9 +3189,9 @@
   "schema_version": 1,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 437,
+    "owner_files": 434,
     "persistent_sink_files": 4,
     "task_492_calls": 1073,
-    "task_494_calls": 6707
+    "task_494_calls": 6683
   }
 }

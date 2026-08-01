@@ -1,5 +1,11 @@
 # Speech Recording & Live Dictation Implementation Plan
 
+> **Superseded dictation history design (2026-08-01):** TASK-1331 determined
+> transcription history is not a product feature. TASK-865 retired the
+> unreachable `transcription_history.py` store and
+> `transcription_history_viewer.py`; `Dictation_Window.py` is also retired.
+> The retained production dictation UI is `Dictation_Window_Improved.py`.
+
 ## Overview
 
 This document outlines the plan to implement a live speech recording and dictation library for the tldw_chatbook project. The goal is to enable real-time voice transcription and recording capabilities that can be integrated into the existing S/TT/S tab and potentially used throughout the application for voice input.
@@ -87,7 +93,7 @@ class VoiceInputWidget(Widget):
     - Device selection dropdown
 ```
 
-##### b. Dictation Window (`tldw_chatbook/UI/Dictation_Window.py`)
+##### b. Retired Dictation Window (`tldw_chatbook/UI/Dictation_Window.py`)
 ```python
 class DictationWindow(Container):
     """Full dictation interface for the STTS tab"""
@@ -141,7 +147,7 @@ Microphone → Audio Buffer → VAD Filter → Transcription Service → UI Upda
 #### 3. STTS Tab Enhancement
 - Dedicated dictation section
 - Advanced settings and controls
-- Transcription history
+- Retired: transcription history is not a product feature
 
 ### Cross-Platform Considerations
 

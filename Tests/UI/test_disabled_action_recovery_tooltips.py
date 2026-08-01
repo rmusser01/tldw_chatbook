@@ -1,20 +1,13 @@
-from datetime import datetime
-from types import SimpleNamespace
-
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Audio.transcription_history import TranscriptionEntry
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.Utils import optional_deps as optional_deps_module
 from tldw_chatbook.Widgets.template_selector import (
     TemplatePreviewWidget,
     TemplateSelectorDialog,
-)
-from tldw_chatbook.Widgets.transcription_history_viewer import (
-    TranscriptionHistoryViewer,
 )
 
 
@@ -105,55 +98,6 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
         assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(
             search_button.tooltip
-        )
-
-
-@pytest.mark.asyncio
-async def test_transcription_history_disabled_actions_explain_selection_requirement(
-    monkeypatch,
-):
-    monkeypatch.setattr(TranscriptionHistoryViewer, "on_mount", lambda self: None)
-    monkeypatch.setattr(
-        TranscriptionHistoryViewer, "on_select_changed", lambda self, event: None
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.Widgets.transcription_history_viewer.get_transcription_history",
-        lambda: SimpleNamespace(is_encrypted=lambda: False),
-    )
-
-    app = _WidgetHost(TranscriptionHistoryViewer())
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.widget_under_test,
-            {
-                "copy-btn": "Select a transcription entry before copying text.",
-                "export-btn": "Select a transcription entry before exporting it.",
-                "delete-btn": "Select a transcription entry before deleting it.",
-            },
-        )
-
-        app.widget_under_test._show_entry_details(
-            TranscriptionEntry(
-                id="entry-1",
-                timestamp=datetime(2026, 4, 20, 9, 0),
-                transcript="The selected transcript text.",
-                duration=4.2,
-                word_count=4,
-                language="en",
-                provider="test",
-            )
-        )
-
-        _assert_button_tooltips(
-            app.widget_under_test,
-            {
-                "copy-btn": "Copy the selected transcription text.",
-                "export-btn": "Export the selected transcription entry.",
-                "delete-btn": "Delete the selected transcription entry.",
-            },
         )
 
 

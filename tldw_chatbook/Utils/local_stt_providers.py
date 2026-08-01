@@ -128,14 +128,11 @@ def installed_local_providers() -> tuple[str, ...]:
     )
 
 
-#: Provider ids the legacy Dictation windows (`UI/Dictation_Window.py`,
-#: `UI/Dictation_Window_Improved.py`) once persisted to
-#: `dictation.provider` before being corrected to their real dispatch id.
-#: `"lightning-whisper"` was the same misspelling of `"lightning-whisper-mlx"`
-#: described in this module's docstring above -- both dropdowns offered it as
-#: a `Select` option and a user who picked it got that string written to
-#: config. Fixing the dropdown option does not fix an already-saved config
-#: file, so read-side code must still translate the old value.
+#: Provider ids persisted by the retired and retained dictation
+#: implementations before being corrected to their real dispatch id.
+#: `"lightning-whisper"` was a misspelling of `"lightning-whisper-mlx"`.
+#: Read-side code must still translate an already-saved value without
+#: rewriting the user's configuration as a side effect of loading it.
 LEGACY_PROVIDER_IDS: dict[str, str] = {
     "lightning-whisper": "lightning-whisper-mlx",
 }
