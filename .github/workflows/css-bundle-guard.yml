@@ -16,6 +16,16 @@ on:
     paths:
       - 'tldw_chatbook/css/**'
 
+# One run per workflow per ref: a new push supersedes the previous run instead of
+# queueing another alongside it. Without this, every push to `dev` stacked a full
+# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
+# The event name is part of the group so different trigger types (push,
+# pull_request, schedule) never cancel each other, and `main` is never cancelled
+# so its history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   css-bundle-reproducible:
     name: CSS bundle reproduces from its sources
