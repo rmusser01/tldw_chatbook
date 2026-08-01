@@ -80,7 +80,12 @@ from textual.widgets import Button, Static
 
 from ...Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from ...Constants import TAB_SETTINGS
-from ...Evals.character_probe.storage import is_character_bench, is_probe_set
+from ...Evals.character_probe.probe_format import parse_probe_text
+from ...Evals.character_probe.storage import (
+    is_character_bench,
+    is_probe_set,
+    save_probe_set,
+)
 from ...Evals.word_bench.models import BenchConfig
 from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
@@ -773,6 +778,9 @@ class LibraryRail(NotifyMixin, Vertical):
         yield Horizontal(
             Button("+ New dataset", id="evals-rail-new-dataset", compact=True),
             Button("Import…", id="evals-rail-import-dataset", compact=True),
+            Button(
+                "Import probes…", id="evals-rail-import-probes", compact=True
+            ),
             classes="evals-rail-empty-actions",
         )
 
@@ -805,6 +813,10 @@ class LibraryRail(NotifyMixin, Vertical):
         if button_id == "evals-rail-import-dataset":
             event.stop()
             self._open_dataset_import_dialog()
+            return
+        if button_id == "evals-rail-import-probes":
+            event.stop()
+            self._open_probe_import_dialog()
             return
         selection = self._row_targets.get(button_id)
         if selection is None:
@@ -948,6 +960,67 @@ class LibraryRail(NotifyMixin, Vertical):
             entry_word = "entry" if skipped_count == 1 else "entries"
             message += f"; skipped {skipped_count} invalid {entry_word}"
         self._notify(f"{message}.", severity="information")
+        self.post_message(
+            self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
+        )
+
+    def _open_probe_import_dialog(self) -> None:
+        """Mirrors ``_open_dataset_import_dialog``: no filters, since the
+        character-probe plain-text format (``---``/``===`` delimited, see
+        ``character_probe.probe_format``) has no standard file extension of
+        its own the way snippet CSV/JSON does.
+        """
+        self.app.push_screen(
+            FileOpen(title="Import probe set"),
+            self._handle_probe_import_file_selected,
+        )
+
+    def _handle_probe_import_file_selected(self, path: Optional[Any]) -> None:
+        """Creates a NEW probe-set dataset from an imported plain-text file.
+
+        Public-shaped (not ``_on_...``) so a test can drive it directly with
+        a real temp file, bypassing the modal picker -- mirrors
+        ``_handle_dataset_import_file_selected``'s own convention for
+        snippet imports.
+
+        Args:
+            path: The chosen file, or ``None``/falsy when the dialog was
+                cancelled.
+        """
+        if not path:
+            return
+        db = self.view_model.db
+        if db is None:
+            self._notify("The evaluation service is unavailable.", severity="error")
+            return
+        try:
+            file_path = validate_path_simple(path, require_exists=True)
+        except ValueError as exc:
+            self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
+            return
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
+            return
+        try:
+            probe_set = parse_probe_text(text)
+        except ValueError as exc:
+            self._notify(
+                f"That file is not a valid probe set: {exc}", severity="error"
+            )
+            return
+
+        dataset_name = f"{file_path.stem or 'Imported probes'} {uuid.uuid4().hex[:8]}"
+        try:
+            dataset_id = save_probe_set(db, dataset_name, probe_set)
+        except Exception as exc:
+            self._notify(f"Import failed: {exc}", severity="error")
+            return
+
+        count = len(probe_set.probes)
+        probe_word = "probe" if count == 1 else "probes"
+        self._notify(f"Imported {count} {probe_word} into a new probe set.")
         self.post_message(
             self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
         )

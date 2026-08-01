@@ -678,6 +678,129 @@ def test_the_marker_glyph_is_single_width():
 
 
 # ---------------------------------------------------------------------------
+# Importing a probe set from a file (task-1691 phase 2, task 2). Mirrors
+# `_handle_dataset_import_file_selected`'s own convention (public-shaped
+# handler bypassing the modal picker, real DB writes, a real toast) for the
+# character-probe plain-text format instead of snippets.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_importing_a_probe_file_creates_a_marked_probe_set(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    from tldw_chatbook.Evals.character_probe.storage import (
+        is_probe_set,
+        load_probe_set,
+    )
+
+    probe_file = tmp_path / "starter.txt"
+    probe_file.write_text(
+        "What do you think about lying?\n---\nAnd to protect someone?\n===\n"
+        "Describe your earliest memory."
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        rail._handle_probe_import_file_selected(probe_file)
+        await pilot.pause()
+
+        rows = [row for row in evals_db.list_datasets() if is_probe_set(row)]
+        assert len(rows) == 1
+        probes = load_probe_set(evals_db, rows[0]["id"]).probes
+        assert len(probes) == 2
+        assert probes[0].turns == (
+            "What do you think about lying?",
+            "And to protect someone?",
+        )
+
+
+@pytest.mark.asyncio
+async def test_importing_a_malformed_probe_file_notifies_and_creates_nothing(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    from tldw_chatbook.Evals.character_probe.storage import is_probe_set
+
+    bad = tmp_path / "bad.txt"
+    bad.write_text("Real probe\n===\n   \n===\nAnother")
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        rail._handle_probe_import_file_selected(bad)
+        await pilot.pause()
+
+        assert [row for row in evals_db.list_datasets() if is_probe_set(row)] == []
+        assert any(
+            "probe 2" in message
+            for message, _severity in evals_app.app_instance.notifications
+        )
+
+
+@pytest.mark.asyncio
+async def test_importing_a_file_that_cannot_be_read_notifies(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    from tldw_chatbook.Evals.character_probe.storage import is_probe_set
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        rail._handle_probe_import_file_selected(tmp_path / "missing.txt")
+        await pilot.pause()
+
+        assert [row for row in evals_db.list_datasets() if is_probe_set(row)] == []
+        assert evals_app.app_instance.notifications
+
+
+@pytest.mark.asyncio
+async def test_the_import_probes_button_is_present_in_the_dataset_actions(evals_app):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert pilot.app.screen.query_one("#evals-rail-import-probes")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 45), (235, 52)], ids=["160x45", "235x52"])
+async def test_dataset_action_buttons_stay_hit_testable_with_import_probes_added(
+    evals_app, size
+):
+    """Global constraint: this task adds a THIRD button to the Datasets
+    actions row (`#evals-rail-import-probes`, beside `+ New dataset` /
+    `Import…`). `_lab.tcss`'s own comment on
+    `#lab-rail .evals-rail-empty-actions` records this exact row already
+    broke once this way -- two buttons side by side at a 34-column rail
+    clipped "Import…" off the right edge, present in the DOM but
+    unreachable on screen, fixed by stacking the row vertically instead.
+    Adding a third button reuses that same stacked layout, but "the row
+    still fits" is exactly the kind of claim this pane's history says to
+    verify empirically rather than assume -- painted geometry is the
+    arbiter, not the stylesheet's intent. `Screen.get_widget_at` resolving
+    each button's own region CENTER back to itself is the same check a
+    real `pilot.click` performs before a press does anything.
+    """
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        for button_id in (
+            "evals-rail-new-dataset",
+            "evals-rail-import-dataset",
+            "evals-rail-import-probes",
+        ):
+            control = screen.query_one(f"#{button_id}", Button)
+            assert control.region.width > 0 and control.region.height > 0, (
+                f"#{button_id} has an empty region at {size[0]}x{size[1]}"
+            )
+            center = control.region.center
+            hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
+            assert hit is control, (
+                f"#{button_id} at {control.region} is not hit-testable at "
+                f"{size[0]}x{size[1]} -- resolved to {hit!r} instead"
+            )
+
+
+# ---------------------------------------------------------------------------
 # The one-click sample bench.
 # ---------------------------------------------------------------------------
 
