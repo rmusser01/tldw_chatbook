@@ -1763,7 +1763,43 @@ git commit -m "feat(evals): persist probe conversations, turn annotations, and r
 
 - `Tests/Evals/character_probe/` passes in full, and `Tests/Evals/word_bench/` is unchanged.
 - A bench can be saved, loaded, and run end to end against a fake chat callable, producing conversations that persist and reload.
-- No module under `character_probe/` imports word_bench's capture client, normalizer, or canary code.
+- No module under `character_probe/` references word_bench's measurement concepts — no distribution
+  vocabulary appears anywhere in this package's source or surface.
+
+  **Amended after the whole-branch review (was: "imports word_bench's capture client, normalizer,
+  or canary code").** `character_probe/targets.py` deliberately imports
+  `word_bench.storage.model_steering`, the app's single existing reader for a target's steering out
+  of an `eval_models` row's `config` JSON. Importing that module pulls word_bench's own imports
+  transitively — `storage` → `capture_client` → `normalizer` → `httpx` — so the criterion as
+  originally worded is **not** met by the import graph.
+  The reuse is correct and stays: duplicating that reader is exactly what produced Critical C1, in
+  which the runner read a key no `eval_models` row has ever carried and every real run silently
+  dropped its steering. The criterion's *intent* — that none of the measurement stack's ideas leak
+  into an eval that reads only generated text — is fully met, so the criterion is amended to say
+  what is actually true rather than left silently unmet.
+
+  **The in-repo hygiene test is weaker than the rule it names.**
+  `Tests/Evals/character_probe/test_conversation_storage.py::test_character_probe_never_imports_the_word_bench_measurement_stack`
+  greps each module's SOURCE TEXT for forbidden tokens. It cannot see an import graph at all, so it
+  passes on exactly the situation described above. TASK-1754 tracks both halves of the remedy:
+  moving `model_steering`/`_steering_field` (pure functions of a row dict, with no word_bench
+  dependencies) into a shared home neither package's stack rides on, and strengthening the test to
+  assert on the real import graph — e.g. `sys.modules` after a fresh package import — instead of on
+  tokens.
+
+### Forward-looking caveats for Phase 2
+
+Two consequences of Phase 1's fail-loudly choices that a UI author will meet:
+
+- **`_stored_int_field` is strict against JSON floats.** `load_character_bench` now rejects a
+  stored `512.0` as a non-integer `max_tokens` (previously `int()` silently truncated it). A form
+  control or JSON payload that emits whole numbers as floats will therefore make a bench fail to
+  load. Coerce at the UI boundary, not by loosening the loader.
+- **`eval_models` has `UNIQUE(name, provider, model_id)`.** The prefix-steered rejection in
+  `targets.resolve_target` tells the user to use a chat-mode target instead, and steering is
+  immutable per row (there is no `update_model`), so that means creating a NEW row. A Phase 2
+  "duplicate this target" affordance must offer a **different name** — reusing the name raises
+  `ConflictError`.
 
 ## Not in Phase 1 (deliberate)
 

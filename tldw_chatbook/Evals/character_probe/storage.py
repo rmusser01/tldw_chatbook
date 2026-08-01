@@ -681,12 +681,25 @@ def save_conversations(
     all failed before producing a turn -- ``load_conversations`` below has
     no other way to discover which runs belong to this group.
 
-    EVERY check runs before the FIRST write. An unknown target used to be
-    detected inside the write loop, so a group could be left half-committed
-    -- earlier conversations stored, the rest not, and the run group loading
-    back as if it were complete, since nothing distinguishes a missing
-    conversation from one that was never meant to exist. Validating in one
-    pass first means the group is either fully written or not started.
+    EVERY check this function makes runs before the FIRST write. An unknown
+    target used to be detected inside the write loop, so a group could be
+    left half-committed -- earlier conversations stored, the rest not, and
+    the run group loading back as if it were complete, since nothing
+    distinguishes a missing conversation from one that was never meant to
+    exist.
+
+    That is a claim about VALIDATION ordering only, not about atomicity: the
+    write loop itself is NOT transactional. ``EvalsDB.store_result`` commits
+    each row in its own ``with conn`` block, so an error raised by the
+    database mid-loop still leaves the preceding rows committed. The one
+    reachable way to provoke that is two conversations sharing a
+    ``sample_id`` -- the same ``(card_id, probe_index, sample_index)`` under
+    one target -- which trips ``eval_results``'s UNIQUE
+    ``(run_id, sample_id)`` on the second write. A runner-produced grid
+    cannot contain such a pair (every cell is one point of a product of
+    distinct axes), so this is a hand-assembled-input hazard rather than a
+    live one; making the loop genuinely atomic needs a batch write on
+    ``EvalsDB``, which is not this function's to add.
 
     Args:
         db: The evals database handle.
