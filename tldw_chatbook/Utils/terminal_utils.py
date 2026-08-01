@@ -4,17 +4,101 @@
 # Imports
 #
 # Standard Library
+import importlib
 import os
 import time
 from typing import Dict, Literal
 
 #
 # Local Imports
+from loguru import logger
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 #
 # Functions:
+
+
+def warm_up_image_protocol() -> bool:
+    """Resolve textual_image's rendering protocol while the terminal is free.
+
+    task-1650: ``textual_image`` chooses its renderer exactly once, at
+    import time, by writing an escape query and reading the terminal's
+    reply (see ``textual_image/renderable/__init__.py``). Every app-side
+    import is lazy -- nested inside functions that run in the LIVE app --
+    and by then Textual holds the terminal in raw mode and owns stdin, so
+    the query never gets an answer and selection silently degrades to
+    half-cell rendering. The result is pixelated avatars and inline images
+    in Kitty/iTerm2 with no exception and no log line. textual_image warns
+    about exactly this in its own source ("querying the terminal isn't
+    possible anymore once Textual is started").
+
+    Call this ONCE from each entry point before ``App.run()``. Importing
+    the top-level ``textual_image`` package is not sufficient, which is
+    also why this cannot route through ``optional_deps.check_dependency``:
+    that helper imports the TOP-LEVEL package, and the protocol choice
+    lives in the ``renderable`` submodule that only ``textual_image.widget``
+    pulls in.
+
+    Outcomes are logged and counted (Qodo PR #1150): a silent degrade is
+    the very symptom this function exists to remove.
+
+    Returns:
+        True if the protocol-selecting import completed; False when the
+        optional dependency is absent or its terminal query failed (both
+        leave the app on its mosaic/pixels fallbacks, which always work).
+    """
+    # Qodo PR #1150: availability goes through the central helper so
+    # DEPENDENCIES_AVAILABLE stays consistent with the rest of the
+    # codebase. The submodule import below is still done directly and
+    # deliberately -- check_dependency() imports only the TOP-LEVEL
+    # package, which never loads textual_image.renderable where the
+    # protocol is chosen, so routing the whole thing through it would
+    # silently reinstate the bug this function exists to fix.
+    from .optional_deps import check_dependency
+
+    try:
+        if not check_dependency("textual_image"):
+            raise ImportError("textual_image unavailable")
+        importlib.import_module("textual_image.widget")
+    except ImportError:
+        # Optional dependency absent -- expected, not a defect.
+        logger.debug(
+            "textual_image not installed; images use mosaic/pixels rendering."
+        )
+        log_counter(
+            "terminal_utils_image_protocol_warmup",
+            labels={"result": "missing_dependency"},
+        )
+        return False
+    except Exception as exc:
+        # A terminal that does not answer the capability query raises here
+        # (observed: TerminalError under a bare pty). Rendering still
+        # degrades gracefully, but say so rather than failing silently.
+        logger.warning(
+            "Image protocol warm-up failed ({}); falling back to mosaic/pixels "
+            "rendering.",
+            type(exc).__name__,
+        )
+        log_counter(
+            "terminal_utils_image_protocol_warmup", labels={"result": "query_failed"}
+        )
+        return False
+
+    selected = "unknown"
+    try:
+        import textual_image.renderable as _renderable
+
+        selected = _renderable.Image.__module__.rsplit(".", 1)[-1]
+    except Exception:  # pragma: no cover - introspection only
+        pass
+    logger.info("Image render protocol selected: {}", selected)
+    log_counter(
+        "terminal_utils_image_protocol_warmup",
+        labels={"result": "ok", "protocol": selected},
+    )
+    return True
 
 
 def detect_terminal_capabilities() -> Dict[str, any]:

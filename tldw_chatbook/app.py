@@ -8961,6 +8961,14 @@ if __name__ == "__main__":
         loguru_logger.error(f"Error checking config encryption: {e}")
         # Continue without encryption if there's an error
 
+    # task-1650: resolve textual_image's rendering protocol NOW, while the
+    # terminal still answers escape queries. Textual takes raw mode in
+    # run() below, after which the query silently fails and every image
+    # surface degrades to half-cell rendering.
+    from .Utils.terminal_utils import warm_up_image_protocol
+
+    warm_up_image_protocol()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     # Set the early logging flag so _setup_logging knows logging was already initialized
@@ -9245,6 +9253,14 @@ def main_cli_runner():
         return  # Exit after web server stops
 
     # Otherwise, run as normal TUI app
+    # task-1650: resolve textual_image's rendering protocol NOW, while the
+    # terminal still answers escape queries. Textual takes raw mode in
+    # run() below, after which the query silently fails and every image
+    # surface degrades to half-cell rendering.
+    from .Utils.terminal_utils import warm_up_image_protocol
+
+    warm_up_image_protocol()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     # Set the early logging flag so _setup_logging knows logging was already initialized

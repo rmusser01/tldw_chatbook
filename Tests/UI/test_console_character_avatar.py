@@ -591,3 +591,99 @@ async def test_reactive_avatar_never_raises_on_corrupt_expression(console_screen
     # Must not raise into the sync tick even though the image is corrupt.
     await screen._refresh_active_character_avatar_if_scope_changed()
     assert screen._last_console_avatar_scope == (char_id, "speaking")
+
+
+# ---- task-1661: rail-derived avatar box + hugging holder ----
+
+
+def test_avatar_box_scales_with_rail_width():
+    """A wider rail yields a bigger box, clamped at both ends.
+
+    task-1661: the box was hard-coded 16x8 regardless of rail width, so a
+    ~50-column rail showed a 16-column thumb.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CHARACTER_AVATAR_COLS,
+        CHARACTER_AVATAR_LINES,
+        CHARACTER_AVATAR_MAX_COLS,
+        CHARACTER_AVATAR_MAX_LINES,
+        character_avatar_box,
+    )
+
+    # Unsettled layout (0) falls back to the historical minimum.
+    assert character_avatar_box(0) == (CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
+    # A real rail width scales up...
+    cols, lines = character_avatar_box(48)
+    assert cols > CHARACTER_AVATAR_COLS and lines > CHARACTER_AVATAR_LINES
+    assert lines == round(cols / 2)
+    # ...but never past the clamp.
+    wide_cols, wide_lines = character_avatar_box(400)
+    assert wide_cols == CHARACTER_AVATAR_MAX_COLS
+    assert wide_lines <= CHARACTER_AVATAR_MAX_LINES
+
+
+def test_mosaic_fallback_contains_rather_than_crops():
+    """The non-graphics path must show the whole portrait (user choice).
+
+    task-1661: the fallback baked with fit="cover", cropping the edges;
+    graphics uses a contain fit, so the two paths disagreed on framing.
+    """
+    import inspect
+
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    src = inspect.getsource(chat_screen._character_avatar_fallback_renderable)
+    assert 'fit="contain"' in src
+    assert 'fit="cover"' not in src
+
+
+@pytest.mark.asyncio
+async def test_avatar_holder_hugs_its_content():
+    """The holder must not claim the whole rail section.
+
+    task-1661: ClickableAvatarBox is a bare Container (width/height 1fr),
+    so it expanded to fill the rail -- the portrait sat in the corner of a
+    tall empty box with the character name pushed to the bottom.
+    """
+    import inspect
+
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    src = inspect.getsource(chat_screen.ChatScreen.compose_content)
+    holder = src.split("avatar_holder = ClickableAvatarBox", 1)[1][:900]
+    assert 'avatar_holder.styles.width = "auto"' in holder
+    assert 'avatar_holder.styles.height = "auto"' in holder
+
+
+
+@pytest.mark.asyncio
+async def test_available_cols_measures_the_section_not_the_holder(
+    console_screen_with_db,
+):
+    """Width must come from the rail section body, never the holder.
+
+    task-1661 regression: the holder is ``width: auto`` so it hugs the
+    portrait; measuring IT to size the portrait is circular -- it fed the
+    previous child's width back in (13 cols observed) and pinned the box
+    at the 16-column minimum no matter how wide the rail was.
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+
+    buf = BytesIO()
+    PILImage.new("RGB", (400, 500), (200, 10, 10)).save(buf, format="PNG")
+    cid = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, cid, "Ada")
+    await screen._refresh_active_character_avatar_if_scope_changed()
+
+    body = screen.query_one("#console-rail-section-body-character")
+    holder = screen.query_one("#console-character-avatar")
+    measured = screen._character_avatar_available_cols()
+
+    assert measured == body.content_size.width
+    assert holder.content_size.width < body.content_size.width, (
+        "holder should hug its content, so this test proves the two differ"
+    )
+    assert measured != holder.content_size.width
+

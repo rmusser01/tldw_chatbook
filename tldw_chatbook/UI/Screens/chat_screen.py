@@ -537,6 +537,13 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # smaller for the rail's narrower column).
 CHARACTER_AVATAR_COLS = 16
 CHARACTER_AVATAR_LINES = 8
+#: task-1661: the rail avatar used to paint into the fixed box above no
+#: matter how wide the rail was, leaving a ~50-column rail showing a
+#: 16-column portrait pinned to the corner of an unsized (1fr) holder.
+#: The box is now derived from the rail's live width, clamped so a very
+#: tall portrait cannot swallow the whole rail.
+CHARACTER_AVATAR_MAX_COLS = 44
+CHARACTER_AVATAR_MAX_LINES = 22
 # task-1537: remote inline images. Only the most recent assistant replies are
 # scanned for image links (older history never triggers fetches), and one
 # fetched body is capped well below the render cache's decode ceiling.
@@ -1118,18 +1125,49 @@ def _character_session_prompt_seed(
     return name, system_prompt, greeting
 
 
-def _character_avatar_fallback_renderable(pil: Any):
+def character_avatar_box(available_cols: int) -> tuple[int, int]:
+    """Avatar box (cols, lines) for a rail of ``available_cols`` width.
+
+    task-1661: keeps the portrait proportional to the rail instead of a
+    fixed 16x8 corner thumb, while clamping so a tall image cannot claim
+    the entire rail. Lines are half the columns because terminal cells are
+    roughly twice as tall as wide, which keeps the box near-square on
+    screen.
+
+    Args:
+        available_cols: The holder's usable width in columns; values below
+            the historical minimum fall back to it (layout not settled).
+
+    Returns:
+        ``(cols, lines)`` for `fit_image_cell_size`.
+    """
+    cols = max(CHARACTER_AVATAR_COLS, min(CHARACTER_AVATAR_MAX_COLS, available_cols))
+    lines = max(
+        CHARACTER_AVATAR_LINES, min(CHARACTER_AVATAR_MAX_LINES, round(cols / 2))
+    )
+    return cols, lines
+
+
+def _character_avatar_fallback_renderable(
+    pil: Any,
+    *,
+    box_cols: int = CHARACTER_AVATAR_COLS,
+    box_lines: int = CHARACTER_AVATAR_LINES,
+):
     """Bake the rail avatar's non-graphics renderable from a PIL image.
 
     Quadrant mosaic (2x2 subpixels per cell) at the rail's fitted box --
     double the horizontal detail of the previous half-block Pixels build
     with the same universal Block Elements font coverage.
+
+    Args:
+        pil: The decoded portrait.
+        box_cols: Target width in columns (task-1661: rail-derived).
+        box_lines: Target height in lines.
     """
     from ...Utils.mosaic_render import mosaic_from_image
 
-    return mosaic_from_image(
-        pil, CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES, fit="cover"
-    )
+    return mosaic_from_image(pil, box_cols, box_lines, fit="contain")
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -6135,6 +6173,29 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    def _character_avatar_available_cols(self) -> int:
+        """Usable width, in columns, available to the rail avatar.
+
+        Measures the rail SECTION BODY, never the avatar holder: the
+        holder is ``width: auto`` (task-1661, so it hugs the portrait
+        instead of claiming the whole section), which makes its width a
+        function of the child we are about to size -- measuring it fed the
+        old child's width back in and pinned the box at the minimum
+        forever. ``content_size`` already excludes padding and border.
+
+        Returns:
+            The section body's content width in columns, or 0 before
+            layout settles so `character_avatar_box` uses its fallback.
+        """
+        try:
+            body = self.query_one("#console-rail-section-body-character")
+        except Exception:
+            return 0
+        try:
+            return int(body.content_size.width)
+        except Exception:
+            return 0
+
     def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
@@ -6173,11 +6234,14 @@ class ChatScreen(BaseAppScreen):
                 # tick before that settles can ask the renderer to scale
                 # into a transient 0-width/height region, which PIL's
                 # resize() raises on.
+                box_cols, box_lines = character_avatar_box(
+                    self._character_avatar_available_cols()
+                )
                 w, h = fit_image_cell_size(
                     spec["pil"].width,
                     spec["pil"].height,
-                    CHARACTER_AVATAR_COLS,
-                    CHARACTER_AVATAR_LINES,
+                    box_cols,
+                    box_lines,
                 )
                 widget.styles.width = w
                 widget.styles.height = h
@@ -6185,15 +6249,20 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
         try:
+            box_cols, box_lines = character_avatar_box(
+                self._character_avatar_available_cols()
+            )
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
-                pixels = _character_avatar_fallback_renderable(spec["pil"])
+                pixels = _character_avatar_fallback_renderable(
+                    spec["pil"], box_cols=box_cols, box_lines=box_lines
+                )
             widget = Static(
                 pixels if pixels is not None else "",
                 id="console-character-avatar-image",
             )
-            widget.styles.max_width = CHARACTER_AVATAR_COLS
-            widget.styles.max_height = CHARACTER_AVATAR_LINES
+            widget.styles.max_width = box_cols
+            widget.styles.max_height = box_lines
             return widget
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
@@ -11424,6 +11493,13 @@ class ChatScreen(BaseAppScreen):
                                 avatar_holder = ClickableAvatarBox(
                                     id="console-character-avatar"
                                 )
+                                # task-1661: Container defaults to
+                                # width/height 1fr, so the holder claimed the
+                                # entire rail section -- the portrait sat in
+                                # the corner of a tall empty box with the name
+                                # pushed to the bottom. Hug the image instead.
+                                avatar_holder.styles.width = "auto"
+                                avatar_holder.styles.height = "auto"
                                 with avatar_holder:
                                     yield self._build_character_avatar_widget(
                                         self._active_character_avatar
