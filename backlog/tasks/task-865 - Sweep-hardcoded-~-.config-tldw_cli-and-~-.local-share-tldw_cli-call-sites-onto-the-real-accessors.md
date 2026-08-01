@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-27 04:35'
-updated_date: '2026-07-27 16:29'
+updated_date: '2026-08-01 09:37'
 labels:
   - security
   - config
@@ -24,19 +24,43 @@ The data-dir group (~18 sites, including Chatbooks/chatbook_importer.py:77-79, C
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every listed config-dir call site derives its parent directory from _get_effective_config_path().parent instead of a Path.home()/'.config'/'tldw_cli' literal
-- [ ] #2 Every listed data-dir call site derives its path from get_user_data_dir() instead of a Path.home()/'.local'/'share'/'tldw_cli' literal that omits the user folder segment
+- [ ] #1 Every swept hardcoded profile-owned config-dir occurrence in ADR-040's normative inventory derives its parent directory from get_cli_config_path().parent instead of a Path.home()/'.config'/'tldw_cli' literal
+- [ ] #2 Every swept hardcoded active-user data-dir occurrence in ADR-040's normative inventory derives its path from get_user_data_dir() instead of a Path.home()/'.local'/'share'/'tldw_cli' literal that omits the user folder segment
 - [x] #3 The chatbook importer's extraction root matches the chatbook creator's temp root (both under get_user_data_dir()/temp/...) with a test asserting the two derive to the same parent
 - [x] #4 A test with TLDW_CONFIG_PATH pointed at a profile confirms at least one swept config-dir site (e.g. ui_state.toml) writes under that profile's directory, not the real ~/.config/tldw_cli
+- [ ] #5 Every remaining executable literal is classified by an exact sentinel exception as inert configuration data, a canonical resolver/default seed, a compatibility constant, a shared artifact, or a read-only legacy probe
+- [ ] #6 The rejected transcription-history store/viewer, unmounted legacy Dictation window, and unused legacy user-database path helper are retired rather than allowlisted
+- [ ] #7 No existing global file is copied, moved, imported, or deleted by the completion tranche
+- [ ] #8 Regression tests use production functions or the full TldwCli application; no reduced test application is introduced
+- [ ] #9 Swept profile-owned state writers use ADR-029 private atomic replacement and preserve the previous file when serialization or replacement fails
+- [ ] #10 Generated diagnostics/SQLite inventories, affected legacy-window tests/source censuses, stale feature documentation, release notes, and installed-wheel coverage agree with the retired modules and symbols
 <!-- AC:END -->
+
+## ADR Check
+
+ADR required: yes
+
+ADR path: [ADR-040: Profile-Owned State and Shared Asset Paths](../decisions/040-profile-owned-state-and-shared-asset-paths.md)
+
+Reason: The completion tranche classifies persistent data ownership, profile
+isolation, shared artifacts, legacy probes, and migration behavior across
+multiple modules.
+
+Design: [TASK-865 Profile-Owned Path Completion Design](../../Docs/superpowers/specs/2026-08-01-profile-owned-path-completion-design.md)
+
+Completion-scope note: existing consumers of `_get_effective_config_path()`
+already resolve the active config correctly and are not part of this
+hardcoded-literal sweep. New or changed consumers use the public
+`get_cli_config_path()` wrapper. This tranche does not modify Notes Sync.
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Enumerate every explicitly named config-dir and data-dir call site from the task description and fix each.
-2. Fix the chatbook importer (highest-value, live-diverged) to match the chatbook creator's sibling temp-root convention; add a parity test.
-3. Add a TLDW_CONFIG_PATH-retargeting test proving at least one swept config-dir site (ui_state.toml) honors the active profile.
-4. Best-effort sweep additional lower-value sites found by a broader grep, time permitting; catalog whatever remains unfixed rather than claim full coverage.
+1. Use ADR-040 to classify every remaining executable literal as profile-owned config state, active-user data, shared artifact, inert default, read-only legacy probe, or unreachable code.
+2. Write failing function/full-application path-isolation tests and an executable-token/source sentinel that detects embedded, multiline, indirect-join, duplicate, and stale cases with exact counted exceptions.
+3. Retire every rejected transcript-history implementation, including the unmounted legacy Dictation window, plus the unused legacy user-database path helper; reconcile every importing test/source census, generated/curated inventory, compatibility comment, current architecture document, and release note without rewriting historical Backlog records.
+4. Apply the design's normative disposition inventory: move each swept profile-owned config/data occurrence onto get_cli_config_path().parent or get_user_data_dir() at the call boundary without migrating existing files, preserve classified exceptions, and route swept private state writers through ADR-029 atomic replacement.
+5. Run targeted ownership/privacy/inventory/installed-wheel suites, the full suite, and static checks; then reconcile the acceptance criteria, implementation notes, and task status.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -49,4 +73,6 @@ As a best-effort addition beyond the explicitly named sites, also fixed: Widgets
 NOT checking AC #1/#2 as fully satisfied: the task also references '~25 lower-value' config-dir sites and '~18' data-dir sites only in aggregate, without file:line references, and a full sweep was not completed given the size of that remainder. A broader grep during this task surfaced a SEPARATE, adjacent, and larger finding worth its own follow-up task: UI/ChatbookCreationWindow.py, UI/ChatbookExportManagementWindow.py, UI/Wizards/ChatbookCreationWizard.py and UI/Wizards/ChatbookImportWizard.py each build their OWN ad-hoc db_paths dict straight from self.app.config_data.get('database', {}) with hardcoded, WRONG, non-user-folder fallback literals (e.g. '~/.local/share/tldw_cli/tldw_prompts_db.db') instead of calling get_prompts_db_path()/get_media_db_path() -- these do NOT go through the get_*_db_path() accessors at all, unlike everything reconciled in TASK-858/899. Deliberately left out of this task's scope (a distinct defect class, not a Path.home()-literal sweep site) and recommend filing separately. Also deliberately left OUT as a scope decision, not an oversight: TTS/UI model-weight and voice-cache paths under ~/.config/tldw_cli/models/... and .../*_voices (STTS_Window.py, Dictation_Window.py, TTS/backends/kokoro.py, TTS/kokoro_pytorch.py, TTS/utils/download_models.py) -- these are large, shared binary caches/exports, not per-profile config/state; making them profile-relative would force re-downloading multi-hundred-MB models on every profile switch, which is very unlikely to be the intended behavior and is exactly the kind of live-file-relocation this task's hard constraints told me to stop and report on rather than silently do.
 
 AC #3 (chatbook importer/creator parity) and AC #4 (a profile-retargeted config-dir site) are both satisfied with concrete tests: Tests/Chatbooks/test_chatbook_importer.py (temp_dir == get_user_data_dir()/'temp'/'imports', and shares a parent with ChatbookCreator's temp_dir), Tests/UI/test_chat_screen_ui_state_path.py (TLDW_CONFIG_PATH retargeted to a scratch profile -> _save_sidebar_state() writes ui_state.toml under THAT profile's directory, two different profiles do not collide). Files: tldw_chatbook/UI/Screens/chat_screen.py, Event_Handlers/{notes_events,note_ingest_events,conv_char_events}.py, Subscriptions/website_monitor.py, Chatbooks/{chatbook_importer,local_chatbook_service}.py, Character_Chat/Character_Chat_Lib.py, Widgets/{emoji_picker,settings_theme_editor}.py, Notes/sync_service.py, Config_Files/create_custom_template.py, RAG_Search/{pipeline_loader,pipeline_builder_simple}.py; new tests in Tests/Chatbooks/test_chatbook_importer.py and Tests/UI/test_chat_screen_ui_state_path.py.
+
+The revised completion design supersedes the earlier partial-note decision to retain `UI/Dictation_Window.py`: TASK-1331 rejected transcript persistence and current production has no importer, so the completion tranche retires that entire legacy window while preserving `ImprovedDictationWindow` coverage. These partial notes remain historical progress notes and will be replaced by final implementation notes only after the remaining acceptance criteria are verified.
 <!-- SECTION:NOTES:END -->
