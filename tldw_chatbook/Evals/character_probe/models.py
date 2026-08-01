@@ -112,3 +112,37 @@ class CardSnapshot:
     first_message: str = ""
     post_history_instructions: str = ""
     message_example: str = ""
+
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    """One scripted user turn and the model's reply to it.
+
+    ``reply`` and ``error`` are both ``""`` by default: a turn that never
+    ran (the conversation was cancelled or failed before reaching it) is
+    simply absent from a ``Conversation.turns`` tuple, so a turn that *is*
+    present but carries no reply text is not a state this runner produces.
+    """
+
+    user: str
+    reply: str
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class Conversation:
+    """One cell: a card, a probe, a target, and one sample of the exchange.
+
+    ``turns`` holds only the turns that actually ran -- a conversation that
+    failed or was cancelled partway through keeps its completed turns and
+    records why it stopped in ``error``, rather than discarding the partial
+    transcript. A failed or partial conversation is still evidence and stays
+    reviewable.
+    """
+
+    card_id: int
+    probe_index: int
+    sample_index: int
+    target_id: str
+    turns: tuple[ConversationTurn, ...]
+    error: str = ""
