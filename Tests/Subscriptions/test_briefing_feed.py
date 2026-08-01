@@ -65,6 +65,10 @@ def _build(episodes: list[FeedEpisode], **overrides: object) -> bytes:
 
 
 def test_document_is_well_formed_rss_2_with_exactly_one_channel():
+    """The bare well-formedness contract every other test in this file
+    relies on: `build_feed_xml` must produce a real `<rss version="2.0">`
+    root with exactly one `<channel>` -- not zero, not more than one --
+    parseable by `ElementTree` without error."""
     root = ET.fromstring(_build([]))
     assert root.tag == "rss"
     assert root.get("version") == "2.0"
@@ -73,6 +77,10 @@ def test_document_is_well_formed_rss_2_with_exactly_one_channel():
 
 
 def test_channel_carries_title_description_and_last_build_date():
+    """All three channel-level fields must actually render. `lastBuildDate`
+    specifically is round-tripped through real RFC-822 parsing back to the
+    exact injected `now` -- a string-format assertion could pass on a
+    plausible-looking but unparseable (or off-by-format) date."""
     channel = ET.fromstring(_build([])).find("channel")
     assert channel.findtext("title") == "My Watchlist"
     assert channel.findtext("description") == "Episodes from My Watchlist"
@@ -96,6 +104,10 @@ def test_channel_link_is_present_non_empty_and_a_relative_reference():
 
 
 def test_empty_episodes_still_produces_a_valid_channel_with_zero_items():
+    """The "no episodes yet" case (a fresh watchlist, or every episode
+    skipped upstream) must still yield a valid channel with a title -- not
+    an error, and not a malformed or missing channel -- with an item list
+    that is empty rather than absent."""
     channel = ET.fromstring(_build([])).find("channel")
     assert channel is not None
     assert channel.find("title") is not None
@@ -106,6 +118,11 @@ def test_empty_episodes_still_produces_a_valid_channel_with_zero_items():
 
 
 def test_each_episode_yields_an_item_with_title_guid_and_pubdate():
+    """One `FeedEpisode`'s title/guid/published must map through 1:1 into
+    its `<item>`. `pubDate` is round-tripped through real RFC-822 parsing
+    back to the exact source datetime, not merely asserted non-empty --
+    catching a wrong format that a podcast client's own parser would
+    reject even though this test's channel-shape assertions would pass."""
     episode = _episode()
     channel = ET.fromstring(_build([episode])).find("channel")
     items = channel.findall("item")
@@ -119,6 +136,9 @@ def test_each_episode_yields_an_item_with_title_guid_and_pubdate():
 
 
 def test_two_episodes_yield_two_items_in_order():
+    """Multiple episodes must preserve the ORDER they were given in --
+    `build_feed_xml` must not sort, reverse, or otherwise reorder the
+    episode list a caller already assembled."""
     first = _episode(title="First", guid="g1")
     second = _episode(title="Second", guid="g2")
     channel = ET.fromstring(_build([first, second])).find("channel")
@@ -130,6 +150,11 @@ def test_two_episodes_yield_two_items_in_order():
 
 
 def test_enclosure_url_is_the_bare_relative_filename_never_absolute():
+    """The enclosure `url` must be exactly the bare filename -- no leading
+    `/` (an absolute POSIX path) and no `:` (a URL scheme) -- so a podcast
+    client resolves it relative to wherever the self-contained folder
+    itself ends up served or opened, never against a path or host on the
+    exporting machine."""
     episode = _episode(filename="script-9-audio-3.wav")
     item = ET.fromstring(_build([episode])).find("channel").find("item")
     enclosure = item.find("enclosure")
@@ -141,6 +166,11 @@ def test_enclosure_url_is_the_bare_relative_filename_never_absolute():
 
 
 def test_enclosure_length_is_bytes_and_type_is_audio_wav():
+    """`length` must be the given byte count verbatim (not, e.g., seconds
+    or a rounded/truncated value) and `type` must be the fixed
+    `audio/wav` MIME type every enclosure declares -- both are read
+    directly by podcast clients to decide how to fetch and play the
+    file."""
     episode = _episode(length_bytes=98765)
     enclosure = ET.fromstring(_build([episode])).find("channel").find("item").find("enclosure")
     assert enclosure.get("length") == "98765"
@@ -161,6 +191,10 @@ def test_enclosure_length_is_bytes_and_type_is_audio_wav():
 
 
 def test_enclosure_url_percent_encodes_a_space_and_carries_no_raw_space():
+    """A space in the on-disk filename (`safe_export_stem` keeps spaces
+    verbatim) must be percent-encoded (`%20`) in the emitted URL, with no
+    raw space surviving -- RFC 3986 forbids a literal space in a URI
+    reference, and a client that sends it verbatim gets a 400."""
     episode = _episode(filename="Two Host Debate-42.wav")
     url = (
         ET.fromstring(_build([episode]))
@@ -174,6 +208,10 @@ def test_enclosure_url_percent_encodes_a_space_and_carries_no_raw_space():
 
 
 def test_enclosure_url_percent_encodes_non_ascii_characters():
+    """A non-ASCII letter (`é`), admitted by `safe_export_stem`'s
+    `str.isalnum()` check, must be percent-encoded as its UTF-8 bytes in
+    the emitted URL -- a raw non-ASCII byte in a URI reference is exactly
+    as invalid as a raw space, just easier to overlook in review."""
     episode = _episode(filename="Café Debate-7.wav")
     url = (
         ET.fromstring(_build([episode]))
@@ -232,6 +270,9 @@ def test_enclosure_url_percent_encoding_does_not_change_the_on_disk_filename():
 
 
 def test_itunes_duration_emitted_when_duration_seconds_present():
+    """When an episode carries a known duration, the item must include a
+    non-empty `itunes:duration` element -- podcast clients use this to show
+    a runtime before the user starts playback."""
     episode = _episode(duration_seconds=125.0)
     item = ET.fromstring(_build([episode])).find("channel").find("item")
     duration_el = item.find(f"{{{_ITUNES_NS}}}duration")
@@ -240,6 +281,10 @@ def test_itunes_duration_emitted_when_duration_seconds_present():
 
 
 def test_itunes_duration_omitted_when_duration_seconds_is_none():
+    """An unknown duration (`None`) must OMIT the element entirely rather
+    than emit a placeholder like `"0:00:00"` or an empty tag -- a bogus
+    zero duration would be actively misleading to a listening client, an
+    absent element is honestly "unknown"."""
     episode = _episode(duration_seconds=None)
     item = ET.fromstring(_build([episode])).find("channel").find("item")
     assert item.find(f"{{{_ITUNES_NS}}}duration") is None
@@ -249,6 +294,11 @@ def test_itunes_duration_omitted_when_duration_seconds_is_none():
 
 
 def test_hostile_title_round_trips_exactly_through_parse():
+    """A title containing XML-significant characters (`<`, `&`) and a
+    CDATA-closing sequence (`]]>`) must build into valid XML and parse
+    back to EXACTLY the original string -- proving `ElementTree` is
+    escaping it correctly (this module must never hand-escape itself, per
+    the module docstring)."""
     hostile_title = "Report: <Q3> Sales & Marketing ]]> Recap"
     episode = _episode(title=hostile_title)
     item = ET.fromstring(_build([episode])).find("channel").find("item")
@@ -256,6 +306,9 @@ def test_hostile_title_round_trips_exactly_through_parse():
 
 
 def test_hostile_description_round_trips_exactly_through_parse():
+    """Same property as the hostile-title test above, for `description` --
+    a second field independently exercising escaping, since a field-level
+    fix in one place would not prove the other is safe."""
     hostile_description = "A & B <together>, plus a stray ]]> marker."
     episode = _episode(description=hostile_description)
     item = ET.fromstring(_build([episode])).find("channel").find("item")
@@ -267,6 +320,11 @@ def test_hostile_description_round_trips_exactly_through_parse():
 
 @pytest.mark.parametrize("bad_filename", ["../evil.wav", "sub/evil.wav", "sub\\evil.wav"])
 def test_filename_with_a_path_separator_raises_feed_build_error_naming_it(bad_filename):
+    """A path-shaped `FeedEpisode.filename` (parent reference, POSIX or
+    Windows separator) must raise rather than be emitted into an enclosure
+    URL that could resolve outside the feed directory -- and the raised
+    message must name the exact offending filename, not a generic error,
+    so the caller can trace it back to the episode."""
     episode = _episode(filename=bad_filename)
     with pytest.raises(FeedBuildError, match=re.escape(bad_filename)):
         _build([episode])
@@ -295,12 +353,22 @@ def test_path_separator_guard_rejects_before_emitting_any_xml():
 
 
 def test_naive_now_raises_feed_build_error_naming_now():
+    """A naive (no-`tzinfo`) `now` must raise rather than being silently
+    treated as UTC -- see the module comment above on why quietly coercing
+    it would risk the "-0000 round-trips to naive, then gets
+    re-interpreted as local time" hazard downstream. The message must
+    name `now` specifically so the caller knows which argument is at
+    fault."""
     naive_now = datetime(2026, 8, 1, 12, 0, 0)  # no tzinfo
     with pytest.raises(FeedBuildError, match="now"):
         _build([], now=naive_now)
 
 
 def test_naive_episode_published_raises_feed_build_error_naming_the_episode():
+    """Same guard as the naive-`now` test above, for a single episode's
+    `published` timestamp -- and the message must name the offending
+    episode's `guid` (`briefing-audio-77`), not just say "a timestamp was
+    naive", so a multi-episode build can be traced back to which one."""
     naive_published = datetime(2026, 7, 30, 8, 0, 0)  # no tzinfo
     episode = _episode(published=naive_published, guid="briefing-audio-77")
     with pytest.raises(FeedBuildError, match="briefing-audio-77"):
@@ -337,6 +405,11 @@ def test_xmlns_itunes_is_declared_in_raw_bytes_when_a_duration_is_present():
 
 
 def test_xmlns_itunes_is_absent_from_raw_bytes_when_no_duration_is_present():
+    """The mirror of the declared-when-present test above: when nothing in
+    the build actually uses the `itunes` namespace, neither the namespace
+    declaration nor the element itself should appear in the raw bytes --
+    an unused namespace declaration is at best clutter and, in stricter
+    parsers, can itself be flagged."""
     episode = _episode(duration_seconds=None)
     text = _build([episode]).decode("utf-8")
     assert "xmlns:itunes" not in text

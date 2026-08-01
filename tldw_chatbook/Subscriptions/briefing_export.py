@@ -24,10 +24,11 @@ user chose (through Task 5's `ExportFeedRequested` flow), alongside a
 markdown half above, this DOES do its own I/O -- validating the
 destination, copying files, and writing `feed.xml` atomically -- because
 the deliverable here is several files landing together, not one screen
-writing one file. Five decisions are load-bearing for this half
+writing one file. Six decisions are load-bearing for this half
 specifically: the first three from the phase 3 plan, the fourth (full
-pagination) from this whole-branch review, and the fifth (`0o644`
-permissions) from Task 4's own review round 1:
+pagination) from this whole-branch review, the fifth (`0o644`
+permissions) from Task 4's own review round 1, and the sixth
+(no-follow writes) from a later Qodo PR review round:
 
 1. **Never route the destination through `Utils/private_paths.py`.**
    `secure_private_directory(..., application_owned=True)` chmods its
@@ -76,12 +77,16 @@ permissions) from Task 4's own review round 1:
    exercise the pagination loop without seeding hundreds of real rows.
 5. **Exported files get a fixed `0o644`, deliberately ignoring umask.**
    Audio in `briefing_audio_dir()` is written `0o600` by
-   `atomic_private_write_bytes`, and `shutil.copy2` would carry that mode
-   into the user's folder -- which silently breaks the entire deliverable:
+   `atomic_private_write_bytes`. Review round 1 found that `shutil.copy2`
+   -- the original copy mechanism -- carries the SOURCE file's mode along
+   with its data, which would have silently broken the entire deliverable:
    a folder meant to be synced, zipped, or served would be readable only
-   by the exporting account. (Review round 1 found exactly this; the test
-   that was supposed to catch it stopped at the directory, and its fixture
-   seeded permissive sources, so mode inheritance looked harmless.)
+   by the exporting account. (The test that was supposed to catch it
+   stopped at the directory, and its fixture seeded permissive sources, so
+   mode inheritance looked harmless.) Decision 6 below replaced
+   `shutil.copy2` outright with a direct `os.open` write that sets
+   `0o644` at creation time, which makes the mode question moot rather
+   than merely patched after the fact.
    Umask is deliberately NOT consulted: it expresses a default for
    arbitrary file creation, not intent for a folder the user explicitly
    chose in order to share it, and honouring a hardened umask here would
@@ -89,6 +94,36 @@ permissions) from Task 4's own review round 1:
    feed. The real access boundary is unchanged -- the destination
    directory's own permissions, which Decision 1 leaves untouched, so a
    `0o644` file inside a `0o700` directory remains unreachable to others.
+6. **Neither the per-episode copy nor `feed.xml`'s write ever follows a
+   symlink planted at the destination's final path component.** A Qodo
+   review round on the PR found that `shutil.copy2(source_path,
+   dest_path)` follows a symlink AT `dest_path` and writes through it: if
+   the chosen export directory is shared, synced, or otherwise writable by
+   another process, a symlink planted at a predictable episode filename
+   redirects that write to an arbitrary path outside the folder, with the
+   exporting user's own permissions. `validate_path_simple` does not close
+   this -- it validates the path STRING and only logs when resolution
+   changes, it never fails closed, and the destination is legitimately
+   outside our private area anyway (decision 1), so no path-string check
+   can be the real boundary here. `_copy_episode_audio_file` now opens the
+   destination itself with `O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW`
+   (guarded with `getattr(os, "O_NOFOLLOW", 0)`) and streams the source
+   into it -- the same posture `_write_feed_xml_atomically` already held
+   for `feed.xml`'s own write. A symlink at the final component now makes
+   the `os.open` call itself raise `OSError`, caught by the per-episode
+   loop (decision 3) exactly like any other copy failure, instead of being
+   written through. The same review round found that
+   `_write_feed_xml_atomically`'s stale-partial cleanup
+   (`if partial_path.exists(): partial_path.unlink()`) used `Path.exists()`,
+   which FOLLOWS a symlink to check its target and so returns `False` for a
+   dangling symlink left at `feed.xml.partial` -- silently skipping the
+   unlink, so the following `O_EXCL | O_NOFOLLOW` open then fails on every
+   subsequent export to that directory: a persistent, user-visible denial
+   of service in a folder the user chose. Fixed by checking
+   `os.path.lexists` instead, which reports the directory entry itself
+   (symlink or not, dangling or not) without following it; `Path.unlink()`
+   on a symlink always removes the link, never the file it points to, so a
+   LIVE symlink at that name is cleared the same safe way.
 """
 
 from __future__ import annotations
@@ -289,13 +324,16 @@ _EPISODES_MAX_ROWS = 100_000
 #: file, deliberately NOT the `0o600` private-storage mode `briefing_audio_
 #: dir()`'s own contents carry. Applied explicitly (not left to the
 #: process umask) so the result is deterministic regardless of the
-#: caller's environment: `feed.xml`'s partial is created with this mode
-#: directly, and each copied episode file is `chmod`ed to it after
-#: `shutil.copy2` (which would otherwise carry the PRIVATE source file's
-#: mode straight into the user's folder -- see `_copy_episode_audio_file`).
-#: A directory the user means to sync, zip, or serve must be readable by
-#: more than just their own account; Decision 1 already makes this promise
-#: for the directory itself, this pins the same promise for its files.
+#: caller's environment: both `feed.xml`'s partial and each copied episode
+#: file are created directly at this mode via `os.open`, with an explicit
+#: `fchmod` right after (module docstring, decision 6) -- neither one is
+#: corrected after the fact by a separate `chmod` following a
+#: `shutil.copy2` or similar copy that would otherwise carry the PRIVATE
+#: source file's mode straight into the user's folder (see
+#: `_copy_episode_audio_file`). A directory the user means to sync, zip,
+#: or serve must be readable by more than just their own account;
+#: Decision 1 already makes this promise for the directory itself, this
+#: pins the same promise for its files.
 _EXPORTED_FILE_MODE = 0o644
 
 
@@ -443,25 +481,49 @@ def _copy_episode_audio_file(
 ) -> Path:
     """Copy one episode's audio file into the feed directory.
 
-    Follows the exact validate-then-copy order `UI/STTS_Window.py:4040-4049`
+    Follows the exact validate-then-write order `UI/STTS_Window.py:4040-4049`
     uses for its own user-chosen export destination: validate the full
     destination path, validate its parent exists and resolve it (catches a
     symlink swapped in after the caller's own directory-level validation),
-    validate the bare filename, THEN copy. `source_path` is not
+    validate the bare filename, THEN write. `source_path` is not
     re-validated here -- by the time this is called, the caller has already
     confirmed it via `audio_file_path_is_safe` and `.exists()` (module
     docstring, decision 2).
 
-    Task 4 review round 1: `shutil.copy2` preserves the SOURCE file's
-    permission mode along with its data, and production audio is written
-    by `Utils.private_paths.atomic_private_write_bytes` at `0o600`
-    (application-owned, private-storage semantics). Left alone, every
-    exported episode would inherit that private mode into the user's own
-    folder -- exactly what Decision 1 forbids, just applied to a file
-    instead of the directory, and defeating the entire point of exporting
-    a folder the user means to sync, zip, or serve. The explicit `chmod`
-    below relaxes it back to an ordinary, group/other-readable file
-    regardless of what the source's mode happened to be.
+    Qodo review round: the destination used to be handed straight to
+    `shutil.copy2`, which follows a symlink planted at the final path
+    component and writes through it (module docstring, decision 6).
+    `validate_path_simple` above cannot be the boundary against that -- it
+    validates the path STRING and only logs when resolution changes, it
+    does not fail closed, and the destination is legitimately outside our
+    private area anyway (decision 1). The destination is now opened
+    directly with `O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW` (guarded with
+    `getattr(os, "O_NOFOLLOW", 0)`, same idiom `_write_feed_xml_atomically`
+    already uses) and the source streamed into it: a symlink at `dest_path`
+    now makes this `os.open` call itself raise `OSError`, which the
+    caller's per-episode loop already catches and records in `skipped`
+    (decision 3) -- it never reaches this function's own control flow.
+    `O_TRUNC` (not `O_EXCL`) is deliberate: unlike `feed.xml`'s
+    fixed-name write, a re-export must still overwrite an existing
+    REGULAR file at the same path cleanly
+    (`test_re_exporting_the_same_episode_overwrites_its_existing_
+    destination_file`) -- only a symlink, never an ordinary file, is
+    refused.
+
+    Task 4 review round 1: `shutil.copy2` (the original mechanism) also
+    preserved the SOURCE file's permission mode along with its data, and
+    production audio is written by `Utils.private_paths.
+    atomic_private_write_bytes` at `0o600` (application-owned,
+    private-storage semantics). Left alone, every exported episode would
+    have inherited that private mode into the user's own folder -- exactly
+    what Decision 1 forbids, just applied to a file instead of the
+    directory. Opening the destination directly sidesteps this rather than
+    patching it after the fact: `_EXPORTED_FILE_MODE` (`0o644`) is passed
+    to `os.open` and re-asserted with `fchmod` right after (the same
+    defensive idiom `_write_feed_xml_atomically` uses for `feed.xml`'s own
+    mode), so the destination's mode never depends on the source's --
+    the separate post-copy `os.chmod` call this function used to make is
+    now redundant, and has been removed.
 
     Args:
         source_path: The episode's audio file inside `briefing_audio_dir()`.
@@ -469,11 +531,12 @@ def _copy_episode_audio_file(
         filename: The bare filename to write within `destination_dir`.
 
     Returns:
-        The validated path the file was copied to.
+        The validated path the file was written to.
 
     Raises:
         ValueError: `destination_dir / filename` fails validation.
-        OSError: The copy itself fails.
+        OSError: `dest_path` is a symlink (refused via `O_NOFOLLOW`), or
+            the write itself fails.
     """
     dest_path = destination_dir / filename
     validate_path_simple(dest_path, require_exists=False)
@@ -482,8 +545,20 @@ def _copy_episode_audio_file(
     ).resolve()
     validated_filename = validate_filename(dest_path.name)
     dest_path = validated_parent / validated_filename
-    shutil.copy2(source_path, dest_path)
-    os.chmod(dest_path, _EXPORTED_FILE_MODE)
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    dest_fd = os.open(dest_path, flags, _EXPORTED_FILE_MODE)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(dest_fd, _EXPORTED_FILE_MODE)
+        with os.fdopen(dest_fd, "wb") as dest_stream:
+            dest_fd = -1  # ownership transferred to the stream
+            with open(source_path, "rb") as source_stream:
+                shutil.copyfileobj(source_stream, dest_stream)
+    finally:
+        if dest_fd >= 0:
+            os.close(dest_fd)
     return dest_path
 
 
@@ -501,6 +576,19 @@ def _write_feed_xml_atomically(destination_dir: Path, xml_bytes: bytes) -> None:
     `chatbook_creator`'s per-export unique output path, `feed.xml` is a
     fixed name reused on every re-export, so leaving a stale partial in
     place would permanently wedge every future export behind `O_EXCL`.
+
+    Qodo review round: that removal check used to be
+    `if partial_path.exists(): partial_path.unlink()` -- but `Path.exists()`
+    FOLLOWS a symlink to check its target, so it returns `False` for a
+    DANGLING symlink left at the partial's name, silently skipping the
+    unlink. The following `O_EXCL | O_NOFOLLOW` open would then fail on
+    every subsequent export to that directory: a persistent, user-visible
+    denial of service in a folder the user chose (module docstring,
+    decision 6). Fixed by checking `os.path.lexists` instead, which
+    reports the directory entry itself -- symlink or not, dangling or not
+    -- without following it. `Path.unlink()` on a symlink always removes
+    the link itself, never the file it points to, so a LIVE symlink at
+    that name is cleared the same safe way, never written through.
 
     Task 4 review round 1: the partial used to be opened at `0o600` (copied
     from the `chatbook_creator` precedent verbatim, without noticing that
@@ -527,7 +615,7 @@ def _write_feed_xml_atomically(destination_dir: Path, xml_bytes: bytes) -> None:
     partial_path = destination_dir / _FEED_XML_PARTIAL_NAME
 
     try:
-        if partial_path.exists():
+        if os.path.lexists(partial_path):
             partial_path.unlink()
     except OSError as exc:
         logger.warning(

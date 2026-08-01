@@ -49,12 +49,19 @@ def _complete_briefing(**overrides: object) -> dict:
 
 
 def test_document_carries_the_body_verbatim():
+    """The stored `body_markdown` must appear byte-for-byte in the exported
+    document -- no reformatting, escaping, or truncation of the model- or
+    user-authored content the export exists to hand over."""
     document = briefing_markdown_document(_complete_briefing())
 
     assert "## This week\n\nAcme shipped a thing.\n" in document
 
 
 def test_document_front_matter_carries_watchlist_status_window_and_created():
+    """All four front-matter fields (watchlist name, status, coverage
+    window, created_at) must actually render, not just be accepted as
+    arguments -- a document missing one silently loses the context a
+    reader needs to place it without the app around it."""
     briefing = _complete_briefing()
 
     document = briefing_markdown_document(briefing)
@@ -67,6 +74,9 @@ def test_document_front_matter_carries_watchlist_status_window_and_created():
 
 
 def test_document_front_matter_precedes_the_body():
+    """The front matter must come BEFORE the body, not merely be present
+    somewhere in the document -- a reader (or a markdown front-matter
+    parser) reads top-down, so context has to precede content."""
     briefing = _complete_briefing()
 
     document = briefing_markdown_document(briefing)
@@ -77,6 +87,10 @@ def test_document_front_matter_precedes_the_body():
 
 
 def test_null_body_raises_naming_the_briefing():
+    """A `body_markdown` of `None` must raise, and the exception message
+    must name the specific briefing id (`42`) -- a toast built from
+    `str(exc)` is the only way the user learns WHICH row failed to
+    export."""
     briefing = _complete_briefing(body_markdown=None)
 
     with pytest.raises(BriefingExportError, match="42"):
@@ -96,33 +110,54 @@ def test_empty_body_raises_naming_the_briefing():
 
 
 def test_stem_keeps_ordinary_characters():
+    """The whitelist must not over-filter: ordinary alnum/space/hyphen text
+    (a realistic watchlist name) must survive completely unchanged,
+    including its spaces and casing -- this is the control case the
+    stripping tests below are contrasted against."""
     assert safe_export_stem("Morning Brief 2026-08-01", fallback="x") == (
         "Morning Brief 2026-08-01"
     )
 
 
 def test_stem_strips_path_separators():
+    """Both `/` and `\\` must be dropped from the output -- a watchlist or
+    briefing title containing a path separator must never be able to
+    escape the destination directory a caller builds a filename inside."""
     stem = safe_export_stem("../../etc/passwd", fallback="fallback")
     assert "/" not in stem
     assert "\\" not in stem
 
 
 def test_stem_strips_dot_dot():
+    """A bare `".."` contains no whitelisted character at all (`.` is not
+    in the whitelist), so it must fall back to the caller's `fallback`
+    rather than surviving as a literal `".."` stem -- which, unlike the
+    ordinary path-separator case above, contains no separator for a naive
+    filter to catch."""
     stem = safe_export_stem("..", fallback="fallback")
     assert stem == "fallback"
 
 
 def test_stem_strips_markup_shaped_text():
+    """Bracket/markup punctuation (`[`, `]`) must be dropped -- a crafted
+    title must not be able to produce a filename that some other surface
+    later misinterprets as markup."""
     stem = safe_export_stem("[bold red]Evening Brief[/]", fallback="x")
     assert "[" not in stem
     assert "]" not in stem
 
 
 def test_stem_falls_back_when_nothing_survives():
+    """When every character in the input is outside the whitelist, the
+    function must return the caller-supplied `fallback` verbatim rather
+    than an empty string or a stem made of leftover punctuation."""
     assert safe_export_stem("###???", fallback="fallback-name") == "fallback-name"
 
 
 def test_stem_falls_back_on_empty_input():
+    """An empty string is a degenerate case of "nothing survives" and must
+    hit the same fallback path as filtered-out text, not raise or return
+    an empty stem."""
     assert safe_export_stem("", fallback="fallback-name") == "fallback-name"
 
 
@@ -130,12 +165,18 @@ def test_stem_falls_back_on_empty_input():
 
 
 def test_default_filename_ends_in_md():
+    """The `FileSave` dialog this seeds always expects a markdown file --
+    the suggested filename must carry a `.md` extension every time, not
+    just for the input this particular briefing happens to have."""
     briefing = _complete_briefing()
     filename = default_briefing_filename(briefing, watchlist_name="Morning AI Brief")
     assert filename.endswith(".md")
 
 
 def test_default_filename_never_contains_a_separator():
+    """A hostile or path-shaped watchlist name must not survive into the
+    suggested filename as a separator -- this is the end-to-end version of
+    `safe_export_stem`'s own guarantee, through this caller specifically."""
     briefing = _complete_briefing(watchlist_name="../../evil")
     filename = default_briefing_filename(briefing, watchlist_name="../../evil")
     assert "/" not in filename
@@ -143,6 +184,11 @@ def test_default_filename_never_contains_a_separator():
 
 
 def test_default_filename_falls_back_when_watchlist_name_is_unusable():
+    """When the watchlist name has nothing left after the whitelist, the
+    result must still be a real, non-degenerate filename (via the
+    `briefing-<id>` fallback) -- not just a bare `.md` with an empty
+    stem, which would look wrong in a save dialog and could collide with
+    every other briefing that hits the same fallback."""
     briefing = _complete_briefing()
     filename = default_briefing_filename(briefing, watchlist_name="###???")
     assert filename.endswith(".md")

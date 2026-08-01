@@ -145,6 +145,11 @@ def test_orders_by_briefings_created_at_not_audio_created_at():
 
 
 def test_tiebreaks_same_briefing_multiple_audio_by_audio_id_desc():
+    """When two audio rows share the same briefing (so the "newer briefing
+    first" ordering above cannot distinguish them), the tiebreak must be
+    `audio_id DESC` -- the more recently created audio row first -- not an
+    arbitrary or storage-order result that would make repeated exports
+    list episodes inconsistently."""
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
     briefing_id = _make_briefing(db, watchlist_id, created_at="2026-01-01 00:00:00")
@@ -211,6 +216,10 @@ def test_scoped_to_watchlist_by_identity_not_count():
 
 
 def test_empty_watchlist_returns_empty_list():
+    """A watchlist with no briefings at all -- not merely one whose audio
+    rows get filtered out -- must return an empty list rather than raise
+    or return `None`, so callers (e.g. the export directory writer) can
+    treat "nothing yet" as a normal, iterable result."""
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
 
@@ -295,6 +304,13 @@ def test_limit_and_offset_are_bound_as_real_sql_parameters():
 
 
 def test_row_shape_carries_every_documented_alias_with_correct_values():
+    """Pins the full row-shape CONTRACT Tasks 3 (feed builder) and 5
+    (export UI) quote verbatim: exactly this set of column aliases, no
+    more and no fewer, each holding the value it claims to -- not merely
+    that the query returns one row. A caller that reads a value under the
+    wrong key, or a schema change that silently renamed/dropped a column,
+    would still pass a looser "row is non-empty" test but must fail this
+    one."""
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
     briefing_id = _make_briefing(db, watchlist_id, created_at="2026-01-01 00:00:00")

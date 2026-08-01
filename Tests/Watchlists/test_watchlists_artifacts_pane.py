@@ -3492,12 +3492,20 @@ async def test_play_is_disabled_when_the_file_is_null_or_missing(monkeypatch, tm
 def test_audio_file_path_is_safe_rejects_a_path_outside_the_audio_dir(
     monkeypatch, tmp_path
 ) -> None:
+    """A `file_path` that is a plain, unrelated absolute path (not even
+    disguised as an in-directory path) must be rejected -- the baseline
+    "obviously outside" case the traversal and in-dir tests below
+    contrast against."""
     _patch_audio_dir(monkeypatch, tmp_path)
 
     assert audio_file_path_is_safe("/etc/passwd") is False
 
 
 def test_audio_file_path_is_safe_rejects_a_traversal_path(monkeypatch, tmp_path) -> None:
+    """A path that is textually rooted at `briefing_audio_dir()` but
+    escapes it via `..` segments must still be rejected -- a naive
+    "starts with the audio dir string" check would wrongly accept this,
+    since the check must resolve the path, not just prefix-match it."""
     _patch_audio_dir(monkeypatch, tmp_path)
     audio_dir = briefing_audio.briefing_audio_dir()
 
@@ -3509,6 +3517,10 @@ def test_audio_file_path_is_safe_rejects_a_traversal_path(monkeypatch, tmp_path)
 def test_audio_file_path_is_safe_accepts_a_normal_in_dir_path(
     monkeypatch, tmp_path
 ) -> None:
+    """The control case: a genuine, well-formed path inside
+    `briefing_audio_dir()` must be accepted -- proving the two rejection
+    tests above are pinning a real boundary and not a check so strict it
+    rejects everything."""
     _patch_audio_dir(monkeypatch, tmp_path)
     audio_dir = briefing_audio.briefing_audio_dir()
     in_dir_path = audio_dir / "script-1-audio-1.wav"
