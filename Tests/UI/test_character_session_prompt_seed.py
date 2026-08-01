@@ -8,10 +8,11 @@ resolved before any of it reaches session settings or the provider.
 task-1744: ``_character_session_prompt_seed`` now assembles its system
 prompt through the same shared joiner
 (``Character_Chat_Lib.compose_character_card_text``) as the character-probe
-eval engine's ``compose_system_prompt``, so a card composes to the same
-system prompt through either caller -- see
-``test_console_and_engine_compose_byte_identical_system_prompts`` below,
-which is the whole point of the shared function.
+eval engine's ``compose_system_prompt`` AND the Personas preview pane's
+``build_preview_system_prompt``, so a card composes to the same system
+prompt through any of the three callers -- see
+``test_console_engine_and_preview_compose_byte_identical_system_prompts``
+below, which is the whole point of the shared function.
 """
 
 from tldw_chatbook.UI.Screens.chat_screen import _character_session_prompt_seed
@@ -88,17 +89,24 @@ def test_message_example_and_post_history_instructions_reach_the_prompt():
     assert "Never break character." in system_prompt
 
 
-def test_console_and_engine_compose_byte_identical_system_prompts():
+def test_console_engine_and_preview_compose_byte_identical_system_prompts():
     """task-1744: the character-probe engine exists to predict what Console
-    actually sends a model, and that prediction is only meaningful if both
-    build the exact same system prompt text from the same card. This is the
-    regression guard for the shared joiner -- a real card dict fed to
-    Console's seed function and the equivalent CardSnapshot fed to the
-    engine's compose_system_prompt must agree byte for byte, macros
-    included.
+    actually sends a model, and that prediction is only meaningful if EVERY
+    surface that shows a card's system prompt builds the exact same text
+    from the same card. This is the regression guard for the shared joiner,
+    covering all three callers: a real card dict fed to Console's seed
+    function, the equivalent CardSnapshot fed to the engine's
+    compose_system_prompt, and the same card dict fed to the Personas
+    preview pane's build_preview_system_prompt (task-1744 fix round 1;
+    called with greeting="" so its preview-only greeting-folding step,
+    which Console and the engine have no equivalent of, does not
+    participate) -- all three must agree byte for byte, macros included.
     """
     from tldw_chatbook.Evals.character_probe.models import CardSnapshot
     from tldw_chatbook.Evals.character_probe.prompt import compose_system_prompt
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
 
     fields = dict(
         name="Vex",
@@ -129,8 +137,12 @@ def test_console_and_engine_compose_byte_identical_system_prompts():
     )
     engine_system_prompt = compose_system_prompt(engine_card, steering=None)
 
+    preview_card = dict(fields)
+    preview_system_prompt = build_preview_system_prompt(preview_card, greeting="")
+
     assert console_system_prompt == engine_system_prompt
-    # Sanity: this is a real assertion about real content, not two empty
+    assert console_system_prompt == preview_system_prompt
+    # Sanity: this is a real assertion about real content, not three empty
     # strings agreeing by accident.
     assert "You are Vex." in console_system_prompt
     assert "Try me, User." in console_system_prompt

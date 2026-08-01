@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any, Mapping
 from loguru import logger
 from textual.css.query import QueryError
 
-from ...Character_Chat.Character_Chat_Lib import replace_placeholders
+from ...Character_Chat.Character_Chat_Lib import (
+    compose_character_card_text,
+    replace_placeholders,
+)
 from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
     fold_greeting_into_system_prompt,
@@ -43,11 +46,24 @@ def build_preview_system_prompt(
 ) -> str:
     """Build the preview's provider system prompt from a card/profile record.
 
-    Joins the record's prompt-bearing fields, resolves ``{{char}}``/``{{user}}``
-    macros against the record name (task-1530), and folds the seeded greeting
-    into the system row so the model knows the opener the user already read --
-    the preview's message history stays user-first for strict providers
-    (task-1531).
+    task-1744: the card->prompt join itself (field order, labels, macro
+    resolution) is ``Character_Chat_Lib.compose_character_card_text`` -- the
+    same function Console's live session seeding
+    (``chat_screen._character_session_prompt_seed``) and the character-probe
+    engine (``compose_system_prompt``) use, so the preview shows exactly the
+    system prompt a real Console session (or a probe run) would send for
+    this card, greeting aside. ``record`` may be a character card OR a
+    persona profile -- profiles simply lack most of these keys, which
+    ``compose_character_card_text`` already treats as absent fields, so no
+    persona-specific branching is needed here.
+
+    The seeded greeting is then folded into the composed text (task-1531)
+    so the model knows the opener the user already read -- the preview's
+    message history stays user-first for strict providers (task-427). This
+    is a PREVIEW-only step: a live Console session keeps its greeting
+    separate (seeded as its own chat turn, not folded into the system
+    prompt), so the preview and Console legitimately diverge exactly here,
+    and only here, once a greeting is seeded.
 
     Args:
         record: Character card or persona profile record.
@@ -56,15 +72,25 @@ def build_preview_system_prompt(
 
     Returns:
         The system prompt text; falls back to "Stay in character." when the
-        record carries no prompt fields and no greeting is seeded.
+        record carries no prompt fields and no greeting is seeded. This
+        fallback stays the preview's OWN decision (not delegated to the
+        shared composer, same as Console's own adapter) precisely because it
+        must account for the folded-in greeting too: a card with no prompt
+        fields but a real seeded greeting still shows the greeting-derived
+        text, not the generic fallback -- Console's live-session seed has no
+        such greeting-folding step to consider.
     """
-    parts = [
-        str(record.get(key) or "").strip()
-        for key in ("system_prompt", "personality", "description", "scenario")
-    ]
-    joined = "\n".join(part for part in parts if part)
     name = str(record.get("name") or "").strip() or "Character"
-    prompt = replace_placeholders(joined, name, "User") if joined else ""
+    prompt = compose_character_card_text(
+        name=name,
+        system_prompt=str(record.get("system_prompt") or ""),
+        personality=str(record.get("personality") or ""),
+        description=str(record.get("description") or ""),
+        scenario=str(record.get("scenario") or ""),
+        message_example=str(record.get("message_example") or ""),
+        post_history_instructions=str(record.get("post_history_instructions") or ""),
+        user_name="User",
+    )
     folded = fold_greeting_into_system_prompt(prompt, greeting)
     return folded or "Stay in character."
 

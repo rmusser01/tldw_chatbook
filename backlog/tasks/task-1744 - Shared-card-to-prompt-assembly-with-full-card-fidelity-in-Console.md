@@ -4,7 +4,7 @@ title: Shared card-to-prompt assembly with full-card fidelity in Console
 status: Done
 assignee: []
 created_date: '2026-08-01 11:16'
-updated_date: '2026-08-01 21:00'
+updated_date: '2026-08-01 22:19'
 labels:
   - evals
   - roleplay
@@ -186,4 +186,64 @@ compose_character_card_text), tldw_chatbook/Evals/character_probe/prompt.py
 (_character_session_prompt_seed delegates), Tests/UI/test_character_session_prompt_seed.py
 (one assertion updated, two tests added), Docs/superpowers/specs/2026-08-01-character-probe-eval-design.md
 (marked the Console-divergence section resolved).
+
+Fix round 1 (post-review): converged the THIRD joiner too --
+build_preview_system_prompt in UI/Persona_Modules/personas_preview_controller.py
+(Personas workbench preview pane). The reviewer's finding that changed the
+scope call: before this task, the preview builder was byte-identical to
+OLD Console (same 4 fields, same unlabelled "\n" join) -- preview and
+Console never disagreed. task-1744's Console change moved Console and left
+the preview behind, creating a NEW divergence on a user-facing surface
+right next to "Start Chat" -- exactly the class of bug this task exists to
+remove. Converged it: build_preview_system_prompt now builds its card text
+via compose_character_card_text (all 7 fields, name resolved the same way),
+then folds the seeded greeting in on top exactly as before.
+
+Decision on the empty-card fallback (explicitly asked for): the preview
+KEEPS ITS OWN fallback decision -- `folded_result or "Stay in character."`,
+computed AFTER greeting-folding -- rather than adopting Console's fallback,
+which fires the instant the card alone has no prompt fields. This is
+deliberate, not an accident: the preview folds a seeded greeting into the
+system row (task-1531, so strict providers still see the greeting the user
+already read), a step Console's live-session seed has no equivalent of
+(Console keeps the greeting as its own separate chat turn). A card with no
+prompt fields but a real seeded greeting must still show the
+greeting-derived system text in the preview, not the generic fallback --
+collapsing straight to Console's fallback rule would silently drop that
+greeting content from the preview's own provider-facing prompt. When
+greeting="" (the parity test's condition), both fallback rules agree
+exactly, which is what the byte-identical test proves.
+
+Test approach followed the review's instruction: extended the existing
+parity test in Tests/UI/test_character_session_prompt_seed.py (renamed
+test_console_and_engine_compose_byte_identical_system_prompts ->
+test_console_engine_and_preview_compose_byte_identical_system_prompts)
+to a third caller -- build_preview_system_prompt(card, greeting="") --
+rather than adding a separate test, so the point ("ALL surfaces agree") is
+one assertion set, not three scattered ones. Tests/UI/test_personas_preview.py's
+three build_preview_system_prompt tests: two updated deliberately (label
+now present, never loosened -- exact-equality assertions still exact,
+just with "Description: " prepended), one (empty-record fallback) needed
+no change. Added two new tests there: message_example/post_history_instructions
+now reach the preview (mirrors the Console-side AC #2 test), and a persona-
+profile record (no personality/description/scenario/message_example/
+post_history_instructions keys at all, matching PersonasScreen._profile_record's
+actual shape) still composes cleanly -- confirms no persona-specific
+branching was needed, absent fields already read the same as empty ones.
+
+All three surfaces (Console, character-probe engine, Personas preview) now
+share exactly one card->prompt composer: Character_Chat_Lib.compose_character_card_text.
+
+Verification (foreground, /private/tmp/tldw-venv/bin/python -m pytest):
+Tests/UI/test_character_session_prompt_seed.py Tests/UI/test_personas_preview.py
+Tests/UI/test_personas_workbench.py Tests/Evals/character_probe -p no:randomly
+-> 475 passed, 0 failed (5 pre-existing unrelated asyncio-mark warnings on
+sync test functions in test_personas_preview.py, present before this round
+too).
+
+Modified files (fix round 1): tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py
+(build_preview_system_prompt delegates to the shared composer),
+Tests/UI/test_personas_preview.py (2 assertions updated, 2 tests added),
+Tests/UI/test_character_session_prompt_seed.py (parity test extended to
+three callers).
 <!-- SECTION:NOTES:END -->
