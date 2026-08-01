@@ -349,7 +349,7 @@
     },
     {
       "call_count": 15,
-      "diagnostic_digest": "a261ed24e24438c9cd40",
+      "diagnostic_digest": "d2c90ceae85b86dd907b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Evals_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -923,7 +923,7 @@
     },
     {
       "call_count": 282,
-      "diagnostic_digest": "6a31143acfbc50bf6ecb",
+      "diagnostic_digest": "d27ef161660b1a555126",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/transcription_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1875,7 +1875,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "ac6fccf5d4ccb7bd5887",
+      "diagnostic_digest": "efdacb02daeddbb830fd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Evals/sample_bench.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1979,8 +1979,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 131,
-      "diagnostic_digest": "50811655b46ad7c7175d",
+      "call_count": 136,
+      "diagnostic_digest": "fd63dca30632b16f8de5",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1994,7 +1994,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "d28a27208156d98520fe",
+      "diagnostic_digest": "4a80108868b86682c72c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/evals_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2981,7 +2981,7 @@
     },
     {
       "call_count": 283,
-      "diagnostic_digest": "f0b5b0240ebc01ff0b52",
+      "diagnostic_digest": "d91f3db6b375e63c375a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3129,13 +3129,13 @@
         {
           "digest": "567455f2495e9603",
           "kind": "addHandler",
-          "line": 5739,
+          "line": 5732,
           "method": "addHandler"
         },
         {
           "digest": "928f6c554daaf493",
           "kind": "addHandler",
-          "line": 5793,
+          "line": 5786,
           "method": "addHandler"
         }
       ]
@@ -3164,6 +3164,6 @@
     "owner_files": 430,
     "persistent_sink_files": 4,
     "task_492_calls": 1067,
-    "task_494_calls": 6631
+    "task_494_calls": 6636
   }
 }
