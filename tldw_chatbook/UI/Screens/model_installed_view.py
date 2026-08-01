@@ -13,6 +13,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactDiskUsage,
     ArtifactInUseError,
     ArtifactNotReadyError,
     ArtifactRef,
@@ -107,6 +108,7 @@ class InstalledView(Widget):
         self._legacy_dir = legacy_dir or Path("~/Downloads/tldw_models").expanduser()
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
+        self._usage: ArtifactDiskUsage | None = None
         self._loaded = False
         self._loading = False
         self._load_error: str | None = None
@@ -136,14 +138,13 @@ class InstalledView(Widget):
 
     def _summary(self) -> Static:
         """Return the managed-store disk summary."""
-        if not self._rows or self._rows[0].installed_store_bytes is None:
+        if self._usage is None:
             return Static("Disk usage unavailable.", markup=False)
-        first = self._rows[0]
         return Static(
             "Managed: "
-            f"{self._format_bytes(first.installed_store_bytes or 0)} installed, "
-            f"{self._format_bytes(first.staging_store_bytes or 0)} staging · "
-            f"{self._format_bytes(first.free_bytes or 0)} free",
+            f"{self._format_bytes(self._usage.installed_bytes)} installed, "
+            f"{self._format_bytes(self._usage.staging_bytes)} staging · "
+            f"{self._format_bytes(self._usage.free_bytes)} free",
             markup=False,
         )
 
@@ -263,18 +264,21 @@ class InstalledView(Widget):
             self.app.call_from_thread(
                 self._apply_inventory,
                 (),
+                None,
                 "The local model inventory could not be loaded.",
             )
             return
-        self.app.call_from_thread(self._apply_inventory, rows, None)
+        self.app.call_from_thread(self._apply_inventory, rows, usage, None)
 
     def _apply_inventory(
         self,
         rows: tuple[InventoryRow, ...],
+        usage: ArtifactDiskUsage | None,
         error: str | None,
     ) -> None:
         """Apply a completed inventory read on the Textual event loop."""
         self._rows = rows
+        self._usage = usage
         self._loading = False
         self._loaded = error is None
         self._load_error = error

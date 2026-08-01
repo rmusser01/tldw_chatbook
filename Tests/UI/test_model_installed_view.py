@@ -117,6 +117,29 @@ def test_lease_blocked_deletion_message_is_specific_and_sanitized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_inventory_still_reports_managed_and_staging_space(
+    tmp_path: Path,
+) -> None:
+    """Disk totals do not disappear merely because no manifest row exists."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+    async with app.run_test() as pilot:
+        view._apply_inventory(
+            (),
+            ArtifactDiskUsage(installed_bytes=0, staging_bytes=2048, free_bytes=4096),
+            None,
+        )
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in view.query("Static"))
+
+    assert "2.0 KiB staging" in text
+    assert "4.0 KiB free" in text
+
+
+@pytest.mark.asyncio
 async def test_curated_view_performs_no_io_at_compose_time(tmp_path: Path) -> None:
     """Curated is also eagerly mounted but remains idle until selected."""
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
