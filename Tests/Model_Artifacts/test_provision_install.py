@@ -27,6 +27,7 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactRef,
     ArtifactRole,
     ArtifactIntegrityError,
+    ArtifactStateError,
     ProvenanceClass,
     closure_fingerprint,
 )
@@ -123,6 +124,99 @@ async def test_preverify_matches_declared_hash_and_reports_real_progress(tmp_pat
     assert progress_state.preverify_bytes_done == len(body)
     # The fetch counter is untouched by pre-verify -- separately tracked.
     assert progress_state.bytes_done == 0
+
+
+@pytest.mark.asyncio
+async def test_preverify_progress_total_defaults_to_bytes_total_when_unset(tmp_path):
+    """Direct construction without ``preverify_bytes_total`` (every other
+    test in this file) keeps working: it defaults to ``bytes_total`` via
+    ``__post_init__``, matching this class's behavior before Task 4's
+    review-finding fix introduced the separate field."""
+    body = b"y" * 100
+    desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=body)
+    staging_dir = tmp_path / "staging" / "m"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "model.bin").write_bytes(body)
+
+    core = ModelArtifactService(tmp_path / "root")
+    svc = ArtifactAcquisitionService(core)
+    progress_state = _ProvisionProgressState(callback=None, bytes_total=len(body))
+
+    assert progress_state.preverify_bytes_total == len(body)
+    await svc._preverify_artifact(desc, staging_dir, progress_state)
+    assert progress_state.preverify_bytes_done == len(body)
+
+
+@pytest.mark.asyncio
+async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_credit(
+    tmp_path, monkeypatch
+):
+    """Pre-verify's progress total is the full closure file size, NOT the
+    fetch phase's total (``PreflightReport.download_bytes``), which nets
+    out already-staged credit from a resumed run.
+
+    Regression test for the review finding: ``_hash_staged_file`` always
+    re-hashes a staged file's ENTIRE on-disk content, but the fetch and
+    pre-verify progress events previously shared one ``bytes_total``
+    (the fetch phase's netted-down total) -- so ANY resumed run's
+    pre-verify progress would overshoot 100%. Here, 500 of 2048 bytes are
+    already durably staged and credited before this run starts, netting
+    the fetch total (``bytes_total``) down to 1548 while the file's real,
+    full size (what pre-verify actually hashes) stays 2048.
+    """
+    body = b"m" * 2048
+    ref = ArtifactRef("root-model", "r" * 40, "int8")
+    desc = _descriptor(ref, files_body=body)
+    core = ModelArtifactService(tmp_path / "root")
+
+    staged = core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
+    staged.mkdir(parents=True)
+    atomic_write_json(
+        staged / "fetch-state.json",
+        {
+            "files": {
+                "model.bin": {
+                    "etag": None,
+                    "last_modified": None,
+                    "bytes_done": 500,
+                    "complete": False,
+                }
+            }
+        },
+    )
+
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+    catalog = DictCatalog({ref: desc})
+    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+
+    captured: list[_ProvisionProgressState] = []
+
+    async def fake_fetch(descriptor, staging_dir, progress_state):
+        captured.append(progress_state)
+
+    async def fake_preverify(descriptor, staging_dir, progress_state):
+        captured.append(progress_state)
+
+    async def fake_install(descriptor, staging_dir):
+        pass
+
+    monkeypatch.setattr(svc, "_fetch_artifact", fake_fetch)
+    monkeypatch.setattr(svc, "_preverify_artifact", fake_preverify)
+    monkeypatch.setattr(svc, "_install_artifact", fake_install)
+    # Nothing was actually installed (every phase above is faked as a
+    # no-op) -- fake activate() too so provision() completes instead of
+    # failing on core.activate()'s own "nothing installed" check, which is
+    # irrelevant to what this test verifies (the progress_state wiring).
+    monkeypatch.setattr(core, "activate", lambda root_reference: root_reference)
+
+    await svc.provision(ref, consent, catalog)
+
+    assert len(captured) == 2
+    state = captured[0]
+    assert state.bytes_total == 1548, "fetch total nets out the 500 staged bytes"
+    assert state.preverify_bytes_total == 2048, (
+        "pre-verify total is the full file size, unaffected by staged credit"
+    )
 
 
 @pytest.mark.asyncio
@@ -274,7 +368,13 @@ async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_pat
     nothing gets installed, and ``_install_artifact`` itself does not
     ``rmtree`` our staging directory on failure (only a successful install
     triggers that cleanup) -- unlike the sidecar, which is removed
-    up front regardless, to satisfy install's exact-file-set check."""
+    up front regardless, to satisfy install's exact-file-set check.
+
+    ``core.install``'s raw ``ArtifactIntegrityError`` is wrapped by
+    ``_run_core_call`` (review finding: core ``ArtifactError`` subclasses
+    must never escape ``provision()`` raw) into a non-retryable
+    ``TransferError`` with the original preserved as ``__cause__``.
+    """
 
     desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=b"expected")
     core = ModelArtifactService(tmp_path / "root")
@@ -288,8 +388,11 @@ async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_pat
         {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": 8, "complete": True}}},
     )
 
-    with pytest.raises(ArtifactIntegrityError):
+    with pytest.raises(TransferError) as excinfo:
         await svc._install_artifact(desc, staging_dir)
+
+    assert excinfo.value.retryable is False
+    assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
 
     assert staging_dir.exists()
     assert not (staging_dir / "fetch-state.json").exists()
@@ -472,3 +575,79 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
         assert set(handle.handle.closure) == {root_ref, dep_ref}
 
     assert [event.phase for event in events] == ["activate"]
+
+
+# ---------------------------------------------------------------------------
+# _run_core_call: core.install/core.activate ArtifactError never escapes raw.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_install_artifact_wraps_core_integrity_error_as_non_retryable(
+    tmp_path, monkeypatch
+):
+    """``core.install`` raising ``ArtifactIntegrityError`` must surface as a
+    non-retryable ``TransferError``, never the raw core error.
+
+    Regression test for the review finding: core ``ArtifactError``
+    subclasses escaped ``provision()`` untouched, breaking the spec's
+    never-trap rule. Integrity failures are not retryable -- the same
+    staged content would fail again.
+    """
+    desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=b"x")
+    core = ModelArtifactService(tmp_path / "root")
+    svc = ArtifactAcquisitionService(core)
+
+    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "model.bin").write_bytes(b"x")
+
+    def raise_integrity_error(*args, **kwargs):
+        raise ArtifactIntegrityError("simulated integrity failure")
+
+    monkeypatch.setattr(core, "install", raise_integrity_error)
+
+    with pytest.raises(TransferError) as excinfo:
+        await svc._install_artifact(desc, staging_dir)
+
+    assert excinfo.value.retryable is False
+    assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
+    assert "m" in str(excinfo.value)
+    assert "install" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_provision_activate_wraps_core_state_error_as_retryable(
+    tmp_path, monkeypatch
+):
+    """``core.activate`` raising ``ArtifactStateError`` (lease-timeout/
+    contention style failure) must surface as a retryable ``TransferError``.
+
+    Both artifacts are pre-installed so ``provision()`` skips straight to
+    ``core.activate`` without any network activity, isolating this to the
+    activate hop specifically.
+    """
+    ref = ArtifactRef("root-model", "r" * 40, "int8")
+    desc = _descriptor(ref, files_body=b"x")
+    core = ModelArtifactService(tmp_path / "root")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"x")
+    core.install(desc, source)
+
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+    catalog = DictCatalog({ref: desc})
+    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+
+    def raise_state_error(*args, **kwargs):
+        raise ArtifactStateError("simulated lease contention")
+
+    monkeypatch.setattr(core, "activate", raise_state_error)
+
+    with pytest.raises(TransferError) as excinfo:
+        await svc.provision(ref, consent, catalog)
+
+    assert excinfo.value.retryable is True
+    assert isinstance(excinfo.value.__cause__, ArtifactStateError)
+    assert "root-model" in str(excinfo.value)
+    assert "activate" in str(excinfo.value)

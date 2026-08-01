@@ -123,6 +123,16 @@ ACQUISITION_SESSION_LEASE_KEY = ArtifactLeaseKey(
     "#managed-acquisition", "session", "global"
 )
 
+# Non-blocking probe timeout (seconds) shared by every lease this service
+# (or its ArtifactAcquisitionService caller) only ever tries opportunistically
+# rather than waiting on: reconcile()'s two staging-GC lease probes below
+# (_gc_install_staging_orphan, _gc_managed_staging), and acquisition.py's own
+# acquisition-session lease attempt in provision() (imported from there, not
+# redefined -- this 0.1s value was previously triplicated across all three
+# call sites). An immediate, typed failure beats a hang: whoever else holds
+# the lease is busy RIGHT NOW, not "worth waiting for" at any of these sites.
+NONBLOCKING_LEASE_TIMEOUT_SECONDS = 0.1
+
 # Naming convention for install()'s ephemeral staging tempdirs (see install()
 # and tempfile.mkdtemp below). reconcile() uses this same prefix to recognize
 # candidate orphans among staging's top-level entries.
@@ -1429,11 +1439,13 @@ class ModelArtifactService:
           under the exclusive lifecycle lease this method's caller already
           holds -- no additional lease is required for this category.
         * ``managed/<id>/<rev>/<variant>`` download-staging directories
-          that lack a parseable ``fetch-state.json`` sidecar. Only removed
-          when ``ACQUISITION_SESSION_LEASE_KEY`` is free (non-blocking);
-          when busy, the entire ``managed`` subtree is left untouched for
-          this reconcile pass so an in-progress acquisition's resumable
-          state is never disturbed.
+          whose ``fetch-state.json`` sidecar is missing, unparseable, or
+          does not parse to the ``{"files": {...}}`` shape the fetch phase
+          actually writes (see :meth:`_is_valid_managed_staging_entry`).
+          Only removed when ``ACQUISITION_SESSION_LEASE_KEY`` is free
+          (non-blocking); when busy, the entire ``managed`` subtree is left
+          untouched for this reconcile pass so an in-progress acquisition's
+          resumable state is never disturbed.
 
         Args:
             staging_entries: Immediate children of the staging root, as
@@ -1494,7 +1506,7 @@ class ModelArtifactService:
                 self._locks_path,
                 _install_staging_lease_key(entry.name),
                 LeaseMode.EXCLUSIVE,
-                timeout_seconds=0.1,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
             )
             lease.acquire()
         except ArtifactLeaseTimeoutError:
@@ -1527,7 +1539,7 @@ class ModelArtifactService:
                 self._locks_path,
                 ACQUISITION_SESSION_LEASE_KEY,
                 LeaseMode.EXCLUSIVE,
-                timeout_seconds=0.1,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
             )
             lease.acquire()
         except ArtifactLeaseTimeoutError:
@@ -1554,12 +1566,17 @@ class ModelArtifactService:
 
         A live entry is a ``managed/<id>/<rev>/<variant>`` directory --
         exactly three path components below ``managed_root`` -- containing
-        a ``fetch-state.json`` sidecar that parses as JSON. Anything
-        shallower, deeper, symlinked, or with a missing or corrupt sidecar
-        is an orphan. ``_assert_managed_path`` on the sidecar rejects a
-        symlink anywhere in the chain up to and including ``candidate``
-        itself, so a symlinked ``candidate`` is correctly treated as an
-        orphan without ever being followed.
+        a ``fetch-state.json`` sidecar that parses to a JSON OBJECT with a
+        ``"files"`` mapping: the exact shape ``ArtifactAcquisitionService``'s
+        fetch phase always writes (see ``acquisition.py``'s
+        ``_load_fetch_sidecar`` / ``_fetch_one_file``). Anything shallower,
+        deeper, symlinked, or whose sidecar is missing, unparseable, or
+        parses to something else entirely (e.g. a bare JSON list or string --
+        valid JSON, but not a usable fetch-state record) is an orphan.
+        ``_assert_managed_path`` on the sidecar rejects a symlink anywhere in
+        the chain up to and including ``candidate`` itself, so a symlinked
+        ``candidate`` is correctly treated as an orphan without ever being
+        followed.
 
         Args:
             managed_root: The ``staging/managed`` directory.
@@ -1581,10 +1598,10 @@ class ModelArtifactService:
                 target_must_be_directory=False,
             )
             payload = sidecar.read_text(encoding="utf-8")
-            json.loads(payload)
+            parsed = json.loads(payload)
         except (ArtifactPathError, OSError, ValueError):
             return False
-        return True
+        return isinstance(parsed, dict) and isinstance(parsed.get("files"), dict)
 
     def _readiness_ref_from_path(self, path: Path) -> ArtifactRef | None:
         try:

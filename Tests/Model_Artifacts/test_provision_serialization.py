@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -166,9 +167,16 @@ async def test_provision_serializes_concurrent_calls_in_process(tmp_path, monkey
     assert events == ["enter", "exit", "enter", "exit"]
     # Both calls reach the real core.activate() (fetch/preverify/install were
     # faked as no-ops, so nothing was actually installed) and fail there --
-    # confirms no OTHER exception masked the ordering proof above.
-    assert isinstance(result1, ArtifactDependencyError)
-    assert isinstance(result2, ArtifactDependencyError)
+    # confirms no OTHER exception masked the ordering proof above. The raw
+    # ArtifactDependencyError core.activate() raises is wrapped by
+    # _run_core_call into a retryable TransferError (never-trap rule); the
+    # original is still reachable as __cause__.
+    assert isinstance(result1, TransferError)
+    assert result1.retryable is True
+    assert isinstance(result1.__cause__, ArtifactDependencyError)
+    assert isinstance(result2, TransferError)
+    assert result2.retryable is True
+    assert isinstance(result2.__cause__, ArtifactDependencyError)
 
 
 @pytest.mark.integration
@@ -334,6 +342,116 @@ async def test_provision_holds_session_lease_across_phase_stub(tmp_path, monkeyp
     )
     await loop.run_in_executor(None, probe2.acquire)
     probe2.release()
+
+
+@pytest.mark.asyncio
+async def test_provision_releases_session_lease_when_cancelled_during_acquire(
+    tmp_path, monkeypatch
+):
+    """Cancelling provision() while the session lease is still being
+    acquired in its worker thread must not leak the OS-backed flock.
+
+    Regression test for a review finding: ``await run_in_executor(None,
+    lease.acquire)`` sat OUTSIDE the try/finally that released the lease,
+    so a ``CancelledError`` delivered while that call was still running in
+    its worker thread (not yet returned) left the lease's file handle open
+    for the rest of the process's life -- every later ``provision()`` call
+    would then raise ``AcquisitionBusyError`` forever, and
+    ``reconcile()``'s managed-staging GC (which also requires the session
+    lease to be free) would be permanently disabled.
+
+    ``lease.acquire`` cannot be interrupted once its worker thread has
+    started, so the fix must WAIT for it to actually finish before
+    deciding whether to release -- a naive ``if lease.acquired`` check
+    performed immediately after catching the cancellation (without first
+    waiting for the in-flight acquire to settle) would still read False
+    here, since ``gated_acquire`` below deliberately keeps the acquire in
+    flight, blocked on ``gate``, at the moment ``task.cancel()`` is called.
+
+    ``captured["lease"]`` deliberately keeps its own reference to the
+    abandoned lease object, independent of ``provision()``'s own (now-dead)
+    frame: confirmed by trial that without a held reference, CPython's
+    reference counting can close the abandoned handle as an incidental side
+    effect of collecting the ``CancelledError``'s traceback shortly after
+    ``pytest.raises`` releases it -- closing a file descriptor releases its
+    flock too, which would silently "self-heal" this exact leak in-process
+    and produce a false pass. A real caller that catches and logs/reports
+    the ``CancelledError`` (holding its traceback, and therefore this
+    frame, alive far longer) would not get that same accidental rescue, so
+    the test must not rely on it either.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+    root = ArtifactRef("root-model", "r1", "int8")
+    desc = make_descriptor(ref=root)
+    catalog = DictCatalog({root: desc})
+    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
+
+    started = threading.Event()
+    gate = threading.Event()
+    # Set once the gated acquire attempt has fully settled (succeeded OR
+    # itself failed) -- awaited below before probing. Without this, the
+    # probe's own acquire could race ahead of the background attempt and
+    # spuriously "win" the flock first, which would make the background
+    # attempt fail out on ITS OWN contention timeout (never setting
+    # ``lease._handle``) and mask a real leak as a false pass.
+    settled = threading.Event()
+    original_acquire = ArtifactOperationLease.acquire
+    captured = {}
+
+    def gated_acquire(self):
+        is_session_lease = self.key == ACQUISITION_SESSION_LEASE_KEY
+        if is_session_lease:
+            captured["lease"] = self
+            started.set()
+            assert gate.wait(timeout=5.0), "test gate was never released"
+        try:
+            return original_acquire(self)
+        finally:
+            if is_session_lease:
+                settled.set()
+
+    monkeypatch.setattr(ArtifactOperationLease, "acquire", gated_acquire)
+
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(svc.provision(root, consent, catalog))
+    assert await loop.run_in_executor(None, started.wait, 5.0), "acquire never started"
+
+    task.cancel()
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await loop.run_in_executor(None, settled.wait, 5.0), (
+        "the in-flight acquire attempt never settled"
+    )
+    # ``captured["lease"]`` is not asserted on directly here: a correct fix
+    # releases it as part of its own cancellation handling (before
+    # ``await task`` above even returns), while the buggy version leaves it
+    # acquired forever -- ".acquired" legitimately differs between the two,
+    # so the probe below (not this snapshot) is the single source of truth.
+
+    # Restore the real acquire before probing -- the gate above only
+    # applies to the cancelled attempt.
+    monkeypatch.setattr(ArtifactOperationLease, "acquire", original_acquire)
+
+    # Direct, authoritative evidence the OS-backed flock was released: a
+    # fresh non-blocking probe must succeed instead of timing out busy.
+    probe = ArtifactOperationLease(
+        core.locks_path,
+        ACQUISITION_SESSION_LEASE_KEY,
+        LeaseMode.EXCLUSIVE,
+        timeout_seconds=1.0,
+    )
+    await loop.run_in_executor(None, probe.acquire)
+    probe.release()
+
+    # And per the review's own framing: a subsequent provision() call must
+    # not raise AcquisitionBusyError (it still fails, but for the unrelated
+    # reason that the placeholder source_url never resolves).
+    with pytest.raises(TransferError):
+        await svc.provision(root, consent, catalog)
 
 
 @pytest.mark.asyncio

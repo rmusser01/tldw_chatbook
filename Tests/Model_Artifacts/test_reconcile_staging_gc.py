@@ -60,6 +60,30 @@ def test_managed_entry_with_corrupt_sidecar_is_removed(service):
     assert not d.exists()
 
 
+def test_managed_entry_with_non_mapping_sidecar_is_removed(service):
+    """A sidecar that parses as valid JSON but isn't a ``{"files": {...}}``
+    mapping (the exact shape Task 7's fetch phase always writes) is still
+    garbage, not resumable state.
+
+    Regression test for the review finding: the old check only required
+    ``json.loads`` to succeed, so a bare JSON list or string -- neither a
+    usable fetch-state record -- would survive as "valid" forever, keeping
+    dead staging alive indefinitely.
+    """
+    list_dir = _managed_dir(service, artifact="m-list")
+    (list_dir / "fetch-state.json").write_text(json.dumps([]))
+
+    string_dir = _managed_dir(service, artifact="m-string")
+    (string_dir / "fetch-state.json").write_text(json.dumps("x"))
+
+    report = service.reconcile()
+
+    assert not list_dir.exists()
+    assert not string_dir.exists()
+    assert any("m-list" in item for item in report.staging_removed)
+    assert any("m-string" in item for item in report.staging_removed)
+
+
 def test_gc_never_escapes_staging(service, tmp_path):
     """Containment: a symlink inside staging pointing outside must not
     cause deletion outside the root (extends the 594 containment tests)."""

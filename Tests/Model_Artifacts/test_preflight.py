@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
 import pytest
 
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
-from tldw_chatbook.Model_Artifacts import ArtifactRef
+from tldw_chatbook.Model_Artifacts import (
+    ArtifactDescriptor,
+    ArtifactFile,
+    ArtifactFormat,
+    ArtifactRef,
+    ArtifactRole,
+    ProvenanceClass,
+)
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactAcquisitionService,
+    CatalogError,
     PreflightNotGrantableError,
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
@@ -253,3 +263,103 @@ async def test_preflight_clamps_oversized_staged_credit_to_entry_total(tmp_path)
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 2048
     assert report.download_bytes == 0
+
+
+def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:
+    """A 2-file descriptor -- real per-file URLs are undefined until the
+    catalog work (TASK-596/1301) specifies them; only the file COUNT
+    matters here (mirrors test_provision_fetch.py's identical-purpose
+    ``_make_two_file_descriptor``, duplicated locally per this suite's
+    convention of not cross-importing test-private helpers)."""
+
+    files = (
+        ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
+        ArtifactFile("b.bin", 4, hashlib.sha256(b"bbbb").hexdigest()),
+    )
+    return ArtifactDescriptor(
+        reference=ref,
+        model_id="test/model",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.ONNX,
+        consumer="test",
+        model_family="test-family",
+        upstream_repository="test/repo",
+        upstream_revision="main",
+        source_url="https://example.test/model",
+        precision="int8",
+        license_id="test-license",
+        license_url="https://example.test/license",
+        usage_notice="Test model",
+        runtime_name="test-runtime",
+        runtime_version_constraint="==1.0.0",
+        supported_os=("linux",),
+        supported_architectures=("x86-64",),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        files=files,
+        expected_installed_bytes=8,
+        dependencies=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_multi_file_descriptor_raises_catalog_error(tmp_path):
+    """A 2-file descriptor fails ``preflight()`` itself, before any report
+    or consent exists -- not just later at ``provision()``'s fetch phase.
+
+    Regression test for the review finding: previously only
+    ``_fetch_artifact`` guarded this shape, so a preflight report could be
+    built and consent granted for a closure that ``provision()`` would
+    ALWAYS reject with ``CatalogError`` -- after already taking the
+    exclusive session lease. The spec requires catalog problems to surface
+    at preflight. No network fixture is needed: ``_aggregate_closure``
+    raises before ``preflight()`` ever reaches its gating probe.
+    """
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("multi-file-model", "r1", "int8")
+    catalog = DictCatalog({root: _two_file_descriptor(root)})
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+
+    with pytest.raises(CatalogError) as excinfo:
+        await svc.preflight(root, catalog)
+    assert "multi-file-model" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_probe_gating_head_does_not_follow_redirects(tmp_path):
+    """The preflight gating HEAD probe must not follow a redirect, even
+    when the injected ``client_factory`` seam supplies a client configured
+    to do so by default.
+
+    Regression test for the review finding: an injected redirect-following
+    client would both bypass this app's own egress SSRF check for the
+    redirect target (only ``entry.source_url`` -- origin A here -- is
+    checked before the request) AND, when a credential is configured,
+    carry the bearer token cross-origin. ``follow_redirects=False`` passed
+    explicitly on the ``.head()`` call itself is what guarantees this
+    regardless of the client's own configured default -- proven here by
+    asserting the redirect target never receives any request at all.
+    """
+    with FixtureArtifactServer() as origin_a, FixtureArtifactServer() as origin_b:
+        origin_b.serve("/final.bin", b"body-bytes")
+        origin_a.serve("/gated.bin", b"", redirect_to=origin_b.url("/final.bin"))
+
+        root = ArtifactRef("root-model", "r1", "int8")
+        catalog = DictCatalog(
+            {root: make_descriptor(ref=root, source_url=origin_a.url("/gated.bin"))}
+        )
+        core = ModelArtifactService(tmp_path / "root")
+        injected_client = httpx.AsyncClient(follow_redirects=True)
+        try:
+            svc = ArtifactAcquisitionService(
+                core,
+                free_bytes_probe=lambda p: 10**12,
+                trusted_origins=frozenset({urlparse(origin_a.url("/")).hostname}),
+                client_factory=lambda: injected_client,
+            )
+            await svc.preflight(root, catalog)
+        finally:
+            await injected_client.aclose()
+
+        assert origin_b.requests == {}, (
+            "the gating probe must not follow a redirect to a different origin"
+        )

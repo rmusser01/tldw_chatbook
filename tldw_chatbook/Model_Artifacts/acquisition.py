@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import hashlib
 import json
@@ -10,7 +11,16 @@ import os
 import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Literal, Mapping, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Iterable,
+    Literal,
+    Mapping,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
 import httpx
 
@@ -29,8 +39,12 @@ from .fetch import (
 from .leases import ArtifactLeaseTimeoutError, ArtifactOperationLease, LeaseMode
 from .service import (
     ACQUISITION_SESSION_LEASE_KEY,
+    NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+    ArtifactConflictError,
     ArtifactError,
+    ArtifactIntegrityError,
     ArtifactRef,
+    ArtifactStateError,
     closure_fingerprint,
 )
 
@@ -45,11 +59,16 @@ MAX_FILE_REFETCHES = 1
 # Bounded timeout for the preflight repository-gating HEAD probe (Task 5).
 _PREFLIGHT_PROBE_TIMEOUT_SECONDS = 10.0
 
-# Non-blocking acquisition-session-lease timeout (Task 6): an immediate,
-# typed AcquisitionBusyError beats a hang -- another process or in-process
-# caller already holding the session lease means "busy right now", not
-# "worth waiting for".
-_SESSION_LEASE_TIMEOUT_SECONDS = 0.1
+# Non-blocking acquisition-session-lease timeout: an immediate, typed
+# AcquisitionBusyError beats a hang -- another process or in-process caller
+# already holding the session lease means "busy right now", not "worth
+# waiting for". Imported from service.py (not redefined here) -- this same
+# 0.1s value also gates reconcile()'s two staging-GC lease probes, and a
+# single shared constant keeps the three call sites from silently drifting
+# apart.
+_SESSION_LEASE_TIMEOUT_SECONDS = NONBLOCKING_LEASE_TIMEOUT_SECONDS
+
+_CoreCallResult = TypeVar("_CoreCallResult")
 
 # Credential hint named in gating_errors -- never a token value. Matches the
 # precedence EnvConfigCredentialResolver (below) actually implements against
@@ -255,40 +274,59 @@ class _ProvisionProgressState:
     it, unchanged, into ``_fetch_artifact`` and ``_preverify_artifact`` for
     every artifact in the closure. Task 7 reads and updates ``bytes_done``
     as each declared file streams; Task 8 reads and updates
-    ``preverify_bytes_done`` as each staged file is hashed. Both counters
-    are reported against the SAME ``bytes_total`` (the closure's declared
-    download bytes -- the exact same files are streamed in the fetch phase
-    and hashed in the pre-verify phase) but are tracked SEPARATELY: fetch
-    finishes one full closure-wide pass through ``bytes_total`` before
-    pre-verify begins its own, so a single shared counter would either
-    stall at 100% through the whole pre-verify phase or run past 100% --
-    neither is "closure-wide, not reset per artifact or per file", the
-    property this class exists to provide. ``callback`` is called with an
-    ``AcquisitionProgress`` event carrying whichever counter belongs to the
-    active phase.
+    ``preverify_bytes_done`` as each staged file is hashed. The two phases
+    are tracked against SEPARATE totals, not just separate running counts:
+    ``bytes_total`` is the closure's declared DOWNLOAD bytes
+    (``PreflightReport.download_bytes``), which nets out any already-staged
+    credit from a resumed run, while ``preverify_bytes_total`` is the
+    closure's full declared file size, unaffected by staged credit --
+    ``_hash_staged_file`` always re-hashes a staged file's ENTIRE on-disk
+    content regardless of how much of it was freshly downloaded versus
+    already present when this run started, so reusing the (possibly
+    netted-down) fetch total for pre-verify's progress would make ANY
+    resumed run's pre-verify events overshoot 100%. ``callback`` is called
+    with an ``AcquisitionProgress`` event carrying whichever counter (and
+    total) belongs to the active phase.
 
     Args:
         callback: The caller's optional progress sink, forwarded unchanged
             from ``provision()``'s own ``progress`` keyword argument.
-        bytes_total: Total bytes still to download (and, in the pre-verify
-            phase, to re-hash) across the whole closure
+        bytes_total: Total bytes still to download across the whole closure
             (``PreflightReport.download_bytes``), computed once before the
-            per-artifact loop starts.
+            per-artifact loop starts. Nets out already-staged credit --
+            NOT the total bytes pre-verify will hash; see
+            ``preverify_bytes_total``.
+        preverify_bytes_total: Total bytes pre-verify will hash across the
+            whole closure -- the full declared size of every not-yet-
+            installed artifact's files (``ArtifactDescriptor.
+            expected_installed_bytes``), regardless of how much of that was
+            already staged before this run started. Defaults to
+            ``bytes_total`` (see ``__post_init__``) so existing direct-
+            construction call sites that only exercise the fetch phase are
+            unaffected; ``provision()`` itself always passes both totals
+            explicitly, independently computed.
         bytes_done: Running total of bytes fetched so far across every
             artifact already processed in this run; starts at zero.
         preverify_bytes_done: Running total of bytes hashed so far during
             the pre-verify phase, across every artifact already processed
             in this run; starts at zero. A pre-verify hash mismatch and
             refetch (Task 8) re-streams and re-hashes the same file, so
-            this counter can advance past ``bytes_total`` in that recovery
-            path -- an acceptable cosmetic wrinkle in an uncommon retry,
-            not a steady-state property.
+            this counter can advance past ``preverify_bytes_total`` in that
+            recovery path -- an acceptable cosmetic wrinkle in an uncommon
+            retry, not a steady-state property.
     """
 
     callback: Callable[[AcquisitionProgress], None] | None
     bytes_total: int
+    preverify_bytes_total: int | None = None
     bytes_done: int = 0
     preverify_bytes_done: int = 0
+
+    def __post_init__(self) -> None:
+        """Default ``preverify_bytes_total`` to ``bytes_total`` when unset."""
+
+        if self.preverify_bytes_total is None:
+            self.preverify_bytes_total = self.bytes_total
 
 
 @dataclass(frozen=True)
@@ -381,6 +419,34 @@ def resolve_catalog_closure(
 
     visit(root)
     return tuple(resolved[ref] for ref in sorted(resolved))
+
+
+def _require_single_file(descriptor: ArtifactDescriptor) -> None:
+    """Raise ``CatalogError`` unless ``descriptor`` declares exactly one file.
+
+    Per-file source URLs are undefined until the catalog work
+    (TASK-596/1301) specifies them (see ``_file_url``). Shared by
+    ``_aggregate_closure`` -- so a not-yet-installed multi-file descriptor
+    fails ``preflight()`` itself, before any report or consent exists --
+    and ``_fetch_artifact`` (defense-in-depth: a descriptor's shape could in
+    principle change between ``preflight()`` and ``provision()``'s
+    independent catalog re-walk).
+
+    Args:
+        descriptor: The descriptor to check.
+
+    Raises:
+        CatalogError: ``descriptor`` declares more than one file.
+    """
+
+    if len(descriptor.files) != 1:
+        ref = descriptor.reference
+        raise CatalogError(
+            f"{ref.artifact_id}@{ref.revision} declares "
+            f"{len(descriptor.files)} files, but per-file source URLs "
+            "are undefined until the catalog work (TASK-596/1301) "
+            "specifies them"
+        )
 
 
 class ArtifactAcquisitionService:
@@ -493,7 +559,9 @@ class ArtifactAcquisitionService:
 
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
-                cycle, or a conflicting-revision closure.
+                cycle, a conflicting-revision closure, or a not-yet-
+                installed entry declaring more than one file (see
+                ``_require_single_file``).
         """
         _closure, report, gating_targets = self._aggregate_closure(root, catalog)
         gating_errors = await self._probe_gating(gating_targets.values())
@@ -531,7 +599,9 @@ class ArtifactAcquisitionService:
 
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
-                cycle, or a conflicting-revision closure.
+                cycle, a conflicting-revision closure, or a not-yet-
+                installed entry declaring more than one file (see
+                ``_require_single_file``).
         """
         closure = resolve_catalog_closure(root, catalog)
         fingerprint = closure_fingerprint(root, (descriptor.reference for descriptor in closure))
@@ -578,6 +648,16 @@ class ArtifactAcquisitionService:
             )
             entries.append(entry)
             if not already_installed:
+                # Fail loudly here, not just later in _fetch_artifact: a
+                # multi-file descriptor that still needs fetching is a
+                # catalog-contract problem (per-file URLs are undefined --
+                # see _require_single_file), and the spec requires catalog
+                # problems to surface at preflight, before any report or
+                # consent exists. An ALREADY-installed multi-file
+                # descriptor never reaches provision()'s fetch phase (the
+                # per-artifact loop skips installed entries outright), so
+                # it is deliberately not checked here.
+                _require_single_file(descriptor)
                 # Clamp per entry: a stale/corrupt sidecar claiming more
                 # bytes than this artifact's own declared total must not
                 # inflate the credit shown on the consent screen.
@@ -708,9 +788,13 @@ class ArtifactAcquisitionService:
             CatalogError: Propagated from an unknown ref, a dependency
                 cycle, or a conflicting-revision closure during the
                 re-walk.
-            TransferError: A file failed to fetch, or a staged file failed
-                pre-verify a second time after one automatic refetch --
-                nothing is installed for that artifact.
+            TransferError: A file failed to fetch, a staged file failed
+                pre-verify a second time after one automatic refetch, or
+                ``core.install``/``core.activate`` raised a core
+                ``ArtifactError`` (integrity, conflict, or state/lease
+                contention -- see ``_run_core_call``). Nothing further is
+                installed or activated for that artifact once this is
+                raised.
         """
         async with self._lock:
             loop = asyncio.get_running_loop()
@@ -720,13 +804,31 @@ class ArtifactAcquisitionService:
                 LeaseMode.EXCLUSIVE,
                 timeout_seconds=_SESSION_LEASE_TIMEOUT_SECONDS,
             )
+            # The acquire itself must live INSIDE this try/finally, not
+            # before it (a prior review found the release leaked): once
+            # lease.acquire() has started running in its worker thread, it
+            # cannot be interrupted, so a CancelledError delivered while it
+            # is still in flight must not skip past the finally below
+            # without first learning whether the acquire actually
+            # succeeded. asyncio.shield keeps the executor future running
+            # even if THIS await is cancelled; the except-CancelledError
+            # branch then waits for that same future to actually settle
+            # (ignoring whatever it raises) before re-raising, so
+            # `lease.acquired` below always reflects the true outcome
+            # instead of a stale "not yet" snapshot.
+            acquire_future = loop.run_in_executor(None, lease.acquire)
             try:
-                await loop.run_in_executor(None, lease.acquire)
-            except ArtifactLeaseTimeoutError as error:
-                raise AcquisitionBusyError(
-                    "another managed acquisition session is already active"
-                ) from error
-            try:
+                try:
+                    await asyncio.shield(acquire_future)
+                except ArtifactLeaseTimeoutError as error:
+                    raise AcquisitionBusyError(
+                        "another managed acquisition session is already active"
+                    ) from error
+                except asyncio.CancelledError:
+                    with contextlib.suppress(BaseException):
+                        await acquire_future
+                    raise
+
                 closure, report, _gating_targets = self._aggregate_closure(root, catalog)
                 if report.closure_fingerprint != consent.closure_fingerprint:
                     raise ConsentMismatchError(
@@ -749,6 +851,11 @@ class ArtifactAcquisitionService:
                 progress_state = _ProvisionProgressState(
                     callback=progress,
                     bytes_total=report.download_bytes,
+                    preverify_bytes_total=sum(
+                        descriptor.expected_installed_bytes
+                        for descriptor in closure
+                        if descriptor.reference not in installed_refs
+                    ),
                 )
 
                 for descriptor in closure:
@@ -773,11 +880,14 @@ class ArtifactAcquisitionService:
                         progress_state, "verify-install", descriptor.reference
                     )
 
-                activated = await loop.run_in_executor(None, self._core.activate, root)
+                activated = await self._run_core_call(
+                    "activate", root, functools.partial(self._core.activate, root)
+                )
                 self._emit_indeterminate_progress(progress_state, "activate", root)
                 return activated
             finally:
-                await loop.run_in_executor(None, lease.release)
+                if lease.acquired:
+                    await loop.run_in_executor(None, lease.release)
 
     async def _fetch_artifact(
         self,
@@ -822,6 +932,11 @@ class ArtifactAcquisitionService:
                 (TASK-596/1301) specifies them (see ``_file_url``). Raised
                 before touching staging, the sidecar, or the network: a
                 catalog-contract problem, not a transfer failure.
+                ``_aggregate_closure`` already rejects this same shape for
+                a not-yet-installed entry at ``preflight()`` time; this is
+                defense-in-depth for a descriptor that changed shape
+                between ``preflight()`` and ``provision()``'s independent
+                catalog re-walk.
             TransferError: A file failed to fetch -- network/transport
                 failure, disk I/O failure (e.g. ENOSPC), an egress-policy
                 block, or a response body exceeding the file's declared
@@ -834,16 +949,7 @@ class ArtifactAcquisitionService:
                 polling).
         """
 
-        if len(descriptor.files) != 1:
-            # Fail loudly before any I/O: see _file_url for why guessing a
-            # per-file URL for a multi-file descriptor is unsafe.
-            ref = descriptor.reference
-            raise CatalogError(
-                f"{ref.artifact_id}@{ref.revision} declares "
-                f"{len(descriptor.files)} files, but per-file source URLs "
-                "are undefined until the catalog work (TASK-596/1301) "
-                "specifies them"
-            )
+        _require_single_file(descriptor)
 
         staging_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = staging_dir / "fetch-state.json"
@@ -1285,7 +1391,7 @@ class ArtifactAcquisitionService:
                             ref=descriptor.reference,
                             file=file.path,
                             bytes_done=progress_state.preverify_bytes_done,
-                            bytes_total=progress_state.bytes_total,
+                            bytes_total=progress_state.preverify_bytes_total,
                         )
                     )
         return digest.hexdigest()
@@ -1323,14 +1429,15 @@ class ArtifactAcquisitionService:
                 files.
 
         Raises:
-            ArtifactError: Propagated from ``core.install`` (e.g. an
-                integrity or conflict failure). Only a SUCCESSFUL install
-                triggers the ``staging_dir`` cleanup above -- on failure it
-                is left in place (though ``consume_source`` may already
-                have moved its declared files into the core's own,
-                separately-cleaned-up staging by the time the failure
-                surfaces, so an empty leftover directory is not itself
-                proof anything is wrong).
+            TransferError: ``core.install`` raised ``ArtifactIntegrityError``,
+                ``ArtifactConflictError``, or ``ArtifactStateError`` --
+                wrapped by ``_run_core_call`` with ``retryable`` set
+                accordingly (see there). Only a SUCCESSFUL install triggers
+                the ``staging_dir`` cleanup above -- on failure it is left
+                in place (though ``consume_source`` may already have moved
+                its declared files into the core's own, separately-cleaned-
+                up staging by the time the failure surfaces, so an empty
+                leftover directory is not itself proof anything is wrong).
         """
 
         sidecar_path = staging_dir / "fetch-state.json"
@@ -1339,15 +1446,68 @@ class ArtifactAcquisitionService:
         except FileNotFoundError:
             pass
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
+        await self._run_core_call(
+            "install",
+            descriptor.reference,
             functools.partial(
                 self._core.install, descriptor, staging_dir, consume_source=True
             ),
         )
 
         shutil.rmtree(staging_dir, ignore_errors=True)
+
+    async def _run_core_call(
+        self,
+        operation: Literal["install", "activate"],
+        ref: ArtifactRef,
+        func: Callable[[], _CoreCallResult],
+    ) -> _CoreCallResult:
+        """Run one synchronous core call in the executor, never trapping raw.
+
+        ``core.install`` and ``core.activate`` are the two core entry
+        points this service reaches via a bare executor hop; both can raise
+        the core's own ``ArtifactError`` subclasses (integrity, conflict,
+        or lease/state contention), which would otherwise escape
+        ``provision()`` untouched -- breaking the spec's never-trap rule
+        that every acquisition-surfaced failure is a typed, retryable-
+        flagged ``AcquisitionError``. ``ArtifactIntegrityError`` and
+        ``ArtifactConflictError`` are not retryable: the same staged
+        content, or the same conflicting destination, would fail again.
+        ``ArtifactStateError`` (and its subclasses, e.g.
+        ``ArtifactInUseError`` -- lease-timeout/contention style failures)
+        is retryable: a later attempt may find the contended resource free.
+        The original error is preserved as ``__cause__`` (``raise ... from
+        exc``); the wrapped message names only the operation, artifact id,
+        and revision -- never a path.
+
+        Args:
+            operation: Which core call this is, for the error message only.
+            ref: The artifact reference the call concerns.
+            func: A zero-argument callable wrapping the real core call (see
+                ``functools.partial`` at both call sites).
+
+        Returns:
+            The core call's own return value, unchanged.
+
+        Raises:
+            TransferError: ``func`` raised ``ArtifactIntegrityError``,
+                ``ArtifactConflictError``, or ``ArtifactStateError`` (or a
+                subclass of any of these).
+        """
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(None, func)
+        except (ArtifactIntegrityError, ArtifactConflictError) as exc:
+            raise TransferError(
+                f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
+                retryable=False,
+            ) from exc
+        except ArtifactStateError as exc:
+            raise TransferError(
+                f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
+                retryable=True,
+            ) from exc
 
     @staticmethod
     def _emit_indeterminate_progress(
@@ -1455,6 +1615,14 @@ class ArtifactAcquisitionService:
                         entry.source_url,
                         timeout=_PREFLIGHT_PROBE_TIMEOUT_SECONDS,
                         headers=self._auth_headers(entry.repository),
+                        # Explicit regardless of the client's own default:
+                        # client_factory is a public seam, and an injected
+                        # client configured to follow redirects would
+                        # otherwise both bypass this app's own egress check
+                        # for the redirect target (only entry.source_url is
+                        # checked above) and carry the bearer token
+                        # cross-origin.
+                        follow_redirects=False,
                     )
                 except (httpx.HTTPError, EgressBlockedError):
                     continue
