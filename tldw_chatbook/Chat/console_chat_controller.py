@@ -4025,6 +4025,59 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
+    async def impersonate_user_reply(self, session_id: str) -> str:
+        """Draft the USER's next message with the session's current model.
+
+        task-1683: "Impersonate" writes a candidate reply *as the user*,
+        for review in the composer -- it never sends and never appends to
+        the transcript. Reuses the same resolve + non-streaming collect
+        path as ``summarize_up_to``.
+
+        Args:
+            session_id: The session whose transcript and provider to use.
+
+        Returns:
+            The drafted reply, or "" when the provider is not ready or the
+            model returns nothing.
+        """
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            return ""
+        transcript: list[dict[str, Any]] = []
+        for message in self.store.messages_for_session(session_id):
+            role = getattr(message, "role", None)
+            content = str(getattr(message, "content", "") or "").strip()
+            if not content or role is None:
+                continue
+            role_value = getattr(role, "value", role)
+            if role_value not in (
+                ConsoleMessageRole.USER.value,
+                ConsoleMessageRole.ASSISTANT.value,
+            ):
+                continue
+            transcript.append({"role": role_value, "content": content})
+        if not transcript:
+            return ""
+        instruction = (
+            "You are helping the USER write their next message in the "
+            "conversation below. Reply with that message only -- their "
+            "words, in their voice, no quotation marks, no narration, no "
+            "preamble, and never as the assistant."
+        )
+        messages = [
+            {"role": ConsoleMessageRole.SYSTEM.value, "content": instruction},
+            *transcript,
+        ]
+        try:
+            return (await self._collect_summary_completion(resolution, messages)).strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning("Impersonate completion failed.")
+            return ""
+
     async def _collect_summary_completion(
         self, resolution: Any, messages: list[dict[str, Any]]
     ) -> str:
