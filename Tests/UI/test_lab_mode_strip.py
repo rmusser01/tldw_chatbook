@@ -307,6 +307,28 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
             await _wait_until(
                 pilot, lambda: isinstance(app.screen, LLMScreen), context="lab -> llm"
             )
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query(LocalModelsWidget)) == 1,
+                context="local models widget",
+            )
+            local_models = app.screen.query_one(LocalModelsWidget)
+            await _wait_until(
+                pilot,
+                lambda: len(local_models.query("#delete-confirm-dialog")) == 1,
+                context="delete confirmation dialog",
+            )
+            delete_confirm = local_models.query_one("#delete-confirm-dialog")
+            assert delete_confirm.display is False
+
+            local_models.show_delete_confirm = True
+            await pilot.pause()
+            assert delete_confirm.display is True
+
+            local_models.show_delete_confirm = False
+            await pilot.pause()
+            assert delete_confirm.display is False
+
             assert app.screen.query_one("#lab-mode-models", Button).has_class(
                 "is-active"
             )

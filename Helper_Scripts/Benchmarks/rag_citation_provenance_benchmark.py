@@ -323,8 +323,9 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
     config_root = root / "config"
     config_directory = config_root / "tldw_cli"
     data_root = root / "data"
-    for path in (home, config_directory, data_root):
+    for path in (home, data_root):
         path.mkdir(parents=True, exist_ok=True)
+    config_directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     overrides = {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(config_root),

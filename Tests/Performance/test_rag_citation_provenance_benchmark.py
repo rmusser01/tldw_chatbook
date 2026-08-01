@@ -347,14 +347,18 @@ def test_benchmark_host_state_context_isolates_and_restores_environment(
     for key, value in original.items():
         monkeypatch.setenv(key, value)
 
-    with benchmark.isolated_benchmark_host_state(tmp_path / "benchmark-host"):
-        assert os.environ["TLDW_TEST_MODE"] == "1"
-        assert Path(os.environ["HOME"]).is_relative_to(tmp_path)
-        assert Path(os.environ["XDG_CONFIG_HOME"]).is_relative_to(tmp_path)
-        assert Path(os.environ["XDG_DATA_HOME"]).is_relative_to(tmp_path)
-        assert Path(os.environ["TLDW_CONFIG_PATH"]).is_relative_to(tmp_path)
-        assert Path(os.environ["TLDW_CONFIG_PATH"]).parent.is_dir()
-        assert "OPENAI_API_KEY" not in os.environ
+    benchmark_root = tmp_path / "benchmark-host"
+    for _ in range(2):
+        with benchmark.isolated_benchmark_host_state(benchmark_root):
+            assert os.environ["TLDW_TEST_MODE"] == "1"
+            assert Path(os.environ["HOME"]).is_relative_to(tmp_path)
+            assert Path(os.environ["XDG_CONFIG_HOME"]).is_relative_to(tmp_path)
+            assert Path(os.environ["XDG_DATA_HOME"]).is_relative_to(tmp_path)
+            assert Path(os.environ["TLDW_CONFIG_PATH"]).is_relative_to(tmp_path)
+            assert Path(os.environ["TLDW_CONFIG_PATH"]).parent.is_dir()
+            assert "OPENAI_API_KEY" not in os.environ
+
+        assert {key: os.environ.get(key) for key in original} == original
 
     assert {key: os.environ.get(key) for key in original} == original
 

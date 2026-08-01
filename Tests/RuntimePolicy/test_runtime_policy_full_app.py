@@ -88,6 +88,11 @@ def _configure_full_app_media_startup(
         get_cli_setting_without_splash,
     )
 
+    async def skip_model_catalog_refresh() -> None:
+        return None
+
+    monkeypatch.setattr(app, "_refresh_model_catalogs", skip_model_catalog_refresh)
+
 
 async def _wait_for_mounted_media_screen(app: TldwCli, pilot) -> MediaScreen:
     deadline = asyncio.get_running_loop().time() + 5.0

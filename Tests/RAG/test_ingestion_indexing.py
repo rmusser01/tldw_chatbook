@@ -1046,6 +1046,12 @@ class TestSharedRagServiceLockDeadlock:
     ``select()`` on a stalled socket).
     """
 
+    @pytest.fixture(autouse=True)
+    def _isolate_build_lock(self, monkeypatch):
+        monkeypatch.setattr(
+            ingestion_indexing, "_shared_service_build_lock", threading.Lock()
+        )
+
     def _patch_construction(self, monkeypatch, build_fn):
         import tldw_chatbook.RAG_Search.simplified as simplified_pkg
         import tldw_chatbook.RAG_Search.simplified.active_config as active_config

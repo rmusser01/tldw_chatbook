@@ -1792,10 +1792,12 @@ async def get_rag_context_capture_for_chat(
 ) -> LocalRagContextResult:
     """Get local RAG context with optional request-scoped citation capture.
 
-    Pipelines retain their legacy ``(results, context)`` tuple. When the
-    repository cannot issue a canonical builder, the returned context is the
-    pipeline context byte-for-byte. When a builder exists, only freshly
-    authorized normalized candidates are formatted, recorded, and returned.
+    Pipelines retain their legacy ``(results, context)`` tuple. Recognized
+    canonical local candidates are returned only after current prompt authority
+    completes, regardless of builder availability; when a builder exists, the
+    authorized normalized candidates are also recorded. Raw pipeline context is
+    retained byte-for-byte only when no recognized canonical candidate exists,
+    such as an unsupported external result.
     """
     from textual.css.query import NoMatches
 

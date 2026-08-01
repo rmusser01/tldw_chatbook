@@ -392,8 +392,8 @@ def mock_chat_host():
 
 def test_set_console_pending_skill_script_preserves_other_resume_fields(mock_chat_host):
     screen = ChatScreen(mock_chat_host)
-    screen._task_resume_state = TaskResumeState(
-        summary="Keep me", last_step="Also keep"
+    screen.set_task_resume_state(
+        TaskResumeState(summary="Keep me", last_step="Also keep")
     )
 
     payload = {"skill_name": "demo", "script_path": "s.py", "request_id": "r1"}

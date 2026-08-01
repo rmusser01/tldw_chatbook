@@ -293,8 +293,8 @@ class TestEndToEndDictation:
 class TestErrorRecovery:
     """Test error handling and recovery scenarios."""
 
-    def test_recording_preserves_chunks_before_stream_error(self):
-        """Test that a stream error stops capture without losing prior chunks."""
+    def test_recording_stops_after_stream_error_and_preserves_prior_chunks(self):
+        """Test an audio stream error stops recording and preserves prior chunks."""
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
             with patch(
                 "tldw_chatbook.Audio.recording_service.pyaudio.PyAudio"
@@ -304,12 +304,8 @@ class TestErrorRecovery:
                 mock_pa_class.return_value = mock_pa
                 mock_pa.open.return_value = mock_stream
 
-                # Simulate stream error after some successful reads
-                mock_stream.read.side_effect = [
-                    b"\x00\x01" * 512,
-                    b"\x00\x01" * 512,
-                    Exception("Stream error"),
-                ]
+                chunk = b"\x00\x01" * 512
+                mock_stream.read.side_effect = [chunk, chunk, Exception("Stream error")]
 
                 service = AudioRecordingService(backend="pyaudio", use_vad=False)
                 chunks = []
@@ -318,8 +314,11 @@ class TestErrorRecovery:
 
                 service._pyaudio_recording_loop()
 
-                assert chunks == [b"\x00\x01" * 512, b"\x00\x01" * 512]
+                assert chunks == [chunk, chunk]
                 assert service.is_recording is False
+                mock_stream.stop_stream.assert_called_once_with()
+                mock_stream.close.assert_called_once_with()
+                assert service.stream is None
 
     def test_transcription_service_fallback(self):
         """Test fallback when primary transcription service fails."""

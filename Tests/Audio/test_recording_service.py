@@ -254,9 +254,7 @@ class TestAudioRecordingService:
         assert service.audio_buffer[0] == chunk
         callback.assert_called_once_with(chunk)
 
-    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(
-        self, mock_pyaudio
-    ):
+    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(self, mock_pyaudio):
         """A configured memory limit must stop capture without splitting a frame."""
         limit_called = threading.Event()
         limit_calls = []
@@ -441,6 +439,7 @@ class TestAudioRecordingIntegration:
 
                 # Simulate audio data
                 test_audio = b"\x00\x01" * 512
+                mock_stream.read.return_value = test_audio
 
                 # use_vad=False: with webrtcvad installed, VAD classifies this
                 # synthetic buffer as non-speech, the callback below never
@@ -450,12 +449,11 @@ class TestAudioRecordingIntegration:
                 # subject.
                 service = AudioRecordingService(backend="pyaudio", use_vad=False)
 
-                # Record for a short time
                 chunks_received = []
 
                 def callback(chunk):
                     chunks_received.append(chunk)
-                    if len(chunks_received) >= 3:
+                    if len(chunks_received) == 3:
                         service.is_recording = False
 
                 # Belt and braces: bound the loop at the read() source too, so
@@ -474,8 +472,11 @@ class TestAudioRecordingIntegration:
                 service.is_recording = True
                 service._pyaudio_recording_loop()
 
-                assert len(chunks_received) >= 3
-                assert all(chunk == test_audio for chunk in chunks_received)
+                assert chunks_received == [test_audio] * 3
+                assert service.is_recording is False
+                mock_stream.stop_stream.assert_called_once_with()
+                mock_stream.close.assert_called_once_with()
+                assert service.stream is None
 
     def test_sounddevice_recording_flow(self):
         """Test complete recording flow with sounddevice backend."""
@@ -486,42 +487,38 @@ class TestAudioRecordingIntegration:
                 with patch(
                     "tldw_chatbook.Audio.recording_service.sd.InputStream"
                 ) as mock_stream_class:
-                    # Setup context manager mock
                     mock_stream = MagicMock()
-                    mock_stream_class.return_value.__enter__.return_value = mock_stream
-                    mock_stream_class.return_value.__exit__.return_value = None
+                    mock_stream.__enter__.return_value = mock_stream
+                    mock_stream.__exit__.return_value = None
+                    callback_ready = threading.Event()
+                    captured_callback = {}
 
                     # use_vad=False for the same reason as the pyaudio flow test
                     # above (task-1466): the 4-sample chunk below is smaller
                     # than one 20ms VAD frame, so with VAD on the frame loop
                     # never executes and nothing reaches the queue — the
                     # assertion fails whenever webrtcvad is installed.
+
+                    def create_input_stream(*args, **kwargs):
+                        captured_callback["callback"] = kwargs["callback"]
+                        callback_ready.set()
+                        return mock_stream
+
+                    mock_stream_class.side_effect = create_input_stream
                     service = AudioRecordingService(
                         backend="sounddevice", use_vad=False
                     )
-
-                    def stop_recording_loop(_interval):
-                        service.is_recording = False
-
-                    service.is_recording = True
-                    with patch(
-                        "tldw_chatbook.Audio.recording_service.time.sleep",
-                        side_effect=stop_recording_loop,
-                    ):
-                        service._sounddevice_recording_loop()
-
-                    # Simulate callback being called
-                    callback_func = mock_stream_class.call_args[1]["callback"]
                     test_data = np.array(
                         [[0.5], [-0.5], [0.25], [-0.25]], dtype=np.float32
                     )
-                    service.is_recording = True
-                    callback_func(test_data, 4, None, None)
 
-                    # Stop recording
-                    service.is_recording = False
+                    try:
+                        assert service.start_recording() is True
+                        assert callback_ready.wait(timeout=1.0)
+                        captured_callback["callback"](test_data, 4, None, None)
+                    finally:
+                        service.stop_recording()
 
-                    # Check that audio was processed
                     assert not service.audio_queue.empty()
 
 

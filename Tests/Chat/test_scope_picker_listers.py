@@ -7,6 +7,7 @@ coverage), driven through the exact app-level seams
 ``chachanotes_db``) ``scope_picker_listers.py`` reads -- never a hand-rolled
 fake of the listers themselves.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -37,7 +38,7 @@ def lister_stack(tmp_path):
     chachanotes_db = CharactersRAGDB(tmp_path / "chacha.db", client_id="scope-lister")
     media_db = MediaDatabase(tmp_path / "media.db", client_id="scope-lister")
     notes_base = tmp_path / "notes_base"
-    notes_base.mkdir()
+    notes_base.mkdir(mode=0o700)
     notes_interop = NotesInteropService(
         base_db_directory=notes_base,
         api_client_id="scope-lister",
@@ -57,6 +58,7 @@ def lister_stack(tmp_path):
     try:
         yield app, chachanotes_db, media_db, notes_interop
     finally:
+        notes_interop.close_all_user_connections()
         media_db.close_connection()
         chachanotes_db.close_connection()
 
@@ -78,9 +80,7 @@ async def test_media_lister_list_page_and_list_ids_real_seam(lister_stack):
     ids = await lister.list_ids(text="roadmap", tags=())
     assert ids == (str(media_id),)
 
-    page = await lister.list_page(
-        text="", tags=(), sort="recent", offset=0, limit=20
-    )
+    page = await lister.list_page(text="", tags=(), sort="recent", offset=0, limit=20)
     returned_ids = {item.source_id for item in page.items}
     assert returned_ids == {str(media_id), str(other_id)}
     assert page.total_matching == 2
@@ -235,7 +235,9 @@ async def test_notes_lister_list_page_and_list_ids_real_seam(lister_stack):
 async def test_notes_lister_paginates_client_side_over_fetch_window(lister_stack):
     app, _chachanotes_db, _media_db, notes_interop = lister_stack
     for title in ("Charlie", "Alpha", "Bravo"):
-        notes_interop.add_note(user_id=_NOTES_USER, title=title, content=f"{title} body")
+        notes_interop.add_note(
+            user_id=_NOTES_USER, title=title, content=f"{title} body"
+        )
     lister = build_notes_source_lister(app, user_id=_NOTES_USER)
 
     page1 = await lister.list_page(text="", tags=(), sort="title", offset=0, limit=2)
@@ -431,7 +433,9 @@ async def test_v6_listers_return_full_universe_with_no_visibility_wrapper(
         for i in range(5)
     }
     note_ids = {
-        notes_interop.add_note(user_id=_NOTES_USER, title=f"Note {i}", content=f"body {i}")
+        notes_interop.add_note(
+            user_id=_NOTES_USER, title=f"Note {i}", content=f"body {i}"
+        )
         for i in range(5)
     }
     media_lister = build_media_source_lister(app)
