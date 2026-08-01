@@ -260,13 +260,23 @@ def test_managed_entry_sidecar_without_payload_dir_is_removed(service):
     assert any("int8.fetch-state.json" in item for item in report.staging_removed)
 
 
-def test_fetch_sidecar_suffix_mirror_matches_acquisition():
-    """Drift guard: service.py's sibling-sidecar suffix must equal
-    acquisition.py's -- see both modules' constants for the rationale."""
-    from tldw_chatbook.Model_Artifacts import acquisition
-    from tldw_chatbook.Model_Artifacts import service as service_module
-
-    assert acquisition._FETCH_SIDECAR_SUFFIX == service_module._MANAGED_FETCH_SIDECAR_SUFFIX
+# TASK-1694: the drift guard that used to live here (asserting
+# ``acquisition._FETCH_SIDECAR_SUFFIX == service_module._MANAGED_FETCH_SIDECAR_SUFFIX``)
+# is gone along with ``_FETCH_SIDECAR_SUFFIX`` itself. That constant named
+# a sibling-FILE sidecar convention for the OLD bare
+# ``staging/managed/<id>/<rev>/<variant>`` layout acquisition.py no longer
+# writes -- remote acquisition now stages downloads through
+# ``ModelArtifactService``'s marked download-stage seam
+# (``_download_stage_for``/``_finalize_download_stage``, see
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1), whose fetch-state sidecar lives inside the
+# stage's own ``state/`` subtree instead. ``service.py``'s
+# ``_MANAGED_FETCH_SIDECAR_SUFFIX`` / ``_gc_managed_staging`` /
+# ``_is_valid_managed_staging_entry`` (exercised by every other test in
+# this file) are intentionally left in place -- they still correctly
+# reclaim any leftover ``managed/`` staging from before this change, and
+# porting that GC to the new stage layout is a separate, later piece of
+# work (reconciliation doc item 4), not required by TASK-1694.
 
 
 def test_gc_never_escapes_staging(service, tmp_path):

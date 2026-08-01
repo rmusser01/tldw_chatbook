@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -74,41 +73,44 @@ async def test_preflight_counts_staged_credit(tmp_path):
     The staged file itself must actually exist with AT LEAST as many
     bytes as the sidecar claims: credit is capped by the file's real
     on-disk size, not just the sidecar's say-so (see the review finding
-    covered by test_preflight_stale_sidecar_credit_capped_by_actual_file_size)."""
+    covered by test_preflight_stale_sidecar_credit_capped_by_actual_file_size).
+
+    TASK-1694: staged credit is now read from a service-owned download
+    stage's ``state/`` subtree (``core._download_stage_for``), not a bare
+    ``staging/managed/<id>/<rev>/<variant>`` directory with a sibling
+    sidecar file -- see acquisition.py's ``_fetch_sidecar_path`` and
+    ``_staged_bytes_for``.
+    """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 500)
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 500,
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 500)
+        # Sidecar lives inside the stage's state/ subtree (see
+        # acquisition.py's _fetch_sidecar_path), never inside payload/.
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 500,
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 500
     assert report.download_bytes == 2048 - 500
@@ -243,38 +245,34 @@ async def test_preflight_clamps_oversized_staged_credit_to_entry_total(tmp_path)
     """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 2048)
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 999_999,
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        # TASK-1694: staged credit now lives under a service-owned
+        # download stage's state/ subtree (see _staged_bytes_for).
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 2048)
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 999_999,
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 2048
     assert report.download_bytes == 0
@@ -298,38 +296,34 @@ async def test_preflight_stale_sidecar_credit_capped_by_actual_file_size(tmp_pat
     """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
-    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
-    staged.mkdir(parents=True)
-    (staged / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
-    # Sidecar lives as a SIBLING of the payload directory (see
-    # acquisition.py's _fetch_sidecar_path), never a child of it.
-    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
-        json.dumps(
-            {
-                "files": {
-                    "model.onnx": {
-                        "etag": '"v1"',
-                        "last_modified": None,
-                        "bytes_done": 5000,  # claims far more than exists
-                        "complete": False,
-                    }
-                }
-            }
-        )
-    )
     with FixtureArtifactServer() as srv:
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
         body = b"m" * 2048
         srv.serve("/m.onnx", body)
-        catalog = DictCatalog(
-            {
-                root: make_descriptor(
-                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
-                )
-            }
+        desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+        catalog = DictCatalog({root: desc})
+
+        # TASK-1694: staged credit now lives under a service-owned
+        # download stage's state/ subtree (see _staged_bytes_for).
+        stage = core._download_stage_for(desc, create=True)
+        (stage.payload / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
+        (stage.state / "fetch-state.json").write_text(
+            json.dumps(
+                {
+                    "files": {
+                        "model.onnx": {
+                            "etag": '"v1"',
+                            "last_modified": None,
+                            "bytes_done": 5000,  # claims far more than exists
+                            "complete": False,
+                        }
+                    }
+                }
+            )
         )
+
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 100
     assert report.download_bytes == 2048 - 100

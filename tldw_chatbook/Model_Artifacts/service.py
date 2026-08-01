@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import sys
+import tempfile
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -104,6 +105,17 @@ _DESCRIPTOR_KEYS = frozenset(
 )
 _MANIFEST_SCHEMA_VERSION = 1
 _MANIFEST_KEYS = frozenset({"schema_version", "descriptor"})
+# TASK-1694: schema for the marker file (``download-stage.json``) that
+# identifies one service-owned download-staging operation -- ported from
+# codex/task-595-managed-downloads-v2's service.py (that branch's own
+# port of TASK-595's "service-owned staging and finalization" seam; see
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1). Distinct from `_MANIFEST_SCHEMA_VERSION`
+# above: the marker names the OPERATION, not the installed artifact.
+_DOWNLOAD_STAGE_SCHEMA_VERSION = 1
+_DOWNLOAD_STAGE_KEYS = frozenset(
+    {"schema_version", "reference", "descriptor_fingerprint"}
+)
 _READINESS_SCHEMA_VERSION = 1
 _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
@@ -883,6 +895,30 @@ class ArtifactHandle:
         """Return the cache-safe identity of this resident closure."""
 
         return (self.root, self.closure_fingerprint)
+
+
+@dataclass(frozen=True)
+class _ManagedDownloadStage:
+    """One service-owned resumable download operation inside staging.
+
+    TASK-1694: ported from codex/task-595-managed-downloads-v2 (see the
+    reconciliation doc referenced above ``_DOWNLOAD_STAGE_SCHEMA_VERSION``).
+    ``payload`` is the ONLY subtree ``_finalize_download_stage`` ever
+    renames into the immutable destination; ``marker`` and ``state`` never
+    enter it, so resume metadata written into ``state`` cannot end up
+    inside a promoted artifact by construction.
+    """
+
+    reference: ArtifactRef
+    descriptor_fingerprint: str
+    operation: Path
+    marker: Path
+    payload: Path
+    state: Path
+    operation_identity: _NodeIdentity
+    marker_identity: _NodeIdentity
+    payload_identity: _NodeIdentity | None
+    state_identity: _NodeIdentity | None
 
 
 @dataclass(frozen=True)
@@ -1961,6 +1997,661 @@ class ModelArtifactService:
             raise
         except OSError as error:
             raise ArtifactStateError("failed to account artifact disk usage") from error
+
+    # -- TASK-1694: service-owned download-stage seam -----------------------
+    #
+    # Ported from codex/task-595-managed-downloads-v2's service.py (that
+    # branch's own implementation of TASK-595's "service-owned staging and
+    # finalization" design -- see Docs/superpowers/specs/2026-07-31-
+    # verified-managed-model-downloads-design.md, "### 2. Service-owned
+    # staging and finalization", and the reconciliation decision at
+    # Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+    # reconciliation.md, item 1).
+    #
+    # A "download stage" is a marked, contained operation directory
+    # (``staging/download-<fingerprint>/``) with three children: a JSON
+    # marker naming the exact reference and descriptor this stage belongs
+    # to, a ``payload/`` subtree the downloader writes fetched files into,
+    # and a ``state/`` subtree for resume metadata (e.g. a fetch-state
+    # sidecar). ``_finalize_download_stage`` verifies and RENAMES only
+    # ``payload/`` into the immutable destination -- ``marker``/``state``
+    # never enter it, so resume metadata cannot end up inside a promoted
+    # artifact by construction. This replaces the old
+    # ``install(..., consume_source=True)`` promotion path for REMOTE
+    # acquisition (``ArtifactAcquisitionService._install_artifact`` in
+    # acquisition.py), which needed a sibling-file sidecar workaround to
+    # keep resume state out of ``core.install``'s validated payload tree.
+    # ``install()`` itself is unchanged and still used by local import,
+    # whose copy/TOCTOU contract is different (see its own docstring).
+
+    def _download_stage_for(
+        self,
+        descriptor: ArtifactDescriptor,
+        *,
+        create: bool,
+    ) -> _ManagedDownloadStage | None:
+        """Open or create the exact service-owned staging operation for a download."""
+
+        if type(descriptor) is not ArtifactDescriptor:
+            raise TypeError("descriptor must be an ArtifactDescriptor")
+        if type(create) is not bool:
+            raise TypeError("create must be a bool")
+        operation, marker, payload, state, fingerprint = self._download_stage_paths(
+            descriptor,
+        )
+        self._assert_managed_path(self._staging_path)
+        if self._managed_path_exists(operation):
+            return self._open_download_stage(
+                descriptor,
+                operation,
+                marker,
+                payload,
+                state,
+                fingerprint,
+            )
+        if not create:
+            return None
+        temporary: Path | None = None
+        temporary_identity: _NodeIdentity | None = None
+        try:
+            temporary = Path(
+                tempfile.mkdtemp(prefix=".download-", dir=self._staging_path)
+            )
+            temporary_identity = self._download_stage_node_identity(
+                temporary,
+                directory=True,
+            )
+        except OSError as error:
+            raise ArtifactStateError("failed to create download staging operation") from error
+        try:
+            temporary_marker = temporary / marker.name
+            temporary_payload = temporary / payload.name
+            temporary_state = temporary / state.name
+            self._assert_managed_path(temporary)
+            temporary_payload.mkdir()
+            temporary_state.mkdir()
+            atomic_write_json(
+                temporary_marker,
+                {
+                    "schema_version": _DOWNLOAD_STAGE_SCHEMA_VERSION,
+                    "reference": descriptor.reference.to_dict(),
+                    "descriptor_fingerprint": fingerprint,
+                },
+            )
+            temporary_stage = self._open_download_stage(
+                descriptor,
+                temporary,
+                temporary_marker,
+                temporary_payload,
+                temporary_state,
+                fingerprint,
+            )
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLease(
+                self._locks_path,
+                descriptor.reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                if self._managed_path_exists(operation):
+                    canonical_stage = self._open_download_stage(
+                        descriptor,
+                        operation,
+                        marker,
+                        payload,
+                        state,
+                        fingerprint,
+                    )
+                    self._discard_temporary_download_stage(temporary_stage)
+                    return canonical_stage
+                os.rename(temporary, operation)
+            return self._open_download_stage(
+                descriptor,
+                operation,
+                marker,
+                payload,
+                state,
+                fingerprint,
+            )
+        except ArtifactError:
+            if temporary is not None and temporary_identity is not None:
+                self._remove_incomplete_download_stage(
+                    temporary,
+                    temporary_identity,
+                    temporary / marker.name,
+                    temporary / payload.name,
+                    temporary / state.name,
+                )
+            raise
+        except OSError as error:
+            if temporary is not None and temporary_identity is not None:
+                self._remove_incomplete_download_stage(
+                    temporary,
+                    temporary_identity,
+                    temporary / marker.name,
+                    temporary / payload.name,
+                    temporary / state.name,
+                )
+            raise ArtifactStateError("failed to initialize download staging operation") from error
+
+    def _finalize_download_stage(
+        self,
+        descriptor: ArtifactDescriptor,
+        stage: _ManagedDownloadStage,
+    ) -> ArtifactRef:
+        """Verify and promote a complete staged download without copying it."""
+
+        if type(descriptor) is not ArtifactDescriptor:
+            raise TypeError("descriptor must be an ArtifactDescriptor")
+        if type(stage) is not _ManagedDownloadStage:
+            raise TypeError("stage must be a _ManagedDownloadStage")
+        destination = self.artifact_path(descriptor.reference)
+        try:
+            self._assert_managed_path(self._locks_path)
+            # Keep finalization in the same writer domain as install and deletion.
+            with ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                with ArtifactOperationLease(
+                    self._locks_path,
+                    descriptor.reference.lease_key(),
+                    LeaseMode.EXCLUSIVE,
+                    timeout_seconds=self._lease_timeout_seconds,
+                ):
+                    checked = self._validate_download_stage_handle(descriptor, stage)
+                    manifest_path = checked.payload / "manifest.json"
+                    if self._managed_path_exists(manifest_path):
+                        existing = self._read_manifest(checked.payload)
+                        if existing != descriptor:
+                            raise ArtifactConflictError(
+                                "download staging payload has a different manifest"
+                            )
+                    self._verify_payload(
+                        checked.payload,
+                        descriptor.files,
+                        allowed_files=frozenset({"manifest.json"}),
+                    )
+                    if self._managed_path_exists(destination):
+                        self._verify_existing_destination(destination, descriptor)
+                        self._discard_download_stage(checked)
+                        return descriptor.reference
+                    atomic_write_json(
+                        manifest_path,
+                        {
+                            "schema_version": _MANIFEST_SCHEMA_VERSION,
+                            "descriptor": descriptor.to_dict(),
+                        },
+                    )
+                    # Recheck after the crash-recovery manifest write and before rename.
+                    checked = self._validate_download_stage_handle(descriptor, checked)
+                    self._verify_payload(
+                        checked.payload,
+                        descriptor.files,
+                        allowed_files=frozenset({"manifest.json"}),
+                    )
+                    self._ensure_final_parent(destination.parent)
+                    if self._managed_path_exists(destination):
+                        raise ArtifactConflictError(
+                            "immutable artifact destination already exists"
+                        )
+                    self._assert_managed_path(checked.payload)
+                    self._assert_managed_path(destination.parent)
+                    self._promote(checked.payload, destination)
+                    self._assert_managed_path(destination)
+                    self._remove_finalized_download_stage(checked)
+            return descriptor.reference
+        except ArtifactError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact writer leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("download finalization I/O failed") from error
+
+    def _discard_download_stage(self, stage: _ManagedDownloadStage) -> None:
+        """Remove one exact marked operation without touching other staging data."""
+
+        if type(stage) is not _ManagedDownloadStage:
+            raise TypeError("stage must be a _ManagedDownloadStage")
+        try:
+            self._validate_download_stage_handle_by_marker(stage)
+        except ArtifactPathError as full_stage_error:
+            try:
+                self._validate_download_stage_handle_by_marker_after_promotion(stage)
+            except ArtifactPathError:
+                raise full_stage_error
+        try:
+            shutil.rmtree(self._retire_download_stage_operation(stage.operation))
+        except FileNotFoundError:
+            raise ArtifactPathError("download staging operation disappeared during discard")
+        except OSError as error:
+            raise ArtifactStateError("failed to discard download staging operation") from error
+
+    def _discard_temporary_download_stage(self, stage: _ManagedDownloadStage) -> None:
+        """Remove one verified losing temporary publication candidate."""
+
+        if (
+            stage.operation.parent != self._staging_path
+            or not stage.operation.name.startswith(".download-")
+            or stage.payload_identity is None
+            or stage.state_identity is None
+        ):
+            raise ArtifactPathError("download staging temporary has unexpected paths")
+        operation_identity = self._download_stage_node_identity(
+            stage.operation,
+            directory=True,
+        )
+        marker_identity = self._download_stage_node_identity(
+            stage.marker,
+            directory=False,
+        )
+        payload_identity = self._download_stage_node_identity(
+            stage.payload,
+            directory=True,
+        )
+        state_identity = self._download_stage_node_identity(stage.state, directory=True)
+        if (
+            operation_identity != stage.operation_identity
+            or marker_identity != stage.marker_identity
+            or payload_identity != stage.payload_identity
+            or state_identity != stage.state_identity
+        ):
+            raise ArtifactPathError("download staging temporary identity changed")
+        self._validate_download_stage_layout(
+            stage.operation,
+            stage.marker,
+            stage.payload,
+            stage.state,
+        )
+        self._read_download_stage_marker(
+            stage.marker,
+            stage.reference,
+            stage.descriptor_fingerprint,
+        )
+        try:
+            shutil.rmtree(stage.operation)
+        except OSError as error:
+            raise ArtifactStateError("failed to discard download staging temporary") from error
+
+    def _download_stage_paths(
+        self,
+        descriptor: ArtifactDescriptor,
+    ) -> tuple[Path, Path, Path, Path, str]:
+        fingerprint = hashlib.sha256(
+            b"managed-download-stage-v1\0"
+            + json.dumps(
+                descriptor.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        operation = self._staging_path / f"download-{fingerprint}"
+        return (
+            operation,
+            operation / "download-stage.json",
+            operation / "payload",
+            operation / "state",
+            fingerprint,
+        )
+
+    def _open_download_stage(
+        self,
+        descriptor: ArtifactDescriptor,
+        operation: Path,
+        marker: Path,
+        payload: Path,
+        state: Path,
+        fingerprint: str,
+    ) -> _ManagedDownloadStage:
+        operation_identity = self._download_stage_node_identity(
+            operation,
+            directory=True,
+        )
+        marker_identity = self._download_stage_node_identity(marker, directory=False)
+        state_identity = (
+            self._download_stage_node_identity(state, directory=True)
+            if self._managed_path_exists(state)
+            else None
+        )
+        payload_identity = (
+            self._download_stage_node_identity(payload, directory=True)
+            if self._managed_path_exists(payload)
+            else None
+        )
+        self._read_download_stage_marker(marker, descriptor, fingerprint)
+        self._validate_download_stage_layout(
+            operation,
+            marker,
+            payload,
+            state,
+            payload_present=payload_identity is not None,
+            state_present=state_identity is not None,
+        )
+        if payload_identity is not None and state_identity is None:
+            raise ArtifactPathError("download staging state is missing")
+        if state_identity is not None:
+            self._validate_download_stage_state(state)
+        return _ManagedDownloadStage(
+            reference=descriptor.reference,
+            descriptor_fingerprint=fingerprint,
+            operation=operation,
+            marker=marker,
+            payload=payload,
+            state=state,
+            operation_identity=operation_identity,
+            marker_identity=marker_identity,
+            payload_identity=payload_identity,
+            state_identity=state_identity,
+        )
+
+    def _validate_download_stage_handle(
+        self,
+        descriptor: ArtifactDescriptor,
+        stage: _ManagedDownloadStage,
+    ) -> _ManagedDownloadStage:
+        operation, marker, payload, state, fingerprint = self._download_stage_paths(
+            descriptor,
+        )
+        if (
+            stage.reference != descriptor.reference
+            or stage.descriptor_fingerprint != fingerprint
+            or stage.operation != operation
+            or stage.marker != marker
+            or stage.payload != payload
+            or stage.state != state
+        ):
+            raise ArtifactPathError("download staging handle does not match descriptor")
+        opened = self._open_download_stage(
+            descriptor,
+            operation,
+            marker,
+            payload,
+            state,
+            fingerprint,
+        )
+        if (
+            stage.payload_identity is None
+            or opened.payload_identity is None
+            or stage.state_identity is None
+            or opened.state_identity is None
+        ):
+            raise ArtifactPathError("download staging payload is missing")
+        if (
+            opened.operation_identity != stage.operation_identity
+            or opened.marker_identity != stage.marker_identity
+            or opened.payload_identity != stage.payload_identity
+            or opened.state_identity != stage.state_identity
+        ):
+            raise ArtifactPathError("download staging operation identity changed")
+        return opened
+
+    def _validate_download_stage_handle_by_marker(
+        self,
+        stage: _ManagedDownloadStage,
+    ) -> None:
+        self._validate_download_stage_handle_paths(stage)
+        operation = stage.operation
+        operation_identity = self._download_stage_node_identity(operation, directory=True)
+        marker_identity = self._download_stage_node_identity(stage.marker, directory=False)
+        payload_identity = self._download_stage_node_identity(stage.payload, directory=True)
+        state_identity = self._download_stage_node_identity(stage.state, directory=True)
+        if (
+            operation_identity != stage.operation_identity
+            or marker_identity != stage.marker_identity
+            or payload_identity != stage.payload_identity
+            or state_identity != stage.state_identity
+        ):
+            raise ArtifactPathError("download staging operation identity changed")
+        self._validate_download_stage_layout(
+            operation,
+            stage.marker,
+            stage.payload,
+            stage.state,
+        )
+        self._read_download_stage_marker(
+            stage.marker,
+            stage.reference,
+            stage.descriptor_fingerprint,
+        )
+
+    def _download_stage_node_identity(
+        self,
+        path: Path,
+        *,
+        directory: bool,
+    ) -> _NodeIdentity:
+        self._assert_managed_path(
+            path,
+            target_must_be_directory=directory,
+        )
+        try:
+            info = path.stat(follow_symlinks=False)
+        except OSError as error:
+            raise ArtifactPathError("failed to inspect download staging path") from error
+        if stat.S_ISLNK(info.st_mode) or (
+            not stat.S_ISDIR(info.st_mode)
+            if directory
+            else not stat.S_ISREG(info.st_mode)
+        ):
+            raise ArtifactPathError("download staging path has an invalid node type")
+        return _node_identity(info)
+
+    def _validate_download_stage_layout(
+        self,
+        operation: Path,
+        marker: Path,
+        payload: Path,
+        state: Path,
+        *,
+        payload_present: bool = True,
+        state_present: bool = True,
+    ) -> None:
+        try:
+            entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
+        except OSError as error:
+            raise ArtifactPathError("failed to scan download staging operation") from error
+        expected = {
+            marker.name: marker,
+        }
+        if payload_present:
+            expected[payload.name] = payload
+        if state_present:
+            expected[state.name] = state
+        if entries != expected:
+            raise ArtifactPathError("download staging operation has unexpected entries")
+
+    def _validate_download_stage_handle_paths(
+        self,
+        stage: _ManagedDownloadStage,
+    ) -> None:
+        operation = stage.operation
+        if operation.parent != self._staging_path:
+            raise ArtifactPathError("download staging operation escapes staging root")
+        if (
+            stage.marker != operation / "download-stage.json"
+            or stage.payload != operation / "payload"
+            or stage.state != operation / "state"
+            or operation.name != f"download-{stage.descriptor_fingerprint}"
+        ):
+            raise ArtifactPathError("download staging handle has unexpected paths")
+        if _LOWERCASE_SHA256.fullmatch(stage.descriptor_fingerprint) is None:
+            raise ArtifactPathError("download staging handle has invalid fingerprint")
+
+    def _remove_incomplete_download_stage(
+        self,
+        operation: Path,
+        operation_identity: _NodeIdentity,
+        marker: Path,
+        payload: Path,
+        state: Path,
+    ) -> None:
+        """Remove only an empty pre-marker operation created by this call."""
+
+        try:
+            if self._managed_path_exists(marker):
+                return
+            if self._download_stage_node_identity(
+                operation,
+                directory=True,
+            ) != operation_identity:
+                return
+            entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
+            if set(entries) - {payload.name, state.name}:
+                return
+            for path in (payload, state):
+                if path.name not in entries:
+                    continue
+                self._download_stage_node_identity(path, directory=True)
+                if tuple(os.scandir(path)):
+                    return
+            for path in (state, payload):
+                if path.name in entries:
+                    path.rmdir()
+            operation.rmdir()
+        except (ArtifactError, OSError):
+            return
+
+    def _read_download_stage_marker(
+        self,
+        marker: Path,
+        reference: ArtifactDescriptor | ArtifactRef,
+        fingerprint: str,
+    ) -> None:
+        expected_reference = (
+            reference.reference if type(reference) is ArtifactDescriptor else reference
+        )
+        try:
+            with marker.open("r", encoding="utf-8") as handle:
+                raw = json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+            _require_exact_keys(raw, _DOWNLOAD_STAGE_KEYS, "download stage")
+            assert isinstance(raw, Mapping)
+            if (
+                type(raw["schema_version"]) is not int
+                or raw["schema_version"] != _DOWNLOAD_STAGE_SCHEMA_VERSION
+                or _parse_reference(raw["reference"], "download stage.reference")
+                != expected_reference
+                or type(raw["descriptor_fingerprint"]) is not str
+                or raw["descriptor_fingerprint"] != fingerprint
+            ):
+                raise ArtifactPathError("download stage marker does not match descriptor")
+        except ArtifactPathError:
+            raise
+        except (
+            ArtifactDescriptorError,
+            FileNotFoundError,
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as error:
+            raise ArtifactPathError("download stage marker is invalid") from error
+
+    def _validate_download_stage_state(self, state: Path) -> None:
+        def scan(directory: Path) -> None:
+            try:
+                entries = tuple(os.scandir(directory))
+            except OSError as error:
+                raise ArtifactPathError("failed to scan download staging state") from error
+            for entry in entries:
+                path = Path(entry.path)
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError as error:
+                    raise ArtifactPathError(
+                        "failed to inspect download staging state"
+                    ) from error
+                if stat.S_ISLNK(info.st_mode):
+                    raise ArtifactPathError("download staging state contains a symlink")
+                if stat.S_ISDIR(info.st_mode):
+                    scan(path)
+                elif stat.S_ISREG(info.st_mode) and path.suffix == ".json":
+                    try:
+                        with path.open("r", encoding="utf-8") as handle:
+                            json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+                    except (
+                        OSError,
+                        UnicodeError,
+                        json.JSONDecodeError,
+                        ValueError,
+                    ) as error:
+                        raise ArtifactPathError(
+                            "download staging state contains invalid JSON"
+                        ) from error
+                else:
+                    raise ArtifactPathError("download staging state has invalid entry")
+
+        scan(state)
+
+    def _remove_finalized_download_stage(self, stage: _ManagedDownloadStage) -> None:
+        self._validate_download_stage_handle_by_marker_after_promotion(stage)
+        try:
+            shutil.rmtree(self._retire_download_stage_operation(stage.operation))
+        except OSError as error:
+            raise ArtifactStateError("failed to clean finalized download staging") from error
+
+    def _retire_download_stage_operation(self, operation: Path) -> Path:
+        """Atomically move one validated canonical operation off its stable path."""
+
+        retired = Path(
+            tempfile.mkdtemp(prefix=".download-retired-", dir=self._staging_path)
+        )
+        try:
+            retired.rmdir()
+            os.rename(operation, retired)
+        except OSError:
+            try:
+                retired.rmdir()
+            except OSError:
+                pass
+            raise
+        return retired
+
+    def _validate_download_stage_handle_by_marker_after_promotion(
+        self,
+        stage: _ManagedDownloadStage,
+    ) -> None:
+        self._validate_download_stage_handle_paths(stage)
+        if self._managed_path_exists(stage.payload):
+            raise ArtifactPathError("download staging payload was not promoted")
+        operation_identity = self._download_stage_node_identity(
+            stage.operation,
+            directory=True,
+        )
+        marker_identity = self._download_stage_node_identity(
+            stage.marker,
+            directory=False,
+        )
+        state_identity = (
+            self._download_stage_node_identity(stage.state, directory=True)
+            if self._managed_path_exists(stage.state)
+            else None
+        )
+        if (
+            operation_identity != stage.operation_identity
+            or marker_identity != stage.marker_identity
+            or state_identity != stage.state_identity
+        ):
+            raise ArtifactPathError("download staging operation identity changed")
+        try:
+            entries = {entry.name for entry in os.scandir(stage.operation)}
+        except OSError as error:
+            raise ArtifactPathError("failed to scan finalized download staging") from error
+        expected_entries = {stage.marker.name}
+        if state_identity is not None:
+            expected_entries.add(stage.state.name)
+        if entries != expected_entries:
+            raise ArtifactPathError("finalized download staging has unexpected entries")
+        self._read_download_stage_marker(
+            stage.marker,
+            stage.reference,
+            stage.descriptor_fingerprint,
+        )
+
+    # -- end TASK-1694 download-stage seam -----------------------------------
 
     def install(
         self,

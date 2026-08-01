@@ -153,6 +153,21 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         srv.serve("/model.bin", initial_body, etag='"v1"', support_range=True)
         trusted = _trusted_hostname(srv)
 
+        # Built once, reused both to compute the download stage's location
+        # after the crash (TASK-1694: a service-owned stage keyed off the
+        # descriptor's own fingerprint, not a bare
+        # staging/managed/<id>/<rev>/<variant> path) and as the resumed
+        # provision()'s catalog entry below -- the child process
+        # independently reconstructs the identical descriptor from `spec`.
+        descriptor = build_descriptor(
+            *ref_parts,
+            role="root",
+            source_url=srv.url("/model.bin"),
+            size_bytes=len(full_body),
+            sha256=sha256,
+            dependencies=(),
+        )
+
         spec = {
             "artifact_id": ref_parts[0],
             "revision": ref_parts[1],
@@ -174,10 +189,9 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         )
 
         core = ModelArtifactService(root_dir)
-        staging_dir = (
-            core.staging_path / "managed" / ref_parts[0] / ref_parts[1] / ref_parts[2]
-        )
-        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
+        stage = core._download_stage_for(descriptor, create=False)
+        assert stage is not None
+        sidecar_path = stage.state / "fetch-state.json"
 
         # The fetch phase durably completed before the freeze: a real,
         # parseable checkpoint sits on disk.
@@ -189,12 +203,15 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
             "bytes_done": len(initial_body),
             "complete": False,
         }
-        assert (staging_dir / "model.bin").stat().st_size == len(initial_body)
+        assert (stage.payload / "model.bin").stat().st_size == len(initial_body)
 
-        # (a) valid-sidecar managed staging survives reconcile() (Task 2's rule).
+        # (a) the valid, marked download stage survives reconcile() (it is
+        # not the bare install-*/managed staging shape reconcile()'s GC
+        # recognizes at all, so it is left untouched as an unrecognized
+        # top-level entry -- see service.py's _gc_staging docstring).
         report = core.reconcile()
-        assert staging_dir.exists()
-        assert (staging_dir / "model.bin").exists()
+        assert stage.operation.exists()
+        assert (stage.payload / "model.bin").exists()
         assert sidecar_path.exists()
         assert report.staging_removed == ()
 
@@ -204,14 +221,6 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
 
         # (c) a fresh provision resumes via Range and completes.
         srv.serve("/model.bin", full_body, etag='"v1"', support_range=True)
-        descriptor = build_descriptor(
-            *ref_parts,
-            role="root",
-            source_url=srv.url("/model.bin"),
-            size_bytes=len(full_body),
-            sha256=sha256,
-            dependencies=(),
-        )
         catalog = DictCatalog({descriptor.reference: descriptor})
         root_ref = ArtifactRef(*ref_parts)
         consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root_ref, ()))
@@ -224,7 +233,8 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         assert activated == root_ref
         range_headers = [headers.get("Range") for headers in srv.requests["/model.bin"]]
         assert f"bytes={len(initial_body)}-" in range_headers
-        assert not staging_dir.exists()
+        # A successful finalize retires the whole stage operation.
+        assert not stage.operation.exists()
         with core.acquire(root_ref) as handle:
             assert handle.handle.root == root_ref
 
@@ -365,6 +375,20 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
         srv.serve("/model.bin", survivor_body, etag='"v1"', support_range=True)
         trusted = _trusted_hostname(srv)
 
+        # Reused after the crash to compute the survivor's download stage
+        # location (TASK-1694: a service-owned stage keyed off the
+        # descriptor's own fingerprint, not a bare
+        # staging/managed/<id>/<rev>/<variant> path) -- the child process
+        # independently reconstructs the identical descriptor from
+        # `survivor_spec`.
+        survivor_descriptor = build_descriptor(
+            *survivor_ref_parts,
+            role="root",
+            source_url=srv.url("/model.bin"),
+            size_bytes=len(survivor_body),
+            sha256=survivor_sha256,
+            dependencies=(),
+        )
         survivor_spec = {
             "artifact_id": survivor_ref_parts[0],
             "revision": survivor_ref_parts[1],
@@ -389,30 +413,34 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
         )
 
     core = ModelArtifactService(root_dir)
-    survivor_dir = (
-        core.staging_path
-        / "managed"
-        / survivor_ref_parts[0]
-        / survivor_ref_parts[1]
-        / survivor_ref_parts[2]
-    )
-    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
+    survivor_stage = core._download_stage_for(survivor_descriptor, create=False)
+    assert survivor_stage is not None
+    survivor_sidecar = survivor_stage.state / "fetch-state.json"
+    assert survivor_sidecar.exists()
 
-    # A hand-crafted orphan: no sidecar at all, unrelated to the crash above.
+    # A hand-crafted orphan in the OLD bare managed/ staging shape: no
+    # sidecar at all. reconcile()'s staging GC (_gc_managed_staging) still
+    # recognizes and removes this shape -- porting that GC to the new
+    # download-stage layout is separate follow-up work (reconciliation doc
+    # item 4), not required by TASK-1694; this pins that the OLD GC path
+    # still works and is not disturbed by the new stage layout existing
+    # alongside it.
     orphan_dir = core.staging_path / "managed" / "orphan-model" / "rev1" / "int8"
     orphan_dir.mkdir(parents=True)
     (orphan_dir / "model.bin").write_bytes(b"abandoned")
 
     report = core.reconcile()
 
-    # Only the orphan is named as removed.
+    # Only the orphan is named as removed; the survivor's own (unrecognized
+    # top-level "download-*") stage entry is left alone entirely -- see
+    # service.py's _gc_staging docstring.
     assert report.staging_removed == ("managed/orphan-model/rev1/int8",)
     assert not orphan_dir.exists()
 
-    # The crash-surviving valid entry is untouched.
-    assert survivor_dir.exists()
-    assert (survivor_dir / "model.bin").exists()
-    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
+    # The crash-surviving valid stage is untouched.
+    assert survivor_stage.operation.exists()
+    assert (survivor_stage.payload / "model.bin").exists()
+    assert survivor_sidecar.exists()
 
     # Content entirely outside the managed store is untouched.
     assert unrelated_file.read_text() == "do not touch"

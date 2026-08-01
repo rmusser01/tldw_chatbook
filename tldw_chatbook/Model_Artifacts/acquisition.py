@@ -8,7 +8,6 @@ import functools
 import hashlib
 import json
 import os
-import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import (
@@ -50,7 +49,12 @@ from .service import (
 )
 
 if TYPE_CHECKING:
-    from .service import ArtifactDescriptor, ArtifactFile, ModelArtifactService
+    from .service import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ModelArtifactService,
+        _ManagedDownloadStage,
+    )
 
 
 # Constants per spec (Docs/superpowers/specs/2026-07-30-managed-model-acquisition-design.md)
@@ -76,40 +80,44 @@ _CoreCallResult = TypeVar("_CoreCallResult")
 # these same names: HUGGINGFACE_API_KEY, then HF_TOKEN, then config.
 _CREDENTIAL_ENV_HINT = "HUGGINGFACE_API_KEY (or HF_TOKEN)"
 
-# The fetch-state sidecar's filename SUFFIX when addressed as a sibling of
-# its staging directory (see _fetch_sidecar_path). Mirrors
-# service.py's _MANAGED_FETCH_SIDECAR_SUFFIX (private there, used by the
-# staging GC classifier) -- a drift-guard test in
-# test_reconcile_staging_gc.py fails if the two ever diverge, the same
-# pattern fetch.py's _STRIP_HEADERS uses against egress.py's.
-_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
+# TASK-1694: the fetch-state sidecar's filename, addressed inside a
+# ``state/`` directory that is a SIBLING of the download stage's
+# ``payload/`` subtree (see ``_fetch_sidecar_path`` and
+# ``ModelArtifactService._download_stage_for``/``_finalize_download_stage``
+# in service.py). This supersedes the pre-1694 design, where the sidecar
+# lived as a sibling FILE of the (then bare) staging directory
+# (``<variant>.fetch-state.json``, named via the now-removed
+# ``_FETCH_SIDECAR_SUFFIX``): that convention existed only to keep resume
+# metadata out of what ``core.install(..., consume_source=True)``
+# validated and promoted. The service-owned download stage makes that
+# workaround unnecessary -- ``state/`` is never part of the ``payload/``
+# subtree ``_finalize_download_stage`` renames into the immutable
+# destination, so resume metadata cannot end up inside a promoted
+# artifact by construction, regardless of what acquisition.py names it or
+# where inside ``state/`` it puts it. See
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1.
+_FETCH_STATE_FILENAME = "fetch-state.json"
 
 
 def _fetch_sidecar_path(staging_dir: Path) -> Path:
-    """Sibling fetch-state sidecar path for a managed staging directory.
-
-    TASK-595 final-review P2: the sidecar used to live INSIDE the payload
-    directory it describes (``staging_dir / "fetch-state.json"``) --
-    ``core.install``'s payload-tree validation rejects any file it
-    doesn't declare, so ``_install_artifact`` had to delete the sidecar
-    before every install attempt, destroying the only resumable state on
-    ANY install failure (including a merely transient, retryable one).
-    Living OUTSIDE the payload tree instead -- a sibling FILE named after
-    the staging directory, not a child of it -- means ``core.install``
-    never sees it at all, so nothing needs deleting before the call, and
-    a failed install leaves the sidecar (and the staged bytes it
-    describes) exactly where a later ``provision()`` attempt can resume
-    from.
+    """Fetch-state sidecar path for a download stage's payload directory.
 
     Args:
-        staging_dir: The ``staging/managed/<id>/<rev>/<variant>`` payload
-            directory for one artifact.
+        staging_dir: A download stage's ``payload/`` directory (i.e.
+            ``_ManagedDownloadStage.payload``, or -- for the standalone
+            unit tests that exercise ``_fetch_artifact``/
+            ``_preverify_artifact`` directly without a real stage -- any
+            directory whose parent also owns a sibling ``state/``
+            directory this call may create).
 
     Returns:
-        The sidecar path, a sibling of ``staging_dir`` (same parent
-        directory, name ``<variant>.fetch-state.json``).
+        ``staging_dir.parent / "state" / "fetch-state.json"`` -- inside
+        the stage's ``state/`` subtree, never inside ``staging_dir``
+        itself (which is exactly what gets promoted on a successful
+        finalize).
     """
-    return staging_dir.parent / f"{staging_dir.name}{_FETCH_SIDECAR_SUFFIX}"
+    return staging_dir.parent / "state" / _FETCH_STATE_FILENAME
 
 
 # Error hierarchy: all subclass ArtifactError
@@ -711,12 +719,14 @@ class ArtifactAcquisitionService:
                 download_bytes += max(entry.total_bytes - staged, 0)
                 gating_targets.setdefault(entry.repository, entry)
 
-        # consume_source install() moves staged bytes into the immutable
-        # store (os.replace, or copy+delete of the SAME bytes on EXDEV) --
-        # there is no second on-disk copy of the payload to budget for. The
-        # field survives at 0 so a future copy-based install path (or a
-        # policy change back to consume_source=False) has somewhere honest
-        # to report real overhead without an API/signature break.
+        # TASK-1694: _install_artifact finalizes a download stage by
+        # RENAMING its payload subtree into the immutable destination
+        # (core._finalize_download_stage) -- fetched bytes never leave the
+        # service's own same-filesystem staging until that single rename,
+        # so there is no second on-disk copy of the payload to budget for.
+        # The field survives at 0 so a future copy-based finalization path
+        # has somewhere honest to report real overhead without an
+        # API/signature break.
         staging_overhead_bytes = 0
 
         retained_bytes = (
@@ -901,21 +911,36 @@ class ArtifactAcquisitionService:
                 for descriptor in closure:
                     if descriptor.reference in installed_refs:
                         continue
-                    staging_dir = (
-                        self._core.staging_path
-                        / "managed"
-                        / descriptor.reference.artifact_id
-                        / descriptor.reference.revision
-                        / descriptor.reference.variant
+                    # TASK-1694: a service-owned, marked download stage
+                    # replaces the old bare
+                    # ``staging/managed/<id>/<rev>/<variant>`` directory.
+                    # ``stage.payload`` is where fetch/pre-verify write and
+                    # read declared files -- the exact subtree
+                    # ``_install_artifact`` (via
+                    # ``core._finalize_download_stage``) verifies and
+                    # RENAMES into the immutable destination. Resume
+                    # metadata (the fetch-state sidecar) is written under
+                    # ``stage.state`` -- a sibling of ``payload``, never
+                    # promoted -- see ``_fetch_sidecar_path``.
+                    stage = await self._run_core_call(
+                        "stage",
+                        descriptor.reference,
+                        functools.partial(
+                            self._core._download_stage_for, descriptor, create=True
+                        ),
                     )
-                    await self._fetch_artifact(descriptor, staging_dir, progress_state)
-                    await self._preverify_artifact(descriptor, staging_dir, progress_state)
-                    await self._install_artifact(descriptor, staging_dir)
-                    # _install_artifact's signature is frozen at
-                    # (descriptor, staging_dir) -- no progress_state -- so
-                    # the per-artifact "verify-install" event is emitted
-                    # here, by the caller that already has it, immediately
-                    # after the phase it describes actually completes.
+                    # create=True always returns a stage (never None); the
+                    # Optional return type only covers the create=False
+                    # lookup path (see _staged_bytes_for).
+                    assert stage is not None
+                    await self._fetch_artifact(descriptor, stage.payload, progress_state)
+                    await self._preverify_artifact(descriptor, stage.payload, progress_state)
+                    await self._install_artifact(descriptor, stage)
+                    # _install_artifact's signature is (descriptor, stage)
+                    # -- no progress_state -- so the per-artifact
+                    # "verify-install" event is emitted here, by the caller
+                    # that already has it, immediately after the phase it
+                    # describes actually completes.
                     self._emit_indeterminate_progress(
                         progress_state, "verify-install", descriptor.reference
                     )
@@ -1486,90 +1511,74 @@ class ArtifactAcquisitionService:
     async def _install_artifact(
         self,
         descriptor: ArtifactDescriptor,
-        staging_dir: Path,
+        stage: _ManagedDownloadStage,
     ) -> None:
-        """Promote one pre-verified staged directory into the immutable store.
+        """Finalize one pre-verified download stage into the immutable store.
 
-        The fetch-state sidecar lives OUTSIDE ``staging_dir`` (see
-        ``_fetch_sidecar_path``) -- a SIBLING file, never a child of the
-        payload directory ``core.install`` validates -- so it is left
-        completely untouched here until AFTER a successful install. This
-        is deliberately NOT the same as the earlier design, which deleted
-        an in-tree sidecar before every attempt (required then, since
-        ``install``'s payload-tree validation rejects any file it doesn't
-        declare): that pre-deletion destroyed the only resumable state on
-        ANY install failure, including a merely transient, retryable one
-        -- a "retryable" error that also destroys what it would resume
-        from is not actually retryable. With the sidecar out of the
-        payload tree, ``core.install`` never even sees it, so a failed
-        attempt leaves both the sidecar and the staged bytes it describes
-        exactly where a later ``provision()`` call can resume from.
+        TASK-1694: retargets this phase at
+        ``core._finalize_download_stage`` -- the service-owned payload-
+        subtree finalization seam ported from the parallel TASK-595
+        implementation (see
+        Docs/superpowers/reviews/2026-08-01-task-595-duplicate-
+        implementation-reconciliation.md, item 1) -- instead of
+        ``core.install(..., consume_source=True)``. ``stage.payload`` (what
+        ``_fetch_artifact``/``_preverify_artifact`` wrote and verified) is
+        the ONLY subtree the core renames into the immutable destination;
+        ``stage.marker``/``stage.state`` (the fetch-state sidecar's home,
+        see ``_fetch_sidecar_path``) never enter it, so resume metadata
+        cannot end up inside a promoted artifact by construction -- this
+        is what makes the OLD sibling-sidecar workaround unnecessary and
+        structurally eliminates the "retryable install failure destroys
+        the resumable download" bug class: finalization never moves any
+        bytes out of ``stage.payload`` until every verification and lease
+        has already succeeded, and a failure at any step before that final
+        rename leaves ``stage`` -- payload, state, and marker -- completely
+        untouched for a later ``provision()`` attempt to resume from.
 
-        ``core.install(..., consume_source=True)`` is synchronous core
-        surface (file moves, lease acquisition, manifest writes), so it
-        runs in the default executor like every other core call this
-        service makes. On success, ``consume_source`` has moved every
-        declared file out of ``staging_dir`` into the immutable store;
-        the now-empty directory tree AND its sibling sidecar are both
-        removed so a later ``reconcile()`` staging GC sees nothing left
-        to classify for this artifact -- an empty leftover directory (or
-        a stale sidecar with no matching payload) would otherwise look
-        identical to an abandoned partial download.
+        On success, ``core._finalize_download_stage`` also retires the
+        whole stage operation directory (payload having been promoted,
+        plus the marker and state subtree) so a later ``reconcile()``
+        staging GC sees nothing left to classify for this artifact; this
+        phase does not need its own cleanup step.
 
         Args:
             descriptor: The artifact to install.
-            staging_dir: The durable staging directory holding the verified
-                files.
+            stage: The service-owned download stage holding the verified
+                payload (obtained via ``core._download_stage_for`` earlier
+                in ``provision()``'s per-artifact loop).
 
         Raises:
-            TransferError: ``core.install`` raised ``ArtifactIntegrityError``,
-                ``ArtifactConflictError``, ``ArtifactPathError``, or
-                ``ArtifactStateError`` -- wrapped by ``_run_core_call``
-                with ``retryable`` set accordingly (see there). Only a
-                SUCCESSFUL install triggers the ``staging_dir``/sidecar
-                cleanup above -- on failure both are left in place (though
-                ``consume_source`` may already have moved the payload's
-                declared files into the core's own, separately-cleaned-up
-                staging by the time the failure surfaces, so an empty
-                leftover payload directory is not itself proof anything
-                is wrong; the sidecar's checkpoint is what a resumed
-                fetch actually trusts).
+            TransferError: ``core._finalize_download_stage`` raised
+                ``ArtifactIntegrityError``, ``ArtifactConflictError``,
+                ``ArtifactPathError``, or ``ArtifactStateError`` --
+                wrapped by ``_run_core_call`` with ``retryable`` set
+                accordingly (see there). On failure, ``stage`` is left
+                completely in place for a resumed ``provision()`` attempt.
         """
 
-        sidecar_path = _fetch_sidecar_path(staging_dir)
-
         await self._run_core_call(
-            "install",
+            "finalize",
             descriptor.reference,
-            functools.partial(
-                self._core.install, descriptor, staging_dir, consume_source=True
-            ),
+            functools.partial(self._core._finalize_download_stage, descriptor, stage),
         )
-
-        # Only reached on a SUCCESSFUL install -- both the (now-consumed)
-        # payload directory and its sibling sidecar are cleaned up
-        # together; a failure raised above skips this entirely, leaving
-        # both in place for a resumed provision() attempt.
-        try:
-            sidecar_path.unlink()
-        except FileNotFoundError:
-            pass
-        shutil.rmtree(staging_dir, ignore_errors=True)
 
     async def _run_core_call(
         self,
-        operation: Literal["install", "activate"],
+        operation: Literal["stage", "finalize", "activate"],
         ref: ArtifactRef,
         func: Callable[[], _CoreCallResult],
     ) -> _CoreCallResult:
         """Run one synchronous core call in the executor, never trapping raw.
 
-        ``core.install`` and ``core.activate`` are the two core entry
-        points this service reaches via a bare executor hop; both can raise
-        the core's own ``ArtifactError`` subclasses (integrity, conflict,
-        path safety, or lease/state contention), which would otherwise
-        escape ``provision()`` untouched -- breaking the spec's never-trap
-        rule that every acquisition-surfaced failure is a typed, retryable-
+        ``core._download_stage_for``, ``core._finalize_download_stage``
+        (TASK-1694: replaces the old ``core.install(...,
+        consume_source=True)`` call this wrapping originally covered), and
+        ``core.activate`` are the core entry points this service reaches
+        via a bare executor hop; all three can raise the core's own
+        ``ArtifactError`` subclasses (integrity, conflict, path safety, or
+        lease/state contention), which would otherwise escape
+        ``provision()`` untouched -- breaking the spec's never-trap rule
+        that every acquisition-surfaced failure is a typed, retryable-
         flagged ``AcquisitionError``. ``ArtifactIntegrityError``,
         ``ArtifactConflictError``, and ``ArtifactPathError`` are not
         retryable: the same staged content, the same conflicting
@@ -1643,6 +1652,14 @@ class ArtifactAcquisitionService:
         are only ever a hint surfaced on the consent screen ("up to N bytes
         already fetched") -- ``provision()`` independently re-validates
         against the server's current validators before trusting any of it.
+        TASK-1694: the sidecar now lives under a service-owned download
+        stage's ``state/`` subtree (see ``_fetch_sidecar_path``), so this
+        looks the stage up via ``core._download_stage_for(descriptor,
+        create=False)`` rather than computing a bare
+        ``staging/managed/<id>/<rev>/<variant>`` path directly. A stage
+        that does not exist, or one whose marker/layout fails the core's
+        own validation, reads as zero credit -- same best-effort contract
+        as a missing or corrupt sidecar file always had.
 
         Each declared file's credit is capped by THREE independent limits:
         the sidecar's own recorded ``bytes_done``, the file's declared
@@ -1659,18 +1676,20 @@ class ArtifactAcquisitionService:
         something ``provision()`` will never look at.
 
         Args:
-            descriptor: The artifact descriptor whose staging directory and
+            descriptor: The artifact descriptor whose download stage and
                 declared files to inspect.
 
         Returns:
-            The sum of capped per-file credit, or 0 for a missing or
-            unparseable sidecar.
+            The sum of capped per-file credit, or 0 for a missing,
+            invalid, or unparseable stage/sidecar.
         """
-        ref = descriptor.reference
-        staging_dir = (
-            self._core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
-        )
-        sidecar = _fetch_sidecar_path(staging_dir)
+        try:
+            stage = self._core._download_stage_for(descriptor, create=False)
+        except ArtifactError:
+            return 0
+        if stage is None:
+            return 0
+        sidecar = _fetch_sidecar_path(stage.payload)
         try:
             payload = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1693,7 +1712,7 @@ class ArtifactAcquisitionService:
             ):
                 continue
             try:
-                actual_size = (staging_dir / file_path).stat().st_size
+                actual_size = (stage.payload / file_path).stat().st_size
             except OSError:
                 actual_size = 0
             total += min(bytes_done, actual_size, declared_sizes[file_path])

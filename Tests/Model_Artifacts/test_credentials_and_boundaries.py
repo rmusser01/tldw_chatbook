@@ -126,9 +126,8 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
                 trusted_origins=_trusted(srv),
                 credential_resolver=resolver,
             )
-            catalog = DictCatalog(
-                {root: make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))}
-            )
+            desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+            catalog = DictCatalog({root: desc})
 
             report = await svc.preflight(root, catalog)
             assert report.gating_errors == (), (
@@ -169,13 +168,15 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
             assert TOKEN.encode() not in path.read_bytes(), f"token leaked into {path}"
     assert scanned > 0, "sanity: the artifact store must contain files to scan"
 
-    # 3. The fetch-state sidecar specifically no longer exists (install()
-    #    removes it), which the tree scan above already covers, but assert
-    #    it explicitly as the most direct claim the brief asks for. Lives
-    #    as a SIBLING of the payload directory, never a child of it (see
-    #    acquisition.py's _fetch_sidecar_path).
-    sidecar_path = root_dir / "staging" / "managed" / "gated-model" / "r1" / "int8.fetch-state.json"
-    assert not sidecar_path.exists()
+    # 3. The fetch-state sidecar specifically no longer exists (a
+    #    successful finalize retires the whole download stage, sidecar
+    #    included -- see core._finalize_download_stage /
+    #    _remove_finalized_download_stage), which the tree scan above
+    #    already covers, but assert it explicitly as the most direct claim
+    #    the brief asks for. It would have lived inside the stage's
+    #    state/ subtree, never inside payload/ (see acquisition.py's
+    #    _fetch_sidecar_path).
+    assert core._download_stage_for(desc, create=False) is None
 
 
 # ---------------------------------------------------------------------------
