@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import hashlib
 import json
+import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, Protocol
@@ -170,25 +173,42 @@ class _ProvisionProgressState:
 
     Task 6 only constructs one instance per ``provision()`` call and threads
     it, unchanged, into ``_fetch_artifact`` and ``_preverify_artifact`` for
-    every artifact in the closure. Tasks 7-8 read and update ``bytes_done``
-    as each declared file streams or is pre-verified, and call ``callback``
-    with an ``AcquisitionProgress`` event carrying these CLOSURE-WIDE totals
-    -- per the design spec, fetch/pre-verify progress is reported summed
-    across the whole closure, not reset per artifact or per file.
+    every artifact in the closure. Task 7 reads and updates ``bytes_done``
+    as each declared file streams; Task 8 reads and updates
+    ``preverify_bytes_done`` as each staged file is hashed. Both counters
+    are reported against the SAME ``bytes_total`` (the closure's declared
+    download bytes -- the exact same files are streamed in the fetch phase
+    and hashed in the pre-verify phase) but are tracked SEPARATELY: fetch
+    finishes one full closure-wide pass through ``bytes_total`` before
+    pre-verify begins its own, so a single shared counter would either
+    stall at 100% through the whole pre-verify phase or run past 100% --
+    neither is "closure-wide, not reset per artifact or per file", the
+    property this class exists to provide. ``callback`` is called with an
+    ``AcquisitionProgress`` event carrying whichever counter belongs to the
+    active phase.
 
     Args:
         callback: The caller's optional progress sink, forwarded unchanged
             from ``provision()``'s own ``progress`` keyword argument.
-        bytes_total: Total bytes still to download across the whole
-            closure (``PreflightReport.download_bytes``), computed once
-            before the per-artifact loop starts.
+        bytes_total: Total bytes still to download (and, in the pre-verify
+            phase, to re-hash) across the whole closure
+            (``PreflightReport.download_bytes``), computed once before the
+            per-artifact loop starts.
         bytes_done: Running total of bytes fetched so far across every
             artifact already processed in this run; starts at zero.
+        preverify_bytes_done: Running total of bytes hashed so far during
+            the pre-verify phase, across every artifact already processed
+            in this run; starts at zero. A pre-verify hash mismatch and
+            refetch (Task 8) re-streams and re-hashes the same file, so
+            this counter can advance past ``bytes_total`` in that recovery
+            path -- an acceptable cosmetic wrinkle in an uncommon retry,
+            not a steady-state property.
     """
 
     callback: Callable[[AcquisitionProgress], None] | None
     bytes_total: int
     bytes_done: int = 0
+    preverify_bytes_done: int = 0
 
 
 @dataclass(frozen=True)
@@ -537,8 +557,14 @@ class ArtifactAcquisitionService:
         Artifacts already present in ``core.list_installed()`` are skipped
         entirely, bypassing the fetch/pre-verify/install phases -- this is
         both the idempotent-completion path for a fully provisioned closure
-        and the crash-after-install recovery path (Tasks 7-8 exercise the
-        latter with a mid-closure crash).
+        and the crash-after-install recovery path.
+
+        Every not-yet-installed artifact in the closure runs its three
+        phases strictly in order -- fetch (Task 7), pre-verify (Task 8),
+        install (Task 8) -- before the loop moves to the next artifact; a
+        ``verify-install`` progress event follows each artifact's install.
+        Once every artifact is installed, the whole closure is activated
+        (``core.activate``) and a final ``activate`` progress event fires.
 
         Args:
             root: The root artifact reference to provision.
@@ -550,7 +576,9 @@ class ArtifactAcquisitionService:
                 freshly resolved descriptors supply the file URLs the
                 fetch phase needs.
             progress: Optional sink for ``AcquisitionProgress`` events
-                emitted by the fetch and pre-verify phases (Tasks 7-8).
+                emitted by every phase: real byte detail for ``fetch`` and
+                ``pre-verify``, indeterminate per-artifact events for
+                ``verify-install`` and ``activate``.
 
         Returns:
             The activated root artifact reference.
@@ -566,9 +594,9 @@ class ArtifactAcquisitionService:
             CatalogError: Propagated from an unknown ref, a dependency
                 cycle, or a conflicting-revision closure during the
                 re-walk.
-            NotImplementedError: A not-yet-installed artifact reached the
-                fetch, pre-verify, or install phase stub (Tasks 7-8 fill
-                these in).
+            TransferError: A file failed to fetch, or a staged file failed
+                pre-verify a second time after one automatic refetch --
+                nothing is installed for that artifact.
         """
         async with self._lock:
             loop = asyncio.get_running_loop()
@@ -622,8 +650,18 @@ class ArtifactAcquisitionService:
                     await self._fetch_artifact(descriptor, staging_dir, progress_state)
                     await self._preverify_artifact(descriptor, staging_dir, progress_state)
                     await self._install_artifact(descriptor, staging_dir)
+                    # _install_artifact's signature is frozen at
+                    # (descriptor, staging_dir) -- no progress_state -- so
+                    # the per-artifact "verify-install" event is emitted
+                    # here, by the caller that already has it, immediately
+                    # after the phase it describes actually completes.
+                    self._emit_indeterminate_progress(
+                        progress_state, "verify-install", descriptor.reference
+                    )
 
-                return await loop.run_in_executor(None, self._core.activate, root)
+                activated = await loop.run_in_executor(None, self._core.activate, root)
+                self._emit_indeterminate_progress(progress_state, "activate", root)
+                return activated
             finally:
                 await loop.run_in_executor(None, lease.release)
 
@@ -1016,8 +1054,15 @@ class ArtifactAcquisitionService:
     ) -> None:
         """Streaming-verify every staged file's SHA-256 before install.
 
-        Stub (Task 6); Task 8 implements this phase. The signature is final
-        -- ``provision()``'s call site will not change when it does.
+        A mismatch does not fail outright: the offending file is deleted,
+        its sidecar entry is reset (so ``_fetch_artifact`` treats it as
+        never fetched), and the whole artifact is refetched once via the
+        existing ``_fetch_artifact`` path before hashing is retried. Only a
+        SECOND mismatch for the same file raises -- this bounds automatic
+        recovery to ``MAX_FILE_REFETCHES`` (1) per spec, distinct from
+        ``_fetch_artifact``'s own restart-on-``FetchRestartRequired``
+        handling (that guards a download that never completed cleanly;
+        this guards a download that completed but is wrong).
 
         Args:
             descriptor: The artifact whose staged files to verify.
@@ -1027,10 +1072,101 @@ class ArtifactAcquisitionService:
                 update as bytes are verified.
 
         Raises:
-            NotImplementedError: Always, until Task 8 implements this phase.
+            TransferError: A staged file still fails its declared SHA-256
+                after ``MAX_FILE_REFETCHES`` refetch attempts. ``retryable``
+                is True -- a subsequent ``provision()`` call may still
+                succeed (e.g. once the corrupt content upstream is fixed).
         """
 
-        raise NotImplementedError("pre-verify phase is implemented in a later task")
+        for file in descriptor.files:
+            await self._preverify_one_file(descriptor, file, staging_dir, progress_state)
+
+    async def _preverify_one_file(
+        self,
+        descriptor: ArtifactDescriptor,
+        file: ArtifactFile,
+        staging_dir: Path,
+        progress_state: _ProvisionProgressState,
+    ) -> None:
+        """Hash one staged file, refetching once via ``_fetch_artifact`` on mismatch.
+
+        Args:
+            descriptor: The artifact this file belongs to.
+            file: The declared file to verify.
+            staging_dir: The durable staging directory holding the fetched
+                files.
+            progress_state: Closure-wide progress accounting.
+
+        Raises:
+            TransferError: See ``_preverify_artifact``.
+        """
+
+        destination = staging_dir / file.path
+        sidecar_path = staging_dir / "fetch-state.json"
+        attempts_used = 0
+        while True:
+            digest = self._hash_staged_file(destination, descriptor, file, progress_state)
+            if digest == file.sha256:
+                return
+            if attempts_used >= MAX_FILE_REFETCHES:
+                raise TransferError(
+                    f"staged file '{file.path}' still fails SHA-256 verification "
+                    f"after {MAX_FILE_REFETCHES} refetch(es)",
+                    retryable=True,
+                )
+            attempts_used += 1
+            try:
+                destination.unlink()
+            except FileNotFoundError:
+                pass
+            sidecar = self._load_fetch_sidecar(sidecar_path)
+            if sidecar["files"].pop(file.path, None) is not None:
+                atomic_write_json(sidecar_path, sidecar)
+            await self._fetch_artifact(descriptor, staging_dir, progress_state)
+
+    @staticmethod
+    def _hash_staged_file(
+        destination: Path,
+        descriptor: ArtifactDescriptor,
+        file: ArtifactFile,
+        progress_state: _ProvisionProgressState,
+    ) -> str:
+        """Stream one staged file's SHA-256, reporting real byte progress.
+
+        A zero-byte declared file (Task 7 guarantees the destination exists
+        even then) reads zero chunks and hashes to the empty digest --
+        never a special case, matching how ``_fetch_one_file`` already
+        treats a zero-byte file as "real, just empty" rather than absent.
+
+        Args:
+            destination: The staged file's path (must exist).
+            descriptor: The artifact this file belongs to, for the
+                progress event's ``ref``.
+            file: The declared file being hashed, for the progress event's
+                ``file`` and to size chunk reads.
+            progress_state: Closure-wide progress accounting to read and
+                update as bytes are hashed.
+
+        Returns:
+            The lowercase hex SHA-256 digest of the file's current content.
+        """
+
+        digest = hashlib.sha256()
+        with destination.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+                progress_state.preverify_bytes_done += len(chunk)
+                if progress_state.callback is not None:
+                    progress_state.callback(
+                        AcquisitionProgress(
+                            phase="pre-verify",
+                            ref=descriptor.reference,
+                            file=file.path,
+                            bytes_done=progress_state.preverify_bytes_done,
+                            bytes_total=progress_state.bytes_total,
+                        )
+                    )
+        return digest.hexdigest()
 
     async def _install_artifact(
         self,
@@ -1039,8 +1175,25 @@ class ArtifactAcquisitionService:
     ) -> None:
         """Promote one pre-verified staged directory into the immutable store.
 
-        Stub (Task 6); Task 8 implements this phase. The signature is final
-        -- ``provision()``'s call site will not change when it does.
+        The fetch-state sidecar is removed BEFORE calling ``core.install``,
+        not after: ``install``'s payload-tree validation requires the
+        source directory to contain EXACTLY the descriptor's declared
+        files, and ``fetch-state.json`` is an acquisition-owned file the
+        core knows nothing about -- leaving it in place would make every
+        install fail with "source contains an undeclared file". Once
+        pre-verify has confirmed every staged file's content, the sidecar's
+        resume checkpoints have already served their purpose.
+
+        ``core.install(..., consume_source=True)`` is synchronous core
+        surface (file moves, lease acquisition, manifest writes), so it
+        runs in the default executor like every other core call this
+        service makes. On success, ``consume_source`` has moved every
+        declared file out of ``staging_dir`` into the immutable store; the
+        now-empty (files and sidecar both gone) directory tree is removed
+        so a later ``reconcile()`` staging GC sees nothing left to
+        classify for this artifact -- an empty leftover directory with no
+        sidecar would otherwise look identical to an abandoned partial
+        download.
 
         Args:
             descriptor: The artifact to install.
@@ -1048,10 +1201,57 @@ class ArtifactAcquisitionService:
                 files.
 
         Raises:
-            NotImplementedError: Always, until Task 8 implements this phase.
+            ArtifactError: Propagated from ``core.install`` (e.g. an
+                integrity or conflict failure). Only a SUCCESSFUL install
+                triggers the ``staging_dir`` cleanup above -- on failure it
+                is left in place (though ``consume_source`` may already
+                have moved its declared files into the core's own,
+                separately-cleaned-up staging by the time the failure
+                surfaces, so an empty leftover directory is not itself
+                proof anything is wrong).
         """
 
-        raise NotImplementedError("install phase is implemented in a later task")
+        sidecar_path = staging_dir / "fetch-state.json"
+        try:
+            sidecar_path.unlink()
+        except FileNotFoundError:
+            pass
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._core.install, descriptor, staging_dir, consume_source=True
+            ),
+        )
+
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+    @staticmethod
+    def _emit_indeterminate_progress(
+        progress_state: _ProvisionProgressState,
+        phase: Literal["verify-install", "activate"],
+        ref: ArtifactRef,
+    ) -> None:
+        """Emit one per-artifact progress event with no byte detail.
+
+        Per spec, ``verify-install`` and ``activate`` events carry no real
+        byte accounting (unlike ``fetch``/``pre-verify``) -- they mark a
+        phase transition, not a position within a stream.
+
+        Args:
+            progress_state: Closure-wide progress accounting, for its
+                caller-supplied ``callback`` (may be None).
+            phase: Which indeterminate phase this event marks.
+            ref: The artifact reference this event is about.
+        """
+
+        if progress_state.callback is not None:
+            progress_state.callback(
+                AcquisitionProgress(
+                    phase=phase, ref=ref, file=None, bytes_done=0, bytes_total=0
+                )
+            )
 
     def _staged_bytes_for(self, ref: ArtifactRef) -> int:
         """Best-effort resumable-byte credit from a fetch-state sidecar.
