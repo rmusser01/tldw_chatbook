@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from loguru import logger
+
 from .models import (
     CardSnapshot,
     CharacterProbeConfig,
@@ -29,6 +31,7 @@ from .models import (
     ProbeSet,
 )
 from .prompt import build_messages
+from .targets import ResolvedTarget, resolve_targets
 
 #: The injected provider callable. Synchronous by contract -- see the module
 #: docstring for why it must never be awaited directly.
@@ -86,12 +89,17 @@ class CharacterProbeRunner:
         card: CardSnapshot,
         probe_index: int,
         turns: Sequence[str],
-        target: Mapping[str, Any],
+        target: ResolvedTarget,
         sample_index: int,
         config: CharacterProbeConfig,
     ) -> Conversation:
-        """Run one card/probe/target/sample cell's turns, in order."""
-        steering = target.get("system_prompt")
+        """Run one card/probe/target/sample cell's turns, in order.
+
+        ``target`` arrives already resolved (see :mod:`.targets`): its
+        steering has been read out of the row's ``config`` JSON, which is
+        the only place an ``eval_models`` row ever keeps it.
+        """
+        steering = target.steering
         seed = None if config.seed is None else config.seed + sample_index
         collected: list[ConversationTurn] = []
         replies: list[str] = []
@@ -105,7 +113,7 @@ class CharacterProbeRunner:
                 reply = await asyncio.to_thread(
                     self._chat,
                     messages=messages,
-                    model=target.get("model_id"),
+                    model=target.model_id,
                     temperature=config.temperature,
                     max_tokens=config.max_tokens,
                     seed=seed,
@@ -120,7 +128,7 @@ class CharacterProbeRunner:
             card_id=card.id,
             probe_index=probe_index,
             sample_index=sample_index,
-            target_id=str(target.get("id")),
+            target_id=target.id,
             turns=tuple(collected),
             error=error,
         )
@@ -138,13 +146,21 @@ class CharacterProbeRunner:
         Args:
             cards: Snapshotted cards, already resolved.
             probe_set: The scripts to run.
-            targets: ``eval_models``-shaped rows; each needs ``id`` and
-                ``model_id``, and its ``system_prompt`` (if any) supplies the
-                steering ahead of the card's own system prompt.
+            targets: ``eval_models`` rows, as ``EvalsDB.get_model``/
+                ``list_models`` return them. Each is validated and its
+                steering read out of its ``config`` JSON by
+                :func:`~tldw_chatbook.Evals.character_probe.targets.resolve_targets`
+                BEFORE the first provider call, so a malformed or
+                prefix-steered row costs nothing rather than surfacing
+                mid-grid. That steering composes ahead of the card's own
+                system prompt.
             config: The bench, supplying concurrency, samples, seed, and
                 sampling parameters.
             progress: Optional ``(done, total)`` callback fired once per
-                conversation as it finishes, regardless of outcome.
+                conversation as it finishes, regardless of outcome. A
+                callback that RAISES is logged and swallowed: an observer
+                must never be able to destroy the run it is watching (see
+                ``_guarded`` below).
 
         Returns:
             list[Conversation]: Every conversation, including failed,
@@ -152,12 +168,18 @@ class CharacterProbeRunner:
             still evidence and stays reviewable. Length is always
             ``len(cards) * len(probe_set.probes) * len(targets) *
             config.samples_per_cell``.
+
+        Raises:
+            ValueError: Propagated from ``resolve_targets`` for an empty
+                target list, duplicate target ids, or any row that is
+                malformed or prefix-steered.
         """
+        resolved_targets = resolve_targets(targets)
         jobs = [
             (card, probe_index, probe.turns, target, sample_index)
             for card in cards
             for probe_index, probe in enumerate(probe_set.probes)
-            for target in targets
+            for target in resolved_targets
             for sample_index in range(config.samples_per_cell)
         ]
         semaphore = asyncio.Semaphore(config.concurrency)
@@ -173,7 +195,20 @@ class CharacterProbeRunner:
                 )
             done += 1
             if progress is not None:
-                progress(done, total)
+                try:
+                    progress(done, total)
+                except Exception:  # noqa: BLE001 -- see below
+                    # A progress callback is an OBSERVER. Left unguarded it
+                    # runs inside an asyncio.gather child, so one raising
+                    # callback propagates out of gather and discards every
+                    # conversation the run already completed -- hours of
+                    # real provider calls thrown away because a progress
+                    # bar's widget was unmounted. A run's output must
+                    # survive its observer.
+                    logger.exception(
+                        "character probe progress callback failed at "
+                        f"{done}/{total}; continuing the run"
+                    )
             return conversation
 
         return list(await asyncio.gather(*(_guarded(job) for job in jobs)))

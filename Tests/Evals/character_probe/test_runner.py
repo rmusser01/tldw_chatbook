@@ -9,6 +9,9 @@ samples of a cell are not identical.
 
 import asyncio
 
+import pytest
+
+from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.character_probe.models import (
     CardSnapshot,
     CharacterProbeConfig,
@@ -45,15 +48,38 @@ def _config(**overrides):
     return CharacterProbeConfig(**base)
 
 
-def _targets():
-    return [{"id": "t-1", "model_id": "m", "system_prompt": None}]
+@pytest.fixture
+def db():
+    return EvalsDB(db_path=":memory:", client_id="test")
 
 
-def test_turns_run_in_order_and_each_sees_the_previous_reply():
+def _real_target(db, name, provider="llama_cpp", model_id="m", config=None):
+    """One REAL eval_models row, read back exactly as the app reads it.
+
+    Never hand-build a target dict here. The whole-branch review of this
+    branch found the runner reading ``target["system_prompt"]`` -- a key no
+    ``eval_models`` row has ever carried, since steering lives in the row's
+    ``config`` JSON -- and the runner's own steering test passed anyway,
+    because the fixture invented a shape the database does not produce. A
+    fixture that goes through ``create_model`` + ``get_model`` cannot lie
+    about the shape of a row.
+    """
+    row_id = db.create_model(
+        name=name, provider=provider, model_id=model_id, config=config or {}
+    )
+    return db.get_model(row_id)
+
+
+@pytest.fixture
+def targets(db):
+    return [_real_target(db, "t-1")]
+
+
+def test_turns_run_in_order_and_each_sees_the_previous_reply(targets):
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One", "Two")),))
     conversations = asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
     )
     (conversation,) = conversations
     assert [t.user for t in conversation.turns] == ["One", "Two"]
@@ -61,11 +87,11 @@ def test_turns_run_in_order_and_each_sees_the_previous_reply():
     assert second_call_messages[-2] == {"role": "assistant", "content": "ok-1"}
 
 
-def test_a_failed_turn_ends_only_its_own_conversation():
+def test_a_failed_turn_ends_only_its_own_conversation(targets):
     chat = _FakeChat(fail_on=1)
     probe_set = ProbeSet(probes=(Probe(turns=("One",)), Probe(turns=("Two",))))
     conversations = asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
     )
     failed = [c for c in conversations if c.error]
     survived = [c for c in conversations if not c.error]
@@ -73,67 +99,145 @@ def test_a_failed_turn_ends_only_its_own_conversation():
     assert len(survived) == 1
 
 
-def test_partial_turns_are_kept_when_a_later_turn_fails():
+def test_partial_turns_are_kept_when_a_later_turn_fails(targets):
     chat = _FakeChat(fail_on=2)
     probe_set = ProbeSet(probes=(Probe(turns=("One", "Two")),))
     (conversation,) = asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
     )
     assert conversation.turns[0].reply == "ok-1"
     assert conversation.error
 
 
-def test_per_sample_seed_is_offset_so_samples_differ():
+def test_per_sample_seed_is_offset_so_samples_differ(targets):
     """A single fixed seed would return N identical answers -- see the spec."""
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
     asyncio.run(
         CharacterProbeRunner(chat).run(
-            [_card()], probe_set, _targets(), _config(samples_per_cell=3, seed=100)
+            [_card()], probe_set, targets, _config(samples_per_cell=3, seed=100)
         )
     )
     assert sorted(call["seed"] for call in chat.calls) == [100, 101, 102]
 
 
-def test_no_seed_passes_none():
+def test_no_seed_passes_none(targets):
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
     asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
     )
     assert chat.calls[0]["seed"] is None
 
 
-def test_the_grid_covers_cards_probes_targets_and_samples():
+def test_the_grid_covers_cards_probes_targets_and_samples(db):
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)), Probe(turns=("Two",))))
-    targets = [
-        {"id": "t-1", "model_id": "m1", "system_prompt": None},
-        {"id": "t-2", "model_id": "m2", "system_prompt": None},
+    two_targets = [
+        _real_target(db, "t-1", model_id="m1"),
+        _real_target(db, "t-2", model_id="m2"),
     ]
     conversations = asyncio.run(
         CharacterProbeRunner(chat).run(
             [_card(1), _card(2)],
             probe_set,
-            targets,
+            two_targets,
             _config(character_ids=(1, 2), target_ids=("t-1", "t-2"), samples_per_cell=2),
         )
     )
     assert len(conversations) == 2 * 2 * 2 * 2
 
 
-def test_target_steering_reaches_the_system_prompt():
+def test_target_steering_reaches_the_system_prompt(db):
+    """The whole-branch review's C1: steering lives in the row's ``config``
+    JSON, never as a top-level ``system_prompt`` column, so a runner reading
+    the top level drops it for EVERY real row. Built from a real
+    ``create_model``/``get_model`` round trip so this can never pass against
+    a shape the database does not produce."""
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
-    targets = [{"id": "t-1", "model_id": "m", "system_prompt": "Be terse."}]
+    steered = [_real_target(db, "steered", config={"system_prompt": "Be terse."})]
+    assert "system_prompt" not in steered[0]  # it is inside config, nowhere else
     asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, steered, _config())
     )
     system = chat.calls[0]["messages"][0]["content"]
     assert system.startswith("Be terse.")
 
 
-def test_cancelling_stops_scheduling_but_keeps_completed_turns():
+def test_the_model_name_on_the_wire_is_the_rows_model_id_not_its_uuid(db):
+    """``eval_models.id`` identifies the target; ``model_id`` is what the
+    provider is asked for. Sending the row id would name a model no provider
+    has."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    row = _real_target(db, "t-1", model_id="qwen3-8b")
+    conversations = asyncio.run(
+        CharacterProbeRunner(chat).run([_card()], probe_set, [row], _config())
+    )
+    assert chat.calls[0]["model"] == "qwen3-8b"
+    assert conversations[0].target_id == row["id"]
+
+
+def test_a_target_without_a_model_id_fails_loudly(db):
+    """Unfixed, ``None`` reaches the provider as the model name and the
+    conversation records the literal string 'None' as its target."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    broken = dict(_real_target(db, "t-1"))
+    broken["model_id"] = None
+    with pytest.raises(ValueError, match="model_id"):
+        asyncio.run(
+            CharacterProbeRunner(chat).run([_card()], probe_set, [broken], _config())
+        )
+    assert chat.calls == []  # rejected before a single provider call
+
+
+def test_a_target_without_an_id_fails_loudly(db):
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    broken = dict(_real_target(db, "t-1"))
+    del broken["id"]
+    with pytest.raises(ValueError, match="'id'"):
+        asyncio.run(
+            CharacterProbeRunner(chat).run([_card()], probe_set, [broken], _config())
+        )
+
+
+def test_a_prefix_steered_target_is_rejected_rather_than_run_unsteered(db):
+    """A raw-completion prefix has no slot in a chat-shaped probe. Running it
+    anyway would evaluate an unsteered model while the run claims otherwise --
+    the exact silent-drop this package now refuses."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    prefixed = [_real_target(db, "raw", config={"prefix": "Be careful. "})]
+    with pytest.raises(ValueError, match="prefix"):
+        asyncio.run(
+            CharacterProbeRunner(chat).run([_card()], probe_set, prefixed, _config())
+        )
+    assert chat.calls == []
+
+
+def test_duplicate_targets_are_rejected(db):
+    """Everything downstream is keyed by target id, so a duplicate would
+    collapse two columns into one run's worth of results."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    row = _real_target(db, "t-1")
+    with pytest.raises(ValueError, match="duplicate"):
+        asyncio.run(
+            CharacterProbeRunner(chat).run([_card()], probe_set, [row, row], _config())
+        )
+
+
+def test_no_targets_at_all_is_rejected(db):
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    with pytest.raises(ValueError, match="at least one target"):
+        asyncio.run(CharacterProbeRunner(chat).run([_card()], probe_set, [], _config()))
+
+
+def test_cancelling_stops_scheduling_but_keeps_completed_turns(targets):
     """Cancel cannot abort an in-flight turn (to_thread survives cancellation),
     so it means: start nothing further, keep what finished."""
     from tldw_chatbook.Evals.character_probe.runner import CancelToken
@@ -147,7 +251,7 @@ def test_cancelling_stops_scheduling_but_keeps_completed_turns():
     probe_set = ProbeSet(probes=(Probe(turns=("One", "Two", "Three")),))
     (conversation,) = asyncio.run(
         CharacterProbeRunner(chat, cancel_token=token).run(
-            [_card()], probe_set, _targets(), _config()
+            [_card()], probe_set, targets, _config()
         )
     )
     assert len(conversation.turns) == 1
@@ -155,7 +259,7 @@ def test_cancelling_stops_scheduling_but_keeps_completed_turns():
     assert "Cancelled" in conversation.error
 
 
-def test_cancelling_starts_no_further_conversations():
+def test_cancelling_starts_no_further_conversations(targets):
     """Rule 2 is about the whole run, not just one conversation's remaining
     turns: once cancelled, conversations that have not yet run their first
     turn must come back as immediately-cancelled, not skipped or executed."""
@@ -175,7 +279,7 @@ def test_cancelling_starts_no_further_conversations():
     probe_set = ProbeSet(probes=(Probe(turns=("One",)), Probe(turns=("Two",))))
     conversations = asyncio.run(
         CharacterProbeRunner(chat, cancel_token=token).run(
-            [_card()], probe_set, _targets(), _config()
+            [_card()], probe_set, targets, _config()
         )
     )
     assert len(calls) == 1  # the second conversation never reached the provider
@@ -185,7 +289,7 @@ def test_cancelling_starts_no_further_conversations():
     assert "Cancelled" in untouched[0].error
 
 
-def test_the_blocking_chat_callable_never_runs_on_the_event_loop():
+def test_the_blocking_chat_callable_never_runs_on_the_event_loop(targets):
     """chat_api_call is a plain def; calling it inline would freeze the TUI."""
     seen = {}
 
@@ -198,11 +302,11 @@ def test_the_blocking_chat_callable_never_runs_on_the_event_loop():
         return "ok"
 
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
-    asyncio.run(CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config()))
+    asyncio.run(CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config()))
     assert seen["on_loop"] is False
 
 
-def test_progress_callback_reports_running_totals():
+def test_progress_callback_reports_running_totals(targets):
     """`progress(done, total)` is the only feedback a caller gets while a
     grid runs; done must climb to exactly total, once per conversation."""
     chat = _FakeChat()
@@ -211,18 +315,39 @@ def test_progress_callback_reports_running_totals():
 
     asyncio.run(
         CharacterProbeRunner(chat).run(
-            [_card()], probe_set, _targets(), _config(), progress=lambda done, total: calls.append((done, total))
+            [_card()], probe_set, targets, _config(), progress=lambda done, total: calls.append((done, total))
         )
     )
     # concurrency=1 (config default) makes this deterministic.
     assert calls == [(1, 2), (2, 2)]
 
 
-def test_no_progress_callback_is_optional():
+def test_no_progress_callback_is_optional(targets):
     """progress=None (the default) must not be called and must not raise."""
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
     conversations = asyncio.run(
-        CharacterProbeRunner(chat).run([_card()], probe_set, _targets(), _config())
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
     )
     assert len(conversations) == 1
+
+
+def test_a_raising_progress_callback_cannot_destroy_the_run(targets):
+    """The callback runs inside an asyncio.gather child, so unguarded it
+    propagates out of gather and discards every conversation the run already
+    completed -- real provider calls thrown away because an observer failed.
+    A run's output must survive its observer."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)), Probe(turns=("Two",))))
+
+    def exploding_progress(done, total):
+        raise RuntimeError("the progress bar was unmounted")
+
+    conversations = asyncio.run(
+        CharacterProbeRunner(chat).run(
+            [_card()], probe_set, targets, _config(), progress=exploding_progress
+        )
+    )
+    assert len(conversations) == 2
+    assert [c.turns[0].reply for c in conversations] == ["ok-1", "ok-2"]
+    assert not any(c.error for c in conversations)
