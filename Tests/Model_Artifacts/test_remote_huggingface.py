@@ -10,8 +10,12 @@ import pytest
 
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
+    RemoteGGUFCandidate,
+    RemoteGGUFFile,
     RemoteDiscoveryError,
     RemoteModelSummary,
+    ResolvedRemoteModel,
+    build_remote_catalog,
     is_exact_repository,
 )
 
@@ -20,6 +24,21 @@ def _client_factory(
     handler: Callable[[httpx.Request], httpx.Response],
 ) -> Callable[[], httpx.AsyncClient]:
     return lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _model_info(
+    siblings: list[object],
+    *,
+    commit: str = "a" * 40,
+    card_data: object = None,
+) -> dict[str, object]:
+    """Return a complete minimal Hugging Face repository-info response."""
+    return {"sha": commit, "siblings": siblings, "cardData": card_data}
+
+
+def _lfs_file(path: str, *, size: int = 123, digest: str = "b" * 64) -> dict[str, object]:
+    """Return one complete LFS-backed GGUF sibling response entry."""
+    return {"rfilename": path, "lfs": {"size": size, "sha256": digest}}
 
 
 @pytest.mark.asyncio
@@ -176,7 +195,7 @@ async def test_search_rejects_redirect_status_as_remote_error() -> None:
     ("code", "details"),
     [
         ("unexpected", ()),
-        ("invalid_response", ("x" * 513,)),
+        ("invalid_response", ("x" * 553,)),
         ("invalid_response", ("line\nbreak",)),
         ("invalid_response", tuple("warning" for _ in range(21))),
         ("invalid_response", ["warning"]),
@@ -334,3 +353,318 @@ async def test_search_rejects_empty_or_oversized_trimmed_query(query: str) -> No
         False,
         (),
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_uses_pinned_model_info_request_with_lfs_blobs() -> None:
+    """Catches a mutable, unpinned, or credential-leaking resolution request."""
+    requests: list[httpx.Request] = []
+    redirects: list[bool] = []
+
+    class TrackingClient(httpx.AsyncClient):
+        def stream(self, method: str, url: str | httpx.URL, **kwargs: object):
+            redirects.append(bool(kwargs["follow_redirects"]))
+            return super().stream(method, url, **kwargs)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_model_info([_lfs_file("model.gguf")]))
+
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=lambda: TrackingClient(transport=httpx.MockTransport(handler))
+    )
+
+    resolved = await adapter.resolve("acme/model", token="secret")
+
+    assert resolved.repository == "acme/model"
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert str(requests[0].url).split("?")[0] == (
+        "https://huggingface.co/api/models/acme/model"
+    )
+    assert requests[0].url.params == httpx.QueryParams({"blobs": "true"})
+    assert requests[0].headers["authorization"] == "Bearer secret"
+    assert redirects == [False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("commit", ["main", "A" * 40, "a" * 39, "a" * 41])
+async def test_resolve_rejects_non_immutable_commit(commit: str) -> None:
+    """Catches a branch, tag, or malformed revision becoming an artifact revision."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info([], commit=commit))
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert raised.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_repository_with_over_2048_files() -> None:
+    """Catches silently inspecting only part of an unbounded repository listing."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info([_lfs_file(f"model-{index}.gguf") for index in range(2049)]),
+            )
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert raised.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("card_data", "expected"),
+    [
+        ({"license": "apache-2.0"}, "apache-2.0"),
+        (None, "NOASSERTION"),
+        ({}, "NOASSERTION"),
+        ("not-a-mapping", "NOASSERTION"),
+        ({"license": None}, "NOASSERTION"),
+        ({"license": ""}, "NOASSERTION"),
+        ({"license": 12}, "NOASSERTION"),
+        ({"license": "x" * 129}, "NOASSERTION"),
+    ],
+)
+async def test_resolve_uses_only_bounded_card_data_license(
+    card_data: object, expected: str
+) -> None:
+    """Catches license inference from non-authoritative or malformed card fields."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info([_lfs_file("model.gguf")], card_data=card_data),
+            )
+        )
+    )
+
+    assert (await adapter.resolve("acme/model")).license_id == expected
+
+
+@pytest.mark.asyncio
+async def test_resolve_groups_complete_shards_and_keeps_single_files_sorted() -> None:
+    """Catches shard members becoming selectable singles or unstable file ordering."""
+    siblings = [
+        _lfs_file("z.gguf", size=9, digest="9" * 64),
+        _lfs_file("nested/pack-00003-of-00003.gguf", size=3, digest="3" * 64),
+        _lfs_file("nested/pack-00001-of-00003.gguf", size=1, digest="1" * 64),
+        _lfs_file("nested/pack-00002-of-00003.gguf", size=2, digest="2" * 64),
+        _lfs_file("a.gguf", size=4, digest="4" * 64),
+    ]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    resolved = await adapter.resolve("acme/model")
+
+    assert [(candidate.label, candidate.total_bytes) for candidate in resolved.candidates] == [
+        ("acme/model · a.gguf", 4),
+        ("acme/model · nested/pack", 6),
+        ("acme/model · z.gguf", 9),
+    ]
+    assert [item.upstream_path for item in resolved.candidates[1].files] == [
+        "nested/pack-00001-of-00003.gguf",
+        "nested/pack-00002-of-00003.gguf",
+        "nested/pack-00003-of-00003.gguf",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_incomplete_shards_without_reintroducing_members() -> None:
+    """Catches rejected shard members reappearing as independently installable files."""
+    siblings = [
+        _lfs_file("nested/pack-00001-of-00003.gguf"),
+        _lfs_file("nested/pack-00003-of-00003.gguf"),
+        _lfs_file("single.gguf"),
+    ]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    resolved = await adapter.resolve("acme/model")
+
+    assert [candidate.label for candidate in resolved.candidates] == [
+        "acme/model · single.gguf"
+    ]
+    assert resolved.warnings == ("acme/model · nested/pack missing 00002",)
+
+
+@pytest.mark.asyncio
+async def test_resolve_carries_incomplete_shard_warning_when_nothing_is_eligible() -> None:
+    """Catches loss of actionable incomplete-shard context on empty resolution."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info([_lfs_file("pack-00001-of-00002.gguf")]),
+            )
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert raised.value.code == "no_eligible_gguf"
+    assert raised.value.details == ("acme/model · pack missing 00002",)
+
+
+@pytest.mark.asyncio
+async def test_resolve_keeps_all_missing_indexes_for_a_maximum_label_warning() -> None:
+    """Catches truncating required missing shard indexes to fit an error-detail cap."""
+    repository = ("o" * 47) + "/" + ("r" * 48)
+    stem = "s" * 61
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info(
+                    [{"rfilename": f"{stem}-00001-of-00064.gguf", "lfs": {}}]
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve(repository)
+
+    warning = raised.value.details[0]
+    assert len(warning) == 552
+    assert warning.startswith(f"{repository} · {stem} missing 00001")
+    assert warning.endswith("00064")
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_malformed_or_oversized_shard_sets() -> None:
+    """Catches invalid shard cardinalities returning an installable candidate."""
+    siblings = [
+        _lfs_file("bad-00000-of-00002.gguf"),
+        _lfs_file("large-00001-of-00065.gguf"),
+    ]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert raised.value.code == "no_eligible_gguf"
+
+
+@pytest.mark.asyncio
+async def test_resolve_ignores_gguf_without_complete_lfs_metadata() -> None:
+    """Catches unverified GGUF payload metadata becoming an acquisition candidate."""
+    siblings = [
+        {"rfilename": "missing.gguf", "lfs": {"size": 4}},
+        _lfs_file("valid.gguf", size=5),
+    ]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    assert [item.label for item in (await adapter.resolve("acme/model")).candidates] == [
+        "acme/model · valid.gguf"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_records_total_before_deterministic_candidate_cap() -> None:
+    """Catches a display cap that hides the true candidate count or changes ordering."""
+    siblings = [_lfs_file(f"{index:03d}.gguf") for index in range(101, -1, -1)]
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(200, json=_model_info(siblings))
+        )
+    )
+
+    resolved = await adapter.resolve("acme/model")
+
+    assert resolved.total_candidate_count == 102
+    assert len(resolved.candidates) == 100
+    assert resolved.candidates[0].files[0].upstream_path == "000.gguf"
+    assert resolved.candidates[-1].files[0].upstream_path == "099.gguf"
+
+
+def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() -> None:
+    """Catches mutable IDs/URLs, unsafe names, or compatibility claims for remote bytes."""
+    resolved = ResolvedRemoteModel(
+        repository="acme/model",
+        commit="a" * 40,
+        license_id="apache-2.0",
+        review_url="https://huggingface.co/acme/model/tree/" + ("a" * 40),
+        candidates=(),
+        total_candidate_count=0,
+        warnings=(),
+    )
+    candidate = RemoteGGUFCandidate(
+        label="acme/model · nested/pack",
+        files=(
+            RemoteGGUFFile("nested/pack-00001-of-00002.gguf", 11, "1" * 64),
+            RemoteGGUFFile("nested/pack-00002-of-00002.gguf", 12, "2" * 64),
+        ),
+        total_bytes=23,
+    )
+
+    catalog = build_remote_catalog(resolved, candidate)
+    artifact = catalog.artifact
+
+    assert artifact.reference.artifact_id == (
+        "hf-gguf-0cac08cf6bec99fb43ebc68340f029996d72b111ec52945b773fbae8d6005e05"
+    )
+    assert (artifact.reference.revision, artifact.reference.variant, artifact.precision) == (
+        "a" * 40,
+        "not-declared",
+        "not-declared",
+    )
+    assert (artifact.consumer, artifact.model_family, artifact.runtime_name) == (
+        "unassigned",
+        "unassigned",
+        "unassigned",
+    )
+    assert artifact.runtime_version_constraint == "none"
+    assert artifact.supported_os == ("unassigned",)
+    assert artifact.supported_architectures == ("unassigned",)
+    assert [item.path for item in artifact.files] == [
+        "model-00001-of-00002.gguf",
+        "model-00002-of-00002.gguf",
+    ]
+    assert [(item.size_bytes, item.sha256) for item in artifact.files] == [
+        (11, "1" * 64),
+        (12, "2" * 64),
+    ]
+    assert artifact.expected_installed_bytes == 23
+    assert artifact.license_id == "apache-2.0"
+    assert artifact.license_url == resolved.review_url
+    assert artifact.source_url == (
+        "https://huggingface.co/acme/model/resolve/" + ("a" * 40)
+        + "/nested/pack-00001-of-00002.gguf"
+    )
+    assert catalog.sources[artifact.reference] == {
+        "model-00001-of-00002.gguf": artifact.source_url,
+        "model-00002-of-00002.gguf": (
+            "https://huggingface.co/acme/model/resolve/" + ("a" * 40)
+            + "/nested/pack-00002-of-00002.gguf"
+        ),
+    }
+    assert artifact.dependencies == ()
+    assert artifact.usage_notice == (
+        "Runtime compatibility has not been verified. Configuration is required."
+    )
+    assert catalog.descriptor(artifact.reference) is artifact
