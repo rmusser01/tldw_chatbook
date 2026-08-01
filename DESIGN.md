@@ -234,7 +234,7 @@ one-row field. The convention for those fields (task-1586):
   "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
   five save models coexist on the Settings screen, and the badge is what
   keeps their differing footer keys from reading as inconsistency
-  (task-1660).
+  (task-1711).
 - **Fold indicator:** scrollable inspector columns reserve a bottom row
   ("▼ more — scroll…") shown only while content overflows, so a
   mid-sentence clip is never the only signal that more exists
@@ -242,11 +242,11 @@ one-row field. The convention for those fields (task-1586):
 - **Pinned contract row:** the State bar (badge + scope) is pinned
   between the pane title and the scrollable body, never inside it — the
   save contract must not scroll away while the user is acting on the
-  category (task-1665).
+  category (task-1716).
 - **Field-level search:** "/" indexes field labels as well as category
   names and owned config keys; a field hit echoes "Category › Field" and
   Enter lands focus ON the field, which also fires its guidance
-  (task-1664).
+  (task-1715).
 - **Inert destructive actions** carry their reason in the label
   ("Delete — built-in") and are disabled, never merely red (task-1643).
 - **Voice carriers (task-1625):** the three pane titles are the one

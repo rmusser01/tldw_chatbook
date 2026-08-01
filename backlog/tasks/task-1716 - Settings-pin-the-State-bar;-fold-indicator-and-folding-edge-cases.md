@@ -1,5 +1,5 @@
 ---
-id: TASK-1665
+id: TASK-1716
 title: 'Settings: pin the State bar; fold-indicator and folding edge cases'
 status: Done
 assignee:

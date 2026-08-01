@@ -1,5 +1,5 @@
 ---
-id: TASK-1660
+id: TASK-1711
 title: 'Settings: persistence badge names the save model on every category'
 status: Done
 assignee:
