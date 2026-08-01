@@ -36,6 +36,7 @@ from tldw_chatbook.Evals.word_bench.models import (
     TokenProb,
 )
 from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench, save_cell
+from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.results_grid import (
     FAILED_MARK,
     ResultsGrid,
@@ -86,10 +87,20 @@ def evals_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db))
 
 
-def _cap(pairs: list[tuple[str, float]], *, k_returned: int | None = None) -> CellCapture:
+def _cap(
+    pairs: list[tuple[str, float]],
+    *,
+    k_returned: int | None = None,
+    continuation: str = "",
+) -> CellCapture:
     """Mirrors ``Tests/Evals/word_bench/test_analysis.py``'s own ``_cap``
     helper -- probabilities, converted to logprobs the same way the engine
-    stores them."""
+    stores them.
+
+    ``continuation`` (task-1710) defaults to ``""`` -- ``CellCapture``'s
+    own default, matching every historical cell built before that field
+    existed -- so every EXISTING call site in this file keeps constructing
+    a byte-identical ``CellCapture`` with no changes required."""
     top = tuple(
         TokenProb(token=t, logprob=math.log(p), bytes_=tuple(t.encode("utf-8")), token_id=i)
         for i, (t, p) in enumerate(pairs)
@@ -102,6 +113,7 @@ def _cap(pairs: list[tuple[str, float]], *, k_returned: int | None = None) -> Ce
         top_k=top,
         canary="pass",
         captured_at="2026-07-26T00:00:00Z",
+        continuation=continuation,
     )
 
 
@@ -603,6 +615,85 @@ def markup_hazard_run_group(evals_db: EvalsDB) -> dict:
     return {"group_id": group_id, "base_id": base_id}
 
 
+#: task-1710 T2: `run_group_with_cell_continuations`'s stable snippet-id
+#: mapping -- one snippet per rendering rule the focused-cell continuation
+#: sub-line must follow, identical to `inspector.py`'s per-target
+#: continuation rules (task-1691) reused verbatim for this per-cell sibling.
+_CELL_CONTINUATION_LONG = "y" * 150
+
+
+@pytest.fixture
+def run_group_with_cell_continuations(evals_db: EvalsDB) -> dict:
+    """One target, five snippets, each a `CellCapture.continuation`
+    rendering rule `EvalsCellInspector` must follow (task-1710 T2, the
+    per-cell sibling of `bench_with_continuation_samples` in
+    ``test_evals_bench_editor.py``, task-1691's per-target fixture):
+
+    - ``s1``: anomalous whitespace (leading + interior double-space) --
+      must render with ␣ markers.
+    - ``s2``: a bare ``[/]`` markup hazard -- must render literally, never
+      crash the app.
+    - ``s3``: an embedded newline (a real continuation shape -- template
+      scaffolding text often carries one) -- must render single-line via
+      the "⏎" guard.
+    - ``s4``: longer than the inspector's own preview cap -- must
+      truncate with a trailing "…".
+    - ``s5``: no continuation at all (``capture_continuations`` off, or a
+      historical run recorded before task-1710) -- must render NO
+      continuation sub-line, while the rest of the cell inspector (the
+      header line, K requested/returned, Top-K) still renders normally.
+    """
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="cell-continuation-set",
+        format="custom",
+        source_path="inline:cell-continuation-set",
+        metadata={"sample_count": 5},
+    )
+    config = BenchConfig(
+        name="cell continuation bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
+        capture_continuations=True,
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
+    snippets = [
+        Snippet(id="s1", text="whitespace snippet", group=None),
+        Snippet(id="s2", text="hazard snippet", group=None),
+        Snippet(id="s3", text="newline snippet", group=None),
+        Snippet(id="s4", text="long snippet", group=None),
+        Snippet(id="s5", text="empty snippet", group=None),
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        _cap([(" a", 0.9)], continuation="  <|channel>thought  scaffolding"),
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[1],
+        _cap([(" a", 0.9)], continuation="[/]bold-looking output"),
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[2],
+        _cap(
+            [(" a", 0.9)],
+            continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
+        ),
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[3],
+        _cap([(" a", 0.9)], continuation=_CELL_CONTINUATION_LONG),
+    )
+    save_cell(evals_db, run_ids[base_id], snippets[4], _cap([(" a", 0.9)]))
+    return {
+        "group_id": group_id, "base_id": base_id,
+        "s1": "s1", "s2": "s2", "s3": "s3", "s4": "s4", "s5": "s5",
+    }
+
+
 async def _select_run_group(pilot, group_id: str) -> ResultsGrid:
     screen: EvalsScreen = pilot.app.screen
     screen.select(kind="run_group", id=group_id)
@@ -861,6 +952,218 @@ async def test_unrun_cell_renders_blank_never_zero(evals_app, mixed_run_group):
         await pilot.pause()
         body = pilot.app.screen.query_one("#evals-cell-inspector-body")
         assert "Not yet run" in str(body.renderable)
+
+
+# ---------------------------------------------------------------------------
+# task-1710 T2: the focused-cell continuation sub-line
+# (`EvalsCellInspector`'s `#evals-cell-inspector-continuation`) -- the
+# per-cell sibling of task-1691's readiness-pane continuation, following the
+# IDENTICAL rendering rules: markup=False, ␣ whitespace marking via
+# `render_snippet_cell`, the "⏎" single-line guard, a bounded preview, and
+# NOTHING rendered for an absent/empty continuation.
+# ---------------------------------------------------------------------------
+
+
+async def _focus_cell(pilot, grid: ResultsGrid, snippet_id: str, target_id: str) -> None:
+    """Shared by every test in this section only -- every OTHER cell-focus
+    test in this file inlines the same four lines, kept that way rather
+    than refactored here to avoid touching passing tests unrelated to
+    task-1710."""
+    table = grid.query_one("#evals-grid-table", DataTable)
+    row = table.get_row_index(snippet_id)
+    col = table.get_column_index(target_id)
+    table.focus()
+    table.move_cursor(row=row, column=col)
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_continuation_renders_with_whitespace_markers(
+    evals_app, run_group_with_cell_continuations
+):
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s1"], fixture["base_id"])
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.display is True
+        assert continuation.region.width > 0
+        assert continuation.region.height > 0
+        text = str(continuation.renderable)
+        assert text.startswith(inspector_module._CELL_CONTINUATION_LABEL)
+        # The leading run of two spaces and the interior run of two spaces
+        # both become "␣␣" -- `render_snippet_cell`'s own whitespace-run
+        # convention, reused verbatim from the readiness pane (task-1691).
+        assert "␣␣" in text
+        assert "<|channel>thought" in text
+        assert "scaffolding" in text
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_continuation_with_a_markup_hazard_renders_literally(
+    evals_app, run_group_with_cell_continuations
+):
+    """A bare ``[/]`` in raw model output must render as four literal
+    characters, never get parsed as Rich/Textual markup and crash the
+    app -- `markup=False` on the continuation `Static`, mirroring every
+    other user-authored/model-generated text this workbench renders."""
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s2"], fixture["base_id"])
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.display is True
+        text = str(continuation.renderable)
+        assert "[/]bold-looking output" in text
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_continuation_with_a_newline_stays_single_line(
+    evals_app, run_group_with_cell_continuations
+):
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s3"], fixture["base_id"])
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        text = str(continuation.renderable)
+        assert "\n" not in text
+        assert "⏎" in text
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_continuation_longer_than_the_preview_cap_is_truncated(
+    evals_app, run_group_with_cell_continuations
+):
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s4"], fixture["base_id"])
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        text = str(continuation.renderable)
+        assert text.endswith("…")
+        expected = (
+            inspector_module._CELL_CONTINUATION_LABEL
+            + _CELL_CONTINUATION_LONG[: inspector_module._CONTINUATION_PREVIEW_MAX_LEN]
+            + "…"
+        )
+        assert text == expected
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_with_no_continuation_renders_nothing_extra_but_still_renders_the_cell(
+    evals_app, run_group_with_cell_continuations
+):
+    """The empty-continuation case (``capture_continuations`` off, or a
+    historical run recorded before task-1710) must render NO continuation
+    sub-line at all -- and the rest of the cell inspector (the header
+    line, K requested/returned, Top-K) must still render exactly as it
+    always has, proving this feature is additive and cannot break a
+    historical/flag-off run's own rendering."""
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s5"], fixture["base_id"])
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.display is False
+        assert str(continuation.renderable) == ""
+
+        body = pilot.app.screen.query_one("#evals-cell-inspector-body")
+        body_text = str(body.renderable)
+        assert "K requested" in body_text
+        assert "Top-K:" in body_text
+        assert body.region.width > 0
+        assert body.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_focused_cell_continuation_widget_clears_when_moving_to_a_cell_without_one(
+    evals_app, run_group_with_cell_continuations
+):
+    """A stale continuation from a PREVIOUS focused cell must never linger
+    -- focusing a continuation-carrying cell, then a cell with none, must
+    hide AND clear the sub-line, not just leave it hidden with the old
+    text still sitting in `renderable` (see `show_cell`'s own comment on
+    why both are cleared together)."""
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+
+        await _focus_cell(pilot, grid, fixture["s1"], fixture["base_id"])
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.display is True
+        assert "scaffolding" in str(continuation.renderable)
+
+        await _focus_cell(pilot, grid, fixture["s5"], fixture["base_id"])
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.display is False
+        assert str(continuation.renderable) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (160, 45)], ids=["235x52", "160x45"])
+async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewport(
+    evals_app, run_group_with_cell_continuations, size
+):
+    """task-1710 T2: adding the continuation row to ``EvalsCellInspector``
+    means this widget's OWN CSS is now touched, not just its content --
+    confirmed live that ``#evals-cell-inspector`` (an unstyled ``Vertical``,
+    Textual DEFAULT_CSS ``height: 1fr``) is a direct child of
+    ``#evals-inspector-pane`` with a trailing ``#evals-primary-action``
+    sibling, the EXACT shape ``#evals-inspector-bench``'s own ``height:
+    auto`` fix (``_evals.tcss``) already documents as this pane's
+    clipping-bug risk class -- before ``_evals.tcss``'s matching
+    ``#evals-cell-inspector { height: auto; }`` fix, this widget claimed
+    a ~36-row region for ~9 rows of real content at 235x52, pushing
+    ``#evals-primary-action`` one row outside ``#lab-inspector``'s own
+    visible viewport (unreachable even scrolled to ``max_scroll_y``).
+    Pre-existing (not introduced by this task's own continuation row),
+    but in scope here because this task's own CSS touches the exact
+    rule that was missing it.
+
+    Parametrized over 235x52 AND 160x45 (review Minor): 160x45 is this
+    whole test file's own default "realistic" size and independently
+    reproduces the identical escape (button outside the pane,
+    ``max_scroll_y == 1`` without the fix) -- a single-size assertion
+    would have missed a regression that only manifests at the smaller,
+    far more common terminal.
+    """
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s1"], fixture["base_id"])
+
+        lab_inspector = pilot.app.screen.query_one("#lab-inspector")
+        assert lab_inspector.max_scroll_y == 0, (
+            "the inspector pane still needs to scroll to fit its content "
+            f"(max_scroll_y={lab_inspector.max_scroll_y}) -- "
+            "EvalsCellInspector is claiming more height than its own "
+            "content needs"
+        )
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.region.width > 0
+        assert continuation.region.height > 0
+        assert lab_inspector.region.contains_region(continuation.region)
+
+        button = pilot.app.screen.query_one("#evals-primary-action")
+        assert button.region.width > 0 and button.region.height > 0, button.region
+        assert lab_inspector.region.contains_region(button.region), (
+            f"button {button.region} escapes the inspector's own visible "
+            f"viewport {lab_inspector.region}"
+        )
 
 
 @pytest.mark.asyncio

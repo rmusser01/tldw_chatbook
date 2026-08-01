@@ -535,6 +535,111 @@ def test_load_run_preflight_defaults_continuation_for_runs_recorded_before_this_
 
 
 # ---------------------------------------------------------------------------
+# task-1710 -- BenchConfig.capture_continuations rides save_bench/load_bench
+# like concurrency; CellCapture.continuation rides save_cell/load_grid like
+# a top_k entry.
+# ---------------------------------------------------------------------------
+
+
+def test_bench_round_trips_capture_continuations_flag(db, targets, dataset):
+    on = save_bench(
+        db,
+        BenchConfig(
+            name="continuations on", prompt_mode="raw", top_k=20,
+            dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+            capture_continuations=True,
+        ),
+    )
+    off = save_bench(
+        db,
+        BenchConfig(
+            name="continuations off", prompt_mode="raw", top_k=20,
+            dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+            capture_continuations=False,
+        ),
+    )
+
+    assert load_bench(db, on).capture_continuations is True
+    assert load_bench(db, off).capture_continuations is False
+
+
+def test_load_bench_defaults_capture_continuations_to_false_for_a_config_saved_before_this_change(
+    db, dataset, targets
+):
+    """A bench saved before this field existed has no
+    "capture_continuations" key at all in its stored config_data -- same
+    additive contract as concurrency's own `.get(..., 1)` default."""
+    task_id = db.create_task(
+        name="pre-task-1710 bench", task_type="logprob", config_format="custom",
+        config_data={
+            "bench_type": BENCH_TYPE, "prompt_mode": "raw", "top_k": 20,
+            "probes": [], "target_ids": [t.id for t in targets], "concurrency": 1,
+        },
+        dataset_id=dataset,
+    )
+
+    loaded = load_bench(db, task_id)
+
+    assert loaded.capture_continuations is False
+
+
+def test_save_cell_persists_the_continuation_and_it_round_trips_through_load_grid(
+    db, config, targets, snippets
+):
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    save_cell(
+        db, run_ids[targets[0].id], snippets[0], _capture(),
+    )
+    with_continuation = CellCapture(
+        prompt_mode="raw", k_requested=20, k_returned=2, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
+        canary="pass", captured_at="2026-08-01T00:00:00Z",
+        continuation=" the model continues from here",
+    )
+    save_cell(db, run_ids[targets[1].id], snippets[0], with_continuation)
+
+    grid = load_grid(db, group_id)
+    assert grid["cells"][("s1", targets[0].id)].continuation == "", (
+        "a cell saved without a continuation must round-trip as empty, "
+        "not None or a missing attribute"
+    )
+    assert (
+        grid["cells"][("s1", targets[1].id)].continuation
+        == " the model continues from here"
+    )
+
+
+def test_load_grid_defaults_continuation_for_cells_recorded_before_this_change(
+    db, config, targets, snippets
+):
+    """A cell's stored `logprobs` JSON predating this field carries no
+    "continuation" key at all -- must still load, defaulting to ""."""
+    import json as _json
+
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    run_id = run_ids[targets[0].id]
+    save_cell(db, run_id, snippets[0], _capture())
+
+    # Simulate a cell stored before this change: strip "continuation" out of
+    # the persisted logprobs payload directly.
+    rows = db.get_run_results(run_id, limit=10)
+    row = next(r for r in rows if r["sample_id"] == "s1")
+    payload = row["logprobs"]
+    if isinstance(payload, str):
+        payload = _json.loads(payload)
+    payload.pop("continuation", None)
+    db.get_connection().execute(
+        "UPDATE eval_results SET logprobs = ? WHERE id = ?",
+        (_json.dumps(payload), row["id"]),
+    )
+
+    grid = load_grid(db, group_id)
+    assert grid["cells"][("s1", targets[0].id)].continuation == ""
+
+
+# ---------------------------------------------------------------------------
 # task-1611 -- model_steering: eval_models.config is the storage home for a
 # target's steering (prefix/system_prompt).
 # ---------------------------------------------------------------------------

@@ -195,3 +195,51 @@ def test_preflight_result_continuation_can_be_set_explicitly():
         continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
     )
     assert result.continuation == "<|channel><|channel>thought\n<channel|>The sky is **blue"
+
+
+# ---------------------------------------------------------------------------
+# task-1710 -- BenchConfig.capture_continuations, CellCapture.continuation:
+# additive, default off/empty
+# ---------------------------------------------------------------------------
+
+
+def test_bench_config_capture_continuations_defaults_to_false():
+    """Additive field: every pre-existing call site (and every stored
+    config_data lacking the key) must keep constructing without supplying
+    it, and get the flag OFF."""
+    config = BenchConfig(
+        name="b", prompt_mode="raw", top_k=20, dataset_id="d", target_ids=("t1",),
+    )
+    assert config.capture_continuations is False
+
+
+def test_bench_config_capture_continuations_can_be_set_explicitly():
+    config = BenchConfig(
+        name="b", prompt_mode="raw", top_k=20, dataset_id="d", target_ids=("t1",),
+        capture_continuations=True,
+    )
+    assert config.capture_continuations is True
+
+
+def test_cell_capture_continuation_defaults_to_empty_string():
+    """Additive, trailing field: every pre-existing construction of
+    CellCapture (capture_client.capture(), storage._cell_from_payload for
+    historical rows, every test fixture in this suite) must keep
+    constructing without supplying it, and read back "" rather than
+    raising or defaulting to None."""
+    cap = CellCapture(
+        prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
+        canary="pass", captured_at="2026-08-01T00:00:00Z",
+    )
+    assert cap.continuation == ""
+
+
+def test_cell_capture_continuation_can_be_set_explicitly():
+    cap = CellCapture(
+        prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
+        canary="pass", captured_at="2026-08-01T00:00:00Z",
+        continuation=" blue skies ahead",
+    )
+    assert cap.continuation == " blue skies ahead"

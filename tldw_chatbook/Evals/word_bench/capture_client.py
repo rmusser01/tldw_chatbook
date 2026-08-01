@@ -354,6 +354,65 @@ class WordBenchCaptureClient:
             captured_at=_utcnow(),
         ), data
 
+    async def capture_with_continuation(
+        self, snippet: str, target: Target, mode: PromptMode, top_k: int
+    ) -> tuple[CellCapture | CellError, str]:
+        """Measure one cell AND (task-1710) a short continuation of THIS
+        SNIPPET, for opt-in per-cell continuation capture
+        (``BenchConfig.capture_continuations``).
+
+        This is the per-CELL sibling of ``preflight``'s per-TARGET
+        continuation (task-1691): same anti-corruption contract, applied to
+        the snippet actually being measured instead of the fixed
+        ``CANARY_PROMPT``. Concretely, it reuses the exact same machinery
+        ``preflight``/``_resolve_continuation`` already established:
+
+        - Chat mode: ZERO extra requests. The measured request already asks
+          for ``CHAT_TOKEN_WINDOW`` tokens (see ``_build_request``) and this
+          method already has that response's raw payload from
+          ``_capture_with_payload`` -- salvaging ``message.content`` off it
+          (``_extract_chat_continuation``) costs nothing extra, and cannot
+          perturb the measurement since nothing about the measured request
+          changes and the salvage reads a DIFFERENT key
+          (``choices[0].message.content``) than
+          ``normalize_logprobs``/``want_content_token`` ever look at
+          (``choices[0].logprobs...``).
+        - Raw mode: ONE extra request, built and dispatched by
+          ``_capture_raw_continuation`` exactly as it already does for the
+          canary, just steered by ``snippet`` instead of ``CANARY_PROMPT``.
+          That request never asks for ``logprobs`` and its response is
+          never handed to ``normalize_logprobs`` -- structurally incapable
+          of influencing the measured cell's distribution, not merely
+          untested (see this module's docstring on the hard rule this
+          exists to satisfy).
+
+        Args:
+            snippet: See ``capture()``. Also the prompt the continuation is
+                a continuation OF.
+            target: See ``capture()``.
+            mode: See ``capture()``.
+            top_k: See ``capture()``.
+
+        Returns:
+            ``(result, continuation)``. ``continuation`` is only ever
+            attempted when ``result`` is a ``CellCapture`` -- a failed cell
+            has nothing to continue from, and spending an extra request on
+            a cell the caller is about to record as a ``CellError`` anyway
+            would be pure waste. Matches every other continuation path in
+            this module: any failure while resolving it (transport, HTTP
+            status, malformed body) degrades to ``""``, never raises, and
+            never turns a successful ``result`` into a ``CellError`` --
+            ``result``'s own ``top_k``/``k_returned``/``content_offset``
+            are exactly what ``_capture_with_payload`` already computed,
+            untouched by whatever the continuation request does or how it
+            fails.
+        """
+        result, payload = await self._capture_with_payload(snippet, target, mode, top_k)
+        if isinstance(result, CellError):
+            return result, ""
+        continuation = await self._resolve_continuation(target, mode, payload, content=snippet)
+        return result, continuation
+
     async def preflight(
         self, target: Target, mode: PromptMode, top_k: int
     ) -> PreflightResult:
@@ -422,59 +481,79 @@ class WordBenchCaptureClient:
         )
 
     async def _resolve_continuation(
-        self, target: Target, mode: PromptMode, canary_payload: Optional[dict[str, Any]]
+        self,
+        target: Target,
+        mode: PromptMode,
+        response_payload: Optional[dict[str, Any]],
+        content: str = CANARY_PROMPT,
     ) -> str:
-        """A short, best-effort continuation for the readiness surface.
+        """A short, best-effort continuation of ``content``.
 
         Chosen approach (task-1691's option (a), separate-request): chat
-        mode's canary call above already asked for ``CHAT_TOKEN_WINDOW``
-        tokens and this method's caller (``preflight``) already has that
-        response's raw payload in hand, discarded until now -- salvaging the
-        generated text from it costs nothing extra. Raw mode's canary is
-        deliberately ``max_tokens: 1`` (see this class's ``NEUTRAL_SAMPLER``/
-        module docstring and ``preflight``'s own docstring), so there is no
-        free text to salvage there; a real continuation needs a genuinely
-        separate request (``_capture_raw_continuation``), issued and parsed
-        entirely independently of the canary response already used to
-        compute ``canary`` above -- it can never perturb that verdict, no
-        matter what it returns or how it fails, because nothing it produces
-        is ever passed through ``normalize_logprobs``.
+        mode's own request already asked for ``CHAT_TOKEN_WINDOW`` tokens
+        and the caller (``preflight``, or task-1710's
+        ``capture_with_continuation``) already has that response's raw
+        payload in hand -- salvaging the generated text from it costs
+        nothing extra. Raw mode's measured/canary request is deliberately
+        ``max_tokens: 1`` (see this class's ``NEUTRAL_SAMPLER``/module
+        docstring), so there is no free text to salvage there; a real
+        continuation needs a genuinely separate request
+        (``_capture_raw_continuation``), issued and parsed entirely
+        independently of the response already used to compute the caller's
+        own result -- it can never perturb that result, no matter what it
+        returns or how it fails, because nothing it produces is ever passed
+        through ``normalize_logprobs``.
 
         Never raises: any failure (transport, HTTP status, malformed body,
         missing/non-string text field) degrades to ``""``, matching the
-        canary capture's own "never raises" contract.
+        measured capture's own "never raises" contract.
 
         Args:
-            target: The column being checked, steered exactly as ``preflight``
-                steered its own canary request.
+            target: The column being checked, steered exactly as the
+                caller's own request was steered.
             mode: ``"raw"`` or ``"chat"`` -- selects salvage vs. a fresh
                 request, same as everywhere else in this class.
-            canary_payload: The decoded JSON body from ``preflight``'s own
-                canary request, or ``None`` if that request never produced
-                one. Only consulted in chat mode.
+            response_payload: The decoded JSON body from the caller's own
+                request for ``content``, or ``None`` if that request never
+                produced one. Only consulted in chat mode.
+            content: The prompt text a continuation is wanted OF --
+                ``CANARY_PROMPT`` for ``preflight``'s per-target
+                continuation (task-1691), or a snippet under measurement
+                for ``capture_with_continuation``'s per-cell continuation
+                (task-1710). Only consulted in raw mode, where it steers
+                the separate ``_capture_raw_continuation`` request; chat
+                mode ignores it entirely since chat mode always salvages
+                from ``response_payload`` (already a response to
+                ``content``, whatever it was) instead.
 
         Returns:
             The captured continuation, capped by ``_cap_continuation``, or
             ``""``.
         """
         if mode == "chat":
-            return _extract_chat_continuation(canary_payload)
-        return await self._capture_raw_continuation(target)
+            return _extract_chat_continuation(response_payload)
+        return await self._capture_raw_continuation(target, content=content)
 
-    async def _capture_raw_continuation(self, target: Target) -> str:
+    async def _capture_raw_continuation(
+        self, target: Target, content: str = CANARY_PROMPT
+    ) -> str:
         """Issue the SEPARATE, continuation-only raw completion request.
 
         Deliberately built from scratch rather than through
         ``_build_request``/``_capture_with_payload``: this request never
         requests ``logprobs`` at all (only generated text is wanted) and its
         response is never handed to ``normalize_logprobs``, so it is
-        structurally incapable of influencing the canary verdict computed
-        from the separate ``max_tokens: 1`` canary request.
+        structurally incapable of influencing the measured result computed
+        from the separate, always ``max_tokens: 1`` request for ``content``
+        (``top_k`` only ever sizes that request's ``logprobs``, never its
+        ``max_tokens`` -- see ``_build_request``'s raw-mode branch above;
+        corrected here during task-1710 T3 review).
 
-        Steered identically to the canary request (``target.prefix``
-        prepended, same as ``_build_request``'s raw-mode branch) -- see
-        ``preflight``'s docstring: readiness, and now its continuation, are
-        properties of what the run will actually send.
+        Steered identically to that request (``target.prefix`` prepended,
+        same as ``_build_request``'s raw-mode branch) -- see ``preflight``'s
+        docstring: readiness, and now its continuation, are properties of
+        what the run will actually send; task-1710's per-cell continuation
+        carries the same contract forward for the measured snippet itself.
 
         Never raises: any failure (transport, HTTP status, malformed body,
         missing/non-string ``text``) degrades to ``""``.
@@ -482,12 +561,17 @@ class WordBenchCaptureClient:
         Args:
             target: The column being checked; only ``model_id`` and
                 ``prefix`` are used.
+            content: The prompt text to continue -- ``CANARY_PROMPT`` by
+                default (``preflight``'s per-target continuation,
+                task-1691), or a snippet under measurement
+                (``capture_with_continuation``'s per-cell continuation,
+                task-1710).
 
         Returns:
             The captured continuation, capped by ``_cap_continuation``, or
             ``""``.
         """
-        prompt = f"{target.prefix}{CANARY_PROMPT}" if target.prefix else CANARY_PROMPT
+        prompt = f"{target.prefix}{content}" if target.prefix else content
         payload: dict[str, Any] = {
             "model": target.model_id,
             **NEUTRAL_SAMPLER,

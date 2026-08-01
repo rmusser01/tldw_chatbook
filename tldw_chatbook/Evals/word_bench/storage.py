@@ -247,6 +247,9 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
         "probes": list(config.probes),
         "target_ids": list(config.target_ids),
         "concurrency": config.concurrency,
+        # task-1710: rides along the same way concurrency does, immediately
+        # above -- see load_bench's matching `.get(..., False)` default.
+        "capture_continuations": config.capture_continuations,
     }
     if task_id is not None:
         # Evals_DB.update_task takes name/description/config_data as
@@ -325,6 +328,10 @@ def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
         target_ids=tuple(data.get("target_ids", ())),
         probes=tuple(data.get("probes", ())),
         concurrency=int(data.get("concurrency", 1)),
+        # task-1710: absent for every bench saved before this field existed
+        # -- defaults False, same additive contract as `concurrency`'s own
+        # `.get(..., 1)` immediately above.
+        capture_continuations=bool(data.get("capture_continuations", False)),
         strict=False,
     )
 
@@ -346,10 +353,10 @@ def duplicate_bench(db: EvalsDB, task_id: str) -> str:
     not part of ``config_data`` -- see ``save_bench``), ``prompt_mode``,
     ``top_k``, ``dataset_id`` (the dataset is referenced, not itself
     copied -- the copy shares its source's snippets), ``target_ids``
-    (deduped as above), ``probes``, and ``concurrency``. Only ``name``
-    changes, and only run history is left behind: no ``eval_runs`` or
-    ``eval_results`` rows are copied, so the new bench starts with an empty
-    grid.
+    (deduped as above), ``probes``, ``concurrency``, and (task-1710)
+    ``capture_continuations``. Only ``name`` changes, and only run history
+    is left behind: no ``eval_runs`` or ``eval_results`` rows are copied,
+    so the new bench starts with an empty grid.
 
     Args:
         db: Database handle.
@@ -378,6 +385,7 @@ def duplicate_bench(db: EvalsDB, task_id: str) -> str:
         target_ids=deduped_target_ids,
         probes=source.probes,
         concurrency=source.concurrency,
+        capture_continuations=source.capture_continuations,
     )
     return save_bench(db, copy)
 
@@ -496,6 +504,12 @@ def save_cell(
             ],
             "canary": result.canary,
             "captured_at": result.captured_at,
+            # task-1710: "" for every cell captured with
+            # BenchConfig.capture_continuations off (the default) or when a
+            # continuation capture was attempted and failed -- see
+            # _cell_from_payload's matching `.get(..., "")` default for the
+            # read side of this same additive contract.
+            "continuation": result.continuation,
         }
 
     db.store_result(
@@ -535,6 +549,11 @@ def _cell_from_payload(payload: dict[str, Any]) -> CellCapture | CellError:
         ),
         canary=payload.get("canary", "unchecked"),
         captured_at=payload.get("captured_at", ""),
+        # task-1710: absent for every cell stored before this field
+        # existed -- defaults "", same additive contract as
+        # PreflightResult.continuation's own snapshot fallback
+        # (_preflight_from_snapshot).
+        continuation=payload.get("continuation", ""),
     )
 
 

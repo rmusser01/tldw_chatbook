@@ -19,7 +19,7 @@ actually completed first (``asyncio.gather`` preserves input order), so the
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Optional, Protocol, Sequence
 
 from loguru import logger
@@ -55,6 +55,35 @@ class CaptureClientLike(Protocol):
     async def capture(
         self, snippet: str, target: Target, mode: PromptMode, top_k: int
     ) -> CellCapture | CellError: ...
+
+    async def capture_with_continuation(
+        self, snippet: str, target: Target, mode: PromptMode, top_k: int
+    ) -> tuple[CellCapture | CellError, str]:
+        """Measure one cell AND sample what the model says next.
+
+        task-1710: only invoked by ``_capture_cell`` when
+        ``BenchConfig.capture_continuations`` is ``True``. A fake used only
+        in flag-off tests need not implement this -- Python's structural
+        ``Protocol`` is not enforced at runtime, and this method is never
+        called on the flag-off path.
+
+        Args:
+            snippet: The text whose continuation is measured, steered by
+                ``target`` exactly as ``capture`` steers it.
+            target: The column being measured.
+            mode: ``"raw"`` or ``"chat"`` -- decides whether the
+                continuation costs a second request (raw) or is salvaged
+                from the measured response (chat).
+            top_k: The top-K width requested for the measured distribution;
+                it never sizes the continuation.
+
+        Returns:
+            A ``(cell, continuation)`` pair. The cell is exactly what
+            ``capture`` would have returned for the same inputs -- the
+            continuation never perturbs it. The continuation is ``""``
+            when the cell itself failed, or when sampling it failed.
+        """
+        ...
 
 
 class CancelToken:
@@ -258,8 +287,8 @@ class WordBenchRunner:
                     for target in targets:
                         if cancel_token is not None and cancel_token.is_cancelled:
                             return _mark_cancelled("cooperative")
-                        result = await clients[target.id].capture(
-                            snippet.text, target, config.prompt_mode, config.top_k
+                        result = await self._capture_cell(
+                            clients[target.id], snippet, target, config
                         )
                         _report(target, result)
                 else:
@@ -275,8 +304,8 @@ class WordBenchRunner:
                         target: Target,
                     ) -> tuple[Target, CellCapture | CellError]:
                         async with semaphore:
-                            captured = await clients[target.id].capture(
-                                snippet.text, target, config.prompt_mode, config.top_k
+                            captured = await self._capture_cell(
+                                clients[target.id], snippet, target, config
                             )
                         return target, captured
 
@@ -308,6 +337,63 @@ class WordBenchRunner:
             self._db.update_run_status(run_id, "completed")
 
         return RunOutcome(group_id=group_id, preflight=results)
+
+    @staticmethod
+    async def _capture_cell(
+        client: CaptureClientLike, snippet: Snippet, target: Target, config: BenchConfig
+    ) -> CellCapture | CellError:
+        """One cell's measurement, optionally carrying task-1710's opt-in
+        per-cell continuation.
+
+        Concurrency note (task-1710's own requirement: "do not serialize
+        the whole run on it, do not double the effective concurrency
+        unexpectedly"): both call sites below invoke this from INSIDE the
+        same per-target unit of work the plain measurement request already
+        used -- at ``concurrency == 1`` that is simply the next iteration of
+        the sequential loop; at ``concurrency > 1`` it is the SAME
+        ``semaphore``-guarded span ``_capture_one`` already holds for the
+        plain ``capture()`` call. The continuation request, when captured,
+        therefore runs sequentially AFTER the measurement request finishes,
+        while that one target's permit is still held. Enabling continuations
+        does not raise how many requests any single target can have in
+        flight at once (still exactly one -- matching the module docstring's
+        existing "a single target never receives two in-flight requests at
+        once" invariant) and does not raise how many targets are processed
+        concurrently across a row (still bounded by ``config.concurrency``);
+        it only makes each already-serial per-target unit of work slightly
+        longer. Releasing the permit between the two requests (letting a
+        DIFFERENT target's request start while this one waits on its
+        continuation) was considered and rejected: a single-slot local
+        server -- the module docstring's own stated common case -- would
+        then see MORE requests in flight than ``config.concurrency``
+        promises, exactly the failure this method's docstring is written to
+        rule out.
+
+        Args:
+            client: This target's capture client.
+            snippet: The row being measured; also, when
+                ``config.capture_continuations`` is ``True``, the prompt the
+                continuation is a continuation OF.
+            target: The column being measured.
+            config: The bench definition; only ``capture_continuations``,
+                ``prompt_mode``, and ``top_k`` are read.
+
+        Returns:
+            The measured cell. Its ``continuation`` field is set from a
+            successful capture, or left at its dataclass default ``""``
+            when ``config.capture_continuations`` is ``False`` (the
+            byte-identical, single-request path this task's AC #2 pins) or
+            when the cell itself is a ``CellError`` (nothing to continue
+            from).
+        """
+        if not config.capture_continuations:
+            return await client.capture(snippet.text, target, config.prompt_mode, config.top_k)
+        result, continuation = await client.capture_with_continuation(
+            snippet.text, target, config.prompt_mode, config.top_k
+        )
+        if isinstance(result, CellError):
+            return result
+        return replace(result, continuation=continuation)
 
     @staticmethod
     async def _close_clients(clients: dict[str, CaptureClientLike]) -> None:
@@ -357,4 +443,9 @@ class WordBenchRunner:
             canary=canary,
             captured_at=result.captured_at,
             schema=result.schema,
+            # task-1710: must be carried through explicitly, same as every
+            # other field here -- an omitted keyword would silently fall
+            # back to CellCapture.continuation's own "" default and erase
+            # whatever _capture_cell captured, every single stamp.
+            continuation=result.continuation,
         )

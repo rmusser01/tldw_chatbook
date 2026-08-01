@@ -557,3 +557,202 @@ async def test_run_closes_clients_even_when_hard_cancelled(
         await run_task
 
     assert len(closed) == len(targets)
+
+
+# --- task-1710: opt-in per-cell continuation capture ---------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_off_by_default_produces_the_same_request_shape_as_today(
+    db, config, targets, snippets
+):
+    """AC #2, and the thing most likely to regress: with the flag off (the
+    default), the runner must keep calling capture() -- the same method,
+    the same number of times -- exactly as it did before this task existed.
+    FakeClient deliberately has no capture_with_continuation defined, so if
+    the runner ever called that method on the flag-off path, this would
+    raise AttributeError rather than silently doing the wrong thing."""
+    assert config.capture_continuations is False
+    order = []
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FakeClient(order))
+    await runner.run(config, targets, snippets, task_id)
+
+    assert len(order) == len(snippets) * len(targets), (
+        "exactly one capture() call per cell -- no extra continuation calls"
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_on_calls_capture_with_continuation_and_stores_the_result(
+    db, targets, dataset, snippets
+):
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        capture_continuations=True,
+    )
+    continuation_calls = []
+
+    class ContinuationFakeClient(FakeClient):
+        async def capture_with_continuation(self, snippet, target, mode, top_k):
+            continuation_calls.append((snippet, target.name))
+            return _cap("unchecked"), " the model continues"
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: ContinuationFakeClient([]))
+    outcome = await runner.run(config, targets, snippets, task_id)
+
+    assert len(continuation_calls) == len(snippets) * len(targets), (
+        "capture_with_continuation must be called once per cell when the "
+        "flag is on"
+    )
+    grid = load_grid(db, outcome.group_id)
+    assert len(grid["cells"]) == len(snippets) * len(targets)
+    assert all(
+        c.continuation == " the model continues" for c in grid["cells"].values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_on_preserves_the_cell_when_continuation_capture_fails(
+    db, targets, dataset, snippets
+):
+    """A continuation failure must never turn a good measurement into a
+    CellError -- capture_with_continuation's own contract already
+    guarantees this at the client level (see test_capture_client.py); this
+    pins that it survives the runner's own plumbing (_capture_cell's
+    dataclasses.replace) too."""
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        capture_continuations=True,
+    )
+
+    class FailingContinuationClient(FakeClient):
+        async def capture_with_continuation(self, snippet, target, mode, top_k):
+            return _cap("unchecked"), ""  # continuation capture failed internally
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FailingContinuationClient([]))
+    outcome = await runner.run(config, targets, snippets, task_id)
+
+    grid = load_grid(db, outcome.group_id)
+    assert len(grid["cells"]) == len(snippets) * len(targets)
+    assert all(isinstance(c, CellCapture) for c in grid["cells"].values())
+    assert all(c.top_k for c in grid["cells"].values()), "measured top-K must be intact"
+    assert all(c.continuation == "" for c in grid["cells"].values())
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_on_a_failed_cell_is_still_stored_as_a_cellerror(
+    db, targets, dataset, snippets
+):
+    """A cell whose own measurement fails has nothing to continue from --
+    capture_with_continuation resolves that by returning ("", CellError)
+    itself; the runner must store the CellError as-is, not attempt to
+    attach a continuation to it."""
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        capture_continuations=True,
+    )
+
+    class FailingCellClient(FakeClient):
+        async def capture_with_continuation(self, snippet, target, mode, top_k):
+            if target.name == "steered":
+                return CellError(reason="unreachable", detail="x"), ""
+            return _cap("unchecked"), " ok"
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FailingCellClient([]))
+    outcome = await runner.run(config, targets, snippets, task_id)
+
+    base, steered = targets[0].id, targets[1].id
+    grid = load_grid(db, outcome.group_id)
+    assert isinstance(grid["cells"][("s1", steered)], CellError)
+    assert isinstance(grid["cells"][("s1", base)], CellCapture)
+    assert grid["cells"][("s1", base)].continuation == " ok"
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_on_the_canary_stamp_does_not_erase_the_continuation(
+    db, targets, dataset, snippets
+):
+    """_stamp_canary rebuilds a new CellCapture carrying the resolved canary
+    verdict onto every cell -- it must carry `continuation` through
+    explicitly too, or every stamped cell would silently regress to "" no
+    matter what capture_with_continuation captured."""
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        capture_continuations=True,
+    )
+
+    class ContinuationClient(FakeClient):
+        def __init__(self, order):
+            super().__init__(order, canary="degenerate")
+
+        async def capture_with_continuation(self, snippet, target, mode, top_k):
+            return _cap("unchecked"), " stamped continuation"
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: ContinuationClient([]))
+    outcome = await runner.run(config, targets, snippets, task_id)
+
+    grid = load_grid(db, outcome.group_id)
+    assert all(c.canary == "degenerate" for c in grid["cells"].values())
+    assert all(c.continuation == " stamped continuation" for c in grid["cells"].values())
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_on_does_not_raise_effective_concurrency_beyond_the_configured_value(
+    db, dataset, targets, snippets
+):
+    """task-1710's own concurrency requirement: enabling continuations must
+    not let more than config.concurrency targets have a request in flight
+    at once, even though each target now does up to two sequential
+    requests (measurement, then continuation) instead of one -- the whole
+    two-request unit runs inside the SAME semaphore-guarded span the plain
+    capture() call already used (see WordBenchRunner._capture_cell's own
+    docstring for why)."""
+    extra_id = db.create_model(name="extra", provider="llama_cpp", model_id="m")
+    all_targets = list(targets) + [
+        Target(id=extra_id, name="extra", provider="llama_cpp", model_id="m")
+    ]
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset, target_ids=tuple(t.id for t in all_targets),
+        concurrency=2, capture_continuations=True,
+    )
+
+    active: set[str] = set()
+    max_concurrent = [0]
+
+    class TwoLegClient:
+        async def preflight(self, target, mode, top_k):
+            return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+        async def capture_with_continuation(self, snippet, target, mode, top_k):
+            active.add(target.name)
+            max_concurrent[0] = max(max_concurrent[0], len(active))
+            await asyncio.sleep(0.005)  # stands in for the measurement request
+            await asyncio.sleep(0.005)  # stands in for the continuation request
+            active.discard(target.name)
+            return CellCapture(
+                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
+                canary="unchecked", captured_at="2026-08-01T00:00:00Z",
+            ), " continued"
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: TwoLegClient())
+    outcome = await runner.run(config, all_targets, snippets, task_id)
+
+    assert max_concurrent[0] == 2, (
+        "the configured concurrency (2) must still be reached exactly, "
+        "not exceeded by continuation capture's extra sequential request "
+        "per target"
+    )
+    grid = load_grid(db, outcome.group_id)
+    assert len(grid["cells"]) == len(snippets) * len(all_targets)
