@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import traceback
 
 import httpx
 import pytest
@@ -107,6 +108,69 @@ async def test_search_sanitizes_timeout() -> None:
         (),
     )
     assert "upstream secret" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_search_timeout_traceback_has_no_upstream_secret_or_cause() -> None:
+    """Catches chained HTTPX errors that expose credentials or upstream text."""
+    secret = "upstream-secret-and-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout(secret, request=request)
+
+    adapter = HuggingFaceRemoteAdapter(client_factory=_client_factory(handler))
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.search("whisper", token=secret)
+
+    rendered = "".join(traceback.format_exception(raised.value))
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_redirect_status_as_remote_error() -> None:
+    """Catches a redirect response being parsed as trusted search metadata."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(lambda _: httpx.Response(302, json=[]))
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.search("whisper")
+
+    assert (raised.value.code, raised.value.retryable, raised.value.details) == (
+        "remote_error",
+        False,
+        (),
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "details"),
+    [
+        ("unexpected", ()),
+        ("invalid_response", ("x" * 513,)),
+        ("invalid_response", ("line\nbreak",)),
+        ("invalid_response", tuple("warning" for _ in range(21))),
+        ("invalid_response", ["warning"]),
+    ],
+)
+def test_remote_discovery_error_rejects_unbounded_or_unsanitized_values(
+    code: str, details: object
+) -> None:
+    """Catches public error values that could retain arbitrary upstream content."""
+    with pytest.raises(ValueError):
+        RemoteDiscoveryError(code, details=details)  # type: ignore[arg-type]
+
+
+def test_remote_discovery_error_retains_bounded_display_safe_warnings() -> None:
+    """Catches rejection of the bounded warning capacity needed by Task 2."""
+    details = tuple("model.gguf missing 00001" for _ in range(20))
+
+    error = RemoteDiscoveryError("no_eligible_gguf", details=details)
+
+    assert error.details == details
 
 
 @pytest.mark.asyncio

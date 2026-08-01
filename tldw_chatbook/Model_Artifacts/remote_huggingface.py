@@ -17,7 +17,25 @@ _MAX_QUERY_CHARACTERS = 256
 _MAX_REPOSITORY_CHARACTERS = 96
 _MAX_COUNTER = (2**63) - 1
 _MAX_LAST_MODIFIED_CHARACTERS = 64
+_MAX_ERROR_DETAILS = 20
+_MAX_ERROR_DETAIL_CHARACTERS = 512
 _REPOSITORY_COMPONENT_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+_ERROR_CODES = frozenset(
+    {
+        "access_forbidden",
+        "authentication_required",
+        "invalid_query",
+        "invalid_repository",
+        "invalid_response",
+        "invalid_token",
+        "network_error",
+        "no_eligible_gguf",
+        "rate_limited",
+        "remote_error",
+        "repository_not_found",
+        "response_too_large",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +60,9 @@ class RemoteDiscoveryError(RuntimeError):
         retryable: bool = False,
         details: tuple[str, ...] = (),
     ) -> None:
+        if code not in _ERROR_CODES:
+            raise ValueError("unsupported remote discovery error code")
+        _validate_error_details(details)
         super().__init__(code)
         self.code = code
         self.retryable = retryable
@@ -75,6 +96,7 @@ class HuggingFaceRemoteAdapter:
         """
         normalized_query = _validated_query(query)
         headers = _authorization_header(token)
+        network_error: RemoteDiscoveryError | None = None
         try:
             async with self._client_factory() as client:
                 async with client.stream(
@@ -88,10 +110,13 @@ class HuggingFaceRemoteAdapter:
                     payload = await _read_bounded_json(response)
         except RemoteDiscoveryError:
             raise
-        except httpx.TimeoutException as error:
-            raise RemoteDiscoveryError("network_error", retryable=True) from error
-        except httpx.HTTPError as error:
-            raise RemoteDiscoveryError("network_error", retryable=True) from error
+        except httpx.TimeoutException:
+            network_error = RemoteDiscoveryError("network_error", retryable=True)
+        except httpx.HTTPError:
+            network_error = RemoteDiscoveryError("network_error", retryable=True)
+
+        if network_error is not None:
+            raise network_error
 
         return _parse_search_results(payload)
 
@@ -127,6 +152,8 @@ def _authorization_header(token: str | None) -> dict[str, str]:
 
 
 def _raise_for_status(status_code: int) -> None:
+    if 300 <= status_code < 400:
+        raise RemoteDiscoveryError("remote_error")
     if status_code == 401:
         raise RemoteDiscoveryError("authentication_required")
     if status_code == 403:
@@ -152,8 +179,21 @@ async def _read_bounded_json(response: httpx.Response) -> object:
         chunks.append(chunk)
     try:
         return json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RemoteDiscoveryError("invalid_response") from error
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        parse_error = RemoteDiscoveryError("invalid_response")
+    raise parse_error
+
+
+def _validate_error_details(details: tuple[str, ...]) -> None:
+    if type(details) is not tuple or len(details) > _MAX_ERROR_DETAILS:
+        raise ValueError("invalid remote discovery error details")
+    if any(
+        not isinstance(detail, str)
+        or len(detail) > _MAX_ERROR_DETAIL_CHARACTERS
+        or not detail.isprintable()
+        for detail in details
+    ):
+        raise ValueError("invalid remote discovery error details")
 
 
 def _parse_search_results(payload: object) -> tuple[RemoteModelSummary, ...]:
