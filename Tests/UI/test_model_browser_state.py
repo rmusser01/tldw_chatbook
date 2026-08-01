@@ -49,6 +49,49 @@ def _report(destination: Path) -> PreflightReport:
     )
 
 
+# ---------------------------------------------------------------------------
+# format_mib -- the one byte formatter every plan/progress/inventory caller
+# shares (TASK-596 delta port). Before this existed, plan_panel.py,
+# install_progress.py, and model_installed_view.py each reimplemented MiB
+# formatting independently and disagreed: install_progress.py additionally
+# switched to KiB/B below 1 MiB, so the same byte count rendered
+# differently in the install plan than in the progress display. Every
+# expected string below is hand-verified against the formula
+# ``size_bytes / (1024 * 1024)`` rounded to one decimal place, not
+# re-derived from the implementation being tested.
+# ---------------------------------------------------------------------------
+
+
+def test_format_mib_renders_zero_bytes() -> None:
+    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+
+    assert format_mib(0) == "0.0 MiB"
+
+
+def test_format_mib_renders_a_sub_mib_value() -> None:
+    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+
+    # 512_000 / (1024*1024) = 0.48828125 -- hand-computed, not re-derived
+    # from the division this test checks. This is also the case that used
+    # to render as "500.0 KiB" under install_progress.py's old sub-MiB
+    # branch instead of "0.5 MiB"; format_mib always renders MiB.
+    assert format_mib(512_000) == "0.5 MiB"
+
+
+def test_format_mib_renders_exactly_one_mib() -> None:
+    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+
+    assert format_mib(1_048_576) == "1.0 MiB"
+
+
+def test_format_mib_renders_exactly_one_gib() -> None:
+    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+
+    # 1_073_741_824 bytes == exactly 1024 MiB (1 GiB) -- a round number
+    # chosen so the expected string is verifiable by hand.
+    assert format_mib(1_073_741_824) == "1024.0 MiB"
+
+
 def test_plan_rows_and_totals_preserve_every_consent_field(tmp_path: Path) -> None:
     """The render model contains every field required for informed consent."""
     from tldw_chatbook.UI.Screens.model_browser_state import plan_rows, plan_totals

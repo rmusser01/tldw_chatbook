@@ -145,6 +145,37 @@ def plan_totals(report: PreflightReport) -> PlanTotals:
     )
 
 
+def format_mib(size_bytes: int) -> str:
+    """Render a byte count as a complete MiB display string, unit included.
+
+    This is the one place that turns a raw byte count (``PlanRow``/
+    ``PlanTotals``/``InventoryRow`` fields, or a live
+    ``AcquisitionProgress`` event) into display text, and it owns the unit
+    as well as the number. Before this function existed, the plan panel,
+    the install-progress widget, and the installed view each reimplemented
+    this conversion independently and disagreed: the install-progress
+    widget additionally switched to B/KiB for sub-MiB values while the
+    other two always rendered MiB, so the same byte count could render as
+    "512.0 KiB" in one view and "0.5 MiB" in another. The sub-MiB
+    switching is deliberately dropped here -- always rendering MiB (even
+    "0.0 MiB" for a tiny or zero count) is the one behaviour every caller
+    now shares, so two screens showing the same report can never disagree
+    about units or precision. Callers must not reimplement the conversion
+    or append their own unit suffix.
+
+    Args:
+        size_bytes: A byte count (expected non-negative; formats without
+            raising for any int).
+
+    Returns:
+        The value divided by 1024*1024, formatted to one decimal place
+        and suffixed with the unit, e.g. ``"630.6 MiB"`` for
+        ``661_191_781``, ``"0.0 MiB"`` for ``0``, and ``"1.0 MiB"`` for
+        exactly ``1_048_576`` (1 MiB).
+    """
+    return f"{size_bytes / (1024 * 1024):.1f} MiB"
+
+
 def inventory_rows(
     installed: Iterable[InstalledArtifact],
     usage: ArtifactDiskUsage | None,

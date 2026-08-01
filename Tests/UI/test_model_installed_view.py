@@ -297,14 +297,21 @@ async def test_empty_inventory_still_reports_managed_and_staging_space(
     async with app.run_test() as pilot:
         view._apply_inventory(
             (),
-            ArtifactDiskUsage(installed_bytes=0, staging_bytes=2048, free_bytes=4096),
+            ArtifactDiskUsage(
+                installed_bytes=0,
+                staging_bytes=2 * 1024 * 1024,
+                free_bytes=4 * 1024 * 1024,
+            ),
             None,
         )
         await pilot.pause()
         text = "\n".join(str(item.renderable) for item in view.query("Static"))
 
-    assert "2.0 KiB staging" in text
-    assert "4.0 KiB free" in text
+    # All disk totals render through the single shared format_mib formatter
+    # (TASK-596 delta port), which always renders MiB -- 2 MiB and 4 MiB
+    # chosen so the expected strings are distinct and hand-verifiable.
+    assert "2.0 MiB staging" in text
+    assert "4.0 MiB free" in text
 
 
 @pytest.mark.asyncio

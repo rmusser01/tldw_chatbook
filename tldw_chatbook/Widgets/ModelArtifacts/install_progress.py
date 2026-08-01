@@ -10,6 +10,8 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import ProgressBar, Static
 
+from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -67,15 +69,6 @@ def make_progress_callback(
         post_message(InstallProgressed(progress))
 
     return callback
-
-
-def _bytes(size: int) -> str:
-    """Format a nonnegative byte count compactly."""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KiB"
-    return f"{size / (1024 * 1024):.1f} MiB"
 
 
 class ModelInstallProgress(Widget):
@@ -145,7 +138,8 @@ class ModelInstallProgress(Widget):
         if byte_phase:
             filename = event.file or "Model files"
             detail.update(
-                f"{filename} — {_bytes(event.bytes_done)} / {_bytes(event.bytes_total)}"
+                f"{filename} — {format_mib(event.bytes_done)} / "
+                f"{format_mib(event.bytes_total)}"
             )
             bar.display = True
             bar.update(total=max(event.bytes_total, 1), progress=event.bytes_done)
