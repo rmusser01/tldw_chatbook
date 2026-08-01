@@ -40,6 +40,11 @@
 - Production supports only verified HTTPS and literal-host OpenSSH/scp
   destinations with existing noninteractive authentication. Production
   continues to reject local/file/plaintext/custom-helper transports.
+- SSH local proof safely snapshots and fingerprints the standard user/system
+  public `known_hosts` sources. The private context pins OpenSSH to that `0400`
+  snapshot and to one existing SSH agent, disables live/default identity-file
+  reads, and blocks before authorization when trust input or agent authority is
+  unsafe or unavailable.
 - Guarded push is POSIX-only. Windows must fail closed before private-context
   creation, helper contact, SSH launch, or network access until separately
   approved owner-only ACL work exists; Job Objects alone do not admit it.
@@ -83,9 +88,10 @@
   - No owner state, subprocesses, network I/O, Textual, or SQLite.
 - `tldw_chatbook/Notes/file_notes_git_network.py`
   - Private `NetworkGitExecutionContext`, minimal allowlisted network
-    environment, immutable OpenSSH invocation, owner-only temporary bare Git
-    context, controlled format-bound object alternate, zero-field registry
-    capabilities, read-only child scratch roots, and exact cleanup.
+    environment, opaque/fingerprinted SSH host-trust authorization, immutable
+    agent-only OpenSSH invocation, owner-only temporary bare Git context,
+    controlled format-bound object alternate, zero-field registry capabilities,
+    read-only child scratch roots, and exact cleanup.
   - No authority, retained-task ownership, or outcome classification.
 - `tldw_chatbook/Notes/git_process_containment.py`
   - One small platform adapter for POSIX process groups and Windows Job
@@ -520,9 +526,9 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
   helpers.
 - [ ] Write failing OpenSSH invocation tests for literal authorized host/user/
   port, batch mode, strict host-key verification, no forwarding/password/
-  askpass/live user routing config, existing agent/default identity locations/
-  standard known-hosts only, and no `ProxyCommand`, `ProxyJump`, host alias, or
-  custom `IdentityFile`.
+  askpass/live user routing config, exact private host-trust snapshot, pinned
+  agent-only authentication with default identity files disabled, and no
+  `ProxyCommand`, `ProxyJump`, host alias, or custom `IdentityFile`.
 - [ ] Write failing exact-instance capability tests proving public context and
   lease objects expose no state/token fields; endpoint, command, copied-config,
   source-authorization, mutation, copy, and forged-alias attempts cannot
@@ -1070,6 +1076,105 @@ git commit -m "test(notes): verify guarded push transports [TASK-1566]"
 
 Only stage production files if the transport tests required contract fixes.
 
+## Task 12A: Freeze SSH Host Trust and Use Agent-Only Authentication
+
+Task 13's production-app probe exposed that `ssh -F none` still resolves
+default `known_hosts` and identity-file locations from the OS account home.
+The Task 12 wrapper hid that production defect by injecting fixture-only host
+and identity arguments. Amend ADR-039 and the design before changing code; do
+not retain the wrapper as acceptance evidence.
+
+**Files:**
+
+- Modify: `backlog/decisions/039-file-notes-guarded-session-push.md`
+- Modify:
+  `Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md`
+- Modify:
+  `Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md`
+- Modify:
+  `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+- Modify: `tldw_chatbook/Notes/file_notes_git_network.py`
+- Modify: `tldw_chatbook/Notes/file_notes_git_service.py`
+- Modify: `tldw_chatbook/Notes/file_notes_session_owner.py`
+- Modify: `tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py`
+- Modify: `Tests/Notes/test_file_notes_git_push_service.py`
+- Modify: `Tests/Notes/test_file_notes_git_push_transport.py`
+- Modify: `Tests/UI/test_library_file_notes_git_push.py`
+
+**Interfaces:**
+
+- Extend the existing opaque exact-instance `NetworkConfigAuthorization`
+  registry record with the optional private SSH host-trust snapshot and pinned
+  agent facts. Its existing public projection remains only 64-hex
+  fingerprints; no new public capability or owner type is added.
+- Capture `$HOME/.ssh/known_hosts`, `$HOME/.ssh/known_hosts2`,
+  `/etc/ssh/ssh_known_hosts`, and `/etc/ssh/ssh_known_hosts2` in that order.
+  Each source is limited to 1 MiB and the combined payload to 4 MiB.
+- Present sources require a bounded stable nofollow descriptor read, regular
+  same-UID/root ownership, link count one, no group/other write, safe
+  ancestors, and location outside repository roots. Missing sources are
+  fingerprinted as missing; unsafe or unreadable present sources fail closed.
+- The existing network-copy fingerprint includes SSH trust/agent facts, so the
+  current `_PushDestinationPolicySnapshot` prior comparison, command-policy
+  fingerprint, and Review/Confirm reproof bind them without another owner
+  capability. HTTPS records contain no SSH trust/agent facts.
+- `NetworkContextFactory.create(...)` consumes the exact authorization for SSH,
+  writes one private `0400` snapshot, and pins its identity/mode/size/digest in
+  the existing private-layout lifecycle.
+- Exact direct and adapter OpenSSH argv include
+  `UserKnownHostsFile=<private snapshot>`, `GlobalKnownHostsFile=none`,
+  `IdentityFile=none`, `IdentitiesOnly=no`, and the pinned `IdentityAgent`.
+  An SSH destination without a safe pinned agent blocks before network contact.
+
+- [ ] Amend ADR-039, design, plan, and TASK-1566 with the exact approved trust,
+  identity, crash-residue, and UAT boundaries before production edits.
+- [ ] Write focused failing network-context tests proving safe ordered capture,
+  missing-source behavior, symlink/hard-link/group-write/oversize rejection,
+  exact private snapshot bytes/mode, exact direct/adapter argv, HTTPS
+  non-applicability, no-agent refusal, and context invalidation after private
+  snapshot content/mode/substitution drift.
+- [ ] Run only the new exact network selectors. Expected: FAIL because no
+  production host-trust authorization/snapshot exists and current argv can read
+  default host/key files.
+- [ ] Write focused failing service tests proving SSH trust is captured during
+  local proof before authorization, unsafe trust blocks with zero network
+  contact, source drift makes Confirm reject the retained review, and host-trust
+  fingerprint participates in the command policy.
+- [ ] Run only those service selectors. Expected: FAIL for the missing policy
+  binding and revalidation.
+- [ ] Replace the Task 12 SSH wrapper happy path with a disposable isolated
+  `ssh-agent`, synthetic `HOME/.ssh/known_hosts`, the production
+  `NetworkContextFactory`, and the standard OpenSSH executable. Add wrong/empty
+  trust and wrong/missing agent-key cases without reading the user's real SSH
+  config, agent, keys, or credential state.
+- [ ] Run only the OpenSSH transport selectors. Expected: FAIL against the
+  current production invocation even though the loopback fixture itself is
+  available.
+- [ ] Implement the minimal opaque authorization, policy binding, private
+  snapshot, exact argv, and lifecycle validation. Do not add SSH configuration,
+  key selection, credential UI, persistence, or provider-specific behavior.
+- [ ] Change authorization copy from “configured SSH” to “existing SSH agent”
+  and update its focused mounted UI assertion; do not redesign the dialogs.
+- [ ] Re-run the exact RED selectors until green, then run:
+
+```bash
+python3 -m pytest Tests/Notes/test_file_notes_git_push_service.py -q -k 'ssh_host_trust or openssh_invocation or private_host_trust'
+python3 -m pytest Tests/Notes/test_file_notes_git_push_transport.py -q -k openssh
+python3 -m pytest Tests/UI/test_library_file_notes_git_push.py -q -k push_authorization_dialog
+python3 -m ruff check tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_transport.py Tests/UI/test_library_file_notes_git_push.py
+python3 -m compileall -q tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py
+git diff --check
+```
+
+Expected: selected tests pass, static checks exit 0, and no broad suite runs.
+
+- [ ] Commit:
+
+```bash
+git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_transport.py Tests/UI/test_library_file_notes_git_push.py
+git commit -m "fix(notes): freeze guarded push SSH trust [TASK-1566]"
+```
+
 ## Task 13: Run Same-Process Production-App PTY Acceptance
 
 **Files:**
@@ -1097,6 +1202,13 @@ Use isolated synthetic config/data/HOME/tmp, notes root, SQLite data, Git
 repository, and OpenSSH destination. Do not use `App.run_test()`, Pilot, seeded
 candidate state, widget `.press()`, or private handlers.
 
+Start an isolated fixture `ssh-agent`, load its disposable client key, remove
+the private-key file before launching Chatbook, expose only that fixture agent
+socket, leave every default identity-file location empty, and populate only the
+isolated standard `HOME/.ssh/known_hosts` source. The app must use the standard
+OpenSSH executable and production context factory, not an argument-injecting
+wrapper.
+
 - [ ] In one application process, use actual terminal keyboard input to:
   1. navigate Library -> Notes -> Files;
   2. select the synthetic notes root;
@@ -1107,10 +1219,12 @@ candidate state, widget `.press()`, or private handlers.
   7. cancel authorization and externally prove zero connections;
   8. reopen, authorize, and observe one read-only connection;
   9. review the exact commit/ref/endpoint/lease/policy facts;
-  10. confirm and externally prove one exact ref transition;
-  11. leave/reopen during a retained delayed operation with no duplicate;
-  12. continue editing while the fixed candidate/push remains unchanged; and
-  13. verify Tab/Shift+Tab/Enter/Escape/scroll/Details/result at `40x20`.
+  10. change the live standard trust source, confirm the stale review blocks
+      locally with no push, restore trust, and create a fresh authorization;
+  11. confirm and externally prove one exact ref transition;
+  12. leave/reopen during a retained delayed operation with no duplicate;
+  13. continue editing while the fixed candidate/push remains unchanged; and
+  14. verify Tab/Shift+Tab/Enter/Escape/scroll/Details/result at `40x20`.
 - [ ] Run a second focused missing or divergent destination scenario and prove
   no push/recreation/overwrite.
 - [ ] Capture a truthful phase-to-evidence matrix matching the design. Do not
@@ -1123,14 +1237,17 @@ candidate state, widget `.press()`, or private handlers.
   - key phase/viewport captures;
   - `evidence.json` with parent/candidate OIDs, sanitized endpoint/ref,
     pre/post local and remote ref maps, connection/push/prompt/helper counts,
-    logical note/replica assertions, and test-lane labels;
+    logical note/replica assertions, test-lane labels, and sanitized booleans
+    `ssh_agent_only`, `disk_identity_available`,
+    `trust_snapshot_materialized`, and `trust_drift_blocked_before_push`;
   - process-tree settlement evidence from the native automated lane;
   - redaction-canary scan result; and
   - SHA-256 manifest for every retained artifact.
 - [ ] Assert the bundle contains no private key, credential, raw helper/server
   diagnostic, note body, real user path, unsanitized fixture absolute path, or
-  redaction canary. Scan every nested retained artifact, including terminal
-  captures and accessibility/action transcripts.
+  redaction canary. It must also contain no agent socket path, host-key line, or
+  `BEGIN OPENSSH PRIVATE KEY`. Scan every nested retained artifact, including
+  terminal captures and accessibility/action transcripts.
 - [ ] Create `SHA256SUMS` from a sorted recursive list of every retained file
   except `SHA256SUMS` itself. Store paths relative to the QA directory.
 - [ ] Validate:
@@ -1140,6 +1257,7 @@ python3 -m json.tool Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30/
 python3 -c 'from pathlib import Path; r=Path("Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30"); m=r/"SHA256SUMS"; recorded={line.split("  ",1)[1] for line in m.read_text().splitlines() if line}; actual={str(p.relative_to(r)) for p in r.rglob("*") if p.is_file() and p != m}; assert recorded == actual, (sorted(recorded-actual), sorted(actual-recorded))'
 (cd Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30 && shasum -a 256 -c SHA256SUMS)
 ! rg -n --hidden 'GUARDED_PUSH_(SECRET|PATH)_CANARY|/Users/|/home/' Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30
+! rg -n --hidden 'BEGIN OPENSSH PRIVATE KEY|SSH_AUTH_SOCK=' Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30
 git diff --check
 ```
 
@@ -1199,6 +1317,8 @@ Expected: all commands exit 0.
 - [ ] Perform a self-review against all ten TASK-1566 acceptance criteria and
   the phase-to-evidence matrix. Verify in particular:
   - no pre-authorization network/helper contact;
+  - safe bounded standard host-trust capture, drift revocation, exact private
+    snapshot pins, agent-only SSH success, and no identity-file fallback;
   - no candidate range broadening;
   - no live-config TOCTOU redirection;
   - exact lease/refspec and no retry;

@@ -19,10 +19,10 @@ The action targets only that commit's existing tracking upstream and only while
 the remote branch is exactly at the commit's parent.
 
 Chatbook resolves the effective destination locally, asks for a separate
-process-only authorization before any network or credential-helper contact,
-checks the exact remote ref, and shows an immutable review. Confirm revalidates
-the same facts and requests one explicit parent-to-child ref update guarded by
-an exact server-side lease.
+process-only authorization before any network, HTTPS credential-helper, or SSH
+agent contact, checks the exact remote ref, and shows an immutable review.
+Confirm revalidates the same facts and requests one explicit parent-to-child
+ref update guarded by an exact server-side lease.
 
 This is not a branch-ahead push, remote manager, credential manager, retry
 queue, or general Git client. Ordinary Markdown/text files remain authoritative
@@ -65,10 +65,14 @@ Chatbook never automatically retries an uncertain push.
   push automatically.
 - Require a separate process-only destination authorization before any network
   or authentication-helper contact.
-- Use existing noninteractive Git authentication only. Chatbook never prompts
-  for or stores credentials.
+- Use existing noninteractive Git authentication only: a pinned SSH agent for
+  SSH or an approved installed credential helper for HTTPS. Chatbook never
+  prompts for or stores credentials and never reads private-key files.
 - Support only secure HTTPS with normal certificate verification and standard
   OpenSSH/scp-style SSH with existing host-key verification.
+- For SSH, safely snapshot and fingerprint standard public `known_hosts` trust
+  before authorization, revalidate it at Confirm, and pin OpenSSH to the
+  owner-only private snapshot. Never let the child reread live trust files.
 - Admit guarded push only on POSIX. Windows fails closed before private-context
   creation, helper contact, SSH launch, or network access until separately
   approved native owner-only ACL work exists.
@@ -123,7 +127,9 @@ Chatbook never automatically retries an uncertain push.
 - Pull, fetch, merge, rebase, history browsing, remote status browsing, or
   branch management
 - Prompting for, displaying, editing, storing, or configuring passwords,
-  tokens, private keys, certificates, host keys, or credential helpers
+  tokens, private keys, certificates, host-key exceptions, or credential
+  helpers. The ephemeral copy of existing public host-key trust is part of the
+  approved SSH execution context, not credential management.
 - Plain HTTP, `git://`, local/file transports, custom remote helpers, or
   ambiguous transport forms
 - Multiple push URLs, mirror mode, implicit/configured push refspecs, tags,
@@ -226,6 +232,7 @@ Push authorization binds only push-relevant authority:
 - repository identity and repository-trust generation;
 - candidate token and candidate generation;
 - destination-policy/configuration fingerprint and its observed generation;
+- applicable SSH host-trust fingerprint and pinned-agent policy;
 - destination-authorization epoch; and
 - exact push operation/review IDs.
 
@@ -247,7 +254,7 @@ unavailable.
 The existing process-owned service remains the only layer that:
 
 - resolves upstream and effective destination policy;
-- performs local candidate/configuration proof;
+- performs local candidate/configuration proof and safe SSH host-trust capture;
 - asks the owner to capture destination authorization;
 - constructs and invokes network Git commands;
 - owns remote checks, push, postflight, and recovery tasks;
@@ -360,7 +367,9 @@ The service resolves:
 - the exact full destination ref;
 - effective URL rewriting into one unambiguous endpoint;
 - relevant configuration origins and values;
-- transport and authentication-helper policy; and
+- transport and authentication-helper policy;
+- for SSH, the safe standard host-trust snapshot and pinned agent availability;
+  and
 - a fingerprint covering every fact that can select or redirect the
   destination.
 
@@ -398,8 +407,8 @@ Before the first network/helper contact, show
 - local branch and full destination ref;
 - transport;
 - process-only scope;
-- the statement that configured SSH or credential helpers may run after
-  authorization;
+- the statement that an existing SSH agent or approved credential helper may
+  run after authorization;
 - the statement that terminal prompts are disabled; and
 - the statement that authorization checks the destination and does not push.
 
@@ -413,7 +422,8 @@ Authorization binds:
 - destination ref;
 - transport policy;
 - relevant configuration and origin fingerprint;
-- authentication/SSH-helper policy fingerprint; and
+- authentication/SSH-helper policy fingerprint;
+- SSH host-trust fingerprint when applicable; and
 - a monotonic authorization epoch.
 
 An unchanged exact authorization may be reused within the same process.
@@ -456,11 +466,32 @@ Allow only unambiguous `ssh://` or standard scp-style endpoints with:
 The network execution context supplies a Chatbook-owned OpenSSH invocation that
 does not reread live user SSH routing/command configuration after
 authorization. It binds the literal authorized host/user/port, batch and
-host-key policy, disables forwarding and interactive authentication, and may
-use the user's existing SSH agent, standard identity-file locations, and
-standard known-hosts files. Host aliases, ProxyCommand/ProxyJump, custom
-IdentityFile selection, or other behavior that depends on live user SSH config
-is unsupported in this slice and remains available through external Git.
+host-key policy, disables forwarding and interactive authentication, and uses
+only the exact pinned SSH agent socket. `IdentityFile=none` prevents default or
+configured private-key-file reads; explicit `IdentitiesOnly=no` allows keys
+already exposed by that pinned agent. No pinned agent blocks SSH guarded push
+locally. Host aliases, ProxyCommand/ProxyJump, custom IdentityFile selection,
+or other behavior that depends on live user SSH config is unsupported in this
+slice and remains available through external Git.
+
+During each local destination proof Chatbook captures the ordered standard
+sources `$HOME/.ssh/known_hosts`, `$HOME/.ssh/known_hosts2`,
+`/etc/ssh/ssh_known_hosts`, and `/etc/ssh/ssh_known_hosts2`. Each present source
+is opened without following its final component, read through a stable bounded
+descriptor, and must be a single-linked regular file owned by the effective UID
+or root, not group/other-writable, beneath safe ancestors, and outside the
+selected repository roots. Each source is limited to 1 MiB and their combined
+payload to 4 MiB. Missing sources are allowed and fingerprinted as missing;
+unsafe, unreadable, unstable, symlinked, hard-linked, or oversized present
+sources block before authorization or network contact.
+
+The opaque host-trust authorization binds ordered source kind/path identity,
+metadata, presence, and content digest. Confirm recaptures and compares it, so
+trust drift revokes the review. The authorized bytes are combined with safe
+line boundaries into one owner-read-only private snapshot. OpenSSH receives
+`UserKnownHostsFile=<private snapshot>`, `GlobalKnownHostsFile=none`, strict
+checking, and no update command. A live source change after final validation
+cannot redirect the retained child.
 
 Unknown or changed host keys fail without offering an override. Pre-existing
 agents and credential services remain external authentication infrastructure;
@@ -522,8 +553,9 @@ service creates one private immutable `NetworkGitExecutionContext`:
   noninteractive credential-helper and transport-neutral values copied from
   the authorized configuration snapshot;
 - a Chatbook-owned immutable OpenSSH invocation specification for SSH
-  endpoints, with the exact authorized host/user/port and no live user SSH
-  routing/command config;
+  endpoints, with the exact authorized host/user/port, pinned agent-only
+  authentication, a private host-trust snapshot, and no live user SSH
+  routing/command/trust/private-key config;
 - system and global Git configuration redirected to owner-only empty files or
   otherwise disabled for every child;
 - source-object access only through a Chatbook-supplied read-only alternate
@@ -558,9 +590,11 @@ command, configuration, source-authorization, or lifecycle attribute that
 The context root, private Git directories, and files are constructed with
 owner-only POSIX modes. Once construction is complete, child-visible `HOME`,
 `XDG_CONFIG_HOME`, and `TMP`/`TEMP`/`TMPDIR` directories are changed to `0500`
-and their identities and exact modes are pinned. Real Git and the approved
-transport/helper paths must operate without writing them; attempted scratch
-creation must fail. Cleanup removes only the exact known empty shape and
+and their identities and exact modes are pinned. An SSH context's combined
+host-trust file is `0400`; its identity, mode, link count, size, and digest are
+part of private-layout validation and cleanup. Real Git and the approved
+transport/helper paths must operate without writing these paths; attempted
+scratch creation must fail. Cleanup removes only the exact known shape and
 remains retryable. This protects against other principals. Processes running
 as the same effective UID, and root, remain inside the documented trusted
 local boundary.
@@ -584,17 +618,18 @@ Git directory, not the source worktree or its live config. The push child sees
 the candidate object through the controlled alternate but cannot update the
 source repository's refs, index, or config.
 
-The source configuration fingerprint includes relevant content plus source
-identity/change metadata. Confirm rejects a changed fingerprint, but a change
-after child spawn cannot redirect that child because the immutable execution
-context is already detached from the source configuration.
+The source configuration and SSH host-trust fingerprints include relevant
+content plus source identity/change metadata. Confirm rejects a changed
+fingerprint, but a change after child spawn cannot redirect that child because
+the immutable execution context is already detached from the live sources.
 
 The context is retained through review, active children, postflight, and
 uncertain query-only recovery. Cleanup occurs only after all owned descendants
 are terminal and no retained recovery needs it. A crash may leave an
-owner-only temporary directory containing no credentials or user content; it
-is never discovered or reused after restart and remains eligible only for
-ordinary operating-system temporary cleanup.
+owner-only temporary directory containing public host-key trust metadata but no
+credentials, private keys, or note content; it is never discovered or reused
+after restart and remains eligible only for ordinary operating-system
+temporary cleanup.
 
 ## LFS policy
 
@@ -647,7 +682,8 @@ The private review snapshot binds:
 - commit subject and included-session-note provenance;
 - private effective endpoint and sanitized destination identity;
 - full destination ref;
-- transport and authentication-helper policy fingerprint;
+- transport, authentication-helper, and applicable SSH host-trust policy
+  fingerprints;
 - destination-authorization handle/epoch;
 - exact remote-preflight observation of the parent; and
 - immutable network-execution-context identity; and
@@ -1142,7 +1178,8 @@ Cover:
 - second guarded commit replacing rather than accumulating a candidate;
 - full ref and URL parsing, credential-bearing URL rejection, IDNA display, and
   ambiguous scp/local forms;
-- destination/config/helper policy and authorization fingerprint/epoch;
+- destination/config/helper/SSH-host-trust policy and authorization
+  fingerprint/epoch;
 - exact refspec and exact lease construction;
 - no tags/options/delete/upstream/submodule/implicit refspec;
 - LFS candidate-path detection and indeterminate blocking;
@@ -1196,8 +1233,12 @@ Use an ephemeral loopback OpenSSH fixture with:
 - generated disposable client/server keys;
 - temporary isolated `HOME`, Git global config, SSH directory, and
   `known_hosts`;
-- strict host-key checking, batch mode, identities-only fixture policy, no
-  agent forwarding, no askpass, and closed stdin;
+- a disposable isolated `ssh-agent` holding the generated client key;
+- the production factory and standard OpenSSH executable, without a wrapper
+  that injects host or identity flags;
+- strict host-key checking, batch mode, `IdentityFile=none`,
+  `IdentitiesOnly=no`, pinned agent identity, no agent forwarding, no askpass,
+  and closed stdin;
 - no access to the user's real SSH config, agent, keys, or credential state;
 - bounded server connection and receive-side counters; and
 - prompt-invocation sentinels.
@@ -1210,6 +1251,11 @@ Prove:
 - no mutating request before final Confirm;
 - a live user SSH HostName/ProxyCommand/IdentityFile routing override is not
   consulted by the frozen child;
+- unsafe, symlinked, hard-linked, unstable, or oversized present trust sources
+  block before authorization/network contact;
+- trust-source drift before Confirm revokes the review, while mutation after
+  final capture cannot redirect the retained context;
+- private snapshot substitution or content/mode drift invalidates the context;
 - unknown/wrong host key fails without prompting;
 - missing/wrong authentication fails promptly without prompting; and
 - no provider-secret canary reaches the SSH environment.

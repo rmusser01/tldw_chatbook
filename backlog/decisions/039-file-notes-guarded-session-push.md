@@ -80,36 +80,50 @@ honest uncertain state when the result cannot be proved.
   options, a conflicting `branch.*.pushRemote` or `remote.pushDefault`, a
   custom receive-pack, ambiguous URL rewriting, or other configuration that
   could change the destination or broaden the requested operation.
-- Before the first remote query or credential-helper contact, require a
+- Before the first network query, HTTPS credential-helper contact, or SSH-agent
+  contact, require a
   separate process-only `Authorize configured destination` decision. It binds
   a monotonic authorization epoch to the exact sanitized effective endpoint,
   destination ref, transport, repository identity, and relevant configuration
-  and authentication-helper policy fingerprint. It is not persisted, does not
-  assert that Chatbook trusts the remote's content or operator, and does not
-  itself contact the network.
+  authentication-helper policy, and SSH host-trust fingerprints. It is not
+  persisted, does not assert that Chatbook trusts the remote's content or
+  operator, and does not itself contact the network.
 - Permit only secure HTTPS with normal certificate verification and standard
   OpenSSH/scp-style SSH with batch operation and existing host-key
   verification. Plain HTTP, `git://`, local paths, `file://`, external/custom
   transport helpers, ambiguous URL forms, embedded secret material, unknown
   SSH hosts, disabled certificate checks, and repository-controlled executable
   credential or SSH helpers block.
-- Use only existing noninteractive authentication, such as an SSH agent or an
-  installed credential helper allowed by policy. Chatbook never prompts for,
-  reads, displays, edits, stores, or configures a password, token, private key,
-  credential helper, host key, or certificate exception. The authorization UI
-  discloses that configured SSH or credential helpers may be contacted after
-  authorization and that terminal prompts are disabled.
+- Use only existing noninteractive authentication: a pinned SSH agent for SSH,
+  or an installed credential helper allowed by policy for HTTPS. Chatbook never
+  prompts for, reads, displays, edits, stores, or configures a password, token,
+  private key, credential helper, or certificate exception. For SSH it reads
+  only the standard public host-key trust files through bounded local
+  descriptor reads, retains their exact bytes in process authority, and copies
+  them only into the owner-only temporary network context. The authorization UI
+  discloses that the existing SSH agent or an approved credential helper may be
+  contacted after authorization and that terminal prompts are disabled.
 - For SSH, bind the exact authorized URL host, username, and port in a
   Chatbook-owned immutable OpenSSH invocation. Do not reread live user SSH
-  routing/command configuration after authorization. Existing agents,
-  standard identity-file locations, and standard known-hosts files remain
-  usable; host aliases, ProxyCommand/ProxyJump, custom IdentityFile selection,
-  and other behavior requiring live user SSH config are external-Git-only in
-  this slice.
+  routing/command configuration after authorization. Capture, safely read, and
+  fingerprint the ordered standard user and system `known_hosts` sources during
+  local destination proof. Missing sources contribute an explicit missing fact
+  and yield an empty strict-trust snapshot when all are absent; an unsafe,
+  unreadable, unstable, symlinked, hard-linked, or oversized present source
+  blocks before network contact. Confirm recaptures the sources and revokes the
+  review on drift. The private context stores one owner-read-only snapshot,
+  pins `UserKnownHostsFile` to it, and sets `GlobalKnownHostsFile=none`.
+- SSH authentication is agent-only. The immutable invocation pins the proved
+  agent socket, sets `IdentityFile=none` so no default or configured private-key
+  file is read, and keeps `IdentitiesOnly=no` so identities already exposed by
+  that agent remain usable. No pinned agent means SSH guarded push blocks before
+  network contact. Host aliases, ProxyCommand/ProxyJump, custom IdentityFile
+  selection, and other behavior requiring live user SSH config remain
+  external-Git-only in this slice.
 - Any change to the bound endpoint, ref, transport, repository identity,
-  relevant configuration, or helper policy revokes the authorization even if
-  values later change back. Monotonic epochs prevent value-level ABA from
-  reviving stale authority.
+  relevant configuration, helper policy, host-trust source fingerprint, or
+  pinned-agent identity revokes the authorization even if values later change
+  back. Monotonic epochs prevent value-level ABA from reviving stale authority.
 
 ### Remote proof and exact ref update
 
@@ -121,7 +135,8 @@ honest uncertain state when the result cannot be proved.
   exact state blocks review.
 - The immutable review binds the exact root, repository/trust, candidate,
   destination-policy/configuration, authorization, operation, and
-  remote-preflight facts. It deliberately excludes session-change,
+  remote-preflight facts, including the applicable SSH trust snapshot and
+  pinned-agent policy. It deliberately excludes session-change,
   Git-authority, status, staging, index, and worktree generations that may
   advance through later note edits without changing the commit. Confirmation
   consumes one single-use capability and freshly revalidates only the
@@ -157,11 +172,13 @@ honest uncertain state when the result cannot be proved.
   OIDs are accepted. A missing, unsupported, changed, or mismatched format
   blocks before network/helper contact. SHA-1 and SHA-256 repositories remain
   separate authorities; Chatbook never guesses or translates formats.
-- Retain the immutable execution context through review, children,
-  postflight, and query-only recovery. Remove it only after every owned
-  descendant is terminal and no recovery needs it. A crash-left owner-only
-  temporary directory contains no credentials or note content, is never
-  discovered or reused after restart, and is not a durable push journal.
+- Retain the immutable execution context, including any ephemeral SSH
+  host-trust snapshot, through review, children, postflight, and query-only
+  recovery. Remove it only after every owned descendant is terminal and no
+  recovery needs it. A crash-left owner-only temporary directory may contain
+  public host-key trust metadata but contains no credentials, private keys, or
+  note content; it is never discovered or reused after restart and is not a
+  durable push journal.
 - Because Git LFS depends on the bypassed pre-push hook to publish required
   objects, block the operation when any path included by the candidate is
   governed by Git LFS. Chatbook does not attempt to emulate LFS upload or run
@@ -189,10 +206,12 @@ honest uncertain state when the result cannot be proved.
 - The context root and Git directories are owner-only. After construction,
   child-visible `HOME`, `XDG_CONFIG_HOME`, and `TMP`/`TEMP`/`TMPDIR` directories
   are read/execute-only to the owner and their exact modes are pinned through
-  cleanup. Git, OpenSSH, and approved helpers must not require scratch writes
-  there. The documented local threat boundary continues to trust processes
-  running as the same effective UID and root; mode bits do not isolate one
-  same-UID process from another.
+  cleanup. An SSH context's combined host-trust snapshot is owner-read-only and
+  its identity, size, mode, and digest are pinned through cleanup. Git, OpenSSH,
+  and approved helpers must not require scratch writes there. The documented
+  local threat boundary continues to trust processes running as the same
+  effective UID and root; mode bits do not isolate one same-UID process from
+  another.
 - Public context and lease objects carry no reachable authority, lifecycle,
   or release-token fields. Exact-instance weak registries bind them to frozen
   authority facts and inaccessible mutable lifecycle bookkeeping, so copying,
@@ -213,7 +232,8 @@ honest uncertain state when the result cannot be proved.
   ownership. The UI and diagnostics do not claim that terminating a local
   child cancels work that a server may already have accepted.
 - Use a minimal allowlisted child environment that preserves only required
-  noninteractive Git/authentication behavior and excludes provider tokens,
+  noninteractive Git/authentication behavior, including only the frozen SSH
+  agent socket for SSH, and excludes provider tokens,
   ambient Git repository/index/config redirects, ambient prompt controls,
   author overrides, and other unrelated secrets. Install Chatbook's own
   noninteractive prompt controls after removing ambient overrides. Bound
@@ -293,9 +313,10 @@ honest uncertain state when the result cannot be proved.
   local branch, full destination ref, sanitized selectable endpoint details,
   included session-note provenance, exact lease, secure-transport/authentication
   policy, local pre-push-hook bypass, and the fact that remote hooks, CI, or
-  mirroring may run. It explains that later note edits remain local and that
-  Git publishes a commit and its required objects rather than independently
-  transmitting a UI list of notes.
+  mirroring may run. SSH copy discloses strict snapshotted host trust and
+  existing-agent-only authentication with identity files disabled. It explains
+  that later note edits remain local and that Git publishes a commit and its
+  required objects rather than independently transmitting a UI list of notes.
 - A persistent Session Git indicator distinguishes destination checking,
   pushing, and push-needs-attention while the user edits or leaves the Prepare
   panel. Checking the candidate, checking before push, and checking an uncertain
@@ -322,6 +343,8 @@ honest uncertain state when the result cannot be proved.
   credential configuration, provider-specific hosting integration, general
   repository status/history browser, branch manager, fetch, pull, or
   repository repair workflow is added.
+  The ephemeral owner-only SSH host-trust snapshot is process-context material,
+  not an application-managed durable trust record.
 
 This ADR supersedes ADR-038's exclusion of push only for the exact,
 same-process guarded-commit candidate and operation defined here. ADR-038's
@@ -339,6 +362,10 @@ remain in force.
   local branch that is two commits ahead, lacks a configured upstream, targets
   a missing branch, relies on LFS, uses unsupported push policy, or contains a
   commit not proved by the current Chatbook process must be pushed externally.
+- SSH guarded push also requires a safe standard host-trust snapshot and an
+  existing pinned SSH agent. Users who rely on default private-key files,
+  custom SSH routing, or interactive authentication continue with external
+  Git.
 - Separate destination authorization and final confirmation add friction, but
   they prevent destination resolution, authentication contact, and external
   mutation from being collapsed into one ambiguous action.
@@ -383,6 +410,8 @@ remain in force.
 | Run local pre-push hooks | Hooks can execute repository code, launch unowned work, broaden behavior, or make the reviewed outcome depend on arbitrary local policy. |
 | Support LFS by running its hook separately | Reproducing the hook ordering, authentication, object-transfer, and uncertain-recovery contract is a separate feature. |
 | Prompt for or store credentials in Chatbook | It creates a credential-management and secure-persistence boundary unrelated to guarded File Notes ownership. |
+| Let OpenSSH reread live standard `known_hosts` files | A source can drift between Review and Confirm or resolve from the OS account home instead of Chatbook's isolated process home; an authorized private snapshot keeps trust exact and testable. |
+| Let OpenSSH fall back to default identity files | It silently reads live private-key paths outside the frozen context. Agent-only authentication keeps private key material outside Chatbook while preserving existing noninteractive SSH. |
 | Permit HTTP, local, file, `git://`, or custom helper transports | They either lack the approved confidentiality/integrity properties or execute a transport outside the bounded standard-client policy. |
 | Combine commit and push into one confirmation | Users must be able to review the local commit and external destination as separate effects, and a successful commit must not imply consent to network publication. |
 | Automatically retry an uncertain push | The first request may have succeeded despite a lost response; retry could repeat side effects or race a changed destination. |
