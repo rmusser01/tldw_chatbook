@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
@@ -2353,7 +2354,15 @@ class ConsoleChatStore:
 
         Clears ``ephemeral`` first -- that is what opens the gate in
         ``persist_session_if_needed`` -- then mints the conversation and
-        flushes every in-memory message. The whole sequence runs inside one
+        flushes every node in the FULL conversation tree, not just the
+        active-path view: off-path branches left behind by
+        ``create_sibling`` (regenerate / edit-and-resend) are still reachable
+        by swiping back, and a normal (never-temporary) conversation persists
+        them, so a promoted one must too -- otherwise saving would silently
+        discard history the user could see a moment before clicking Save.
+        Nodes are written parent-before-child (``_tree_nodes_parent_first``)
+        since each node's persisted parent is resolved from its
+        already-persisted ancestors. The whole sequence runs inside one
         database transaction when the adapter exposes a real database, so a
         failure part-way through leaves NO conversation in history rather
         than a truncated one.
@@ -2391,7 +2400,7 @@ class ConsoleChatStore:
         if self.persistence is None:
             return None
 
-        messages = list(self._messages_by_session.get(session_id, ()))
+        messages = self._tree_nodes_parent_first(session_id)
         db = getattr(self.persistence, "db", None)
         transaction = getattr(db, "transaction", None)
         # Captured BEFORE any write -- persist_session_if_needed empties the
@@ -3443,6 +3452,51 @@ class ConsoleChatStore:
             collected.append(node_id)
             stack.extend(children_map.get(node_id, []))
         return collected
+
+    def _tree_nodes_parent_first(self, session_id: str) -> list[ConsoleChatMessage]:
+        """Return EVERY tree node for a session, guaranteed parent-before-child.
+
+        Used by ``promote_ephemeral_session`` (task-3), which must persist the
+        whole conversation tree -- every off-path branch left behind by
+        ``create_sibling`` (regenerate / edit-and-resend), not just the
+        active-path view -- so a promoted temporary chat comes out
+        indistinguishable from one that had been saved from the start,
+        swipe-back included.
+
+        Ordering is load-bearing, not cosmetic: ``_persist_new_message``
+        resolves each node's persisted parent via
+        ``_nearest_persisted_ancestor_id``, which walks up
+        ``_native_parent_by_message`` looking for the nearest ANCESTOR that
+        already has a ``persisted_message_id``. Persisting a child before its
+        parent would leave that walk with nothing to find (a stray root) or,
+        worse, silently resolve to some unrelated already-persisted ancestor
+        further up the chain -- a misparented row that looks fine until a
+        later resume walks the wrong branch.
+
+        A breadth-first walk from the roots (``_children_by_parent[session_id]
+        [None]``) down through ``_children_by_parent`` guarantees this by
+        construction: a node is only enqueued once its parent has already been
+        dequeued and emitted. This does NOT rely on ``_nodes_by_session``'s
+        dict insertion/iteration order for correctness -- that order is
+        unspecified by this method's contract even though CPython dicts
+        happen to preserve insertion order today.
+
+        Returns:
+            Every node, in an order where each node's parent (if any)
+            precedes it. TOOL markers are excluded -- they are display-only
+            and never become tree nodes (see ``_register_tree_node``).
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        children_map = self._children_by_parent.get(session_id, {})
+        ordered: list[ConsoleChatMessage] = []
+        queue: deque[str] = deque(children_map.get(None, []))
+        while queue:
+            node_id = queue.popleft()
+            node = nodes.get(node_id)
+            if node is not None:
+                ordered.append(node)
+            queue.extend(children_map.get(node_id, []))
+        return ordered
 
     def _leaf_under(self, node_id: str) -> str:
         """Return the deepest descendant of ``node_id`` (always the last child).

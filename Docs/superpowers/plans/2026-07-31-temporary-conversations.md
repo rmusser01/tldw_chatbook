@@ -414,21 +414,30 @@ control that writes rows in the same harness."
 ### Task 3: Promotion — "Save this chat" in one transaction
 
 **Files:**
-- Modify: `tldw_chatbook/Chat/console_chat_store.py` (new method after `persist_session_if_needed`)
+- Modify: `tldw_chatbook/Chat/console_chat_store.py` (new method after `persist_session_if_needed`, plus a new private helper `_tree_nodes_parent_first`)
 - Test: `Tests/Chat/test_console_ephemeral.py` (append)
 
 **Interfaces:**
-- Consumes: `ConsoleChatSession.ephemeral`, `create_session(ephemeral=...)` from Task 2.
-- Produces: `ConsoleChatStore.promote_ephemeral_session(session_id: str) -> str | None` — returns the new conversation id, or `None` when the session was not temporary or no adapter is configured. Raises whatever the persistence layer raises, after restoring the session to its temporary state.
+- Consumes: `ConsoleChatSession.ephemeral`, `create_session(ephemeral=...)` from Task 2; `session.rag_scope_holder` (task-9's `SessionScopeHolder`); `_nodes_by_session` / `_children_by_parent` / `_native_parent_by_message` (the full-tree structures Phase A's branching tasks maintain).
+- Produces: `ConsoleChatStore.promote_ephemeral_session(session_id: str) -> str | None` — returns the new conversation id, or `None` when the session was not temporary or no adapter is configured. Raises whatever the persistence layer raises (or an internal `RuntimeError` for one defensive, currently-unreachable case — see below), after restoring the session to its temporary state, including its held RAG retrieval scope.
 
-- [ ] **Step 1: Write the failing test**
+**Implementation history (why this section looks different from a first pass):** this task shipped in three rounds. The initial pass matched the prescription below almost exactly, but persisted only the active-path view (`_messages_by_session`) inside a DB transaction, with a plain rollback of `ephemeral`/the persisted ids. An independent review then found four gaps in round 1 (a held RAG scope was destroyed by a failed save; the no-transaction fallback dropped atomicity silently; an internal `None` return bypassed the rollback; the invariant was momentarily false inside the except block) and, in round 2, one gap that changed the task's actual behavior: **promotion was saving only the active path**, silently dropping off-path branches left behind by `create_sibling` (regenerate / edit-and-resend) — reachable by swiping back in a normal conversation, but gone forever from a promoted temporary one. The code and tests below are the FINAL, whole-tree-promoting state; the full round-by-round record (RED/GREEN output, mutation-testing sanity checks, and what was ruled out and why) lives in `.superpowers/sdd/2026-07-31-temporary-conversations/task-3-report.md`.
 
-Append to `Tests/Chat/test_console_ephemeral.py`:
+- [ ] **Step 1: Write the failing tests**
+
+Append to `Tests/Chat/test_console_ephemeral.py` (needs one new import alongside the existing ones: `from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, SOURCE_TYPE_MEDIA`):
 
 ```python
 @pytest.mark.unit
 def test_promotion_writes_every_message_in_order(tmp_path):
-    """Saving a temporary chat persists exactly what is on screen."""
+    """Saving a temporary chat persists exactly what is on screen.
+
+    This session's tree has no branches, so the active path IS the whole
+    tree and this test cannot by itself distinguish active-path-only
+    promotion from whole-tree promotion -- see
+    ``test_promotion_writes_every_node_including_off_path_branches`` below
+    for the branching case that does.
+    """
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
@@ -447,6 +456,165 @@ def test_promotion_writes_every_message_in_order(tmp_path):
             for m in store.messages_for_session(session.id)
         ]
         assert persisted == ["hello", "hi there"]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_writes_every_node_including_off_path_branches(tmp_path):
+    """Saving must not silently drop history still reachable by swiping back.
+
+    Regenerating (``create_sibling``) leaves the previous assistant reply
+    off the active path but still a real tree node, reachable via
+    ``set_active_leaf``. A normal (never-temporary) conversation persists
+    that node like any other; a promoted temporary one must come out the
+    same way -- otherwise regenerating twice and then saving would silently
+    erase the earlier answers, making the promoted conversation unlike one
+    that had been saved from the start.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
+        )
+        original_reply = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="hi there",
+            persist=True,
+        )
+        regenerated_reply = store.create_sibling(
+            original_reply.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="hi again",
+            persist=True,
+        )
+        assert _row_counts(db) == (0, 0)
+        # The active view follows the regenerated branch; the original
+        # reply is off-path but still a tree node.
+        assert [m.content for m in store.messages_for_session(session.id)] == [
+            "hello",
+            "hi again",
+        ]
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        # 1 conversation, 3 messages: "hello" plus BOTH assistant replies.
+        assert _row_counts(db) == (1, 3)
+        all_nodes = store._nodes_by_session[session.id]
+        assert len(all_nodes) == 3
+        assert all(
+            node.persisted_message_id is not None for node in all_nodes.values()
+        ), "every tree node must be persisted, not just the active path"
+        persisted_contents = {
+            db.get_message_by_id(node.persisted_message_id)["content"]
+            for node in all_nodes.values()
+        }
+        assert persisted_contents == {"hello", "hi there", "hi again"}
+
+        # Swipe-back must still work after saving: switching the active leaf
+        # to the off-path (now-persisted) original reply must not raise and
+        # must surface its persisted content.
+        store.set_active_leaf(session.id, original_reply.id)
+        assert [m.content for m in store.messages_for_session(session.id)] == [
+            "hello",
+            "hi there",
+        ]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_preserves_persisted_parent_child_structure(tmp_path):
+    """The persisted tree must connect exactly like the in-memory one.
+
+    Builds a tree deep enough (root -> reply -> user turn -> two sibling
+    replies) that writing a node before its parent is persisted would
+    either strand it as a bogus root or -- worse -- silently attach it to
+    the wrong, already-persisted ancestor further up the chain. Comparing
+    every persisted row's ``parent_message_id`` against the in-memory
+    native parent's OWN persisted id (translated through the same
+    node) catches both failure modes; a same-order-as-creation write
+    produces neither. (Verified by temporarily reversing
+    ``_tree_nodes_parent_first``'s output and confirming this exact
+    assertion fails -- see the task-3 report.)
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        root = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="U1", persist=True
+        )
+        reply = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="A1", persist=True
+        )
+        turn2 = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="U2", persist=True
+        )
+        branch_a = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="A2a", persist=True
+        )
+        branch_b = store.create_sibling(
+            branch_a.id, role=ConsoleMessageRole.ASSISTANT, content="A2b", persist=True
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert _row_counts(db) == (1, 5)
+        rows_by_persisted_id = {
+            row["id"]: row
+            for row in db.get_messages_for_conversation(conversation_id, limit=100)
+        }
+        assert len(rows_by_persisted_id) == 5
+
+        all_nodes = store._nodes_by_session[session.id]
+        for native_id, node in all_nodes.items():
+            assert node.persisted_message_id in rows_by_persisted_id
+            native_parent_id = store._native_parent_by_message[native_id]
+            expected_parent_persisted_id = (
+                all_nodes[native_parent_id].persisted_message_id
+                if native_parent_id is not None
+                else None
+            )
+            actual_parent_persisted_id = rows_by_persisted_id[
+                node.persisted_message_id
+            ]["parent_message_id"]
+            assert actual_parent_persisted_id == expected_parent_persisted_id, (
+                f"node {node.content!r} persisted with the wrong parent"
+            )
+
+        # Spot-check the branch point explicitly (the case an ordering bug
+        # would most likely get wrong -- turn2 has TWO persisted children).
+        # ``root``/``reply``/``turn2`` are snapshots taken BEFORE promotion
+        # (``append_message`` returns a point-in-time copy via
+        # ``dataclasses.replace`` -- see ``_snapshot``), so their own
+        # ``persisted_message_id`` is stale; only their stable native ``.id``
+        # is reused here, looked up fresh through the live ``all_nodes``
+        # mapping captured after promotion above.
+        turn2_persisted_id = all_nodes[turn2.id].persisted_message_id
+        children_of_turn2 = {
+            row["content"]
+            for row in rows_by_persisted_id.values()
+            if row["parent_message_id"] == turn2_persisted_id
+        }
+        assert children_of_turn2 == {"A2a", "A2b"}
+        assert (
+            rows_by_persisted_id[all_nodes[reply.id].persisted_message_id][
+                "parent_message_id"
+            ]
+            == all_nodes[root.id].persisted_message_id
+        )
+        assert (
+            rows_by_persisted_id[all_nodes[turn2.id].persisted_message_id][
+                "parent_message_id"
+            ]
+            == all_nodes[reply.id].persisted_message_id
+        )
     finally:
         db.close()
 
@@ -507,16 +675,145 @@ def test_failed_promotion_rolls_back_and_stays_temporary(tmp_path, monkeypatch):
         )
     finally:
         db.close()
+
+
+@pytest.mark.unit
+def test_failed_promotion_restores_the_held_rag_scope(tmp_path, monkeypatch):
+    """A failed save must not silently drop the user's scope selection.
+
+    ``persist_session_if_needed`` flushes (and empties) the session's held
+    RAG scope as soon as the conversation row is created -- before either
+    message write can fail. If promotion rolls back the database but
+    leaves the now-empty holder alone, the user's scope selection vanishes
+    even though the chat correctly stays temporary. This is reachable in
+    normal use: the Console screen puts a scope in the holder precisely
+    when there is no persisted conversation, which is always true for a
+    temporary chat.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "doc-1"),), updated_at="t1")
+        session.rag_scope_holder.set(scope)
+
+        calls = {"n": 0}
+        real_create = persistence.create_message
+
+        def failing_create(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("disk full")
+            return real_create(**kwargs)
+
+        monkeypatch.setattr(persistence, "create_message", failing_create)
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.rag_scope_holder.scope == scope, (
+            "failed promotion must restore the held scope, not leave it empty"
+        )
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_restores_ephemeral_flag_if_persist_returns_none_unexpectedly(
+    tmp_path, monkeypatch
+):
+    """Defensive: an unexpected None from persist_session_if_needed must not
+    silently leave the session non-ephemeral with no persisted conversation.
+
+    That state is exactly what the docstring warns about -- a failed save
+    that silently starts persisting on the next send. Nothing in
+    ``persist_session_if_needed`` reaches this today (its only None-return
+    branches are already ruled out once ``ephemeral`` is cleared and
+    ``self.persistence`` is known non-None), so this test forces the case
+    directly to prove the rollback still fires if a future change ever adds
+    one.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+
+        monkeypatch.setattr(store, "persist_session_if_needed", lambda session_id: None)
+
+        with pytest.raises(RuntimeError):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.persisted_conversation_id is None
+        assert _row_counts(db) == (0, 0)
+    finally:
+        db.close()
 ```
 
-`create_message` is the adapter call the message flush reaches (verified: `console_chat_store.py:2673`) — not `add_message`, which does not exist on `ChatPersistenceService`.
+`create_message` is the adapter call the message flush reaches (verified: `console_chat_store.py:2673` at the time Task 3 started) — not `add_message`, which does not exist on `ChatPersistenceService`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cd /private/tmp/ephemeral && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_ephemeral.py -v -k promotion`
-Expected: FAIL — `AttributeError: 'ConsoleChatStore' object has no attribute 'promote_ephemeral_session'`
+Expected: FAIL. For a from-scratch implementation this is `AttributeError: 'ConsoleChatStore' object has no attribute 'promote_ephemeral_session'` on all seven; when only the round-2 (whole-tree) tests are new against an already-existing active-path-only implementation, the two branching tests fail on the row-count assertions instead (`(1, 2) != (1, 3)`, `(1, 4) != (1, 5)`) — both are the "fails for the right reason" signal to look for.
 
 - [ ] **Step 3: Implement promotion**
+
+Add a private helper (near the other tree-walk helpers, e.g. beside `_subtree_ids`/`_leaf_under`):
+
+```python
+    def _tree_nodes_parent_first(self, session_id: str) -> list[ConsoleChatMessage]:
+        """Return EVERY tree node for a session, guaranteed parent-before-child.
+
+        Used by ``promote_ephemeral_session`` (task-3), which must persist the
+        whole conversation tree -- every off-path branch left behind by
+        ``create_sibling`` (regenerate / edit-and-resend), not just the
+        active-path view -- so a promoted temporary chat comes out
+        indistinguishable from one that had been saved from the start,
+        swipe-back included.
+
+        Ordering is load-bearing, not cosmetic: ``_persist_new_message``
+        resolves each node's persisted parent via
+        ``_nearest_persisted_ancestor_id``, which walks up
+        ``_native_parent_by_message`` looking for the nearest ANCESTOR that
+        already has a ``persisted_message_id``. Persisting a child before its
+        parent would leave that walk with nothing to find (a stray root) or,
+        worse, silently resolve to some unrelated already-persisted ancestor
+        further up the chain -- a misparented row that looks fine until a
+        later resume walks the wrong branch.
+
+        A breadth-first walk from the roots (``_children_by_parent[session_id]
+        [None]``) down through ``_children_by_parent`` guarantees this by
+        construction: a node is only enqueued once its parent has already been
+        dequeued and emitted. This does NOT rely on ``_nodes_by_session``'s
+        dict insertion/iteration order for correctness -- that order is
+        unspecified by this method's contract even though CPython dicts
+        happen to preserve insertion order today.
+
+        Returns:
+            Every node, in an order where each node's parent (if any)
+            precedes it. TOOL markers are excluded -- they are display-only
+            and never become tree nodes (see ``_register_tree_node``).
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        children_map = self._children_by_parent.get(session_id, {})
+        ordered: list[ConsoleChatMessage] = []
+        queue: deque[str] = deque(children_map.get(None, []))
+        while queue:
+            node_id = queue.popleft()
+            node = nodes.get(node_id)
+            if node is not None:
+                ordered.append(node)
+            queue.extend(children_map.get(node_id, []))
+        return ordered
+```
+
+Needs `from collections import deque` added to the module's stdlib imports.
 
 Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
 
@@ -526,15 +823,28 @@ Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
 
         Clears ``ephemeral`` first -- that is what opens the gate in
         ``persist_session_if_needed`` -- then mints the conversation and
-        flushes every in-memory message. The whole sequence runs inside one
+        flushes every node in the FULL conversation tree, not just the
+        active-path view: off-path branches left behind by
+        ``create_sibling`` (regenerate / edit-and-resend) are still reachable
+        by swiping back, and a normal (never-temporary) conversation persists
+        them, so a promoted one must too -- otherwise saving would silently
+        discard history the user could see a moment before clicking Save.
+        Nodes are written parent-before-child (``_tree_nodes_parent_first``)
+        since each node's persisted parent is resolved from its
+        already-persisted ancestors. The whole sequence runs inside one
         database transaction when the adapter exposes a real database, so a
         failure part-way through leaves NO conversation in history rather
         than a truncated one.
 
         On any failure the session is restored to its temporary state
-        (``ephemeral`` back to True, ids cleared). A failed save that left
-        the flag cleared would silently start persisting on the next send --
-        the opposite of what the user asked for.
+        (``ephemeral`` back to True, ids cleared, any held RAG retrieval
+        scope restored). A failed save that left the flag cleared would
+        silently start persisting on the next send -- the opposite of what
+        the user asked for. Restoring the RAG scope matters for the same
+        reason: ``persist_session_if_needed`` flushes (and empties) the
+        session's held scope as soon as the conversation row exists, before
+        any message write can fail, so a rollback that only undid the DB
+        write would still leave the user's scope selection gone.
 
         Args:
             session_id: Id of the temporary session to save.
@@ -546,7 +856,12 @@ Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
 
         Raises:
             Exception: Whatever the persistence layer raises, re-raised after
-                the in-memory rollback.
+                the in-memory rollback. Also raised (as ``RuntimeError``) if
+                ``persist_session_if_needed`` unexpectedly returns ``None``
+                after ``ephemeral`` has already been cleared -- today
+                unreachable, but treated as a failure rather than silently
+                leaving the session non-ephemeral with no persisted
+                conversation.
         """
         session = self._session_or_raise(session_id)
         if not session.ephemeral:
@@ -554,14 +869,29 @@ Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
         if self.persistence is None:
             return None
 
-        messages = list(self._messages_by_session.get(session_id, ()))
+        messages = self._tree_nodes_parent_first(session_id)
         db = getattr(self.persistence, "db", None)
         transaction = getattr(db, "transaction", None)
+        # Captured BEFORE any write -- persist_session_if_needed empties the
+        # holder on a successful flush, so this is the only chance to learn
+        # what was held and restore it if the save fails partway through.
+        held_scope = session.rag_scope_holder.scope
 
-        def _write() -> str | None:
+        def _write() -> str:
             conversation_id = self.persist_session_if_needed(session_id)
             if conversation_id is None:
-                return None
+                # Unreachable today: persist_session_if_needed's only
+                # None-return branches (ephemeral, already-persisted,
+                # no adapter) are all ruled out by the checks above and by
+                # clearing `ephemeral` before this call. Raising rather than
+                # returning None keeps this on the SAME rollback path as
+                # every other failure, instead of silently leaving the
+                # session non-ephemeral with no persisted conversation.
+                raise RuntimeError(
+                    "promote_ephemeral_session: persist_session_if_needed "
+                    "unexpectedly returned None after ephemeral was cleared; "
+                    "aborting the save."
+                )
             for message in messages:
                 self.persist_message_if_needed(message.id)
             return conversation_id
@@ -571,10 +901,31 @@ Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
             if callable(transaction):
                 with transaction():
                     return _write()
+            # No real database seam to wrap in a transaction (e.g. a
+            # narrower persistence fake) -- production wiring always builds
+            # ChatPersistenceService with a real CharactersRAGDB, so this
+            # branch is not reachable there today, but the loss of the
+            # all-or-nothing guarantee it causes must still be observable
+            # rather than silent, matching the RAG-scope-flush warning just
+            # above in persist_session_if_needed.
+            logger.bind(session_id=session_id).warning(
+                "Saving Console session {} without a database transaction "
+                "-- the persistence adapter exposes no `db.transaction()` "
+                "seam. A failure part-way through this save may leave a "
+                "partial conversation in history instead of the "
+                "all-or-nothing guarantee this method normally provides.",
+                session_id,
+            )
             return _write()
         except Exception:
-            session.ephemeral = True
+            # persisted_conversation_id cleared BEFORE ephemeral is set back
+            # to True so the two are never simultaneously in the one
+            # combination the rest of the codebase treats as forbidden
+            # (ephemeral=True with a non-None persisted_conversation_id),
+            # even momentarily between statements.
             session.persisted_conversation_id = None
+            session.ephemeral = True
+            session.rag_scope_holder.set(held_scope)
             for message in messages:
                 message.persisted_message_id = None
             logger.bind(session_id=session_id).exception(
@@ -586,9 +937,29 @@ Add to `ConsoleChatStore`, immediately after `persist_session_if_needed`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd /private/tmp/ephemeral && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_ephemeral.py -v`
-Expected: PASS (8 tests)
+Expected: PASS (13 tests — 6 carried over from Tasks 1/2's vocabulary and gate tests, plus the 7 promotion tests above).
+
+Also run the store/tree/sibling/branching regression suites, since this task touches shared tree-walk and persistence code:
+
+```
+cd /private/tmp/ephemeral && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Chat/test_console_chat_store.py \
+  Tests/Chat/test_console_chat_store_parent_persist.py \
+  Tests/Chat/test_console_chat_store_sibling.py \
+  Tests/Chat/test_console_chat_store_summary.py \
+  Tests/Chat/test_console_chat_store_tree.py \
+  Tests/Chat/test_chat_persistence_service.py \
+  Tests/Chat/test_console_terminal_citation_persistence.py \
+  Tests/Chat/test_console_ephemeral.py \
+  Tests/Chat/test_rag_scope_storage.py \
+  Tests/Chat/test_console_regenerate_branching.py \
+  Tests/Chat/test_console_edit_resend.py \
+  -q
+```
 
 - [ ] **Step 5: Commit**
+
+Shipped as three commits (initial implementation, then two review-fix rounds), not one:
 
 ```bash
 cd /private/tmp/ephemeral
@@ -599,6 +970,11 @@ Clearing the flag is what opens the gate, so promotion clears it first,
 then mints the conversation and flushes every message inside one DB
 transaction. Any failure restores the temporary state so a failed save
 never leaves a chat that silently starts persisting."
+# round-1 review fixes (RAG scope restoration, no-transaction warning,
+# defensive RuntimeError, except-block ordering): a second commit
+# "fix: close four review gaps in temporary-chat promotion rollback"
+# round-2 review fix (whole-tree promotion, this section's final state):
+# a third commit -- see task-3-report.md for the exact SHAs.
 ```
 
 ---

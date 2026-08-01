@@ -162,7 +162,14 @@ def test_ephemeral_gate_wins_even_if_a_persisted_id_is_already_set(tmp_path):
 
 @pytest.mark.unit
 def test_promotion_writes_every_message_in_order(tmp_path):
-    """Saving a temporary chat persists exactly what is on screen."""
+    """Saving a temporary chat persists exactly what is on screen.
+
+    This session's tree has no branches, so the active path IS the whole
+    tree and this test cannot by itself distinguish active-path-only
+    promotion from whole-tree promotion -- see
+    ``test_promotion_writes_every_node_including_off_path_branches`` below
+    for the branching case that does.
+    """
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
@@ -181,6 +188,163 @@ def test_promotion_writes_every_message_in_order(tmp_path):
             for m in store.messages_for_session(session.id)
         ]
         assert persisted == ["hello", "hi there"]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_writes_every_node_including_off_path_branches(tmp_path):
+    """Saving must not silently drop history still reachable by swiping back.
+
+    Regenerating (``create_sibling``) leaves the previous assistant reply
+    off the active path but still a real tree node, reachable via
+    ``set_active_leaf``. A normal (never-temporary) conversation persists
+    that node like any other; a promoted temporary one must come out the
+    same way -- otherwise regenerating twice and then saving would silently
+    erase the earlier answers, making the promoted conversation unlike one
+    that had been saved from the start.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
+        )
+        original_reply = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="hi there",
+            persist=True,
+        )
+        regenerated_reply = store.create_sibling(
+            original_reply.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="hi again",
+            persist=True,
+        )
+        assert _row_counts(db) == (0, 0)
+        # The active view follows the regenerated branch; the original
+        # reply is off-path but still a tree node.
+        assert [m.content for m in store.messages_for_session(session.id)] == [
+            "hello",
+            "hi again",
+        ]
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        # 1 conversation, 3 messages: "hello" plus BOTH assistant replies.
+        assert _row_counts(db) == (1, 3)
+        all_nodes = store._nodes_by_session[session.id]
+        assert len(all_nodes) == 3
+        assert all(
+            node.persisted_message_id is not None for node in all_nodes.values()
+        ), "every tree node must be persisted, not just the active path"
+        persisted_contents = {
+            db.get_message_by_id(node.persisted_message_id)["content"]
+            for node in all_nodes.values()
+        }
+        assert persisted_contents == {"hello", "hi there", "hi again"}
+
+        # Swipe-back must still work after saving: switching the active leaf
+        # to the off-path (now-persisted) original reply must not raise and
+        # must surface its persisted content.
+        store.set_active_leaf(session.id, original_reply.id)
+        assert [m.content for m in store.messages_for_session(session.id)] == [
+            "hello",
+            "hi there",
+        ]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_preserves_persisted_parent_child_structure(tmp_path):
+    """The persisted tree must connect exactly like the in-memory one.
+
+    Builds a tree deep enough (root -> reply -> user turn -> two sibling
+    replies) that writing a node before its parent is persisted would
+    either strand it as a bogus root or -- worse -- silently attach it to
+    the wrong, already-persisted ancestor further up the chain. Comparing
+    every persisted row's ``parent_message_id`` against the in-memory
+    native parent's OWN persisted id (translated through the same
+    node) catches both failure modes; a same-order-as-creation write
+    produces neither.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        root = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="U1", persist=True
+        )
+        reply = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="A1", persist=True
+        )
+        turn2 = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="U2", persist=True
+        )
+        branch_a = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="A2a", persist=True
+        )
+        branch_b = store.create_sibling(
+            branch_a.id, role=ConsoleMessageRole.ASSISTANT, content="A2b", persist=True
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert _row_counts(db) == (1, 5)
+        rows_by_persisted_id = {
+            row["id"]: row
+            for row in db.get_messages_for_conversation(conversation_id, limit=100)
+        }
+        assert len(rows_by_persisted_id) == 5
+
+        all_nodes = store._nodes_by_session[session.id]
+        for native_id, node in all_nodes.items():
+            assert node.persisted_message_id in rows_by_persisted_id
+            native_parent_id = store._native_parent_by_message[native_id]
+            expected_parent_persisted_id = (
+                all_nodes[native_parent_id].persisted_message_id
+                if native_parent_id is not None
+                else None
+            )
+            actual_parent_persisted_id = rows_by_persisted_id[
+                node.persisted_message_id
+            ]["parent_message_id"]
+            assert actual_parent_persisted_id == expected_parent_persisted_id, (
+                f"node {node.content!r} persisted with the wrong parent"
+            )
+
+        # Spot-check the branch point explicitly (the case an ordering bug
+        # would most likely get wrong -- turn2 has TWO persisted children).
+        # ``root``/``reply``/``turn2`` are snapshots taken BEFORE promotion
+        # (``append_message`` returns a point-in-time copy via
+        # ``dataclasses.replace`` -- see ``_snapshot``), so their own
+        # ``persisted_message_id`` is stale; only their stable native ``.id``
+        # is reused here, looked up fresh through the live ``all_nodes``
+        # mapping captured after promotion above.
+        turn2_persisted_id = all_nodes[turn2.id].persisted_message_id
+        children_of_turn2 = {
+            row["content"]
+            for row in rows_by_persisted_id.values()
+            if row["parent_message_id"] == turn2_persisted_id
+        }
+        assert children_of_turn2 == {"A2a", "A2b"}
+        assert (
+            rows_by_persisted_id[all_nodes[reply.id].persisted_message_id][
+                "parent_message_id"
+            ]
+            == all_nodes[root.id].persisted_message_id
+        )
+        assert (
+            rows_by_persisted_id[all_nodes[turn2.id].persisted_message_id][
+                "parent_message_id"
+            ]
+            == all_nodes[reply.id].persisted_message_id
+        )
     finally:
         db.close()
 
