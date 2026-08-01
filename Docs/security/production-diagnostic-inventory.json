@@ -1406,7 +1406,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "0515e83c1829069b7f34",
+      "diagnostic_digest": "194d1911ab0f2662dc6d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Subscriptions/briefing_cast.py",
       "reason": "remaining Chatbook production diagnostic owner"

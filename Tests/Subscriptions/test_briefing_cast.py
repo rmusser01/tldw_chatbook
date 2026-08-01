@@ -25,24 +25,19 @@ do for an async, thread-hopping caller).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
 
 import pytest
 from loguru import logger
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-from tldw_chatbook.Subscriptions import briefing_cast
 from tldw_chatbook.Subscriptions.briefing_cast import (
     ScriptCastError,
     STATUS_COMPLETE,
     STATUS_FAILED,
-    STATUS_GENERATING,
-    VALID_STATUSES,
     build_cast_prompt,
     dump_roster,
     fail_interrupted_scripts,
@@ -89,7 +84,9 @@ def _db(tmp_path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
-def _complete_briefing(db, watchlist_id, *, body: str = "## This week\n\nSomething happened.\n") -> int:
+def _complete_briefing(
+    db, watchlist_id, *, body: str = "## This week\n\nSomething happened.\n"
+) -> int:
     """A `complete` `briefings` row with a body -- the only status a cast may start from."""
     briefing_id = db.insert_briefing(watchlist_id)
     db.update_briefing(briefing_id, status="complete", body_markdown=body)
@@ -184,7 +181,9 @@ def test_parse_script_turns_recovers_a_fenced_json_array():
 
 
 def test_parse_script_turns_recovers_a_prose_wrapped_array_via_slice():
-    prose = "Sure, here is the script:\n" + json.dumps(CANNED_TURNS) + "\nHope that helps!"
+    prose = (
+        "Sure, here is the script:\n" + json.dumps(CANNED_TURNS) + "\nHope that helps!"
+    )
     assert parse_script_turns(prose, {"Host", "Analyst"}) == CANNED_TURNS
 
 
@@ -264,7 +263,9 @@ def test_build_cast_prompt_includes_roster_style_notes_and_output_contract():
 async def test_generate_script_happy_path_writes_everything(tmp_path):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
-    briefing_id = _complete_briefing(db, watchlist, body="## Body\n\nAcme shipped a thing.")
+    briefing_id = _complete_briefing(
+        db, watchlist, body="## Body\n\nAcme shipped a thing."
+    )
     preset_id = _preset(db, roster=TWO_SPEAKER_ROSTER, style_notes="Keep it brisk.")
 
     chat = _FakeChat()
@@ -303,9 +304,11 @@ async def test_generate_script_snapshot_embeds_the_resolved_character_name(tmp_p
         return {"name": "Ada", "personality": "curious", "description": "a host"}
 
     row = await generate_script(
-        db, briefing_id, preset_id=preset_id, chat=_FakeChat(reply=json.dumps(
-            [{"speaker": "Host", "text": "Hello!"}]
-        )), load_character=_load_character
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=_FakeChat(reply=json.dumps([{"speaker": "Host", "text": "Hello!"}])),
+        load_character=_load_character,
     )
 
     assert row["status"] == STATUS_COMPLETE
@@ -315,7 +318,9 @@ async def test_generate_script_snapshot_embeds_the_resolved_character_name(tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["generating", "empty", "failed"])
-async def test_generate_script_refuses_when_the_briefing_is_not_complete(tmp_path, status):
+async def test_generate_script_refuses_when_the_briefing_is_not_complete(
+    tmp_path, status
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = db.insert_briefing(watchlist)
@@ -359,7 +364,9 @@ async def test_generate_script_refuses_when_the_preset_is_missing(tmp_path):
 async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "local-llama", raising=False
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
@@ -404,7 +411,9 @@ async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
     third leg of the fallback chain `_default_provider`'s own docstring
     names.
     """
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "local-llama", raising=False
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
@@ -419,7 +428,9 @@ async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
 
 
 @pytest.mark.asyncio
-async def test_generate_script_fails_naming_the_card_when_load_character_returns_none(tmp_path):
+async def test_generate_script_fails_naming_the_card_when_load_character_returns_none(
+    tmp_path,
+):
     """Spec: "fails the cast at that point, naming the card"."""
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
@@ -428,7 +439,11 @@ async def test_generate_script_fails_naming_the_card_when_load_character_returns
     preset_id = _preset(db, roster=roster)
 
     row = await generate_script(
-        db, briefing_id, preset_id=preset_id, chat=_FakeChat(), load_character=lambda _card_id: None
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=_FakeChat(),
+        load_character=lambda _card_id: None,
     )
 
     assert row["status"] == STATUS_FAILED
@@ -437,7 +452,9 @@ async def test_generate_script_fails_naming_the_card_when_load_character_returns
 
 
 @pytest.mark.asyncio
-async def test_generate_script_fails_naming_the_card_when_load_character_is_none(tmp_path):
+async def test_generate_script_fails_naming_the_card_when_load_character_is_none(
+    tmp_path,
+):
     """Same failed-naming path when no character lookup is available at all."""
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
@@ -452,7 +469,9 @@ async def test_generate_script_fails_naming_the_card_when_load_character_is_none
 
 
 @pytest.mark.asyncio
-async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_briefing_untouched(tmp_path):
+async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_briefing_untouched(
+    tmp_path,
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
@@ -471,14 +490,19 @@ async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_brief
 
 
 @pytest.mark.asyncio
-async def test_generate_script_parse_failure_is_a_failed_row_naming_the_defect(tmp_path):
+async def test_generate_script_parse_failure_is_a_failed_row_naming_the_defect(
+    tmp_path,
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
 
     row = await generate_script(
-        db, briefing_id, preset_id=preset_id, chat=_FakeChat(reply="not a JSON array at all")
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=_FakeChat(reply="not a JSON array at all"),
     )
 
     assert row["status"] == STATUS_FAILED
@@ -494,16 +518,22 @@ async def test_generate_script_logs_no_cast_content_on_failure(tmp_path):
     frame's locals -- and the frame at the cast failure holds the prompt.
     """
     canary = "ZEBRACANARY"
+    private_endpoint = "PRIVATE-ENDPOINT-SENTINEL"
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist, body=f"## Body\n\n{canary}\n")
     preset_id = _preset(db)
 
     captured: list[str] = []
-    handler = logger.add(captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False)
+    handler = logger.add(
+        captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False
+    )
     try:
         row = await generate_script(
-            db, briefing_id, preset_id=preset_id,
+            db,
+            briefing_id,
+            preset_id=preset_id,
+            provider=private_endpoint,
             chat=_FakeChat(error=RuntimeError("upstream 503")),
         )
     finally:
@@ -515,6 +545,7 @@ async def test_generate_script_logs_no_cast_content_on_failure(tmp_path):
     assert "cast failed" in log_text
     assert "RuntimeError" in log_text
     assert canary not in log_text
+    assert private_endpoint not in log_text
     assert "messages_payload" not in log_text
 
 
@@ -573,7 +604,12 @@ async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
     loop_thread_id = threading.get_ident()
     write_thread_ids: list[int] = []
 
-    for name in ("get_briefing", "get_briefing_preset", "insert_briefing_script", "update_briefing_script"):
+    for name in (
+        "get_briefing",
+        "get_briefing_preset",
+        "insert_briefing_script",
+        "update_briefing_script",
+    ):
         original = getattr(db, name)
 
         def _spy(*args, __original=original, **kwargs):
