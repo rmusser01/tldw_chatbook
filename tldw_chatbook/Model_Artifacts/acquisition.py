@@ -6,13 +6,15 @@ import asyncio
 import functools
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Literal, Protocol
+from typing import TYPE_CHECKING, Callable, Iterable, Literal, Mapping, Protocol, runtime_checkable
 
 import httpx
 
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise_async
 
@@ -50,9 +52,8 @@ _PREFLIGHT_PROBE_TIMEOUT_SECONDS = 10.0
 _SESSION_LEASE_TIMEOUT_SECONDS = 0.1
 
 # Credential hint named in gating_errors -- never a token value. Matches the
-# existing env precedence this codebase already documents (config.py's
-# HUGGINGFACE_API_KEY, Constants.py's HF_TOKEN); Task 9 wires an actual
-# CredentialResolver against these same names.
+# precedence EnvConfigCredentialResolver (below) actually implements against
+# these same names: HUGGINGFACE_API_KEY, then HF_TOKEN, then config.
 _CREDENTIAL_ENV_HINT = "HUGGINGFACE_API_KEY (or HF_TOKEN)"
 
 
@@ -130,6 +131,85 @@ class ArtifactCatalog(Protocol):
             KeyError: If the reference is not found.
         """
         ...
+
+
+@runtime_checkable
+class CredentialResolver(Protocol):
+    """Resolves a per-request bearer token for a repository, without persistence.
+
+    An implementation returns ``None`` when no credential is configured --
+    a gated repository with no working credential then fails visibly at
+    ``preflight()`` (surfaced via ``PreflightReport.gating_errors``) rather
+    than silently proceeding anonymously and failing later, mid-transfer.
+
+    A token this protocol resolves is attached ONLY to the request for the
+    entry's OWN origin (see ``ArtifactAcquisitionService._auth_headers``,
+    consulted by both the preflight gating probe and the real fetch);
+    ``fetch.stream_fetch`` independently strips any ``Authorization`` header
+    on a cross-origin redirect hop regardless -- defense in depth, not the
+    only guard against a token reaching the wrong host.
+    """
+
+    def resolve(self, repository: str) -> str | None:
+        """Resolve a bearer token for ``repository``.
+
+        Args:
+            repository: The upstream repository identifier, e.g.
+                ``ArtifactDescriptor.upstream_repository``.
+
+        Returns:
+            A bearer token string, or ``None`` if no credential is
+            configured for this repository.
+        """
+        ...
+
+
+class EnvConfigCredentialResolver:
+    """Default ``CredentialResolver``: env vars, then config -- no keyring yet.
+
+    Precedence mirrors this codebase's existing HuggingFace credential
+    lookup exactly: ``config.py``'s ``huggingface_api_key`` resolves
+    ``HUGGINGFACE_API_KEY`` from the environment ahead of the ``[API]``
+    config section, and ``Constants.py`` separately documents ``HF_TOKEN``
+    as the equivalent env name other tooling in this ecosystem (llama.cpp's
+    server) already uses. This resolver checks, in order: ``HUGGINGFACE_API_KEY``
+    env, then ``HF_TOKEN`` env, then the ``[API] huggingface_api_key``
+    config setting via ``config.get_cli_setting``.
+
+    Keyring lookup ("where available", per the design spec's Credentials
+    section) is DELIBERATELY not implemented here: this class wires only
+    the env/config precedence this repository's other HuggingFace-key
+    consumers already use. A keyring backend is a follow-up, not required
+    by this task's acceptance criteria.
+
+    Read-only, every call -- a resolved token is never written back to the
+    environment, config, or anywhere else.
+    """
+
+    def resolve(self, repository: str) -> str | None:
+        """Resolve a HuggingFace-style bearer token.
+
+        ``repository`` is accepted to satisfy ``CredentialResolver`` but
+        otherwise unused: the token this resolver returns is global to the
+        process's configured identity (env or config), not scoped per
+        repository -- matching how every other HuggingFace-key consumer in
+        this codebase already resolves credentials.
+
+        Args:
+            repository: Unused; see class docstring.
+
+        Returns:
+            The resolved token, or ``None`` if none is configured anywhere
+            in the env/config precedence chain.
+        """
+        for env_var in ("HUGGINGFACE_API_KEY", "HF_TOKEN"):
+            token = os.environ.get(env_var)
+            if token:
+                return token
+        config_token = get_cli_setting("API", "huggingface_api_key", None)
+        if isinstance(config_token, str) and config_token:
+            return config_token
+        return None
 
 
 # Frozen dataclasses per spec
@@ -318,7 +398,7 @@ class ArtifactAcquisitionService:
         core: ModelArtifactService,
         *,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        credential_resolver: Callable[[str], str | None] | None = None,
+        credential_resolver: CredentialResolver | None = None,
         free_bytes_probe: Callable[[Path], int] | None = None,
         trusted_origins: frozenset[str] = frozenset(),
     ) -> None:
@@ -330,11 +410,17 @@ class ArtifactAcquisitionService:
             client_factory: Optional zero-arg factory returning a caller-owned
                 ``httpx.AsyncClient`` (reused across probes/fetches). When
                 absent, a short-lived client is created and closed per call.
-            credential_resolver: Optional repository -> token resolver. Not
-                yet consulted by ``preflight()`` (the HEAD probe is always
-                anonymous here); accepted now so the constructor shape is
-                stable across the whole feature -- a later task wires actual
-                credential attachment for gated repositories.
+            credential_resolver: Optional ``CredentialResolver`` (see
+                ``EnvConfigCredentialResolver`` for the default env/config
+                implementation). ``None`` means every request goes out
+                anonymous; a gated repository then fails at ``preflight()``
+                with a ``gating_errors`` entry naming the credential env var
+                to set, never a token value. When present, a resolved
+                token is attached as ``Authorization: Bearer`` to BOTH the
+                preflight gating HEAD probe and the real per-file fetch
+                (``_auth_headers``), so a working credential clears gating
+                and lets the transfer itself succeed against the same
+                gated repository.
             free_bytes_probe: Optional override returning available free
                 bytes at a given path, injected by tests instead of
                 ``core.disk_usage().free_bytes`` / ``shutil.disk_usage``.
@@ -357,6 +443,34 @@ class ArtifactAcquisitionService:
         # (queue and proceed, not "busy"). Safe to construct without a
         # running loop on Python >= 3.10.
         self._lock = asyncio.Lock()
+
+    def _auth_headers(self, repository: str) -> dict[str, str] | None:
+        """Resolve an ``Authorization`` header for ``repository``, or ``None``.
+
+        The single seam every credentialed request in this service goes
+        through -- the preflight gating HEAD probe (``_probe_gating``) and
+        the real per-file fetch (``_fetch_one_file``) both call this rather
+        than touching ``self._credential_resolver`` directly, so there is
+        exactly one place that ever holds a resolved token in memory here.
+        Never logged and never embedded in an error message -- callers that
+        need to describe what's being fetched use ``repository`` or the
+        file path, never this return value's contents.
+
+        Args:
+            repository: The upstream repository identifier to resolve a
+                credential for.
+
+        Returns:
+            ``{"Authorization": "Bearer <token>"}`` when a resolver is
+            configured and returns a truthy token for ``repository``, else
+            ``None`` (no header attached -- the request goes out anonymous).
+        """
+        if self._credential_resolver is None:
+            return None
+        token = self._credential_resolver.resolve(repository)
+        if not token:
+            return None
+        return {"Authorization": f"Bearer {token}"}
 
     async def preflight(self, root: ArtifactRef, catalog: ArtifactCatalog) -> PreflightReport:
         """Aggregate space, staged-credit, and repository-gating checks.
@@ -922,6 +1036,7 @@ class ArtifactAcquisitionService:
         )
 
         url = self._file_url(descriptor, file)
+        headers = self._auth_headers(descriptor.upstream_repository)
 
         def on_chunk(count: int) -> None:
             progress_state.bytes_done += count
@@ -944,6 +1059,7 @@ class ArtifactAcquisitionService:
                 max_bytes=file.size_bytes,
                 resume_from=resume_from,
                 validators=validators,
+                headers=headers,
                 on_chunk=on_chunk,
             )
         except OSError as exc:
@@ -988,6 +1104,7 @@ class ArtifactAcquisitionService:
         max_bytes: int,
         resume_from: int,
         validators: FetchValidators | None,
+        headers: Mapping[str, str] | None = None,
         on_chunk: Callable[[int], None],
     ) -> tuple[FetchResult, int]:
         """Call ``stream_fetch``, restarting once from zero on FetchRestartRequired.
@@ -1000,6 +1117,11 @@ class ArtifactAcquisitionService:
                 descriptor's declared ``size_bytes`` for this file).
             resume_from: Durable bytes already on disk (post-reconciliation).
             validators: Validators the existing bytes were fetched under.
+            headers: Extra headers (``_auth_headers``'s ``Authorization``,
+                if any) for the request to ``url``'s own origin -- carried
+                through to BOTH the initial attempt and a from-zero restart;
+                ``stream_fetch`` itself strips them on any cross-origin
+                redirect hop regardless of what's passed here.
             on_chunk: Progress callback forwarded to ``stream_fetch``.
 
         Returns:
@@ -1023,7 +1145,7 @@ class ArtifactAcquisitionService:
                 max_bytes=max_bytes,
                 resume_from=resume_from,
                 validators=validators,
-                headers=None,
+                headers=headers,
                 trusted_origins=self._trusted_origins,
                 on_chunk=on_chunk,
             )
@@ -1040,7 +1162,7 @@ class ArtifactAcquisitionService:
                 max_bytes=max_bytes,
                 resume_from=0,
                 validators=None,
-                headers=None,
+                headers=headers,
                 trusted_origins=self._trusted_origins,
                 on_chunk=on_chunk,
             )
@@ -1292,7 +1414,15 @@ class ArtifactAcquisitionService:
         return total
 
     async def _probe_gating(self, targets: Iterable[ArtifactPreflightEntry]) -> list[str]:
-        """Bounded, anonymous HEAD probe per repository; collect 401/403s.
+        """Bounded HEAD probe per repository; collect 401/403s.
+
+        Anonymous unless a ``credential_resolver`` is configured AND
+        resolves a token for the entry's repository, in which case the
+        probe carries the same ``Authorization`` header the real fetch
+        would use (``_auth_headers``) -- a working credential clears
+        gating here exactly as it would clear the real transfer, instead
+        of preflight reporting a repository gated that provision() would
+        actually be able to reach.
 
         Any other outcome -- 2xx/3xx/other 4xx/5xx, timeout, connection
         failure, or an egress-policy block -- is silently non-fatal here:
@@ -1322,7 +1452,9 @@ class ArtifactAcquisitionService:
                         entry.source_url, trusted_origins=self._trusted_origins
                     )
                     response = await client.head(
-                        entry.source_url, timeout=_PREFLIGHT_PROBE_TIMEOUT_SECONDS
+                        entry.source_url,
+                        timeout=_PREFLIGHT_PROBE_TIMEOUT_SECONDS,
+                        headers=self._auth_headers(entry.repository),
                     )
                 except (httpx.HTTPError, EgressBlockedError):
                     continue

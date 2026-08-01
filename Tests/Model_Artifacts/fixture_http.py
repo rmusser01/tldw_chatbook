@@ -20,6 +20,7 @@ class _Route:
     ignore_if_range: bool = False
     pause_after: int | None = None
     pause_event: threading.Event | None = None
+    redirect_to: str | None = None
 
 
 class FixtureArtifactServer:
@@ -62,6 +63,18 @@ class FixtureArtifactServer:
                     self.headers.get("Authorization") != f"Bearer {route.require_token}"
                 ):
                     self.send_response(401)
+                    self.end_headers()
+                    return
+                if route.redirect_to is not None:
+                    # A 302 to a DIFFERENT origin (e.g. a second
+                    # FixtureArtifactServer on another port) -- models an
+                    # authenticated repository handing off to an
+                    # unauthenticated CDN URL. Sent unconditionally past the
+                    # require_token gate above so a caller can prove BOTH
+                    # that the credential reached this route AND that it did
+                    # NOT reach the redirect target.
+                    self.send_response(302)
+                    self.send_header("Location", route.redirect_to)
                     self.end_headers()
                     return
                 body = route.body
@@ -138,12 +151,15 @@ class FixtureArtifactServer:
         ignore_if_range: bool = False,
         pause_after: int | None = None,
         pause_event: threading.Event | None = None,
+        redirect_to: str | None = None,
     ) -> None:
         """Register (or replace) a route this server responds to.
 
         Args:
             path: Request path, e.g. ``"/f.bin"``.
-            body: Full response body for a non-Range request.
+            body: Full response body for a non-Range request. Ignored (but
+                still required) when ``redirect_to`` is set -- a redirect
+                route never writes a body of its own.
             etag: ETag value to send (``None`` to omit the header).
             weak_etag: Wrap ``etag`` as a weak validator (``W/"..."``).
             last_modified: ``Last-Modified`` header value to send (``None``
@@ -154,6 +170,8 @@ class FixtureArtifactServer:
             disconnect_after: If set, write only this many bytes then close
                 the connection mid-body (simulates a dropped transfer).
             require_token: If set, require ``Authorization: Bearer <token>``.
+                Checked BEFORE ``redirect_to``, so a redirect route can also
+                require a credential on the request that triggers the hop.
             ignore_if_range: Simulate a non-compliant server: honor ``Range``
                 (206) unconditionally even when ``If-Range`` doesn't match
                 the route's current validator, instead of falling back to a
@@ -164,6 +182,12 @@ class FixtureArtifactServer:
                 open/slow for cancellation tests.
             pause_event: The gate ``pause_after`` blocks on; the test sets
                 it to release the remainder of the body.
+            redirect_to: If set, this route answers every request with a
+                302 to this absolute URL instead of serving ``body`` --
+                typically another ``FixtureArtifactServer`` instance's
+                ``.url(...)``, to model a cross-origin hand-off (e.g. an
+                authenticated repository redirecting to an unauthenticated
+                CDN URL on a different port/origin).
         """
         if etag and weak_etag:
             etag = f"W/{etag}"
@@ -177,6 +201,7 @@ class FixtureArtifactServer:
             ignore_if_range=ignore_if_range,
             pause_after=pause_after,
             pause_event=pause_event,
+            redirect_to=redirect_to,
         )
 
     def url(self, path: str) -> str:
