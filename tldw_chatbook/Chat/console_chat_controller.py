@@ -631,6 +631,22 @@ class ConsoleSubmitResult:
     visible_copy: str = ""
 
 
+@dataclass(frozen=True)
+class ImpersonateResult:
+    """Outcome of an Impersonate draft request (task-1683 / Qodo #1160).
+
+    Attributes:
+        text: The drafted user reply, or "" when nothing was produced.
+        reason: "" on success, else one of ``provider-not-ready``,
+            ``empty-transcript``, ``provider-error``, ``empty-completion``.
+        detail: Optional provider-supplied copy for the blocked case.
+    """
+
+    text: str
+    reason: str = ""
+    detail: str = ""
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -4025,26 +4041,42 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
-    async def impersonate_user_reply(self, session_id: str) -> str:
+    async def impersonate_user_reply(
+        self, session_id: str
+    ) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
         task-1683: "Impersonate" writes a candidate reply *as the user*,
         for review in the composer -- it never sends and never appends to
-        the transcript. Reuses the same resolve + non-streaming collect
-        path as ``summarize_up_to``.
+        the transcript. Reuses the same resolve + collect path as
+        ``summarize_up_to``.
+
+        Qodo PR #1160: returns a reason alongside the text so the caller
+        can say WHY nothing came back; a bare "" made "provider not
+        ready" and "empty transcript" indistinguishable.
 
         Args:
             session_id: The session whose transcript and provider to use.
 
         Returns:
-            The drafted reply, or "" when the provider is not ready or the
-            model returns nothing.
+            An ``ImpersonateResult`` carrying the drafted text, or an empty
+            text plus a machine-readable ``reason``.
+
+        Raises:
+            asyncio.CancelledError: Propagated unchanged when the caller's
+                task is cancelled, so cancellation is never swallowed.
         """
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
         )
         if not getattr(resolution, "ready", False):
-            return ""
+            return ImpersonateResult(
+                "",
+                "provider-not-ready",
+                self._blocked_visible_copy(
+                    getattr(resolution, "visible_copy", "")
+                ),
+            )
         transcript: list[dict[str, Any]] = []
         for message in self.store.messages_for_session(session_id):
             role = getattr(message, "role", None)
@@ -4059,7 +4091,7 @@ class ConsoleChatController:
                 continue
             transcript.append({"role": role_value, "content": content})
         if not transcript:
-            return ""
+            return ImpersonateResult("", "empty-transcript", "")
         instruction = (
             "You are helping the USER write their next message in the "
             "conversation below. Reply with that message only -- their "
@@ -4071,12 +4103,17 @@ class ConsoleChatController:
             *transcript,
         ]
         try:
-            return (await self._collect_summary_completion(resolution, messages)).strip()
+            text = (
+                await self._collect_summary_completion(resolution, messages)
+            ).strip()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.opt(exception=True).warning("Impersonate completion failed.")
-            return ""
+            return ImpersonateResult("", "provider-error", "")
+        if not text:
+            return ImpersonateResult("", "empty-completion", "")
+        return ImpersonateResult(text, "", "")
 
     async def _collect_summary_completion(
         self, resolution: Any, messages: list[dict[str, Any]]

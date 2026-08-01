@@ -146,3 +146,87 @@ def test_impersonate_appends_when_the_user_edited_our_text():
 
     screen._replace_console_impersonate_text("s1", "fresh")
     assert composer.text == "generated, then I edited it\nfresh"
+
+
+@pytest.mark.unit
+def test_draft_addition_never_doubles_a_newline():
+    """Qodo PR #1160: a draft already ending in a newline gained a second.
+
+    That put inserted text after a blank line instead of on the next one.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    assert ChatScreen._draft_addition("", "x") == "x"
+    assert ChatScreen._draft_addition("   ", "x") == "x"
+    assert ChatScreen._draft_addition("hello", "x") == "\nx"
+    assert ChatScreen._draft_addition("hello\n", "x") == "x"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_menu_opens_from_the_composer_button_and_returns_an_action():
+    """Integration: drive the real modal through its UI boundary.
+
+    Qodo PR #1160 asked for coverage past the unit level: this mounts the
+    menu in a running app, presses the Generate Image row, and asserts the
+    screen receives that action id.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+        ConsoleComposerMenuModal,
+    )
+
+    class _Host(App):
+        pass
+
+    received: list[str | None] = []
+    app = _Host()
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            ConsoleComposerMenuModal(has_attachment=False), callback=received.append
+        )
+        await pilot.pause()
+
+        caption = app.screen.query_one(
+            f"#console-composer-menu-{ACTION_GENERATE_CAPTION}", Button
+        )
+        assert caption.disabled is True, "caption must be gated without an attachment"
+
+        await pilot.click(f"#console-composer-menu-{ACTION_GENERATE_IMAGE}")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [ACTION_GENERATE_IMAGE]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_generate_image_modal_returns_the_composed_command():
+    """Integration: type a prompt, accept, and get the command back."""
+    from textual.app import App
+    from textual.widgets import Input
+
+    from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
+        ConsoleGenerateImageModal,
+    )
+
+    class _Host(App):
+        pass
+
+    received: list[str | None] = []
+    app = _Host()
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            ConsoleGenerateImageModal(backends=("swarmui",), styles={"anime": "Anime"}),
+            callback=received.append,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-generate-image-prompt", Input).value = "a fox"
+        await pilot.pause()
+        await pilot.click("#console-generate-image-accept")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == ["/generate-image a fox"]

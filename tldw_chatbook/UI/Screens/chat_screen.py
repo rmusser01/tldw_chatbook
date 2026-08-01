@@ -5187,11 +5187,28 @@ class ChatScreen(BaseAppScreen):
         """Insert the pre-canned caption prompt for the attached image."""
         self._append_to_console_draft(CONSOLE_CAPTION_PROMPT)
 
+    @staticmethod
+    def _draft_addition(current: str, text: str) -> str:
+        """Return ``text`` prefixed by a newline only when one is needed.
+
+        Qodo PR #1160: a draft that already ends with a newline gained a
+        SECOND one, so inserted text landed after a blank line.
+
+        Args:
+            current: The existing draft text.
+            text: The text being appended.
+
+        Returns:
+            The exact string to concatenate onto ``current``.
+        """
+        if not current.strip() or current.endswith("\n"):
+            return text
+        return f"\n{text}"
+
     def _append_to_console_draft(self, text: str) -> str:
         """Append ``text`` to the active draft on its own line.
 
-        Existing draft text is never replaced (task-1683): the addition is
-        separated by a newline when the draft is non-empty.
+        Existing draft text is never replaced (task-1683).
 
         Args:
             text: The text to append.
@@ -5205,16 +5222,26 @@ class ChatScreen(BaseAppScreen):
         session_id = store.active_session_id
         if composer is not None:
             current = composer.draft_text()
-            addition = text if not current.strip() else f"\n{text}"
+            addition = self._draft_addition(current, text)
             composer.load_draft(current + addition)
             if session_id:
-                store.set_session_draft(session_id, composer.draft_text())
+                # Qodo PR #1160: a stale/closed active_session_id raises
+                # KeyError from the store during tab transitions; the
+                # composer already holds the text, so this is best-effort.
+                try:
+                    store.set_session_draft(session_id, composer.draft_text())
+                except KeyError:
+                    logger.debug("Composer action: session gone before draft save.")
             return addition
         if session_id:
-            current = store.session_draft(session_id)
-            addition = text if not current.strip() else f"\n{text}"
-            store.set_session_draft(session_id, current + addition)
-            return addition
+            try:
+                current = store.session_draft(session_id)
+                addition = self._draft_addition(current, text)
+                store.set_session_draft(session_id, current + addition)
+                return addition
+            except KeyError:
+                logger.debug("Composer action: session gone before draft write.")
+                return ""
         return ""
 
     async def _run_console_impersonate(self) -> None:
@@ -5226,16 +5253,25 @@ class ChatScreen(BaseAppScreen):
             return
         self.app.notify("Impersonate: drafting a reply…", severity="information")
         try:
-            suggestion = await controller.impersonate_user_reply(session_id)
+            result = await controller.impersonate_user_reply(session_id)
         except Exception:
             logger.opt(exception=True).warning("Impersonate failed.")
             self.app.notify("Impersonate failed.", severity="error")
             return
-        suggestion = (suggestion or "").strip()
+        suggestion = (result.text or "").strip()
         if not suggestion:
-            self.app.notify(
-                "Impersonate: the model returned nothing.", severity="warning"
-            )
+            # Qodo PR #1160: name the actual cause instead of reporting
+            # every empty result as "the model returned nothing".
+            message = {
+                "provider-not-ready": result.detail
+                or "Impersonate needs a ready provider and model.",
+                "empty-transcript": (
+                    "Impersonate needs at least one message to work from."
+                ),
+                "provider-error": "Impersonate: the provider call failed.",
+                "empty-completion": "Impersonate: the model returned nothing.",
+            }.get(result.reason, "Impersonate produced nothing.")
+            self.app.notify(message, severity="warning")
             return
         self._replace_console_impersonate_text(session_id, suggestion)
 
@@ -5259,7 +5295,7 @@ class ChatScreen(BaseAppScreen):
         )
         if previous and current.endswith(previous):
             trimmed = current[: len(current) - len(previous)]
-            replacement = suggestion if not trimmed.strip() else f"\n{suggestion}"
+            replacement = self._draft_addition(trimmed, suggestion)
             new_draft = trimmed + replacement
             if composer is not None:
                 composer.load_draft(new_draft)
