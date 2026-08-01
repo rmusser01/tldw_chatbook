@@ -34,17 +34,25 @@ class ComposerMenuEntry:
 
 
 def build_composer_menu_entries(
-    *, has_attachment: bool = False
+    *, attachment_kind: str = "none"
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
+    Generate Caption is disabled -- never hidden -- when it cannot act, and
+    the row says which case applies: nothing staged, or a staged file that
+    is not an image. Explicit unavailable states beat vanishing entries.
+
     Args:
-        has_attachment: Whether the composer currently holds an
-            attachment; Generate Caption needs one to caption.
+        attachment_kind: ``"image"``, ``"other"``, or ``"none"``.
 
     Returns:
         The menu entries in display order.
     """
+    caption_reason = {
+        "image": "Caption the attached image",
+        "other": "Attached file is not an image",
+        "none": "Attach an image first",
+    }.get(attachment_kind, "Attach an image first")
     return (
         ComposerMenuEntry(
             ACTION_GENERATE_IMAGE,
@@ -54,10 +62,8 @@ def build_composer_menu_entries(
         ComposerMenuEntry(
             ACTION_GENERATE_CAPTION,
             "Generate Caption",
-            "Caption the attached image"
-            if has_attachment
-            else "Attach an image first",
-            enabled=has_attachment,
+            caption_reason,
+            enabled=attachment_kind == "image",
         ),
         ComposerMenuEntry(
             ACTION_NARRATE_CONVERSATION,
@@ -101,16 +107,17 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
 
     BINDINGS = [("escape", "dismiss_menu", "Cancel")]
 
-    def __init__(self, *, has_attachment: bool = False, **kwargs: Any) -> None:
+    def __init__(self, *, attachment_kind: str = "none", **kwargs: Any) -> None:
         """Initialize the menu.
 
         Args:
-            has_attachment: Whether an attachment is pending, which decides
-                if Generate Caption is actionable.
+            attachment_kind: ``"image"``, ``"other"`` or ``"none"``, which
+                decides whether Generate Caption is actionable and what its
+                disabled row explains.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
-        self._entries = build_composer_menu_entries(has_attachment=has_attachment)
+        self._entries = build_composer_menu_entries(attachment_kind=attachment_kind)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-composer-menu"):

@@ -5109,26 +5109,39 @@ class ChatScreen(BaseAppScreen):
         """Open the composer overflow menu (task-1680)."""
         self.app.push_screen(
             ConsoleComposerMenuModal(
-                has_attachment=self._console_has_pending_attachment()
+                attachment_kind=self._console_pending_attachment_kind()
             ),
             callback=self._handle_console_composer_menu_choice,
         )
 
-    def _console_has_pending_attachment(self) -> bool:
-        """Whether the active composer holds an attachment."""
-        composer = self._console_composer_or_none()
-        if composer is None:
-            return False
-        for attr in ("has_pending_attachment", "_pending_attachment_label"):
-            value = getattr(composer, attr, None)
-            if callable(value):
-                try:
-                    return bool(value())
-                except Exception:
-                    continue
-            if isinstance(value, str):
-                return bool(value.strip())
-        return False
+    def _console_pending_attachment_kind(self) -> str:
+        """Classify the active session's staged attachment.
+
+        task-1682 follow-up: Generate Caption used to enable for ANY
+        attachment, so a PDF got an image-caption prompt. Reads the real
+        staged records rather than guessing from the composer's label.
+
+        Returns:
+            ``"image"`` when at least one staged attachment is an image,
+            ``"other"`` when something is staged but none are images, or
+            ``"none"`` when nothing is staged.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = getattr(store, "active_session_id", None)
+        if not session_id:
+            return "none"
+        try:
+            pendings = store.pending_attachments(session_id)
+        except KeyError:
+            return "none"
+        if not pendings:
+            return "none"
+        for attachment in pendings:
+            mime = str(getattr(attachment, "mime_type", "") or "").lower()
+            file_type = str(getattr(attachment, "file_type", "") or "").lower()
+            if mime.startswith("image/") or file_type == "image":
+                return "image"
+        return "other"
 
     def _handle_console_composer_menu_choice(self, action_id: str | None) -> None:
         """Route the chosen menu action (task-1680)."""

@@ -31,19 +31,65 @@ def test_menu_lists_the_four_requested_actions_in_order():
 
 
 @pytest.mark.unit
-def test_caption_entry_requires_an_attachment():
-    """task-1682: captioning needs an image, and says so when there is none."""
-    without = {e.action_id: e for e in build_composer_menu_entries()}[
-        ACTION_GENERATE_CAPTION
-    ]
-    assert without.enabled is False
-    assert "Attach" in without.description
+def test_caption_entry_requires_an_IMAGE_attachment():
+    """task-1682: captioning needs an image, and names the blocking case.
 
-    with_attachment = {
-        e.action_id: e
-        for e in build_composer_menu_entries(has_attachment=True)
-    }[ACTION_GENERATE_CAPTION]
-    assert with_attachment.enabled is True
+    The entry is disabled rather than hidden in both blocked cases, so an
+    unavailable action still explains itself.
+    """
+    def caption(kind):
+        return {
+            e.action_id: e for e in build_composer_menu_entries(attachment_kind=kind)
+        }[ACTION_GENERATE_CAPTION]
+
+    nothing = caption("none")
+    assert nothing.enabled is False
+    assert "Attach an image" in nothing.description
+
+    # A PDF is staged: the entry stays visible and says why it can't act.
+    other = caption("other")
+    assert other.enabled is False
+    assert "not an image" in other.description
+
+    image = caption("image")
+    assert image.enabled is True
+    assert "Caption" in image.description
+
+
+@pytest.mark.unit
+def test_attachment_kind_reads_the_staged_records():
+    """The screen classifies real staged attachments, not the chip label."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    class _A:
+        def __init__(self, mime, file_type=""):
+            self.mime_type = mime
+            self.file_type = file_type
+
+    class _Store:
+        def __init__(self, pendings):
+            self.active_session_id = "s1"
+            self._pendings = pendings
+
+        def pending_attachments(self, session_id):
+            return self._pendings
+
+    screen = ChatScreen.__new__(ChatScreen)
+
+    screen._ensure_console_chat_store = lambda: _Store([])
+    assert screen._console_pending_attachment_kind() == "none"
+
+    screen._ensure_console_chat_store = lambda: _Store([_A("application/pdf")])
+    assert screen._console_pending_attachment_kind() == "other"
+
+    screen._ensure_console_chat_store = lambda: _Store([_A("image/png")])
+    assert screen._console_pending_attachment_kind() == "image"
+
+    # Mixed staging counts as captionable.
+    screen._ensure_console_chat_store = lambda: _Store(
+        [_A("application/pdf"), _A("", file_type="image")]
+    )
+    assert screen._console_pending_attachment_kind() == "image"
 
 
 @pytest.mark.unit
@@ -185,7 +231,7 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
     app = _Host()
     async with app.run_test() as pilot:
         await app.push_screen(
-            ConsoleComposerMenuModal(has_attachment=False), callback=received.append
+            ConsoleComposerMenuModal(attachment_kind="none"), callback=received.append
         )
         await pilot.pause()
 
