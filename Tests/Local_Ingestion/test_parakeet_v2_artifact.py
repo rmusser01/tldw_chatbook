@@ -50,14 +50,29 @@ def test_descriptor_files_match_installer_pinned_constants_exactly() -> None:
     assert descriptor.precision == descriptor.reference.variant == "int8"
 
 
-def test_descriptor_provenance_combines_curated_and_verified() -> None:
+def test_descriptor_provenance_is_curated_and_locally_recorded_not_verified() -> None:
+    """Pins the honest provenance label, not the stronger one.
+
+    Only 2 of the 4 pinned files (``encoder-model.int8.onnx``,
+    ``decoder_joint-model.int8.onnx``) are LFS-tracked on HuggingFace for
+    the pinned revision -- the only case HuggingFace supplies a
+    repository-provided SHA256 for. ``config.json`` and ``vocab.txt`` are
+    plain git blobs (only a git SHA1 oid, no SHA256), so their pinned
+    digests were necessarily computed locally, not repository-supplied.
+    Per ADR-025, a per-artifact provenance claim for a MIXED artifact must
+    use the weaker label. If this ever changes to ``INTEGRITY_VERIFIED``,
+    that's a claim that ALL four files now carry a repository-supplied
+    digest -- re-verify against HuggingFace's tree API for the (possibly
+    new) pinned revision before loosening this assertion.
+    """
     from tldw_chatbook.Model_Artifacts.service import ProvenanceClass
 
     descriptor = artifact.parakeet_v2_descriptor()
-    assert set(descriptor.provenance) == {
+    assert descriptor.provenance == (
         ProvenanceClass.CHATBOOK_CURATED,
-        ProvenanceClass.INTEGRITY_VERIFIED,
-    }
+        ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+    )
+    assert ProvenanceClass.INTEGRITY_VERIFIED not in descriptor.provenance
 
 
 def test_source_map_covers_every_declared_file_with_credential_free_https_urls() -> None:

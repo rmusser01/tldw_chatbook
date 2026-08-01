@@ -865,6 +865,17 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
     def _mib(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024):.1f}"
 
+    @property
+    def _ungrantable(self) -> bool:
+        """Whether ``self.report.grant()`` would raise.
+
+        Mirrors ``PreflightReport.grant()``'s own condition exactly (gating
+        errors or insufficient space) without calling it, so the modal can
+        disable Install before the user ever confirms a plan that would
+        immediately fail.
+        """
+        return bool(self.report.gating_errors) or not self.report.sufficient_space
+
     def compose(self) -> ComposeResult:
         report = self.report
         lines = ["Install the curated Parakeet v2 INT8 speech model?", ""]
@@ -907,6 +918,7 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
                     "Install",
                     id="parakeet-v2-install-confirm",
                     variant="primary",
+                    disabled=self._ungrantable,
                 )
 
     @on(Button.Pressed, "#parakeet-v2-install-confirm")

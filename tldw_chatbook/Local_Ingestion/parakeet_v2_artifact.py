@@ -118,15 +118,27 @@ def parakeet_v2_descriptor() -> ArtifactDescriptor:
     -- this is the single source of truth the shared managed-download layer
     now verifies against; nothing here re-declares or copies a digest.
 
-    Provenance is ``(CHATBOOK_CURATED, INTEGRITY_VERIFIED)``: the pinned
-    sizes and SHA-256 digests are Chatbook's own curated choice of exactly
-    one upstream revision (not merely mirrored as-is), and they are
-    independently verified -- both by the legacy installer's own
-    byte-for-byte check today and by the shared downloader's pre-verify
-    step going forward -- so both provenance classes legitimately apply.
-    Combining ``INTEGRITY_VERIFIED`` with ``LOCAL_INTEGRITY_RECORDED`` is
-    the one combination ``ArtifactDescriptor`` itself forbids; this pair is
-    not that one.
+    Provenance is ``(CHATBOOK_CURATED, LOCAL_INTEGRITY_RECORDED)`` -- NOT
+    ``INTEGRITY_VERIFIED``, even though every file is verified against its
+    pinned digest before use. Per ADR-025, "independently verified" claims
+    that the REPOSITORY itself supplied the expected digest, not merely
+    that Chatbook checked one it computed itself. Checked against
+    HuggingFace's own tree API for this pinned revision: only
+    ``encoder-model.int8.onnx`` and ``decoder_joint-model.int8.onnx`` are
+    LFS-tracked, which is the only case HuggingFace publishes a repository-
+    supplied SHA256 for (matching both pins). ``config.json`` and
+    ``vocab.txt`` are plain git blobs -- HuggingFace exposes only a git
+    SHA1 blob oid for those, no SHA256 -- so those two files' pinned
+    digests were necessarily computed locally (by whoever curated this
+    bundle), not supplied by the repository. Provenance is per-artifact,
+    not per-file, so a mixed artifact must claim the weaker label for the
+    whole thing: two of four files cannot claim independent verification,
+    so the artifact as a whole doesn't either. This does not change what
+    is CHECKED -- every declared file is still verified byte-for-byte
+    against its pinned size and SHA-256 before the bundle becomes usable --
+    only what is CLAIMED about where that digest originally came from.
+    ``ArtifactDescriptor`` itself forbids combining ``INTEGRITY_VERIFIED``
+    with ``LOCAL_INTEGRITY_RECORDED``; this pair does not hit that.
     """
 
     files = _artifact_files()
@@ -154,7 +166,7 @@ def parakeet_v2_descriptor() -> ArtifactDescriptor:
         runtime_version_constraint=">=0.12.0",
         supported_os=("linux", "darwin", "windows"),
         supported_architectures=("x86-64", "arm64"),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.INTEGRITY_VERIFIED),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.LOCAL_INTEGRITY_RECORDED),
         files=files,
         dependencies=(),
     )

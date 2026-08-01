@@ -102,6 +102,7 @@ async def test_install_modal_shows_consent_details_from_report_and_confirms(
         assert "int8" in text
         assert str(destination) in text
         assert "Enough free space" in text
+        assert app.screen.query_one("#parakeet-v2-install-confirm", Button).disabled is False
 
         await pilot.click(app.screen.query_one("#parakeet-v2-install-confirm", Button))
         await pilot.pause()
@@ -139,7 +140,9 @@ async def test_install_modal_renders_values_from_the_injected_report(
 
 
 @pytest.mark.asyncio
-async def test_install_modal_surfaces_gating_errors_from_report(tmp_path: Path) -> None:
+async def test_install_modal_surfaces_gating_errors_and_disables_confirm(
+    tmp_path: Path,
+) -> None:
     report = _report(
         destination=tmp_path / "d",
         gating_errors=(
@@ -156,10 +159,17 @@ async def test_install_modal_surfaces_gating_errors_from_report(tmp_path: Path) 
             str(static.renderable) for static in app.screen.query(Static)
         )
         assert "requires a credential" in text
+        # Confirming a plan that would immediately fail report.grant() is
+        # pre-empted client-side rather than left to a caught background
+        # error -- the button stays present (same id) but disabled.
+        confirm = app.screen.query_one("#parakeet-v2-install-confirm", Button)
+        assert confirm.disabled is True
 
 
 @pytest.mark.asyncio
-async def test_install_modal_shows_insufficient_space_verdict(tmp_path: Path) -> None:
+async def test_install_modal_shows_insufficient_space_verdict_and_disables_confirm(
+    tmp_path: Path,
+) -> None:
     report = _report(
         destination=tmp_path / "d",
         free_bytes=1_000,
@@ -175,6 +185,8 @@ async def test_install_modal_shows_insufficient_space_verdict(tmp_path: Path) ->
             str(static.renderable) for static in app.screen.query(Static)
         )
         assert "Not enough free space" in text
+        confirm = app.screen.query_one("#parakeet-v2-install-confirm", Button)
+        assert confirm.disabled is True
 
 
 # ---------------------------------------------------------------------------
