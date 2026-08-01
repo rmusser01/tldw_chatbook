@@ -31,6 +31,7 @@ from tldw_chatbook.Model_Artifacts.service import InstalledArtifact
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SpeechSetupStep
 from tldw_chatbook.Widgets.ModelArtifacts import (
+    InstallProgressed,
     ModelActivationControls,
     ModelInstallModal,
 )
@@ -105,11 +106,15 @@ def _wizard(**overrides):
     return SimpleNamespace(**base)
 
 
-def _step(*, installed=(), wizard=None) -> SpeechSetupStep:
+def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupStep:
+    # runtime_installed defaults to True (not the real probe) so these tests
+    # are deterministic regardless of whether onnx-asr happens to be
+    # installed in the environment running the suite -- see Important 4.
     return SpeechSetupStep(
         wizard=wizard or _wizard(),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: _FakeService(installed=installed),
+        runtime_installed=runtime_installed or (lambda: True),
     )
 
 
@@ -169,6 +174,7 @@ def test_compose_step_alone_does_no_io():
         wizard=_wizard(),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=factory,
+        runtime_installed=lambda: True,
     )
     status_text, action_widget = step._status_and_action()
     assert "Checking" in status_text
@@ -214,6 +220,75 @@ async def test_installed_but_not_active_shows_activation_controls():
         controls = step.query_one(ModelActivationControls)
         assert controls.active is False
         assert controls.ready is True
+
+
+@pytest.mark.asyncio
+async def test_broken_or_not_ready_artifact_still_offers_activation_controls():
+    """Important 5: a broken/not-ready installed item must not be a dead
+    end -- ModelActivationControls(ready=False) already keeps Delete
+    enabled while disabling Activate, so wire it instead of returning no
+    action widget at all."""
+    step = _step(
+        installed=[_installed_item(active=False, ready=False, error="corrupt manifest")]
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        controls = step.query_one(ModelActivationControls)
+        assert controls.ready is False
+        assert controls.active is False
+        # The 596 widget itself keeps Delete enabled and Activate disabled
+        # for ready=False -- confirm the real rendered buttons agree.
+        activate = step.query_one(".model-activate", Button)
+        delete = step.query_one(".model-delete", Button)
+        assert activate.disabled is True
+        assert delete.disabled is False
+
+
+# ---------------------------------------------------------------------------
+# Runtime-dependency gate (Important 4): mirrors RagStep's own
+# embeddings_rag_deps_installed() gate exactly -- missing extra means no
+# download is ever offered, regardless of curated/artifact-service state.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_missing_runtime_extra_shows_install_instructions_no_download_offered():
+    step = _step(installed=(), runtime_installed=lambda: False)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        text = "\n".join(str(s.render()) for s in step.query(Static))
+        assert "onnx-asr" in text
+        assert not step.query("#setup-speech-install")
+        assert not step.query(ModelActivationControls)
+
+
+@pytest.mark.asyncio
+async def test_missing_runtime_extra_message_shown_immediately_without_waiting_for_load():
+    """The gate is checked BEFORE the installed-state load completes, so a
+    user on a minimal install sees the real reason immediately instead of a
+    "Checking installed models…" placeholder that never resolves into
+    anything actionable."""
+    step = _step(runtime_installed=lambda: False)
+    status_text, action_widget = step._status_and_action()
+    assert "onnx-asr" in status_text
+    assert action_widget is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_extra_present_offers_the_normal_install_flow():
+    step = _step(installed=(), runtime_installed=lambda: True)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert step.query_one("#setup-speech-install", Button)
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +385,19 @@ def test_provision_success_notifies_and_reloads_installed_state():
     step._ensure_loaded.assert_called_once_with(force=True)
 
 
+def test_provision_success_marks_the_step_as_acted_on_this_run():
+    """Important 3: only a successful install/activation THIS run may make
+    commit() persist -- this is where that flag gets set."""
+    step = _step()
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+    assert step._acted_this_run is False
+
+    step._apply_provision_result(None)
+
+    assert step._acted_this_run is True
+
+
 def test_provision_failure_notifies_error_but_still_reloads_never_traps():
     """AC#6: a failed download must not leave the step stuck -- it still
     refreshes installed state so the wizard stays fully navigable."""
@@ -323,6 +411,18 @@ def test_provision_failure_notifies_error_but_still_reloads_never_traps():
     step.notify.assert_called_once()
     assert step.notify.call_args.kwargs.get("severity") == "error"
     step._ensure_loaded.assert_called_once_with(force=True)
+
+
+def test_provision_failure_does_not_mark_the_step_as_acted():
+    """A failed install must not later let commit() persist as if the user
+    had successfully set anything up."""
+    step = _step()
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    step._apply_provision_result("disk full")
+
+    assert step._acted_this_run is False
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +491,43 @@ def test_declined_deletion_does_not_delete():
     step._delete_model.assert_not_called()
 
 
+def test_successful_activation_marks_the_step_as_acted_on_this_run():
+    """Important 3: activating counts as engagement, same as installing."""
+    step = _step()
+    step._operation = "activate"
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    step._apply_lifecycle_result(None)
+
+    assert step._acted_this_run is True
+
+
+def test_successful_deletion_does_not_mark_the_step_as_acted():
+    """Deleting is not "opting in" -- it must not make commit() persist
+    the recommended selection (the artifact will not be active afterwards
+    anyway, but this pins the flag directly)."""
+    step = _step()
+    step._operation = "delete"
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    step._apply_lifecycle_result(None)
+
+    assert step._acted_this_run is False
+
+
+def test_failed_activation_does_not_mark_the_step_as_acted():
+    step = _step()
+    step._operation = "activate"
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    step._apply_lifecycle_result("boom")
+
+    assert step._acted_this_run is False
+
+
 # ---------------------------------------------------------------------------
 # Persistence gate (AC#5): commit() only writes [transcription] after a
 # fresh, off-loop re-verification that the managed artifact is active.
@@ -406,6 +543,34 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
+    step._acted_this_run = True  # even "acted" must not matter without an active artifact
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_does_not_persist_when_active_but_user_did_not_act_this_run(
+    tmp_path, monkeypatch
+):
+    """Important 3 (the core clobbering fix): an artifact installed in an
+    EARLIER session (e.g. via the Library screen) being active must NOT be
+    enough on its own. A re-run that just presses Next through this step
+    (never installed/activated anything here) must leave whatever is
+    already persisted in [transcription] completely untouched -- proven at
+    the correct boundary: wizard.commit_config, the only write path, is
+    never even awaited, so no bytes of the real config file can change."""
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    active_dir = tmp_path / "installed"
+    monkeypatch.setattr(
+        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+    )
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    assert step._acted_this_run is False  # sanity: nothing was done this run
 
     ok, error = await step.commit()
 
@@ -425,6 +590,7 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
+    step._acted_this_run = True  # the user just installed/activated it THIS run
 
     ok, error = await step.commit()
 
@@ -450,11 +616,142 @@ async def test_commit_reports_failure_when_persistence_write_fails(monkeypatch):
     )
     wizard = _wizard(commit_config=AsyncMock(return_value=False))
     step = _step(wizard=wizard)
+    step._acted_this_run = True
 
     ok, error = await step.commit()
 
     assert ok is False
     assert error
+
+
+@pytest.mark.asyncio
+async def test_commit_never_persists_when_the_runtime_extra_is_missing(monkeypatch):
+    """Important 4, commit()-side belt-and-suspenders: even if somehow both
+    active and acted this run, a missing onnx-asr runtime must still block
+    the write (the UI-side gate is the primary defense; this is the second
+    independent check, mirroring RagStep's own commit() re-check of
+    deps_installed())."""
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(
+        wizard_module,
+        "active_managed_parakeet_v2_dir",
+        lambda service: Path("/fake/active"),
+    )
+    wizard = _wizard()
+    step = _step(wizard=wizard, runtime_installed=lambda: False)
+    step._acted_this_run = True
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    wizard.commit_config.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# AC#5 prefill (Important 3, UI half): the step shows what is already
+# persisted before the user acts.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prefill_shown_when_a_different_provider_is_already_configured():
+    wizard = _wizard(
+        app_instance=MagicMock(
+            app_config={
+                "transcription": {
+                    "default_provider": "remote-whisper",
+                    "default_model": "whisper-1",
+                    "default_language": "auto",
+                }
+            }
+        )
+    )
+    step = _step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        text = "\n".join(str(s.render()) for s in step.query(Static))
+        assert "remote-whisper" in text
+
+
+@pytest.mark.asyncio
+async def test_no_prefill_line_when_nothing_is_persisted():
+    step = _step()  # default app_config={}
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert not step.query("#setup-speech-prefill")
+
+
+# ---------------------------------------------------------------------------
+# Minor 9: progress messages must not keep bubbling past this step.
+# ---------------------------------------------------------------------------
+
+
+def test_install_progressed_stops_the_message():
+    from textual.css.query import NoMatches
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    step = _step()
+    step.refresh = MagicMock()
+    step.query_one = MagicMock(side_effect=NoMatches("not mounted"))
+    progress = AcquisitionProgress(
+        "fetch", parakeet_v2_reference(), "encoder.onnx", 1, 2
+    )
+    event = InstallProgressed(progress)
+    event.stop = MagicMock()
+
+    step._install_progressed(event)
+
+    event.stop.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
+# Minor 11: a forced reload requested while a load is already in flight must
+# not be silently dropped.
+# ---------------------------------------------------------------------------
+
+
+def test_forced_reload_requested_while_loading_is_not_dropped():
+    step = _step()
+    step._loading = True
+    step._loaded = True
+    step._load_installed_state = MagicMock()
+    step.refresh = MagicMock()
+
+    step._ensure_loaded(force=True)
+
+    # Still "loading" from the caller's point of view -- no second worker
+    # dispatched yet -- but the request must be remembered...
+    step._load_installed_state.assert_not_called()
+
+    # ...and honored once the in-flight load actually completes.
+    step._loading = False
+    step._apply_installed_state(None, None)
+    step._load_installed_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Minor 8: only the ONE recommended precision is pre-pressed (a second
+# curated precision must never silently pre-press two radio buttons).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_precision_radioset_pre_presses_only_the_recommended_option():
+    step = _step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pressed = [
+            b
+            for b in step.query("#setup-speech-precision-choice RadioButton")
+            if getattr(b, "value", False)
+        ]
+        assert len(pressed) == 1
+        assert "INT8" in str(pressed[0].label).upper()
 
 
 # ---------------------------------------------------------------------------

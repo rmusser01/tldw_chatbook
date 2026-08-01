@@ -619,7 +619,13 @@ class TestSpeechSummaryRow:
                 cfg, {}, rag_deps_installed=False, speech_installed=False
             )
         }
-        assert rows["Speech transcription"].state == ROW_ATTENTION
+        row = rows["Speech transcription"]
+        assert row.state == ROW_ATTENTION
+        # Review Important 1: "Settings" does not have a speech/model
+        # category -- the real destination is the Lab nav destination's
+        # Models screen (Lab -> Models -> Installed).
+        assert "Lab" in row.detail
+        assert "Settings" not in row.detail
 
 
 class TestProviderSummaryConfigured:

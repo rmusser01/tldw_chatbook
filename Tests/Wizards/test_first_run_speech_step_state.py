@@ -17,8 +17,10 @@ from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
     read_speech_prefill,
     recommended_speech_selection,
     routing_policy,
+    should_persist_speech_config,
     speech_language_options,
     speech_precision_options,
+    speech_prefill_status,
 )
 
 
@@ -149,3 +151,58 @@ class TestReadSpeechPrefill:
         }
         prefill = read_speech_prefill(cfg)
         assert prefill.provider_id != routing_policy().parakeet_provider_id
+
+
+class TestSpeechPrefillStatus:
+    """AC#5's "re-run prefills" clause: the step must show what is already
+    persisted, not just silently overwrite it (Important 3)."""
+
+    def test_nothing_persisted_is_blank(self):
+        assert speech_prefill_status(SpeechPrefill()) == ""
+
+    def test_already_parakeet_onnx_reports_already_the_default(self):
+        prefill = SpeechPrefill(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v2",
+            language="en",
+        )
+        text = speech_prefill_status(prefill)
+        assert "Already" in text
+        assert "nemo-parakeet-tdt-0.6b-v2" in text
+        assert "en" in text
+
+    def test_different_provider_reports_current_default_and_consequence(self):
+        prefill = SpeechPrefill(
+            provider_id="remote-whisper", model_id="whisper-1", language="auto"
+        )
+        text = speech_prefill_status(prefill)
+        assert "remote-whisper" in text
+        assert "Parakeet v2" in text
+
+    def test_shipped_template_default_also_reports_as_a_current_default(self):
+        """The template's own default (faster-whisper/distil-large-v3) is a
+        REAL persisted value from the user's point of view even though it
+        was never explicitly chosen -- it must be shown, not hidden, since
+        installing/activating here would replace it (Important 3)."""
+        prefill = SpeechPrefill(
+            provider_id="faster-whisper", model_id="distil-large-v3", language="en"
+        )
+        text = speech_prefill_status(prefill)
+        assert "faster-whisper" in text
+
+
+class TestShouldPersistSpeechConfig:
+    """Important 3's no-clobber gate, isolated as a pure decision."""
+
+    def test_inactive_never_persists_regardless_of_action(self):
+        assert should_persist_speech_config(active=False, acted_this_run=True) is False
+        assert should_persist_speech_config(active=False, acted_this_run=False) is False
+
+    def test_active_but_no_action_this_run_does_not_persist(self):
+        """The byte-identical pin: a re-run that just Nexts through an
+        already-active artifact (e.g. installed earlier via Library) must
+        not touch existing [transcription] config."""
+        assert should_persist_speech_config(active=True, acted_this_run=False) is False
+
+    def test_active_and_acted_this_run_persists(self):
+        assert should_persist_speech_config(active=True, acted_this_run=True) is True
