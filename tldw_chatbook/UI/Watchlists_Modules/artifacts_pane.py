@@ -442,6 +442,20 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: alignment the way a double-width glyph could.
     _AUDIO_GLYPH = "♪"
 
+    #: Owner decision, task-7 phase 2b follow-up ("if synthesis fails, show
+    #: the audio glyph with a red x", verbatim): the mark appended after
+    #: `_AUDIO_GLYPH` when a script's NEWEST `briefing_audio` render is
+    #: `STATUS_FAILED` -- the same `✗` a failed status already uses
+    #: elsewhere in this app (`chat_screen.py`/`library_rail.py`'s own
+    #: ✓/✗ vocabulary). Plain and app-controlled, same reasoning as
+    #: `_AUDIO_GLYPH` above. The red comes from an explicit `rich.text.Text`
+    #: style, never a markup string -- this pane never markup-parses cell
+    #: content (see the module docstring's `hyperlinks=False` note); a
+    #: literal `[bold red]` in provider/model text must keep rendering as
+    #: those literal characters, not be interpreted as styling.
+    _AUDIO_FAILED_MARK = "✗"
+    _AUDIO_FAILED_STYLE = "bold red"
+
     briefings = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_briefing = reactive[dict[str, Any] | None](None, recompose=True)
     #: The scope line, supplied by the screen: which watchlist these
@@ -479,13 +493,22 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: it carries no `watch_`/message pair: there is nothing on this pane
     #: that "selects" a particular audio render, only ever the newest one.
     script_audio = reactive[dict[str, Any] | None](None, recompose=True)
-    #: Review round 1, Minor #4: which of `scripts`' ids have at least one
-    #: `briefing_audio` render, of ANY status -- so the scripts table can
-    #: show an "Audio" indicator for every row, not just the currently
-    #: selected one (before this, a user had to select each script in turn
-    #: to discover whether it had ever been synthesized at all). Screen-
-    #: supplied, resolved alongside `scripts` inside `_load_briefings`.
-    scripts_with_audio = reactive[frozenset[int]](frozenset(), recompose=True)
+    #: Review round 1, Minor #4: `{script_id: status}` for every one of
+    #: `scripts`' ids that has at least one `briefing_audio` render, keyed
+    #: to that render's NEWEST status (`list_briefing_audio` is
+    #: newest-first) -- so the scripts table can show an "Audio" indicator
+    #: for every row, not just the currently selected one (before this, a
+    #: user had to select each script in turn to discover whether it had
+    #: ever been synthesized at all). A script id absent from this mapping
+    #: has no audio row at all. Owner decision, task-7 phase 2b follow-up:
+    #: this used to be a bare `frozenset[int]` of "has at least one
+    #: attempt" -- upgraded to carry status so the scripts table can also
+    #: distinguish a `STATUS_FAILED` render from a `STATUS_COMPLETE` one
+    #: (see `_AUDIO_FAILED_MARK` above), which the old presence-only
+    #: shape could not do: a failed synthesis rendered visually identical
+    #: to a successful one. Screen-supplied, resolved alongside `scripts`
+    #: inside `_load_briefings`.
+    scripts_with_audio = reactive[dict[int, str]]({}, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -526,6 +549,68 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         if self.default_preset_id is not None and self.default_preset_id not in known_ids:
             options.append((f"Preset {self.default_preset_id} (deleted)", self.default_preset_id))
         return options
+
+    @staticmethod
+    def _audio_cell(status: str | None, style: str) -> Text:
+        """The scripts table's "Audio" cell for one row.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x", verbatim) -- before this, the
+        cell only ever answered "has an attempt of ANY status", so a
+        failed synthesis painted identically to a successful one (a
+        reviewer independently flagged the same gap). Three states, one
+        per value `scripts_with_audio` can carry for a script id:
+
+        * `status is None` (the id is absent from `scripts_with_audio` --
+          no `briefing_audio` row at all): an empty cell. A blank cell
+          reads as "never attempted", which is exactly the honest state
+          here -- unlike the other two branches below, there is no
+          attempt to under- or over-state.
+        * `status == STATUS_FAILED` (the newest render failed -- this
+          also covers a recovered interrupted render: `fail_interrupted_
+          audio` writes `STATUS_FAILED`, never a separate "interrupted"
+          status, mirroring `fail_interrupted_briefings` exactly): the
+          note glyph PLUS a red `_AUDIO_FAILED_MARK`, so a failed
+          synthesis finally looks different from a successful one
+          without opening the row.
+        * Anything else (`STATUS_COMPLETE`, or `STATUS_GENERATING`): the
+          note glyph alone, same as a successful render. A `generating`
+          row is deliberately read as "an attempt exists" rather than
+          "an attempt failed" -- it has not failed yet, and marking it
+          with `_AUDIO_FAILED_MARK` pre-emptively would be dishonest in
+          the other direction; a THIRD glyph was considered and rejected
+          for this one row shape (see the phase-2b report) since nothing
+          in the spec calls for one and the column is already
+          tight (`test_the_briefings_table_keeps_at_least_three_usable_
+          rows`'s own sibling pins this table's width).
+
+        A single `Text`, assembled with `.append(..., style=...)` per
+        span -- exactly like `_audio_detail_renderable`'s own header
+        above -- never a markup string: this pane never markup-parses
+        cell content (module docstring, `hyperlinks=False`), and the red
+        mark must come from an explicit style object for the identical
+        reason a briefing/watchlist name must never reach a markup
+        parser.
+
+        Args:
+            status: The newest `briefing_audio` status for this script
+                (`scripts_with_audio.get(script_id)`), or `None`.
+            style: The row's own selection style (`_SELECTED_ROW_STYLE`
+                or `""`) -- applied to the whole cell so a selected row's
+                Audio cell reverses/bolds exactly like its siblings.
+
+        Returns:
+            A `Text` -- empty, glyph-only, or glyph-plus-red-mark.
+        """
+        cell = Text("", style=style)
+        if status is None:
+            return cell
+        cell.append(ArtifactsPane._AUDIO_GLYPH, style=style)
+        if status == STATUS_FAILED:
+            cell.append(" ")
+            mark_style = f"{style} {ArtifactsPane._AUDIO_FAILED_STYLE}".strip()
+            cell.append(ArtifactsPane._AUDIO_FAILED_MARK, style=mark_style)
+        return cell
 
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
@@ -723,12 +808,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     if row_key == selected_script_key
                     else ""
                 )
-                has_audio = row.get("id") in self.scripts_with_audio
+                audio_status = self.scripts_with_audio.get(row.get("id"))
                 scripts_table.add_row(
                     Text(str(row.get("preset_name") or "—"), style=style),
                     Text(_script_status_text(row) or "—", style=style),
                     Text(str(row.get("created_at") or "—"), style=style),
-                    Text(self._AUDIO_GLYPH if has_audio else "", style=style),
+                    self._audio_cell(audio_status, style),
                     key=row_key,
                 )
             if selected_script_index is not None:

@@ -393,11 +393,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_load_briefings` (see that method).
         self._loaded_scripts: list[dict[str, Any]] = []
         self._selected_script: dict[str, Any] | None = None
-        # Review round 1, Minor #4: which of `_loaded_scripts`' ids have at
-        # least one `briefing_audio` render -- the rebuild-survival mirror
-        # of `pane.scripts_with_audio`, resolved alongside `_loaded_scripts`
-        # inside `_load_briefings` (see that method).
-        self._scripts_with_audio: frozenset[int] = frozenset()
+        # Review round 1, Minor #4: `{script_id: status}` for every one of
+        # `_loaded_scripts`' ids that has at least one `briefing_audio`
+        # render -- the rebuild-survival mirror of `pane.scripts_with_
+        # audio`, resolved alongside `_loaded_scripts` inside `_load_
+        # briefings` (see that method). Owner decision, task-7 phase 2b
+        # follow-up: upgraded from a bare `frozenset[int]` of "has an
+        # attempt" to carry each script's newest audio status, so the
+        # scripts table can distinguish a failed render from a
+        # successful one instead of painting both identically.
+        self._scripts_with_audio: dict[int, str] = {}
         # True only while THIS screen's `wl-cast` worker is running -- the
         # exact sibling of `_briefing_in_flight` above, for the same reason:
         # `fail_interrupted_scripts` cannot tell a crashed worker's row from
@@ -3203,7 +3208,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._loaded_scripts = []
             self._selected_script = None
             self._loaded_script_audio = None
-            self._scripts_with_audio = frozenset()
+            self._scripts_with_audio = {}
             self._loaded_citations = []
             self._citation_item_lookup = {}
         else:
@@ -3275,7 +3280,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._loaded_scripts = []
                 self._selected_script = None
                 self._loaded_script_audio = None
-                self._scripts_with_audio = frozenset()
+                self._scripts_with_audio = {}
             else:
                 try:
                     # Zombie recovery for scripts, mirroring the briefing
@@ -3336,7 +3341,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         "Failed to read audio presence for briefing "
                         f"{selected_briefing_id}'s scripts: {type(exc).__name__}"
                     )
-                    self._scripts_with_audio = frozenset()
+                    self._scripts_with_audio = {}
                 wanted_script = (
                     (self._selected_script or {}).get("id")
                     if self._selected_script
@@ -3560,34 +3565,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return settings_row, preset_rows
 
     @staticmethod
-    def _read_scripts_with_audio(db: Any, script_ids: list[int]) -> frozenset[int]:
-        """Which of `script_ids` have at least one `briefing_audio` render.
+    def _read_scripts_with_audio(db: Any, script_ids: list[int]) -> dict[int, str]:
+        """Each of `script_ids` that has at least one `briefing_audio`
+        render, mapped to that render's NEWEST status.
 
-        Review round 1, Minor #4: an existence check per script
-        (`list_briefing_audio(script_id, limit=1)`), bundled into one
-        synchronous unit for `_load_briefings` to dispatch through a
-        SINGLE `asyncio.to_thread` call -- the `_read_watchlist_briefing_
-        state` idiom immediately above. `SubscriptionsDB` has no query
-        batched by many script ids at once (`list_briefing_audio` is
-        scoped to exactly one), and a briefing's own cast-script count is
-        small in real use, so N of these small reads inside one thread
-        hop beats N separate hops through the thread pool. Always called
-        through `asyncio.to_thread`; never call this directly from the UI
-        thread.
+        Review round 1, Minor #4: a single read per script
+        (`list_briefing_audio(script_id, limit=1)`, newest-first --
+        Subscriptions_DB's own `ORDER BY created_at DESC, id DESC`),
+        bundled into one synchronous unit for `_load_briefings` to
+        dispatch through a SINGLE `asyncio.to_thread` call -- the
+        `_read_watchlist_briefing_state` idiom immediately above.
+        `SubscriptionsDB` has no query batched by many script ids at once
+        (`list_briefing_audio` is scoped to exactly one), and a
+        briefing's own cast-script count is small in real use, so N of
+        these small reads inside one thread hop beats N separate hops
+        through the thread pool. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x"): this used to return a bare
+        `frozenset[int]` of "has at least one attempt" (review round 1's
+        original ask), which let a failed synthesis paint identically to
+        a successful one in the scripts table. `limit=1` already fetches
+        the newest render -- reusing its `status` costs nothing extra,
+        so `ArtifactsPane._audio_cell` can tell a `STATUS_FAILED` render
+        apart from a `STATUS_COMPLETE`/`STATUS_GENERATING` one without a
+        second query or a second `to_thread` hop.
 
         Args:
             db: An open `SubscriptionsDB`.
             script_ids: `briefing_scripts.id` values to check.
 
         Returns:
-            The subset of `script_ids` that have at least one
-            `briefing_audio` row, of ANY status.
+            `{script_id: status}` for every id in `script_ids` that has
+            at least one `briefing_audio` row, using that row's newest
+            status. A `script_id` with no `briefing_audio` row at all is
+            simply absent from the mapping.
         """
-        return frozenset(
-            script_id
-            for script_id in script_ids
-            if db.list_briefing_audio(script_id, limit=1)
-        )
+        result: dict[int, str] = {}
+        for script_id in script_ids:
+            rows = db.list_briefing_audio(script_id, limit=1)
+            if rows:
+                result[script_id] = str(rows[0].get("status") or "")
+        return result
 
     @on(BriefingSelected)
     def handle_briefing_selected(self, event: BriefingSelected) -> None:
@@ -3625,7 +3645,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # different audio -- the identical stale-window hazard fixed for
         # scripts above, one level down.
         self._loaded_script_audio = None
-        self._scripts_with_audio = frozenset()
+        self._scripts_with_audio = {}
         # Task 6: a different briefing also means different citations --
         # the identical stale-window hazard fix round 1 fixed for scripts
         # above, for the identical reason. Without clearing
@@ -3642,7 +3662,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pane.scripts = []
             pane.selected_script = None
             pane.script_audio = None
-            pane.scripts_with_audio = frozenset()
+            pane.scripts_with_audio = {}
             pane.citations = []
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"

@@ -3043,6 +3043,161 @@ async def test_the_scripts_table_shows_an_audio_indicator_for_every_row_with_a_r
         assert str(without_audio_row[audio_column_index]) == ""
 
 
+# --- Owner decision, task-7 phase 2b follow-up: three-state audio glyph ----
+#
+# "If synthesis fails, show the audio glyph with a red x" (project owner,
+# verbatim). Before this, `scripts_with_audio` only ever answered "has an
+# attempt of ANY status" (the review-round-1 fix directly above), so a
+# FAILED synthesis painted identically to a successful one -- a reviewer
+# independently flagged the same gap. These three tests each drive the
+# real load path (`pane.select_briefing_by_id`, the same `_load_briefings`
+# reload every other test in this file exercises) for exactly one of
+# `ArtifactsPane._audio_cell`'s three readings.
+
+
+def _seed_briefing_with_three_script_audio_states(app, watchlist_id) -> dict[str, int]:
+    """One `complete` briefing, three `complete` cast scripts -- one for
+    each state `scripts_with_audio` can carry for a script id: a newest
+    audio render that is `complete`, one that is `failed`, and a script
+    with no `briefing_audio` row at all. Shared by the three tests below
+    so each asserts on exactly ONE state without re-deriving the same
+    fixture three times.
+
+    Returns:
+        `{"briefing_id": ..., "complete": script_id, "failed": script_id,
+        "none": script_id}`.
+    """
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    def _script(preset_name: str) -> int:
+        return db.insert_briefing_script(
+            briefing_id,
+            preset_id=None,
+            preset_name=preset_name,
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+            status="complete",
+        )
+
+    complete_script_id = _script("Complete audio")
+    complete_audio_id = db.create_briefing_audio(
+        complete_script_id, voice_snapshot_json="[]"
+    )
+    db.update_briefing_audio(complete_audio_id, status="complete")
+
+    failed_script_id = _script("Failed audio")
+    failed_audio_id = db.create_briefing_audio(
+        failed_script_id, voice_snapshot_json="[]"
+    )
+    db.update_briefing_audio(
+        failed_audio_id, status="failed", error="synthesis failed"
+    )
+
+    none_script_id = _script("No audio")
+
+    return {
+        "briefing_id": briefing_id,
+        "complete": complete_script_id,
+        "failed": failed_script_id,
+        "none": none_script_id,
+    }
+
+
+async def _load_scripts_table(app, watchlist_id, script_states) -> DataTable:
+    """Open Artifacts, select the seeded briefing through the real pane,
+    and return the mounted scripts table once the reload has landed.
+    """
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        host,
+    ):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(script_states["briefing_id"]))
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        # Copy the one cell each test cares about out of the live table --
+        # the `async with` block below tears the screen down on exit, and
+        # a `Text` cell value survives that fine (it owns no widget
+        # reference), but returning the `DataTable` itself would not.
+        return {
+            state: table.get_row(str(script_id))[3]
+            for state, script_id in script_states.items()
+            if state != "briefing_id"
+        }
+
+
+_AUDIO_COLUMN_INDEX = 3  # "Preset", "Status", "Created", "Audio"
+
+
+@pytest.mark.asyncio
+async def test_a_complete_audio_row_shows_the_note_glyph_alone():
+    """`STATUS_COMPLETE` -> the note glyph, and nothing else -- no failure
+    mark, in either the plain text or the styled render.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["complete"]
+
+    assert cell.plain == ArtifactsPane._AUDIO_GLYPH
+    _plain, ansi = _render_to_console(cell)
+    assert "\x1b[1;31m" not in ansi, "a complete render must carry no red mark at all"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audio_row_shows_the_note_glyph_and_a_red_x():
+    """`STATUS_FAILED` -> the note glyph PLUS a red `✗` -- the owner's own
+    words: "if synthesis fails, show the audio glyph with a red x".
+
+    Asserts the exact combined plain text (not merely "the glyph is
+    present", which the ORIGINAL bug -- and a complete row -- would also
+    satisfy) and that the `✗` specifically carries an explicit red style,
+    never a markup string (`ArtifactsPane._audio_cell` builds this with
+    `rich.text.Text.append(..., style=...)`, exactly like `_audio_detail_
+    renderable`'s header -- this pane never markup-parses cell content).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["failed"]
+
+    expected = f"{ArtifactsPane._AUDIO_GLYPH} {ArtifactsPane._AUDIO_FAILED_MARK}"
+    assert cell.plain == expected, (
+        "a failed render must show the note glyph AND the failure mark -- "
+        "not the glyph alone, which is what the bug this fixes looked like"
+    )
+    _plain, ansi = _render_to_console(cell)
+    assert "\x1b[1;31m" in ansi, "the ✗ must carry an explicit red style"
+
+
+@pytest.mark.asyncio
+async def test_a_script_with_no_audio_row_renders_a_blank_audio_cell():
+    """No `briefing_audio` row at all -> an empty cell -- never a bare
+    glyph (that would claim an attempt that never happened) and never a
+    failure mark either.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    script_states = _seed_briefing_with_three_script_audio_states(app, watchlist_id)
+
+    cells = await _load_scripts_table(app, watchlist_id, script_states)
+    cell = cells["none"]
+
+    assert cell.plain == ""
+
+
 @pytest.mark.asyncio
 async def test_a_failed_audio_row_renders_its_error_text(monkeypatch):
     app = _build_test_app()
