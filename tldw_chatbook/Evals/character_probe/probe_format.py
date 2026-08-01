@@ -29,8 +29,18 @@ def _split_on_delimiter(text: str, delimiter: str) -> list[str]:
 
 
 def _clean_turn(raw: str) -> str:
-    """Strip only leading/trailing blank lines; interior whitespace is data."""
-    return raw.strip("\n").strip() if not raw.strip() else raw.strip("\n")
+    """Strip leading/trailing blank lines (including whitespace-only lines).
+
+    Interior whitespace is preserved exactly.
+    """
+    lines = raw.split("\n")
+    # Strip leading blank lines (lines with only whitespace)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    # Strip trailing blank lines (lines with only whitespace)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
 
 
 def parse_probe_text(text: str) -> ProbeSet:
@@ -54,11 +64,18 @@ def parse_probe_text(text: str) -> ProbeSet:
                 # A wholly empty document, or trailing/leading delimiter noise.
                 continue
             raise ValueError(f"probe {index} has no turns")
-        turns = [
-            _clean_turn(raw)
-            for raw in _split_on_delimiter(chunk, TURN_DELIMITER)
-            if raw.strip()
-        ]
+        raw_turns = _split_on_delimiter(chunk, TURN_DELIMITER)
+        turns: list[str] = []
+        for i, raw in enumerate(raw_turns):
+            if not raw.strip():
+                # Check if this is a stray delimiter (not at edges)
+                if i > 0 and i < len(raw_turns) - 1:
+                    raise ValueError(
+                        f"probe {index} has a stray or duplicated turn delimiter"
+                    )
+                # Skip leading/trailing empty turns from delimiter noise
+            else:
+                turns.append(_clean_turn(raw))
         if not turns:
             raise ValueError(f"probe {index} has no turns")
         probes.append(Probe(turns=tuple(turns)))
@@ -74,7 +91,10 @@ def format_probe_text(probe_set: ProbeSet) -> str:
         probe_set: The set to render.
 
     Returns:
-        str: Text that ``parse_probe_text`` round-trips to an equal ProbeSet.
+        str: Text in the plain-text format. Note: if any turn contains a line
+            that strips to ``---`` or ``===``, it will not round-trip through
+            parse_probe_text, as those are treated as delimiters. Escaping is
+            not supported in this format version.
     """
     return f"\n{PROBE_DELIMITER}\n".join(
         f"\n{TURN_DELIMITER}\n".join(probe.turns) for probe in probe_set.probes

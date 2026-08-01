@@ -77,3 +77,41 @@ def test_round_trip_through_format_and_parse():
         )
     )
     assert parse_probe_text(format_probe_text(original)) == original
+
+
+def test_whitespace_only_lines_are_stripped():
+    """Trailing spaces on an empty line should not corrupt the turn."""
+    text = "  \nHello\n---\nSecond"
+    parsed = parse_probe_text(text)
+    assert parsed.probes[0].turns == ("Hello", "Second")
+
+
+def test_stray_turn_delimiter_raises_error():
+    """A duplicated or stray turn delimiter in the middle should raise."""
+    text = "First\n---\n---\nSecond"
+    with pytest.raises(ValueError, match="stray or duplicated"):
+        parse_probe_text(text)
+
+
+def test_probe_rejects_empty_turn():
+    """Attempting to create a probe with an empty turn should raise."""
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        Probe(turns=("",))
+
+
+def test_probe_rejects_whitespace_only_turn():
+    """Attempting to create a probe with a whitespace-only turn should raise."""
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        Probe(turns=("   ",))
+
+
+def test_turn_containing_bare_delimiter_does_not_round_trip():
+    """Document the lossy behavior: delimiters within turn text are not escaped."""
+    # This turn contains a bare --- line
+    original_turn = "before\n---\nafter"
+    probe = Probe(turns=(original_turn,))
+    formatted = format_probe_text(ProbeSet(probes=(probe,)))
+    parsed = parse_probe_text(formatted)
+    # The turn is split into two at the --- delimiter
+    assert len(parsed.probes[0].turns) == 2
+    assert parsed.probes[0].turns == ("before", "after")

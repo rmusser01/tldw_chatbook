@@ -61,6 +61,11 @@ Take your time, and include what you could smell.
 Leading and trailing blank lines around a turn are stripped; interior whitespace is preserved
 exactly, since prompt formatting can change behaviour.
 
+**Limitation:** The v1 format does not escape delimiters, so a turn whose content contains a bare
+line of `---` or `===` will not round-trip correctly through parsing — the line will be treated as a
+delimiter. Escaping is out of scope for v1; a rich probe editor (v2, following task-1482's model)
+will address this.
+
 A rich probe editor is a follow-up, mirroring how bench authoring (task-1482) followed the sample
 bench.
 
