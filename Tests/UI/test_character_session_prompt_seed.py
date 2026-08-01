@@ -70,6 +70,57 @@ def test_empty_card_falls_back_to_defaults():
     assert greeting == ""
 
 
+def test_whitespace_only_card_falls_back_to_stay_in_character():
+    """PR review (task-1744): a card whose fields are all whitespace (not
+    missing, not "") must compose to an empty string internally so
+    Console's "Stay in character." fallback actually fires. Before the fix,
+    a whitespace-only labelled field left a dangling "Personality:" (or
+    similar) that was non-empty, so the composed text was never "" and the
+    fallback never triggered -- the card silently got a bare label as its
+    entire system prompt instead."""
+    card = {
+        "name": "Vex",
+        "system_prompt": "   ",
+        "personality": "\t",
+        "description": "\n",
+        "scenario": " ",
+        "message_example": "  ",
+        "post_history_instructions": " \t ",
+        "first_message": "",
+    }
+
+    _name, system_prompt, _greeting = _character_session_prompt_seed(card)
+
+    assert system_prompt == "Stay in character."
+
+
+def test_whitespace_only_card_agrees_with_the_preview_builder():
+    """The same whitespace-only card must compose the same way through the
+    Personas preview pane's builder too -- all three surfaces (Console, the
+    engine, the preview) share one composer, so a fix to the composer's
+    whitespace handling must show up identically everywhere."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    card = {
+        "name": "Vex",
+        "system_prompt": "   ",
+        "personality": "\t",
+        "description": "\n",
+        "scenario": " ",
+        "message_example": "  ",
+        "post_history_instructions": " \t ",
+    }
+
+    _name, console_system_prompt, _greeting = _character_session_prompt_seed(card)
+    preview_system_prompt = build_preview_system_prompt(card, greeting="")
+
+    assert console_system_prompt == "Stay in character."
+    assert preview_system_prompt == "Stay in character."
+    assert console_system_prompt == preview_system_prompt
+
+
 def test_message_example_and_post_history_instructions_reach_the_prompt():
     """task-1744: Console used to omit both fields entirely -- a character's
     example dialogue and post-history instructions shape its voice as much

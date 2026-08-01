@@ -4,7 +4,7 @@ title: Shared card-to-prompt assembly with full-card fidelity in Console
 status: Done
 assignee: []
 created_date: '2026-08-01 11:16'
-updated_date: '2026-08-01 22:19'
+updated_date: '2026-08-01 22:39'
 labels:
   - evals
   - roleplay
@@ -246,4 +246,61 @@ Modified files (fix round 1): tldw_chatbook/UI/Persona_Modules/personas_preview_
 Tests/UI/test_personas_preview.py (2 assertions updated, 2 tests added),
 Tests/UI/test_character_session_prompt_seed.py (parity test extended to
 three callers).
+
+PR review round: fixed a whitespace-only-field bug in compose_character_card_text
+(Character_Chat/Character_Chat_Lib.py). The four labelled fields
+(personality/description/scenario/message_example) tested the RAW value's
+truthiness before labelling, so a field containing only spaces/tabs/a bare
+newline was treated as present: it got a label prepended, and the label
+text alone ("Personality:") survived the final per-part .strip(), so (a)
+every affected session shipped a dangling label with nothing after it, and
+(b) a card whose fields were ALL whitespace never composed to "", so
+Console's "Stay in character." fallback (which checks for an empty
+composed string) could never fire -- the card silently got a bare label as
+its entire system prompt. This directly contradicted the function's own
+docstring, which already claimed "" for "every field ... empty or
+whitespace-only".
+
+Fix: test `field.strip()` for presence instead of `field` itself, for
+every field (labelled AND the two unlabelled ones, system_prompt/
+post_history_instructions, even though those two already happened to
+degrade correctly via the existing join-time filter -- unified for
+consistency per the review). The RAW (unstripped) value is still what gets
+embedded in the label f-strings, so a genuine value's own interior
+whitespace stays byte-exact -- only the presence TEST changed, not what
+gets written when a field is present.
+
+TDD discipline followed literally: wrote 5 direct unit tests in a new file
+(Tests/Character_Chat/test_compose_character_card_text.py -- no prior
+direct-unit-test coverage of this function existed, only caller-level
+coverage), ran them against the UNFIXED code first and confirmed exactly
+the 2 bug-targeted tests failed (whitespace-only labelled field, all-
+whitespace card) while the 3 others already passed (unlabelled-field
+whitespace handling, interior-whitespace preservation, real-value
+edge-trimming) -- confirming those 3 document pre-existing correct
+behavior, not coincidental passes. Also added 2 caller-level tests in
+Tests/UI/test_character_session_prompt_seed.py
+(test_whitespace_only_card_falls_back_to_stay_in_character,
+test_whitespace_only_card_agrees_with_the_preview_builder) and verified
+THOSE fail against the unfixed function too (temporarily restored the
+pre-fix file via `git show HEAD:...`, ran the two new tests, confirmed
+both red, restored the fix) before trusting the fix made them green.
+Re-ran the three-way byte-identical parity test
+(test_console_engine_and_preview_compose_byte_identical_system_prompts) --
+still holds, unaffected (its fixture card has no whitespace-only fields).
+
+Verification (foreground): Tests/UI/test_character_session_prompt_seed.py
+Tests/UI/test_personas_preview.py Tests/UI/test_personas_workbench.py
+Tests/Evals/character_probe Tests/Character_Chat/test_compose_character_card_text.py
+-p no:randomly -> 482 passed, 0 failed (same 5 pre-existing unrelated
+asyncio-mark warnings as the prior round).
+
+Reviewer's second finding (multi-line test docstrings in
+test_personas_preview.py needing a blank line after the summary) was ruled
+a false positive by the coordinator -- no action taken.
+
+Modified files (PR review round): tldw_chatbook/Character_Chat/Character_Chat_Lib.py
+(whitespace-presence fix), Tests/Character_Chat/test_compose_character_card_text.py
+(new, 5 direct unit tests), Tests/UI/test_character_session_prompt_seed.py
+(2 new caller-level whitespace tests).
 <!-- SECTION:NOTES:END -->

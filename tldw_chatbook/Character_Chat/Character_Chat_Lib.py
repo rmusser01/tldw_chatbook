@@ -584,13 +584,21 @@ def compose_character_card_text(
         at all" and may still emit steering alone, while Console substitutes
         its own "Stay in character." fallback prompt.
     """
+    # Each presence check is on the STRIPPED value -- a whitespace-only
+    # field (spaces, tabs, a bare newline) must count as absent, the same
+    # as an empty one, or a labelled field leaves a dangling "Label:" with
+    # nothing after it and a whitespace-only card can never compose to ""
+    # (defeating Console's "Stay in character." fallback, which tests for
+    # exactly that). The RAW value is still what gets embedded in the
+    # f-string below -- only the presence test is stripped -- so a genuine
+    # value's own interior whitespace stays byte-exact.
     parts = [
-        system_prompt,
-        f"Personality: {personality}" if personality else "",
-        f"Description: {description}" if description else "",
-        f"Scenario: {scenario}" if scenario else "",
-        f"Example dialogue:\n{message_example}" if message_example else "",
-        post_history_instructions,
+        system_prompt if system_prompt.strip() else "",
+        f"Personality: {personality}" if personality.strip() else "",
+        f"Description: {description}" if description.strip() else "",
+        f"Scenario: {scenario}" if scenario.strip() else "",
+        f"Example dialogue:\n{message_example}" if message_example.strip() else "",
+        post_history_instructions if post_history_instructions.strip() else "",
     ]
     text = "\n\n".join(part.strip() for part in parts if part and part.strip())
     if not text:
