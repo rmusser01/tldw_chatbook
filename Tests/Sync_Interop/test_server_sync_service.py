@@ -514,19 +514,21 @@ async def test_server_sync_service_from_config_returns_provider_backed_service()
     service = ServerSyncService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
+    provider = service.client_provider
 
     try:
         assert isinstance(service, ServerSyncService)
         assert service.client is None
-        assert service.client_provider is not None
+        assert provider is not None
 
-        client = service.client_provider.build_client()
+        client = provider.build_client()
 
         assert service.client is None
         assert client.base_url == "https://example.com"
-        assert service.client_provider.build_client() is client
+        assert provider.build_client() is client
     finally:
-        await service.client_provider.close_cached_client()
+        if provider is not None:
+            await provider.close_cached_client()
 
 
 @pytest.mark.asyncio

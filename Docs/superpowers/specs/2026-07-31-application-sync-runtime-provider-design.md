@@ -1,11 +1,11 @@
 # Application Sync Runtime Provider Ownership Design
 
 **Date:** 2026-07-31
-**Status:** Approved for implementation planning
+**Status:** Implemented and verified
 **Task:** TASK-1601
 **Decision:** [ADR-036](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
 **Related follow-up:** [TASK-1602](../../../backlog/tasks/task-1602%20-%20Define-production-local-apply-store-ownership-for-manual-Sync-v2.md)
-**Reviewed baseline:** `origin/dev` at `ff435772c`
+**Final reviewed baseline:** `origin/dev` at `949e2ef73`
 
 ## Purpose
 
@@ -15,7 +15,29 @@ exact Sync repository and memory-only dataset-key owners throughout that graph,
 without introducing a service container, enabling incomplete local-apply
 behavior, or changing the public `from_config(...)` compatibility constructor.
 
-## Verified Current State
+## Implementation Result
+
+The application-composed Sync graph now retains the exact production
+`server_context_provider`, `sync_state_repository`, downstream service graph,
+and initially empty process-memory-only dataset-key cache. Sync resolves clients
+lazily through the shared provider, retains no service-local client, and adds no
+close owner. The public `ServerSyncService.from_config(...)` compatibility API
+remains available and its test now closes the compatibility provider in a
+`finally` block.
+
+The production local apply store remains unavailable (`None`), so manual Sync
+continues to fail its explicit readiness preflight. No in-memory verification
+store was substituted; TASK-1602 remains the owner of the production data,
+transaction, tombstone, conflict, and privacy design.
+
+On the final rebased source, the numeric-safe AST inventory reports 31
+executable app-level `Server*Service.from_config(...)` calls and zero Sync
+calls. Production integration coverage mounts the real `TldwCli`, and the
+offline installed-wheel probe imports and exercises that same production app
+from the installed artifact without checkout imports, host credentials, proxy
+configuration, network access, or a surrogate application.
+
+## Verified Pre-Implementation State
 
 ### Application Sync owns a private compatibility provider
 
@@ -423,7 +445,26 @@ policy, so it will be amended instead of duplicating the decision.
 - TASK-1601 AC1: Design sections 1 and 2.
 - TASK-1601 AC2: Design sections 2 and 3.
 - TASK-1601 AC3: Design sections 1 and 4.
-- TASK-1601 AC4: Verified Current State and Design section 4.
+- TASK-1601 AC4: Verified Pre-Implementation State and Design section 4.
 - TASK-1601 AC5: Design section 5.
 - TASK-1601 AC6: Design section 6 and ADR Check.
 - TASK-1601 AC7: Design section 5 regression matrix.
+
+## Verification Evidence
+
+- Full repository suite before the final dev rebase: `24,932 passed, 170 skipped, 114 warnings` in `13,767.16s` with exit code 0.
+- Final post-rebase combined Sync, provider-audit, ProductionApp, and Packaging gate: `143 passed, 5 warnings` in `224.22s`; this includes the offline installed-wheel production-app probe.
+- Final focused Sync services: `60 passed`; Manual Sync control: `9 passed`.
+- Complete RuntimePolicy suite: `360 passed, 1 warning`.
+- Latest-dev contract reconciliation nodes: `12 passed, 2 warnings`; Briefings privacy and TTS export slice: `50 passed, 1 warning`.
+- Persistent diagnostic inventory: `3 passed`, covering 432 diagnostic-owner files, 1,068 TASK-492 calls, 6,659 TASK-494 calls, and four persistent-sink files.
+- ProductionApp no-surrogate sentinel: `1 passed`; no test, surrogate, simplified, or locally redefined application was added or used by this tranche.
+- Numeric-safe AST inventory: `{'total': 31, 'sync': 0}` on the final source; the final `origin/dev` baseline independently reports `{'total': 32, 'sync': 1}` before this migration.
+- Changed Sync/app Python files compile; Ruff lint and format checks pass; `git diff --check` passes.
+
+The full suite preceded the final rebase by design. After rebasing onto
+`origin/dev@949e2ef73`, all affected Sync, RuntimePolicy, ProductionApp,
+Packaging, installed-wheel, privacy, diagnostic, static, and formatting gates
+were rerun. Concurrent dev merges also created Backlog identity collisions;
+TASK-1652 was reopened and reconciled before closeout so the task sentinel
+remained trustworthy.

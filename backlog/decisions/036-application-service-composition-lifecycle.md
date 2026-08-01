@@ -99,10 +99,12 @@ TASK-1538 records that inventory as separate follow-up work. Correcting every
 provider and shutdown contract in the same change would turn a verified
 single-pass repair into an application-wide lifecycle migration.
 
-The executable AST inventory contains 32 application-level
-`Server*Service.from_config(...)` calls: one Sync call and 31 residual calls
-after this narrow Sync migration. The residual inventory remains subject to
-separate semantic migrations.
+On TASK-1601's final reviewed `origin/dev` baseline, the executable AST
+inventory contained 32 application-level `Server*Service.from_config(...)`
+calls: one Sync call plus 31 residual calls. This narrow migration removes the
+Sync call, leaving 31. The residual inventory remains subject to separate
+semantic migrations and is re-derived after rebases rather than treated as a
+repository-wide constant.
 
 ## Alternatives Considered
 

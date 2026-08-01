@@ -1,11 +1,11 @@
 ---
 id: TASK-1601
 title: Bind application Sync graph to the runtime server context provider
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31 14:02'
-updated_date: '2026-07-31 14:27'
+updated_date: '2026-08-01 11:07'
 labels:
   - architecture
   - sync
@@ -31,13 +31,13 @@ Make the app-composed Sync graph follow the application-owned runtime server sel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The app-composed ServerSyncService retains the exact TldwCli server_context_provider and sync_state_repository identities while public from_config compatibility remains available.
-- [ ] #2 SyncScopeService, LocalFirstSyncService, and ManualSyncControlService retain the exact application-owned server service, repository, local-first service, and initially empty dataset-key cache identities required by their contracts.
-- [ ] #3 Sync operations resolve clients lazily through the shared provider without a service-local client cache, and application shutdown remains the sole owner of provider client cleanup.
-- [ ] #4 The missing production local apply store remains explicitly blocked and is not replaced with an in-memory or test-only implementation in this provider-ownership tranche.
-- [ ] #5 Focused source checks, real production TldwCli tests, and an offline installed-wheel production-app probe verify the ownership graph without a test, surrogate, simplified, or locally redefined application.
-- [ ] #6 ADR-036 and the provider-migration audit use a numeric-safe semantic and AST inventory and record the verified residual app-level compatibility-provider count, expected to be 31 on the reviewed baseline and re-derived after rebases.
-- [ ] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
+- [x] #1 The app-composed ServerSyncService retains the exact TldwCli server_context_provider and sync_state_repository identities while public from_config compatibility remains available.
+- [x] #2 SyncScopeService, LocalFirstSyncService, and ManualSyncControlService retain the exact application-owned server service, repository, local-first service, and initially empty dataset-key cache identities required by their contracts.
+- [x] #3 Sync operations resolve clients lazily through the shared provider without a service-local client cache, and application shutdown remains the sole owner of provider client cleanup.
+- [x] #4 The missing production local apply store remains explicitly blocked and is not replaced with an in-memory or test-only implementation in this provider-ownership tranche.
+- [x] #5 Focused source checks, real production TldwCli tests, and an offline installed-wheel production-app probe verify the ownership graph without a test, surrogate, simplified, or locally redefined application.
+- [x] #6 ADR-036 and the provider-migration audit use a numeric-safe semantic and AST inventory and record the verified residual app-level compatibility-provider count, expected to be 31 on the reviewed baseline and re-derived after rebases.
+- [x] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,15 +57,31 @@ Reason: TASK-1601 changes application runtime-provider ownership, a public Sync 
 Detailed executable plan: Docs/superpowers/plans/2026-07-31-application-sync-runtime-provider-ownership.md
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the approved ADR-036 application-composition slice. `TldwCli` now constructs `ServerSyncService` through the exact runtime `server_context_provider` while forwarding the exact `sync_state_repository`; the provider-aware public factory preserves that repository without constructing or caching a client. `LocalFirstSyncService` now retains an explicitly supplied empty dataset-key mapping, so Local-first and Manual Sync observe the same process-memory-only cache. The production local apply store remains `None`, and public `from_config(...)` compatibility remains available with deterministic provider cleanup in its test.
+
+Verification uses production classes/functions only: direct Sync contracts, the real mounted `TldwCli`, and the offline installed wheel's production app. The final numeric-safe AST inventory is `{'total': 31, 'sync': 0}` versus `{'total': 32, 'sync': 1}` on `origin/dev@949e2ef73`. Full-suite evidence before the final rebase was `24,932 passed, 170 skipped, 114 warnings` in `13,767.16s`; post-rebase evidence includes `143 passed` across Sync/audit/ProductionApp/Packaging, `360 passed` for complete RuntimePolicy, `60 passed` for focused Sync, `9 passed` for Manual Sync, the installed-wheel probe, the no-surrogate sentinel, compile, Ruff lint/format, and diff hygiene.
+
+Deviations were verification-driven and documented rather than hidden: latest dev required stale test-contract reconciliation for the public character-import outcome, TTS export allowlist, direct Footer/Library production-function tests, and RAG lock timing; no test or simplified App was introduced. Self-review also removed a Briefings endpoint diagnostic exposure and refreshed the reviewed diagnostic inventory after upstream Briefings/Evals/TTS additions (`3 passed`, four sink files unchanged). Concurrent dev merges repeatedly collided with branch Backlog IDs; TASK-1652 was reopened, deterministically reconciled, sentinel-verified, and reclosed before this task.
+
+ADR required: yes
+ADR path: `backlog/decisions/036-application-service-composition-lifecycle.md`
+Reason: This implementation changes the application runtime-provider, repository, memory-only secret-cache, public factory, and shutdown ownership boundaries governed by ADR-036.
+
+Core modified files: `tldw_chatbook/app.py`, both Sync services, focused Sync/ProductionApp/Packaging/runtime-audit tests, ADR-036, the provider migration audit, this design/plan, and the task record.
+<!-- SECTION:NOTES:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 All acceptance criteria are checked.
-- [ ] #2 Implementation follows the approved plan or documents deviations.
-- [ ] #3 Focused and full automated verification passes.
-- [ ] #4 Ruff lint and format checks pass for changed Python files.
-- [ ] #5 ADR-036, migration audit, task notes, and relevant documentation are current.
-- [ ] #6 Self-review finds no unresolved correctness, privacy, lifecycle, packaging, or test-contract issue.
-- [ ] #7 No regression introduces a test, surrogate, simplified, or locally redefined application.
-- [ ] #8 Diff hygiene and installed-distribution verification pass.
-- [ ] #9 Task status is set to Done only after all preceding items are complete.
+- [x] #1 All acceptance criteria are checked.
+- [x] #2 Implementation follows the approved plan or documents deviations.
+- [x] #3 Focused and full automated verification passes.
+- [x] #4 Ruff lint and format checks pass for changed Python files.
+- [x] #5 ADR-036, migration audit, task notes, and relevant documentation are current.
+- [x] #6 Self-review finds no unresolved correctness, privacy, lifecycle, packaging, or test-contract issue.
+- [x] #7 No regression introduces a test, surrogate, simplified, or locally redefined application.
+- [x] #8 Diff hygiene and installed-distribution verification pass.
+- [x] #9 Task status is set to Done only after all preceding items are complete.
 <!-- DOD:END -->
