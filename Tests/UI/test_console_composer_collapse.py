@@ -777,37 +777,21 @@ def test_console_composer_has_no_status_strip_selector_dependency():
 
 
 @pytest.mark.asyncio
-async def test_composer_bar_save_chatbook_is_disabled_with_a_reason_when_ephemeral():
-    """F1 (task-9 review): the composer bar's own Save Chatbook button is a
-    second door onto the same write the workbench's Save Chatbook action
-    already blocks. Must gate the same way, with the same registry reason
-    -- and still work normally otherwise (the control)."""
-    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
+    """Save Chatbook moved into the composer's ☰ menu.
 
+    The temporary-chat block this test used to assert here moved with it and
+    is covered in `Tests/UI/test_console_composer_menu.py`. What remains
+    worth pinning is that the button did not stay behind: two surfaces for
+    one action is how this branch previously ended up with save-chatbook
+    blocked in one place and reachable in two others.
+    """
     app = _ComposerGeometryApp()
 
     async with app.run_test(size=(140, 42)) as pilot:
         composer = app.query_one("#console-native-composer", ConsoleComposerBar)
-        save_button = composer.query_one("#console-save-chatbook", Button)
-
-        composer.sync_action_state(
-            has_draft=False,
-            run_active=False,
-            can_save_chatbook=True,
-            ephemeral=True,
-        )
         await pilot.pause()
 
-        assert save_button.disabled is True
-        assert save_button.tooltip == blocked_reason("save-chatbook", ephemeral=True)
-
-        composer.sync_action_state(
-            has_draft=False,
-            run_active=False,
-            can_save_chatbook=True,
-            ephemeral=False,
-        )
-        await pilot.pause()
-
-        assert save_button.disabled is False
-        assert save_button.tooltip == "Open the available Chatbook artifact in Artifacts."
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)

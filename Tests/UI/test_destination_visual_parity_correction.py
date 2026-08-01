@@ -867,8 +867,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(
             ("#console-left-rail", "#console-main-column", "#console-right-rail"),
             (
                 "#console-send-message",
-                "#console-attach-context",
-                "#console-save-chatbook",
+                "#console-composer-menu",
             ),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
@@ -2586,8 +2585,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "detail": "#console-session-surface",
         "actions": (
             "#console-send-message",
-            "#console-attach-context",
-            "#console-save-chatbook",
+            "#console-composer-menu",
         ),
     },
     "library": {
@@ -2791,8 +2789,8 @@ VISIBLE_FOCUS_TARGETS = {
     },
     "chat": {
         "console-send-message",
-        "console-attach-context",
-        "console-save-chatbook",
+        # Attach and Save Chatbook are ☰ menu rows now, not row buttons.
+        "console-composer-menu",
         "console-run-library-rag",
     },
     # The retired #library-open-* buttons lived only in the never-mounted

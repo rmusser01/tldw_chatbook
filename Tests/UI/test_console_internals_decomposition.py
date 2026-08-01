@@ -26,6 +26,9 @@ from Tests.Agents.test_mcp_tool_provider import (
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ACTION_SAVE_CHATBOOK,
+)
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleInspectorState,
@@ -419,8 +422,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         ]
         assert send_controls
         assert console.query_one("#console-stop-generation", Button)
-        assert console.query_one("#console-attach-context", Button)
-        assert console.query_one("#console-save-chatbook", Button)
+        # Attach and Save Chatbook now live in the composer's ☰ menu,
+        # not this width-bounded row -- see test_console_composer_menu.py.
+        assert console.query_one("#console-composer-menu", Button)
 
 
 @pytest.mark.asyncio
@@ -439,8 +443,6 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
         mic_button = composer.query_one("#console-dictation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
         legacy_inputs = [
             widget
             for widget in console.query(".chat-input-area")
@@ -464,8 +466,6 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
             send_button,
             stop_button,
             mic_button,
-            attach_button,
-            save_button,
         ):
             assert action_button.compact is True
             # Stop button is hidden when not running, so it has no valid region
@@ -478,9 +478,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
         assert str(mic_button.label) == "Mic"
-        assert str(attach_button.label) == "Attach"
-        assert str(save_button.label) == "Save"
-        assert save_button.region.width >= len("Save")
+        # Attach and Save Chatbook are ☰ menu rows now, not row buttons.
+        assert str(composer.query_one("#console-composer-menu", Button).label) == "☰"
         assert legacy_inputs == []
 
 
@@ -751,20 +750,10 @@ async def test_console_composer_ranks_actions_by_current_availability():
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
         mic_button = composer.query_one("#console-dictation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
 
         assert send_button.disabled is False
         assert stop_button.disabled is False
         assert mic_button.disabled is False
-        assert save_button.disabled is False
-        assert attach_button.disabled is False
-        assert attach_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-action-subdued")
-        assert save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-primary")
 
         composer.sync_action_state(
             has_draft=True,
@@ -774,24 +763,19 @@ async def test_console_composer_ranks_actions_by_current_availability():
         await pilot.pause(0.1)
 
         assert send_button.has_class("console-action-primary")
-        assert save_button.disabled is False
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-save-chatbook-ready")
-        assert not save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-subdued")
-        assert not save_button.has_class("console-action-primary")
 
 
 @pytest.mark.asyncio
-async def test_console_composer_save_chatbook_disabled_only_for_temporary_chats():
-    """Save Chatbook's ``disabled`` state must track the temporary-chat gate
-    alone, never chatbook availability -- this widget ranks ordinary actions
-    by availability via styling classes while keeping them enabled (see
-    ``test_console_composer_ranks_actions_by_current_availability`` above).
-    A regression once wired ``not can_save_chatbook`` into ``disabled`` too,
-    which silently disabled Save Chatbook for every non-temporary chat with
-    no chatbook artifact yet -- i.e. most of the time."""
+async def test_console_composer_save_chatbook_left_this_row_for_the_menu():
+    """Save Chatbook is no longer a button here; the ☰ menu owns it.
+
+    Its disabled-with-a-reason contract -- including the temporary-chat
+    block that was the point of the earlier version of this test -- did not
+    disappear, it moved with the control and is asserted in
+    `Tests/UI/test_console_composer_menu.py`. What this pins is that the
+    button did not stay BEHIND as well, which would give one action two
+    surfaces that can disagree.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -800,39 +784,9 @@ async def test_console_composer_save_chatbook_disabled_only_for_temporary_chats(
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        save_button = composer.query_one("#console-save-chatbook", Button)
-
-        # Temporary chat: disabled, with the tooltip sourced verbatim from
-        # blocked_reason() -- never a retyped copy of the reason string.
-        composer.sync_action_state(
-            has_draft=True,
-            run_active=False,
-            can_save_chatbook=True,
-            ephemeral=True,
-        )
-        await pilot.pause(0.1)
-
-        expected_reason = blocked_reason("save-chatbook", ephemeral=True)
-        assert expected_reason is not None
-        assert save_button.disabled is True
-        assert save_button.tooltip == expected_reason
-
-        # Ordinary chat with no chatbook artifact available: this is the
-        # assertion that would have caught the regression. Save Chatbook
-        # must stay enabled -- only styled as subdued/disabled-looking --
-        # because unavailability is expressed through classes, not
-        # ``disabled``.
-        composer.sync_action_state(
-            has_draft=True,
-            run_active=False,
-            can_save_chatbook=False,
-            ephemeral=False,
-        )
-        await pilot.pause(0.1)
-
-        assert save_button.disabled is False
-        assert save_button.has_class("console-action-subdued")
-        assert save_button.has_class("console-action-disabled")
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)
 
 
 @pytest.mark.asyncio
@@ -933,8 +887,6 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
         mic_button = composer.query_one("#console-dictation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
 
         composer_right = composer.region.x + composer.region.width
         assert actions.region.x > visible_draft.region.x
@@ -943,8 +895,6 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
             send_button,
             stop_button,
             mic_button,
-            attach_button,
-            save_button,
         ):
             # Stop button is hidden when not running, others remain visible
             if button is stop_button:
@@ -953,8 +903,11 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
                 assert button.display is True
                 assert button.region.x + button.region.width <= composer_right
 
-        assert str(save_button.label) == "Save"
-        assert save_button.tooltip == "No Chatbook artifact is available to save yet."
+        # The ☰ button must itself stay inside the composer bounds --
+        # it is now the only way to reach Attach and Save Chatbook.
+        menu_button = composer.query_one("#console-composer-menu", Button)
+        assert menu_button.display is True
+        assert menu_button.region.x + menu_button.region.width <= composer_right
 
 
 @pytest.mark.asyncio
@@ -978,10 +931,11 @@ async def test_console_composer_save_chatbook_routes_available_artifact_action()
     async with app.run_test(size=(140, 42)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
-        save_button = await _wait_for_enabled_button(
-            console, pilot, "#console-save-chatbook"
-        )
-        save_button.press()
+        # Save Chatbook moved from a composer button into the ☰ menu, so the
+        # route under test is now the menu dispatch. The guarantee is
+        # unchanged and still the point of this test: choosing it must reach
+        # the real Artifacts handoff, not merely close the menu.
+        console._handle_console_composer_menu_choice(ACTION_SAVE_CHATBOOK)
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and not handled_launches:
             await pilot.pause(0.01)
@@ -1838,9 +1792,11 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        # Focus any non-text control in the row; the point is that a
+        # printable key still reaches the draft from non-text focus.
+        menu_button = composer.query_one("#console-composer-menu", Button)
 
-        save_button.focus()
+        menu_button.focus()
         await pilot.pause(0.1)
         await pilot.press("k")
         await pilot.pause(0.1)

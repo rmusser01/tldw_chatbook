@@ -372,8 +372,10 @@ from ...Widgets.Console.console_character_picker_modal import (
 from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
+    ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
     ACTION_NARRATE_CONVERSATION,
+    ACTION_SAVE_CHATBOOK,
     ConsoleComposerMenuModal,
 )
 from ...Widgets.Console.console_generate_image_modal import (
@@ -5187,6 +5189,9 @@ class ChatScreen(BaseAppScreen):
             ConsoleComposerMenuModal(
                 attachment_kind=self._console_pending_attachment_kind(),
                 ephemeral=self._console_active_session_is_ephemeral(),
+                # Same input the action-row button read before it moved here,
+                # so Save Chatbook's available/unavailable copy is unchanged.
+                can_save_chatbook=self._console_chatbook_action_available(),
             ),
             callback=self._handle_console_composer_menu_choice,
         )
@@ -5226,6 +5231,18 @@ class ChatScreen(BaseAppScreen):
             return
         if action_id == ACTION_SAVE_CHAT:
             self._dispatch_promote_console_temporary_session()
+            return
+        # Attach and Save Chatbook moved out of the width-bounded action row
+        # into this menu. Both route to the SAME handlers their buttons used,
+        # so the menu is a second entry point rather than a second
+        # implementation -- including Save Chatbook's temporary-chat block,
+        # which `build_composer_menu_entries` already applied by disabling
+        # the row before it could be chosen.
+        if action_id == ACTION_ATTACH_CONTEXT:
+            self.run_worker(self._handle_console_attach_context(), exclusive=False)
+            return
+        if action_id == ACTION_SAVE_CHATBOOK:
+            self._save_console_chatbook_from_visible_action()
             return
         if action_id == ACTION_GENERATE_IMAGE:
             self.run_worker(
@@ -16310,9 +16327,18 @@ class ChatScreen(BaseAppScreen):
         """Open the native Console file picker from the staged-context empty state."""
         await self._handle_console_attach_context(event)
 
-    async def _handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker and stage the selected attachment."""
-        event.stop()
+    async def _handle_console_attach_context(
+        self, event: Button.Pressed | None = None
+    ) -> None:
+        """Open the native Console file picker and stage the selected attachment.
+
+        Args:
+            event: The originating button press, or ``None`` when reached
+                from the ☰ composer menu (which has no button event to stop
+                because the row lives in a modal, not the action row).
+        """
+        if event is not None:
+            event.stop()
         # TASK-377: block at the cap BEFORE opening the picker. Otherwise the user
         # navigates the picker and selects a sixth file only to have it silently
         # rejected by a transient toast after a full picker round-trip (dead work).

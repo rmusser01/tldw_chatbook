@@ -9169,9 +9169,15 @@ async def test_attachment_indicator_visibility_follows_label():
 
 
 @pytest.mark.asyncio
-async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
-    """TASK-380: staging must not morph Attach into a status glyph -- the button
-    keeps the action verb and the tooltips reflect the real staged count."""
+async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_menu():
+    """TASK-380's guarantee, re-homed: the staged count stays legible.
+
+    The original test pinned it on the Attach button's own label/tooltip
+    ("Attach +", "2 of 5"). Attach now lives in the composer's ☰ menu, so
+    the count reads off the indicator beside the row -- which is where a
+    user looks for it anyway -- and off the ✕ control that acts on it.
+    TASK-380's actual defect (staging morphing a CONTROL into an "attached
+    OK" status glyph) cannot recur for a control that is no longer there."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -9179,21 +9185,20 @@ async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        attach_button = console.query_one("#console-attach-context", Button)
+        assert not console.query("#console-attach-context")
         clear_button = console.query_one("#console-clear-attachment", Button)
+        indicator = console.query_one("#console-attachment-indicator", Static)
 
         composer.set_pending_attachment_label("2 files", count=2, total=5)
         await pilot.pause()
-        # Verb kept, not the "attached OK" status glyph.
-        assert "Attach" in str(attach_button.label)
-        assert "✓" not in str(attach_button.label)
-        # Count-accurate tooltips.
-        assert "2 of 5" in str(attach_button.tooltip)
+        # The count is on the indicator, and the control that acts on it.
+        assert "2 files" in str(indicator.renderable)
+        assert clear_button.styles.display == "block"
         assert "2 attachments" in str(clear_button.tooltip)
 
         composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
         await pilot.pause()
-        assert "Attach" in str(attach_button.label)
+        assert "photo.png" in str(indicator.renderable)
         assert str(clear_button.tooltip) == "Clear the attachment."
 
 

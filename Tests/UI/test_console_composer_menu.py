@@ -11,8 +11,10 @@ from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
+    ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
     ACTION_NARRATE_CONVERSATION,
+    ACTION_SAVE_CHATBOOK,
     build_composer_menu_entries,
 )
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
@@ -22,15 +24,68 @@ from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
 
 
 @pytest.mark.unit
-def test_menu_lists_the_four_requested_actions_in_order():
-    """task-1680: the menu carries exactly the requested entries."""
+def test_menu_lists_the_requested_actions_in_order():
+    """task-1680: the menu carries exactly the requested entries.
+
+    Attach and Save Chatbook lead because they moved here from the
+    composer's action row and are the two a user previously reached with
+    one click; the generative actions keep their original relative order
+    below them.
+    """
     ids = [e.action_id for e in build_composer_menu_entries()]
     assert ids == [
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
         ACTION_NARRATE_CONVERSATION,
         ACTION_IMPERSONATE,
     ]
+
+
+@pytest.mark.unit
+def test_attach_and_save_chatbook_left_the_action_row_for_the_menu():
+    """The two buttons are gone from the width-bounded row, not duplicated.
+
+    Leaving a button behind AND adding a menu row would give one action two
+    surfaces that can disagree -- exactly the split this branch already had
+    to fix for save-chatbook (blocked in one surface, open in two others).
+    """
+    import inspect
+
+    from tldw_chatbook.Widgets.Console import console_composer_bar
+
+    source = inspect.getsource(console_composer_bar.ConsoleComposerBar.compose)
+    assert 'id="console-attach-context"' not in source
+    assert 'id="console-save-chatbook"' not in source
+    # The controls that stay: Send and Mic always, plus the two conditional
+    # ones whose whole point is that they appear only when actionable.
+    assert 'id="console-send-message"' in source
+    assert 'id="console-dictation"' in source
+    assert 'id="console-stop-generation"' in source
+    assert 'id="console-clear-attachment"' in source
+
+
+@pytest.mark.unit
+def test_save_chatbook_row_states_why_it_is_unavailable():
+    """Disabled-with-a-reason, carried over from the button it replaced."""
+    def row(**kwargs):
+        return {
+            e.action_id: e for e in build_composer_menu_entries(**kwargs)
+        }[ACTION_SAVE_CHATBOOK]
+
+    ready = row(can_save_chatbook=True)
+    assert ready.enabled is True
+
+    no_artifact = row(can_save_chatbook=False)
+    assert no_artifact.enabled is False
+    assert "No Chatbook artifact" in no_artifact.description
+
+    # The temporary-chat block wins over artifact availability: the write
+    # itself is the problem, so readiness is moot.
+    temporary = row(can_save_chatbook=True, ephemeral=True)
+    assert temporary.enabled is False
+    assert "temporary chat" in temporary.description
 
 
 @pytest.mark.unit
