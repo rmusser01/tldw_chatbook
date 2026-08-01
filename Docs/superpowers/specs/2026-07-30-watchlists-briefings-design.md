@@ -19,7 +19,8 @@ synthesis split out to phase 2b (task-1630) after the adapter reality below surf
 (this design's own "verified against the real adapters at plan time" caveat, see "Casting and
 audio" below):
 
-1. `synthesize()` returns a byte-stream `TTSAudioResponse` the caller must drain and `aclose()`.
+1. `synthesize()` returns a byte-stream `TTSAudioResponse` the caller must drain and `aclose()`
+   (it is also an async context manager -- prefer `async with`).
 2. Legacy adapters (kokoro/openai/elevenlabs/chatterbox/higgs/alltalk) reject a plain
    `TTSRequest` -- per-call synthesis goes through `generate_audio_stream(OpenAISpeechRequest,
    internal_model_id)`.
@@ -28,6 +29,46 @@ audio" below):
    decode-and-concat primitive must be written.
 5. `private_paths` has no binary append/stream/move helper -- storage is buffer-whole-then-
    `atomic_private_write_bytes` or a new helper.
+
+**Re-verified against dev 2026-07-31 (`8b7fa5eb6`), after ~2,000 lines of TTS character-assignment
+work merged from another workstream.** Findings 1, 3 and 4 hold verbatim. Three corrections, and
+one new constraint that bounds what phase 2b can promise:
+
+- **Finding 2, corrected.** The adapter-level rejection stands (`legacy_bridge.py:681`), but a
+  public all-provider entry point now exists: `TTSService.synthesize_default(text=...,
+  voice_override=...)` builds the legacy option pair itself (`request_admission.py:314,356`).
+  It reads provider/model/format/speed from the app's global `TTSPreferencesSnapshot` and accepts
+  only a voice override, so it is a **one-voice-for-everyone** path -- it cannot express a roster.
+  The new `character_request_resolver.py` does not close this either: it is hard-fenced to
+  `audio_cpp` at two levels (`character_request_resolver.py:85`, `TTS_Generation.py:562`).
+- **Finding 5, corrected.** `open_private_binary` **does** exist (`private_paths.py:864`) but is
+  **read-only** (`O_RDONLY`, `:28`) -- useful for playback-side reads, not for writing. A text
+  append stream exists (`:767`); the binary equivalent does not, and there is no public move
+  helper. The write decision stands: buffer-whole-then-`atomic_private_write_bytes`, or add
+  `open_private_binary_append` modelled on the text one.
+- **The id-builder is now duplicated and the two copies disagree.**
+  `stts_events.py:737` derives kokoro's engine suffix from `options["use_onnx"]` and alltalk's id
+  from `snapshot.model_id`; `request_admission.py:356` hardcodes `local_kokoro_default_onnx` and
+  `alltalk_default`. Phase 2b must promote one to a public builder rather than writing a third.
+- **New constraint: per-speaker exact voices work only on `audio_cpp` today.** `synthesize_exact`
+  (the only path that guarantees the voice you asked for is the voice you got) refuses every other
+  provider. A legacy-provider roster is reachable only through raw
+  `generate_audio_stream(OpenAISpeechRequest, internal_model_id)`, which returns a bare
+  `AsyncIterator[bytes]` with no response contract to validate against. Phase 2b must either scope
+  multi-voice rosters to `audio_cpp` and say so in the UI, or own that validation itself.
+- **Audio snapshots need more than 2a records.** `briefing_scripts.roster_snapshot_json` stores
+  `voice_profile_id` (a stringified profile UUID) and is deliberately immutable. For audio to stay
+  self-interpreting the `briefing_audio` row must snapshot the profile's **`revision`** plus the
+  denormalized selection -- `CharacterTTSRequestResolution` already carries `profile_revision` for
+  exactly this purpose. `profile_portability.py` is the right shape precedent but not a reusable
+  mechanism (it is `audio_cpp`-only and drops `revision`).
+- **Reference implementation to transcribe, not reinvent:** `TTSEventHandler._generate_tts`
+  (`Event_Handlers/TTS_Events/tts_events.py:731`) already solves response-contract validation,
+  batched artifact appends, `aclose()`-in-`finally` that preserves the primary exception,
+  cancellation cleanup, bounded error copy, and metrics. Playback, rate limiting and cooldown
+  admission all exist too. The genuinely new surfaces are: a general decode-and-concat stitcher,
+  a `TTSProfileService.get_profile(UUID)` passthrough (the repository has one, the service does
+  not expose it), the `briefing_audio` table, and the binary-append decision above.
 6. `briefing_presets` ships a single free-text `style_notes` field, not the separate "style and
    target-length notes" the entity table below promises: target-length guidance ships folded into
    that same free-text field for 2a, with no dedicated field of its own; a dedicated field is 2b's
