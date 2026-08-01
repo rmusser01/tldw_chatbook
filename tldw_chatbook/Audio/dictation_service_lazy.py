@@ -139,6 +139,26 @@ class LazyLiveDictationService:
     #: rationale this mirrors. Configurable as `dictation.vad_preroll_ms`.
     VAD_PREROLL_MS = 240
 
+    #: Hard safety net on the non-streaming (buffer-API) regime's in-progress
+    #: segment, expressed as a duration rather than a bare byte count so it
+    #: tracks whatever sample rate/width the capture is actually using (see
+    #: `_max_non_streaming_segment_bytes`). Review finding (PR #1171,
+    #: Finding 2): `_processing_loop`'s non-streaming path only transcribes at
+    #: the silence gate or at stop. `AudioRecordingService` sets
+    #: `use_vad=False` whenever `webrtcvad` is missing or `Vad()` init fails,
+    #: and in that state the recorder forwards EVERY chunk unconditionally --
+    #: so `last_speech_time` never goes stale, the silence gate never fires,
+    #: and `segment_audio` grows for the whole capture: unbounded memory, and
+    #: nothing transcribed until `stop_dictation()`'s tail-drain (itself
+    #: behind `stop_join_timeout_seconds`, 30s default). This bound is a
+    #: safety net, not a VAD workaround -- it fires regardless of VAD state,
+    #: since a user who simply never pauses hits the identical wall with VAD
+    #: fully working. 30s mirrors `STOP_JOIN_TIMEOUT_SECONDS`: the worst-case
+    #: forced-transcription latency this introduces is one the user already
+    #: tolerates at stop, and it is long enough that no ordinary spoken
+    #: sentence (silence-gated well before this) is ever chopped by it.
+    MAX_NON_STREAMING_SEGMENT_SECONDS = 30.0
+
     #: Instance defaults, declared on the class so a service built with
     #: `__new__` (teardown-path tests do exactly that) still stops cleanly
     #: instead of raising AttributeError while releasing the microphone.
@@ -800,28 +820,35 @@ class LazyLiveDictationService:
           alternative (transcribing on the shared loop thread) is the
           defect this method exists to fix.
 
-          `segment_audio`'s size is bounded only by however long the
-          in-progress segment runs before something finalizes it -- and
-          without `webrtcvad` (`recording_service.py` forwards every chunk
-          unconditionally in that state, a documented degrade path), or for
-          an utterance that simply never pauses, NOTHING finalizes it until
-          `stop_dictation()`: `last_speech_time` never goes stale, so the
-          silence check above never fires, and the entire capture -- however
-          long -- sits in `segment_audio` and is transcribed as a single
-          call inside the tail-drain, behind `stop_join_timeout_seconds`
-          (30s default). Two different callers, two different outcomes here:
-          the Console (`UI/Screens/chat_screen.py`) passes
+          `segment_audio`'s size would otherwise be bounded only by however
+          long the in-progress segment runs before something finalizes it --
+          and without `webrtcvad` (`recording_service.py` forwards every
+          chunk unconditionally in that state, a documented degrade path),
+          or for an utterance that simply never pauses, NOTHING would
+          finalize it until `stop_dictation()`: `last_speech_time` never
+          goes stale, so the silence check above never fires, and the entire
+          capture -- however long -- would sit in `segment_audio` and be
+          transcribed as a single call inside the tail-drain, behind
+          `stop_join_timeout_seconds` (30s default). Two different callers
+          already had two different outcomes here: the Console
+          (`UI/Screens/chat_screen.py`) passes
           `max_buffer_bytes=CONSOLE_DICTATION_MAX_BYTES` to the recorder,
           whose `on_buffer_limit` callback stops the capture once that many
           bytes have been delivered (`_handle_console_dictation_limit`), so
-          `segment_audio` is bounded there too, indirectly, at the same
+          `segment_audio` was bounded there too, indirectly, at the same
           ~60s/~1.9MB ceiling. `UI/Dictation_Window_Improved.py` builds this
           service with no `max_buffer_bytes` at all, so for that caller
-          `segment_audio` is genuinely unbounded by anything but the user
-          choosing to stop. Not fixed here -- a max-segment-duration
-          force-finalize would close this cleanly, but is new machinery
-          outside this rework's scope; see
-          `.superpowers/sdd/2026-07-29-console-voice-control-v2/dictation-loop-fix-report.md`.
+          `segment_audio` was genuinely unbounded by anything but the user
+          choosing to stop. Fixed by `MAX_NON_STREAMING_SEGMENT_SECONDS`
+          below: the loop force-finalizes the in-progress segment once it
+          crosses that bound, through the same transcribe+finalize helper
+          the silence gate uses (`_finalize_non_streaming_segment`), so
+          `segment_audio` cannot grow past it regardless of VAD state or
+          `max_buffer_bytes`. See
+          `.superpowers/sdd/2026-07-29-console-voice-control-v2/dictation-loop-fix-report.md`
+          for the original review that first flagged this as future work,
+          and `.superpowers/sdd/2026-07-29-console-voice-control-v2/qodo-findings-report.md`
+          for the review that turned it into this fix.
         """
         streaming = self.streaming_transcriber is not None
         segment_audio = []
@@ -885,6 +912,23 @@ class LazyLiveDictationService:
                     last_process_time = current_time
                     self._trim_privacy_audio_buffer()
 
+                # Hard safety net on the non-streaming segment (review
+                # finding, PR #1171, "Finding 2"; see
+                # `MAX_NON_STREAMING_SEGMENT_SECONDS` for the full rationale):
+                # runs every ~0.1s iteration regardless of VAD state, so it
+                # fires exactly when the silence gate below cannot -- no
+                # `webrtcvad`, or an utterance that simply never pauses. Not
+                # a duplicate of the silence gate's transcribe+finalize call:
+                # both go through `_finalize_non_streaming_segment` so a
+                # forced finalize behaves identically to a silence-triggered
+                # one (same start/done signals, same empty-result drop).
+                if not streaming and segment_audio:
+                    segment_bytes = sum(len(chunk) for chunk in segment_audio)
+                    if segment_bytes >= self._max_non_streaming_segment_bytes():
+                        segment_audio = self._finalize_non_streaming_segment(
+                            segment_audio
+                        )
+
                 # Check for silence timeout. Runs every ~0.1s iteration
                 # independent of chunk arrival -- deliberately not derived
                 # from queue activity, so it still fires while the recorder's
@@ -903,10 +947,9 @@ class LazyLiveDictationService:
                         # backend that never sent an explicit final.
                         self._finalize_current_segment()
                     else:
-                        if segment_audio:
-                            pending, segment_audio = segment_audio, []
-                            self._transcribe_segment_audio(pending)
-                        self._finalize_current_segment()
+                        segment_audio = self._finalize_non_streaming_segment(
+                            segment_audio
+                        )
 
             except Exception as e:
                 logger.error(f"Processing loop error: {e}")
@@ -959,13 +1002,66 @@ class LazyLiveDictationService:
                 if len(self.audio_buffer) > 10:
                     self.audio_buffer = self.audio_buffer[-5:]
 
+    def _max_non_streaming_segment_bytes(self) -> int:
+        """Convert `MAX_NON_STREAMING_SEGMENT_SECONDS` to bytes for this capture.
+
+        Reads the real recorder's sample rate/channels when one has already
+        been constructed (`self._audio_service`, the same fields
+        `_process_audio_buffer` reads for the actual `transcribe_buffer()`
+        call), falling back to the recorder's own defaults otherwise --
+        `_processing_loop` must not read the `audio_service` property here,
+        since that lazily CONSTRUCTS a recorder and opens an audio device.
+        Sample width is hard-coded at 2 bytes (16-bit PCM), the same literal
+        `_process_audio_buffer` passes to `transcribe_buffer()`; nothing in
+        this codebase ever records at a different width.
+        """
+        recorder = self._audio_service
+        sample_rate = getattr(recorder, "sample_rate", None) or 16000
+        channels = getattr(recorder, "channels", None) or 1
+        sample_width = 2  # 16-bit PCM
+        return int(
+            self.MAX_NON_STREAMING_SEGMENT_SECONDS
+            * sample_rate
+            * channels
+            * sample_width
+        )
+
+    def _finalize_non_streaming_segment(
+        self, segment_audio: List[bytes]
+    ) -> List[bytes]:
+        """Transcribe and finalize one non-streaming segment, exactly once.
+
+        Shared by every place `_processing_loop`'s non-streaming regime
+        decides a segment is complete mid-capture -- the silence gate and
+        the hard segment-size bound (`MAX_NON_STREAMING_SEGMENT_SECONDS`) --
+        so a forced finalize behaves identically to a silence-triggered one:
+        `_transcribe_segment_audio` fires the transcribing start/done
+        signals and drops an empty result silently, and
+        `_finalize_current_segment` publishes whatever text it produced (a
+        no-op when that was blank). Not used by the tail-drain at stop,
+        which deliberately transcribes without finalizing -- `stop_dictation()`
+        finalizes once itself, right after the processing thread is joined.
+
+        Args:
+            segment_audio: The chunks accumulated since the last finalize.
+
+        Returns:
+            A fresh empty list, ready for the caller to resume accumulating
+            into.
+        """
+        if segment_audio:
+            self._transcribe_segment_audio(segment_audio)
+        self._finalize_current_segment()
+        return []
+
     def _transcribe_segment_audio(self, segment_audio: List[bytes]) -> None:
         """Transcribe one whole non-streaming segment's audio, exactly once.
 
-        Called only from `_processing_loop`'s non-streaming regime -- the
-        silence check (mid-capture) and the tail-drain (stop) -- never on a
-        cadence, and never for the streaming regime, whose own finals arrive
-        push-style through `_handle_streamed_final`. Reuses
+        Called only from `_processing_loop`'s non-streaming regime -- via
+        `_finalize_non_streaming_segment` (the silence gate and the hard
+        segment-size bound) and directly from the tail-drain (stop) -- never
+        on a cadence, and never for the streaming regime, whose own finals
+        arrive push-style through `_handle_streamed_final`. Reuses
         `_process_audio_buffer()` unchanged (same `transcribe_buffer()` call
         shape: provider/model/language passthrough, sample params), so it
         sets `self.current_transcript` exactly as every other caller of that

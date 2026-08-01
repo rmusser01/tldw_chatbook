@@ -658,3 +658,98 @@ def test_stop_path_an_unfinalized_tail_is_transcribed_and_finalized_at_stop(
     assert len(transcription.buffer_calls) == 1
     assert result.transcript == "one two"
     assert sink.finals == ["one two"]
+
+
+# --------------------------------------------------------------------------
+# Hard segment-size bound: review Finding 2, PR #1171.
+#
+# `_processing_loop`'s non-streaming path used to transcribe ONLY at the
+# silence gate or at stop. When VAD is unavailable (`AudioRecordingService`
+# sets `use_vad=False` when `webrtcvad` is missing or `Vad()` init fails),
+# the recorder forwards every chunk unconditionally, so `last_speech_time`
+# never goes stale and the silence gate never fires -- `segment_audio` grew
+# for the entire capture: unbounded memory, and nothing transcribed until
+# `stop_dictation()`. `MAX_NON_STREAMING_SEGMENT_SECONDS` closes this as a
+# safety net independent of VAD state: these tests drive `_audio_callback`
+# directly, continuously, with a `silence_threshold_seconds` set far longer
+# than the whole test -- the silence gate is structurally incapable of
+# firing here, so any final that arrives can only be the byte-size bound.
+# --------------------------------------------------------------------------
+
+
+def test_hard_bound_forces_a_finalize_when_the_recorder_never_pauses():
+    """Continuous frames, never a gap: the byte-size safety net must still fire.
+
+    Two phases, each exactly the configured bound's worth of audio (3
+    frames of 640 bytes = 1920 bytes), each its own marker. Phase 1 proves
+    the bound finalizes mid-capture without any silence gap; phase 2 proves
+    the segment resumes accumulating cleanly afterward -- if the forced
+    finalize failed to reset the accumulator, phase 2's audio would arrive
+    mixed into phase 1's already-sent call, or never arrive as its own
+    final at all.
+    """
+    transcription = _MarkerTranscriptionService()
+    silence_threshold = 5.0  # far longer than this whole test
+    service = _mid_capture_service(transcription, silence_threshold=silence_threshold)
+    service.buffer_duration_ms = 20
+    # 3 production-shaped (640-byte) frames' worth, expressed as a duration
+    # the same way the real bound is: bytes / (sample_rate * channels *
+    # sample_width), using the same 16kHz/mono/16-bit defaults
+    # `_max_non_streaming_segment_bytes` falls back to when `_audio_service`
+    # is `None` (as it is in this fixture).
+    bound_bytes = 3 * 640
+    service.MAX_NON_STREAMING_SEGMENT_SECONDS = bound_bytes / (16000 * 1 * 2)
+
+    sink = _Sink()
+    service.on_final_transcript = sink.final
+    service.on_error = sink.error
+
+    _run_loop(service)
+    try:
+        # Phase 1: continuous "speech", no gap anywhere near
+        # `silence_threshold` -- simulates a recorder with `use_vad=False`
+        # (or a user who simply never pauses) forwarding everything.
+        for _ in range(3):
+            service._audio_callback(_marker_chunk(1))
+            time.sleep(0.02)
+
+        assert _wait_until(lambda: len(sink.finals) >= 1, timeout=2.0), (
+            "no final arrived once the segment-size bound was crossed -- "
+            "the hard safety net never fired, so segment_audio would grow "
+            "unbounded for a capture with no silence gap"
+        )
+        assert sink.errors == []
+        assert sink.finals[0] == "w1", (
+            f"expected the bound-triggered final to contain only marker 1, "
+            f"got {sink.finals[0]!r}"
+        )
+        first_call_bytes = len(transcription.buffer_calls[0]["audio_data"])
+        assert first_call_bytes == bound_bytes, (
+            f"expected exactly {bound_bytes} bytes (all of phase 1, no "
+            f"more) in the bound-triggered transcription, got "
+            f"{first_call_bytes} -- segment_audio grew past the configured "
+            "bound before the forced finalize fired"
+        )
+
+        # Phase 2: still no silence gap, a different marker. Proves the
+        # accumulator was reset, not merely left full.
+        for _ in range(3):
+            service._audio_callback(_marker_chunk(2))
+            time.sleep(0.02)
+
+        assert _wait_until(lambda: len(sink.finals) >= 2, timeout=2.0), (
+            "no second final arrived -- the segment after the forced "
+            "finalize never resumed accumulating"
+        )
+        assert sink.errors == []
+        assert sink.finals[1] == "w2", (
+            f"expected the second segment to contain only marker 2, got "
+            f"{sink.finals[1]!r} -- it was mixed with audio already sent "
+            "to the transcriber in the first, bound-triggered call"
+        )
+        assert len(transcription.buffer_calls) == 2, (
+            f"expected exactly 2 transcribe_buffer() calls (one per "
+            f"bound-triggered segment), got {len(transcription.buffer_calls)}"
+        )
+    finally:
+        _stop_loop(service)
