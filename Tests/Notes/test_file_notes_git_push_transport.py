@@ -11,8 +11,10 @@ import shlex
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -464,6 +466,7 @@ def _service(
     environment: Mapping[str, str],
     ssh_executable: Path | None = None,
     git_exec_path: Path | None = None,
+    allow_ssh_agent: bool = False,
 ) -> FileNotesGitService:
     contexts = root / "network-contexts"
     contexts.mkdir(mode=0o700)
@@ -482,6 +485,7 @@ def _service(
             ssh_executable=(
                 None if ssh_executable is None else str(ssh_executable)
             ),
+            allow_ssh_agent=allow_ssh_agent,
         ),
         push_query_timeout=5,
         push_timeout=5,
@@ -524,12 +528,200 @@ def _append_only_script(path: Path, source: str) -> Path:
 
 
 @dataclass(repr=False)
+class _OpenSSHAgent:
+    root: Path
+    socket_path: Path
+    process: subprocess.Popen[bytes]
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        if self.process.stderr is not None:
+            self.process.stderr.close()
+        _remove_ssh_agent_root(self.root)
+
+
+def _remove_ssh_agent_root(root: Path) -> None:
+    try:
+        shutil.rmtree(root)
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise RuntimeError("isolated ssh-agent root cleanup failed") from None
+    if root.exists():
+        raise RuntimeError("isolated ssh-agent root cleanup left residue")
+
+
+def _agent_diagnostic_is_permission_denial(diagnostic: bytes) -> bool:
+    lowered = diagnostic.lower()
+    return any(
+        marker in lowered
+        for marker in (b"operation not permitted", b"permission denied")
+    )
+
+
+def _start_ssh_agent(
+    ssh_agent: Path,
+    ssh_add: Path,
+    identity: Path | None,
+) -> _OpenSSHAgent:
+    root = Path(
+        tempfile.mkdtemp(prefix="chatbook-ssh-agent-", dir="/tmp")
+    ).resolve(strict=True)
+    root.chmod(0o700)
+    socket_path = root / "agent.sock"
+    try:
+        process = subprocess.Popen(
+            (
+                str(ssh_agent),
+                "-D",
+                "-a",
+                str(socket_path),
+            ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env={"LC_ALL": "C", "PATH": os.defpath},
+        )
+    except PermissionError:
+        _remove_ssh_agent_root(root)
+        raise
+    except OSError:
+        _remove_ssh_agent_root(root)
+        raise RuntimeError("ssh-agent could not start") from None
+    agent = _OpenSSHAgent(root, socket_path, process)
+    ready = False
+    for _attempt in range(200):
+        if process.poll() is not None:
+            break
+        try:
+            metadata = socket_path.stat(follow_symlinks=False)
+        except OSError:
+            threading.Event().wait(0.01)
+            continue
+        if stat.S_ISSOCK(metadata.st_mode):
+            ready = True
+            break
+        threading.Event().wait(0.01)
+    if not ready:
+        diagnostic = b""
+        if process.poll() is not None and process.stderr is not None:
+            diagnostic = process.stderr.read(4096)
+        agent.close()
+        if _agent_diagnostic_is_permission_denial(diagnostic):
+            raise PermissionError(
+                "ssh-agent socket creation is not permitted"
+            )
+        raise RuntimeError("ssh-agent did not create its isolated socket")
+    environment = {
+        "HOME": str(root),
+        "LC_ALL": "C",
+        "PATH": os.defpath,
+        "SSH_AGENT_PID": str(process.pid),
+        "SSH_AUTH_SOCK": str(socket_path),
+    }
+    try:
+        loaded = (
+            None
+            if identity is None
+            else subprocess.run(
+                (str(ssh_add), str(identity)),
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+                check=False,
+            )
+        )
+        listed = subprocess.run(
+            (str(ssh_add), "-l"),
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+    except PermissionError:
+        agent.close()
+        raise
+    except (OSError, subprocess.TimeoutExpired):
+        agent.close()
+        raise RuntimeError(
+            "ssh-add could not probe the isolated agent"
+        ) from None
+    listing_is_expected = (
+        listed.returncode == 1
+        and listed.stdout.strip() == b"The agent has no identities."
+        if identity is None
+        else listed.returncode == 0
+        and len(listed.stdout.splitlines()) == 1
+    )
+    if (
+        (loaded is not None and loaded.returncode != 0)
+        or not listing_is_expected
+    ):
+        agent.close()
+        raise RuntimeError(
+            "ssh-add reported an unexpected disposable fixture key count"
+        )
+    return agent
+
+
+def test_openssh_agent_startup_removes_root_when_spawn_is_denied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A denied agent spawn must not strand its owner-only temp root."""
+    agent_root = tmp_path / "agent-root"
+
+    def create_agent_root(*_args: object, **_kwargs: object) -> str:
+        agent_root.mkdir(mode=0o700)
+        return str(agent_root)
+
+    def deny_spawn(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("fixture spawn denied")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", create_agent_root)
+    monkeypatch.setattr(subprocess, "Popen", deny_spawn)
+
+    with pytest.raises(PermissionError, match="fixture spawn denied"):
+        _start_ssh_agent(
+            Path("/usr/bin/ssh-agent"),
+            Path("/usr/bin/ssh-add"),
+            tmp_path / "identity",
+        )
+
+    assert not agent_root.exists()
+
+
+@dataclass(frozen=True)
+class _OpenSSHClientState:
+    environment: Mapping[str, str]
+    known_hosts: Path
+    prompt_marker: Path
+    proxy_marker: Path
+    helper_marker: Path
+    provider_marker: Path
+
+
+@dataclass(repr=False)
 class _OpenSSHServer:
     root: Path
     port: int
     host_public_key: str
     client_key: Path
     wrong_client_key: Path
+    ssh_executable: Path
+    correct_agent: _OpenSSHAgent
+    wrong_agent: _OpenSSHAgent
+    empty_agent: _OpenSSHAgent
     connections_log: Path
     process: subprocess.Popen[bytes]
     stderr_lines: list[str]
@@ -569,64 +761,101 @@ class _OpenSSHServer:
             kinds.count("receive"),
         )
 
-    def client_wrapper(
+    def client_state(
         self,
         root: Path,
         *,
-        known_host: str | None = None,
-        identity: Path | None = None,
-    ) -> tuple[Path, Path, Path]:
-        known_hosts = root / "known_hosts"
-        host_key = self.host_public_key if known_host is None else known_host
-        known_hosts.write_text(
-            f"[127.0.0.1]:{self.port} {host_key}\n",
-            encoding="ascii",
-        )
-        known_hosts.chmod(0o600)
+        known_host: str | None,
+        agent: _OpenSSHAgent,
+    ) -> _OpenSSHClientState:
+        home = root / "isolated-home"
+        ssh_directory = home / ".ssh"
+        ssh_directory.mkdir(parents=True, mode=0o700)
+        home.chmod(0o700)
+        ssh_directory.chmod(0o700)
+        known_hosts = ssh_directory / "known_hosts"
+        if known_host is not None:
+            known_hosts.write_text(
+                f"[127.0.0.1]:{self.port} {known_host}\n",
+                encoding="ascii",
+            )
+            known_hosts.chmod(0o600)
         prompt_marker = root / "ssh-prompt-ran"
+        provider_marker = root / "provider-canary-reached-child"
         prompt = _append_only_script(
             root / "ssh-askpass",
             (
+                "import os\n"
                 "from pathlib import Path\n"
+                f"if any({PROVIDER_CANARY!r} in value "
+                "for value in os.environ.values()):\n"
+                f"    Path({str(provider_marker)!r}).write_text('leaked')\n"
                 f"Path({str(prompt_marker)!r}).write_text('prompted')\n"
                 "raise SystemExit(72)\n"
             ),
         )
-        environment_marker = root / "provider-canary-reached-ssh"
-        selected_identity = self.client_key if identity is None else identity
-        wrapper = _append_only_script(
-            root / "fixture-ssh",
+        proxy_marker = root / "hostile-proxy-ran"
+        proxy = _append_only_script(
+            root / "hostile-proxy",
             (
                 "import os\n"
                 "from pathlib import Path\n"
-                "import sys\n"
                 f"if any({PROVIDER_CANARY!r} in value "
                 "for value in os.environ.values()):\n"
-                f"    Path({str(environment_marker)!r}).write_text('leaked')\n"
-                "args = sys.argv[1:]\n"
-                "try:\n"
-                "    split = args.index('--')\n"
-                "except ValueError:\n"
-                "    raise SystemExit(126) from None\n"
-                "fixture = [\n"
-                "    '-o', "
-                f"'UserKnownHostsFile={known_hosts}',\n"
-                "    '-o', 'GlobalKnownHostsFile=none',\n"
-                "    '-o', 'IdentitiesOnly=yes',\n"
-                "    '-o', 'IdentityFile=none',\n"
-                f"    '-i', {str(selected_identity)!r},\n"
-                "]\n"
-                "child = {\n"
-                "    'DISPLAY': 'fixture:0',\n"
-                "    'LC_ALL': 'C',\n"
-                f"    'SSH_ASKPASS': {str(prompt)!r},\n"
-                "    'SSH_ASKPASS_REQUIRE': 'force',\n"
-                "}\n"
-                f"os.execve('/usr/bin/ssh', "
-                "('/usr/bin/ssh', *args[:split], *fixture, *args[split:]), child)\n"
+                f"    Path({str(provider_marker)!r}).write_text('leaked')\n"
+                f"Path({str(proxy_marker)!r}).write_text('invoked')\n"
+                "raise SystemExit(73)\n"
             ),
         )
-        return wrapper, prompt_marker, environment_marker
+        helper_marker = root / "hostile-credential-helper-ran"
+        helper = _append_only_script(
+            root / "hostile-credential-helper",
+            (
+                "import os\n"
+                "from pathlib import Path\n"
+                f"if any({PROVIDER_CANARY!r} in value "
+                "for value in os.environ.values()):\n"
+                f"    Path({str(provider_marker)!r}).write_text('leaked')\n"
+                f"Path({str(helper_marker)!r}).write_text('invoked')\n"
+                "raise SystemExit(74)\n"
+            ),
+        )
+        (home / ".gitconfig").write_text(
+            (
+                "[credential]\n"
+                f"\thelper = !{shlex.quote(str(helper))}\n"
+            ),
+            encoding="utf-8",
+        )
+        (ssh_directory / "config").write_text(
+            (
+                "Host 127.0.0.1\n"
+                "    HostName 192.0.2.99\n"
+                f"    ProxyCommand {shlex.quote(str(proxy))}\n"
+                f"    IdentityFile {self.wrong_client_key}\n"
+            ),
+            encoding="utf-8",
+        )
+        assert not self.client_key.exists()
+        assert not self.wrong_client_key.exists()
+        return _OpenSSHClientState(
+            environment={
+                "DISPLAY": "fixture:0",
+                "GIT_ASKPASS": str(prompt),
+                "HOME": str(home),
+                "OPENAI_API_KEY": PROVIDER_CANARY,
+                "PATH": os.defpath,
+                "SSH_AGENT_PID": str(agent.process.pid),
+                "SSH_ASKPASS": str(prompt),
+                "SSH_ASKPASS_REQUIRE": "force",
+                "SSH_AUTH_SOCK": str(agent.socket_path),
+            },
+            known_hosts=known_hosts,
+            prompt_marker=prompt_marker,
+            proxy_marker=proxy_marker,
+            helper_marker=helper_marker,
+            provider_marker=provider_marker,
+        )
 
     def close(self) -> None:
         if self.process.poll() is None:
@@ -653,16 +882,17 @@ def _drain_stream(
 @pytest.fixture(scope="module")
 def openssh_server(
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> _OpenSSHServer:
     if os.name != "posix":
         pytest.skip("guarded push is POSIX-only")
     tool_path = os.pathsep.join((os.defpath, "/usr/sbin", "/usr/local/sbin"))
     required = {
         name: shutil.which(name, path=tool_path)
-        for name in ("sshd", "ssh-keygen")
+        for name in ("ssh", "sshd", "ssh-add", "ssh-agent", "ssh-keygen")
     }
     if any(value is None for value in required.values()):
-        pytest.skip("OpenSSH server/key tools are unavailable")
+        pytest.skip("OpenSSH client/server/key/agent tools are unavailable")
     root = tmp_path_factory.mktemp("guarded-push-openssh")
     root.chmod(0o700)
     host_key = root / "ssh_host_ed25519_key"
@@ -681,6 +911,29 @@ def openssh_server(
                 str(key),
             )
         )
+    try:
+        correct_agent = _start_ssh_agent(
+            Path(required["ssh-agent"] or "ssh-agent").resolve(strict=True),
+            Path(required["ssh-add"] or "ssh-add").resolve(strict=True),
+            client_key,
+        )
+        request.addfinalizer(correct_agent.close)
+        wrong_agent = _start_ssh_agent(
+            Path(required["ssh-agent"] or "ssh-agent").resolve(strict=True),
+            Path(required["ssh-add"] or "ssh-add").resolve(strict=True),
+            wrong_client_key,
+        )
+        request.addfinalizer(wrong_agent.close)
+        empty_agent = _start_ssh_agent(
+            Path(required["ssh-agent"] or "ssh-agent").resolve(strict=True),
+            Path(required["ssh-add"] or "ssh-add").resolve(strict=True),
+            None,
+        )
+        request.addfinalizer(empty_agent.close)
+    except PermissionError as error:
+        pytest.skip(f"isolated OpenSSH agent unavailable: {error}")
+    client_key.unlink()
+    wrong_client_key.unlink()
     listener = socket.socket()
     try:
         listener.bind(("127.0.0.1", 0))
@@ -806,6 +1059,10 @@ def openssh_server(
         host_public_key,
         client_key,
         wrong_client_key,
+        Path(required["ssh"] or "ssh").resolve(strict=True),
+        correct_agent,
+        wrong_agent,
+        empty_agent,
         connections_log,
         process,
         startup_lines,
@@ -831,58 +1088,27 @@ async def test_openssh_authorization_and_confirm_bound_the_only_push(
     remote = openssh_server.root / f"success-{id(case):x}.git"
     endpoint = openssh_server.endpoint(remote)
     candidate = _candidate_repository(case, remote=remote, endpoint=endpoint)
-    hostile_home = case / "hostile-home"
-    hostile_ssh = hostile_home / ".ssh"
-    hostile_ssh.mkdir(parents=True, mode=0o700)
-    proxy_marker = case / "hostile-proxy-ran"
-    helper_marker = case / "hostile-credential-helper-ran"
-    helper = _append_only_script(
-        case / "hostile-credential-helper",
-        (
-            "from pathlib import Path\n"
-            f"Path({str(helper_marker)!r}).write_text('invoked')\n"
-            "raise SystemExit(74)\n"
-        ),
+    client = openssh_server.client_state(
+        case,
+        known_host=openssh_server.host_public_key,
+        agent=openssh_server.correct_agent,
     )
-    (hostile_home / ".gitconfig").write_text(
-        (
-            "[credential]\n"
-            f"\thelper = !{shlex.quote(str(helper))}\n"
-        ),
-        encoding="utf-8",
-    )
-    (hostile_ssh / "config").write_text(
-        (
-            "Host 127.0.0.1\n"
-            "    HostName 192.0.2.99\n"
-            f"    ProxyCommand touch {proxy_marker}\n"
-            f"    IdentityFile {openssh_server.wrong_client_key}\n"
-        ),
-        encoding="utf-8",
-    )
-    wrapper, prompt_marker, environment_marker = openssh_server.client_wrapper(
-        case
-    )
-    environment = {
-        "HOME": str(hostile_home),
-        "PATH": os.defpath,
-        "OPENAI_API_KEY": PROVIDER_CANARY,
-    }
     openssh_server.reset_counts()
     runner = _TransportRunner()
     service = _service(
         candidate,
         case,
         runner=runner,
-        environment=environment,
-        ssh_executable=wrapper,
+        environment=client.environment,
+        ssh_executable=openssh_server.ssh_executable,
+        allow_ssh_agent=True,
     )
     try:
         local = await service.start_push_review(candidate.binding)
 
         assert local.state == "ready", runner.command_evidence
         assert openssh_server.counts() == (0, 0, 0)
-        assert not helper_marker.exists()
+        assert not client.helper_marker.exists()
         operation = service.retained_push_operation(candidate.binding)
         assert operation is not None
 
@@ -895,7 +1121,25 @@ async def test_openssh_authorization_and_confirm_bound_the_only_push(
         assert reviewed.handle is not None
         assert await asyncio.to_thread(openssh_server.wait_for_connections, 1)
         assert openssh_server.counts() == (1, 1, 0)
-        assert not helper_marker.exists()
+        assert not client.helper_marker.exists()
+        snapshot = service._push_review_snapshots[reviewed.handle]
+        invocation = snapshot.context.openssh_invocation()
+        assert invocation is not None
+        assert invocation.argv[0] == str(openssh_server.ssh_executable)
+        assert "-i" not in invocation.argv
+        assert "IdentityFile=none" in invocation.argv
+        assert all(
+            str(source_key) not in argument
+            for source_key in (
+                openssh_server.client_key,
+                openssh_server.wrong_client_key,
+            )
+            for argument in invocation.argv
+        )
+        assert all(
+            str(client.known_hosts) not in argument
+            for argument in invocation.argv
+        )
         result = await service.start_push(candidate.binding, reviewed.handle)
 
         assert result.state == "succeeded"
@@ -911,10 +1155,10 @@ async def test_openssh_authorization_and_confirm_bound_the_only_push(
         ]
         assert all(runner.network_environment_safe)
         assert openssh_server.counts() == (4, 3, 1)
-        assert not proxy_marker.exists()
-        assert not helper_marker.exists()
-        assert not prompt_marker.exists()
-        assert not environment_marker.exists()
+        assert not client.proxy_marker.exists()
+        assert not client.helper_marker.exists()
+        assert not client.prompt_marker.exists()
+        assert not client.provider_marker.exists()
     finally:
         await service.shutdown()
 
@@ -922,7 +1166,12 @@ async def test_openssh_authorization_and_confirm_bound_the_only_push(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
-    ["unknown_host", "wrong_host_key", "bad_authentication"],
+    [
+        "missing_host_trust",
+        "wrong_host_key",
+        "bad_authentication",
+        "missing_agent_key",
+    ],
 )
 async def test_openssh_trust_and_authentication_fail_without_prompting(
     tmp_path: Path,
@@ -939,39 +1188,36 @@ async def test_openssh_trust_and_authentication_fail_without_prompting(
         endpoint=openssh_server.endpoint(remote),
     )
     known_host = (
-        " ".join(
+        None
+        if failure == "missing_host_trust"
+        else " ".join(
             openssh_server.wrong_client_key.with_suffix(".pub")
             .read_text(encoding="ascii")
             .split()[:2]
         )
         if failure == "wrong_host_key"
-        else None
+        else openssh_server.host_public_key
     )
-    identity = (
-        openssh_server.wrong_client_key
-        if failure == "bad_authentication"
-        else None
-    )
-    wrapper, prompt_marker, environment_marker = openssh_server.client_wrapper(
+    if failure == "bad_authentication":
+        agent = openssh_server.wrong_agent
+    elif failure == "missing_agent_key":
+        agent = openssh_server.empty_agent
+    else:
+        agent = openssh_server.correct_agent
+    client = openssh_server.client_state(
         case,
         known_host=known_host,
-        identity=identity,
+        agent=agent,
     )
-    if failure == "unknown_host":
-        (case / "known_hosts").write_bytes(b"")
-    environment = {
-        "HOME": str(case / "isolated-home"),
-        "PATH": os.defpath,
-        "OPENAI_API_KEY": PROVIDER_CANARY,
-    }
     openssh_server.reset_counts()
     runner = _TransportRunner()
     service = _service(
         candidate,
         case,
         runner=runner,
-        environment=environment,
-        ssh_executable=wrapper,
+        environment=client.environment,
+        ssh_executable=openssh_server.ssh_executable,
+        allow_ssh_agent=True,
     )
     try:
         local = await service.start_push_review(candidate.binding)
@@ -990,8 +1236,10 @@ async def test_openssh_trust_and_authentication_fail_without_prompting(
         assert all(runner.network_environment_safe)
         assert await asyncio.to_thread(openssh_server.wait_for_connections, 1)
         assert openssh_server.counts() == (1, 0, 0)
-        assert not prompt_marker.exists()
-        assert not environment_marker.exists()
+        assert not client.proxy_marker.exists()
+        assert not client.helper_marker.exists()
+        assert not client.prompt_marker.exists()
+        assert not client.provider_marker.exists()
         assert _git_dir(remote, "rev-parse", BRANCH_REF).decode().strip() == (
             candidate.parent_oid
         )
