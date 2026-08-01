@@ -37,7 +37,23 @@ from tldw_chatbook.Model_Artifacts import (
 
 
 def test_package_exports_the_complete_public_artifact_api() -> None:
+    """TASK-595 Task 10 expanded ``__all__`` with the async acquisition
+    surface (``ArtifactAcquisitionService`` et al. and ``stream_fetch``),
+    resolved lazily via ``__getattr__`` so plain ``import
+    tldw_chatbook.Model_Artifacts`` still never touches ``.acquisition``/
+    ``.fetch`` -- see ``test_package_import_does_not_load_inference_or_http_runtimes``
+    below and ``test_credentials_and_boundaries.py``'s
+    ``test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch``,
+    both of which this expansion must keep passing."""
+
     expected = {
+        "ACQUISITION_SESSION_LEASE_KEY",
+        "AcquisitionBusyError",
+        "AcquisitionConsent",
+        "AcquisitionError",
+        "AcquisitionProgress",
+        "ArtifactAcquisitionService",
+        "ArtifactCatalog",
         "ArtifactConflictError",
         "ArtifactDependencyError",
         "ArtifactDescriptor",
@@ -59,16 +75,29 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactOperationLease",
         "ArtifactOperationLeaseSet",
         "ArtifactPathError",
+        "ArtifactPreflightEntry",
         "ArtifactRef",
         "ArtifactRole",
         "ArtifactStateError",
+        "CatalogError",
+        "ConsentMismatchError",
+        "CredentialResolver",
+        "EnvConfigCredentialResolver",
+        "FetchResult",
+        "FetchValidators",
+        "GatedRepositoryError",
+        "InsufficientSpaceError",
         "InstalledArtifact",
         "LeasedArtifactHandle",
         "LeaseMode",
         "ModelArtifactService",
+        "PreflightNotGrantableError",
+        "PreflightReport",
         "ProvenanceClass",
         "ReconcileReport",
+        "TransferError",
         "closure_fingerprint",
+        "stream_fetch",
     }
 
     assert set(artifacts_module.__all__) == expected

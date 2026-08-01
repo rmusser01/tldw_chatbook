@@ -78,6 +78,18 @@ block directly in the file. Also note the CLI strips some free-form sections, an
 backticks in `--notes` are interpreted by the shell — a phrase in backticks vanished
 from a task note this way.
 
+**A related trap (TASK-595 Task 10, 2026-07-31).** `backlog task edit <id> --notes "..."`
+does not append to an existing `## Implementation Notes` section — it REPLACES the
+entire content between `<!-- SECTION:NOTES:BEGIN -->` and `<!-- SECTION:NOTES:END -->`.
+A detailed Implementation Notes section written by hand-editing the task file *before*
+running the close-out `-s Done --notes "..."` command was silently discarded, confirmed
+by diffing the file before and after. Recovered by re-adding the detailed text inside
+the same markers, after the CLI's short summary.
+
+**What to do.** Run the CLI `--notes` command first (or use only the CLI's text), then
+hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
+call to confirm what survived.
+
 ---
 
 ## Never `git add -A` while resolving a rebase conflict

@@ -501,6 +501,47 @@ asymmetrically toward failure.
 
 ---
 
+## A crash mid-transfer proves nothing durable if the checkpoint is never written mid-transfer
+
+**TASK-595 Task 10, 2026-07-31.** Asked to write a real-subprocess, SIGKILL-based test
+proving "a valid sidecar survives a mid-fetch crash and a fresh provision resumes it via
+a Range request," the obvious design was: pause a fixture connection mid-download, kill
+the child while the socket is blocked, then assert the durable checkpoint resumed. That
+design cannot pass — not because of a bug, but because of how the code under test is
+*supposed* to work: `_fetch_one_file` only calls `atomic_write_json` on the sidecar AFTER
+`stream_fetch` returns successfully for that call; a SIGKILL during the first-ever
+transfer of a file leaves no sidecar at all (confirmed directly by an existing test,
+`test_provision_cancel_mid_fetch_releases_lease_and_preserves_prior_active`, which
+asserts `not sidecar_path.exists()` after an asyncio-cancelled mid-fetch). A kill timed
+mid-socket-read can only ever produce an *orphan* (Task 2's GC correctly deletes it), not
+a resumable checkpoint — the two are mutually exclusive outcomes of the same kill point.
+
+A durable-but-partial checkpoint (`bytes_done < size, complete: false`) only exists when
+one `stream_fetch` call already returned successfully with fewer bytes than the
+descriptor declares — which requires either a pre-seeded sidecar (what the existing
+in-process tests do, legitimately, to isolate the resume *logic*) or, for a test that
+must produce this state via a genuine, un-seeded crash: declare a file's size larger than
+what the fixture route currently serves, let that first GET complete normally (a valid,
+un-truncated HTTP response, so `stream_fetch` returns without error), and freeze the
+*next* phase (pre-verify, via a local `threading.Event` a progress-callback hook blocks
+on) before its hash comparison can clear the sidecar entry on mismatch. The kill then
+lands after a real checkpoint is durable, not during the socket read that would prevent
+one existing at all.
+
+**What to do.** Before designing a crash-recovery test for any resumable-transfer
+system, read the exact write-ordering of its checkpoint (grep for where the persisted
+state is actually written, not just where progress callbacks fire) and check for an
+existing test that already documents the "no sidecar" case — it will save you from
+building a scenario the implementation cannot produce. Then time the kill off a
+deterministic signal (a callback blocking on a never-set local event) rather than a
+sleep or a byte-count race, so the exact crash point is provable, not probabilistic.
+Mutation-test the resulting guard afterward: a one-line break in the resume path
+(`resume_from = 0` unconditionally) and in the orphan classifier (`return False`
+unconditionally) each turned the corresponding assertion red, confirming neither guard
+was decorative.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
