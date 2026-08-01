@@ -34,9 +34,12 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    ProviderHealth,
     TTSAudioResponse,
     TTSConfigurationRevisionError,
+    TTSModelInfo,
     TTSOperationError,
+    TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
@@ -539,6 +542,26 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
     class Adapter:
         async def ensure_ready(self) -> None:
             return
+
+        async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
+            del refresh
+            return TTSProviderCatalog(
+                provider_id="audio_cpp",
+                revision=1,
+                health=ProviderHealth(state="available", fresh=True),
+                models=(
+                    TTSModelInfo(
+                        model_id="model",
+                        display_name="Model",
+                        family="test",
+                        upstream_mode="offline",
+                        formats=("wav",),
+                        voices=(),
+                        supports_speed=False,
+                        omit_voice_uses_server_default=True,
+                    ),
+                ),
+            )
 
         async def synthesize(
             self,

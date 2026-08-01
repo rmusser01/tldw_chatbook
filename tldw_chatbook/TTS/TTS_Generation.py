@@ -37,7 +37,15 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.effective_settings import (
+    NativeCapabilityReader,
+    TTSCharacterProfileSelection,
+    TTSEffectiveSelectionSnapshot,
+    TTSSelectionOverrides,
+    TTSStudioDraftSelection,
+)
 from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +435,9 @@ class TTSService:
         *,
         max_concurrent_operations: int = 4,
         preferences_snapshot: TTSPreferencesSnapshot | None = None,
+        studio_preferences_loader: Callable[[], StudioTTSPreferencesSnapshot]
+        | None = None,
+        native_capability_reader: NativeCapabilityReader | None = None,
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
@@ -456,6 +467,8 @@ class TTSService:
         self._request_admission = TTSRequestAdmissionCoordinator(
             self,
             initial_preferences,
+            studio_preferences_loader,
+            native_capability_reader,
         )
 
     async def admit(
@@ -692,21 +705,22 @@ class TTSService:
                     configuration_revision,
                     catalog,
                 )
-            if model_ids and not isinstance(adapter, TTSStructuredVoiceAdapter):
-                return self._unverified_native_capabilities(
-                    provider_id,
-                    configuration_revision,
-                    catalog,
+            if model_ids:
+                if not isinstance(adapter, TTSStructuredVoiceAdapter):
+                    return self._unverified_native_capabilities(
+                        provider_id,
+                        configuration_revision,
+                        catalog,
+                    )
+                semaphore = asyncio.Semaphore(_NATIVE_CAPABILITY_VOICE_CONCURRENCY)
+                observed = await self._observe_native_voice_batch(
+                    adapter,
+                    semaphore,
+                    model_ids,
                 )
-
-            semaphore = asyncio.Semaphore(_NATIVE_CAPABILITY_VOICE_CONCURRENCY)
-            assert isinstance(adapter, TTSStructuredVoiceAdapter)
-            observed = await self._observe_native_voice_batch(
-                adapter,
-                semaphore,
-                model_ids,
-            )
-            voice_results = dict(zip(model_ids, observed, strict=True))
+                voice_results = dict(zip(model_ids, observed, strict=True))
+            else:
+                voice_results = {}
             final_catalog = await adapter.get_catalog(refresh=False)  # type: ignore[attr-defined]
             if (
                 type(final_catalog) is not TTSProviderCatalog
@@ -903,6 +917,27 @@ class TTSService:
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,
+            progress_sink=progress_sink,
+        )
+
+    async def synthesize_effective(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
+        """Resolve owner-scoped settings and synthesize one admitted request."""
+
+        return await self._request_admission.synthesize_effective(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            studio_draft=studio_draft,
+            studio_preferences=studio_preferences,
             progress_sink=progress_sink,
         )
 

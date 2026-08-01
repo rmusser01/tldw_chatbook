@@ -12,7 +12,6 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook import config as config_module
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 
 
@@ -541,6 +540,8 @@ class StudioTTSPreferenceStore:
     def load(self, *, migrate: bool = True) -> StudioTTSLoadResult:
         """Load preferences, optionally performing the idempotent v1 migration."""
 
+        from tldw_chatbook import config as config_module
+
         runtime = config_module.get_runtime_config_snapshot(force_reload=True)
         raw = _raw_config(runtime.values)
         if _STUDIO_SECTION in raw:
@@ -585,6 +586,8 @@ class StudioTTSPreferenceStore:
         snapshot: StudioTTSPreferencesSnapshot,
     ) -> StudioTTSWriteResult:
         """Save one complete Studio snapshot if its revision is still current."""
+
+        from tldw_chatbook import config as config_module
 
         if type(snapshot) is not StudioTTSPreferencesSnapshot:
             raise TypeError("Studio TTS save requires an exact snapshot")

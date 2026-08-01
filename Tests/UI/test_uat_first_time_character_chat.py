@@ -57,7 +57,12 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
     TTSVoiceDiscoveryResult,
 )
-from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.effective_settings import (
+    TTSCharacterProfileSelection,
+    TTSEffectiveSelectionRevisions,
+    TTSEffectiveSelectionSnapshot,
+    TTSSelectionSource,
+)
 from tldw_chatbook.TTS.profile_portability import (
     CHARACTER_CARD_TTS_EXTENSION_KEY,
     PortableTTSProfile,
@@ -180,11 +185,30 @@ class _CompleteWAVSpeechService:
     def preferences_snapshot(self) -> SimpleNamespace:
         return SimpleNamespace(provider_id="audio_cpp")
 
-    async def synthesize_exact(
+    async def synthesize_effective(
         self,
-        request: TTSRequest,
+        *,
+        text: str,
+        character_profile: TTSCharacterProfileSelection,
         progress_sink=None,
-    ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
+        **_kwargs: object,
+    ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
+        selection = character_profile.selection
+        assert selection.provider_id is not None
+        assert selection.model_mode is not None
+        assert selection.model_id is not None
+        assert selection.voice_mode is not None
+        assert selection.response_format is not None
+        assert selection.speed is not None
+        request = TTSRequest(
+            provider_id=selection.provider_id,
+            model_id=selection.model_id,
+            text=text,
+            voice=selection.voice_id,
+            response_format=selection.response_format,
+            speed=selection.speed,
+            options=selection.provider_options or {},
+        )
         self.exact_requests.append(request)
 
         async def complete_wav_stream():
@@ -198,14 +222,36 @@ class _CompleteWAVSpeechService:
                 content_type="audio/wav",
                 byte_stream=complete_wav_stream(),
             ),
-            TTSRequestedSelectionSnapshot(
+            TTSEffectiveSelectionSnapshot(
                 provider_id=request.provider_id,
+                model_mode=selection.model_mode,  # type: ignore[arg-type]
                 model_id=request.model_id,
+                voice_mode=selection.voice_mode,  # type: ignore[arg-type]
                 voice_id=request.voice,
                 response_format=request.response_format,
                 speed=request.speed,
-                options=request.options,
-                configuration_revision=3,
+                provider_options=request.options,
+                sources={
+                    axis: TTSSelectionSource.CHARACTER_PROFILE
+                    for axis in (
+                        "provider_id",
+                        "model_mode",
+                        "model_id",
+                        "voice_mode",
+                        "voice_id",
+                        "response_format",
+                        "speed",
+                        "provider_options",
+                    )
+                },
+                revisions=TTSEffectiveSelectionRevisions(
+                    global_preferences=0,
+                    studio_preferences=None,
+                    character_repository=character_profile.repository_generation,
+                    character_profile=character_profile.profile_revision,
+                    provider_configuration=3,
+                    provider_catalog=None,
+                ),
             ),
         )
 

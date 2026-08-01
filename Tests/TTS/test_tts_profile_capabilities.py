@@ -1026,6 +1026,26 @@ async def test_server_default_only_snapshot_performs_no_voice_observation() -> N
 
 
 @pytest.mark.asyncio
+async def test_server_default_snapshot_needs_no_structured_voice_protocol() -> None:
+    class CatalogOnlyAdapter(FakeAdapter):
+        async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
+            del refresh
+            return _catalog(1, ("model",))
+
+    adapter = CatalogOnlyAdapter("audio_cpp")
+    service, registry = _service(adapter)
+    try:
+        snapshot = await service.get_native_capability_snapshot("audio_cpp", ())
+
+        assert snapshot.state == "complete"
+        assert snapshot.catalog == _catalog(1, ("model",))
+        assert snapshot.voice_results == {}
+        assert registry.expected_revisions == [("audio_cpp", 1)]
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("model_ids", ((), ("model",)))
 async def test_stale_initial_catalog_is_unverified_without_voice_observation(
     model_ids: tuple[str, ...],

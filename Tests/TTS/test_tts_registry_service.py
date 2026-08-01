@@ -41,6 +41,11 @@ from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSLoadResult,
+    StudioTTSLoadState,
+    StudioTTSPreferencesSnapshot,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -1784,6 +1789,31 @@ def test_default_bootstrap_parses_supplied_preferences_exactly_once(
     assert parse_calls == [app_config]
     assert service.preferences_snapshot() == expected
     assert all(slot.active is None for slot in service.registry._slots.values())
+
+
+def test_default_bootstrap_wires_lazy_nonmigrating_studio_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = StudioTTSPreferencesSnapshot(revision=4)
+    load_calls: list[bool] = []
+
+    class Store:
+        def load(self, *, migrate: bool = True) -> StudioTTSLoadResult:
+            load_calls.append(migrate)
+            return StudioTTSLoadResult(snapshot, StudioTTSLoadState.LOADED)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.adapter_bootstrap.StudioTTSPreferenceStore",
+        Store,
+    )
+
+    service = build_default_tts_service({})
+
+    assert load_calls == []
+    loader = service._request_admission._studio_preferences_loader
+    assert loader is not None
+    assert loader() == snapshot
+    assert load_calls == [False]
 
 
 def test_direct_service_construction_has_safe_default_preferences() -> None:
