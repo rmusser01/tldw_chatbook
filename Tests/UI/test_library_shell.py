@@ -208,7 +208,6 @@ def _seed_conversations(app, conversations, *, notes=None, media=None, highlight
     )
 
 
-
 def _normalised_cli_lookup(*args, **kwargs) -> tuple[str, str]:
     """Reduce any ``get_cli_setting`` call shape to a ``(section, key)`` pair.
 
@@ -4677,8 +4676,7 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
         # really does discard user overrides rather than merely clearing text.
         generic = form.type_options.get("generic", {})
         expected_defaults = {
-            field.name: field.default
-            for field in get_capabilities("generic").fields
+            field.name: field.default for field in get_capabilities("generic").fields
         }
         for name, value in generic.items():
             # Number inputs round-trip through display text, so compare as text.
@@ -9612,7 +9610,9 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(tmp_path):
+async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
+    tmp_path,
+):
     """Per-type options panels stay expanded across recomposes.
 
     The canvas posts ``OptionPanelToggled`` messages; the screen persists the
@@ -9651,7 +9651,9 @@ async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(t
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
-            raise AssertionError("Manual expand never synced back to expanded_type_groups.")
+            raise AssertionError(
+                "Manual expand never synced back to expanded_type_groups."
+            )
 
         # A direct recompose must leave the panel expanded.
         screen.refresh(recompose=True)
@@ -11664,24 +11666,15 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
         assert screen.query_one("#library-export-submit", Button).disabled is False
 
 
-@pytest.mark.asyncio
-async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_artifacts(
+def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
     tmp_path,
 ):
-    """REVIEW FIX (F4 Task 3): a successful zip whose ``create_chatbook``
-    registry step fails is still an overall SUCCESS (the artifact exists
-    on disk -- zip-first semantics), but the user must be TOLD the
-    bookkeeping failed, or the export silently never appears under
-    Artifacts/Home with no explanation. Asserts BOTH notifications fire
-    in order -- the primary success info, then the registry-failure
-    warning -- and that the form still lands in the clean success state
-    (no error line: the export itself did not fail)."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.media_db = MediaDatabase(":memory:", client_id="export-regfail-media")
-    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
-    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-regfail-ccn")
+    """A saved zip with a failed registry write warns but remains successful.
 
+    Exercise the two production functions directly: zip-first service execution
+    and UI-thread outcome application. No surrogate Textual application is needed
+    for this function contract.
+    """
     service = _FakeLibraryExportService(
         export_result={
             "success": True,
@@ -11695,82 +11688,49 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
         },
         create_error=RuntimeError("registry disk full"),
     )
-    app.local_chatbook_service = service
     notified = []
-    app.notify = lambda message, **kwargs: notified.append((message, kwargs))
-    host = LibraryHarness(app)
+    output_path = tmp_path / "out.zip"
+    outcome = LibraryScreen._run_library_export_via_service(
+        service,
+        {"output_path": str(output_path)},
+        name="Chatbook",
+        description="",
+    )
+    screen = Mock()
+    screen.app_instance.notify = lambda message, **kwargs: notified.append(
+        (message, kwargs)
+    )
+    screen._library_export_run_id = 7
+    screen._library_export_running = True
+    screen._library_export_error = "stale error"
+    screen._library_export_status = "Exporting…"
+    screen._build_library_export_success_message = (
+        LibraryScreen._build_library_export_success_message
+    )
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
+    LibraryScreen._apply_library_export_success(
+        screen,
+        7,
+        outcome["path"],
+        outcome["dependency_info"],
+        outcome["registry_recorded"],
+        outcome["message"],
+    )
 
-        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
-        await _wait_for_selector(screen, pilot, "#library-export-destination")
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._library_export_counts is not None,
-            message="Export counts never landed.",
-        )
-        screen.refresh(recompose=True)
-        await pilot.pause()
-
-        screen._apply_library_export_destination(tmp_path / "out")
-        await pilot.pause()
-
-        screen.query_one("#library-export-submit", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-
-        # (Flake investigation: documented as an order/global-state-dependent
-        # flake in the Task-6 gate README, alongside task-192's own
-        # note-conflict flake -- same CPU-contention family, same
-        # `_wait_for_condition` wall-clock-deadline treatment (a fixed
-        # 150-iteration/0.02s budget is not a reliable proxy for "this
-        # settled" once a large combined suite is contending for CPU).
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._library_export_running is False and len(notified) == 2,
-            message="Export run never completed.",
-        )
-        await pilot.pause()
-
-        # The registry step was genuinely attempted (zip-first ordering)...
-        assert len(service.create_calls) == 1
-        # ...and BOTH notifications fired, in order: the primary success
-        # info, then the registry-failure warning.
-        assert len(notified) == 2
-        assert notified[0][0] == f"Exported chatbook to {tmp_path / 'out.zip'}"
-        assert notified[0][1].get("severity") == "information"
-        assert notified[1][0] == (
-            "Export saved, but couldn't be registered — it won't appear under Artifacts."
-        )
-        assert notified[1][1].get("severity") == "warning"
-        # Still an overall success: no error line, form back to clean state.
-        assert screen._library_export_error == ""
-        assert screen.query_one("#library-export-error-line", Static).display is False
-        # (Flake investigation, confirmed via direct reproduction under a
-        # heavy cross-file sweep: `AssertionError: assert True is False` on
-        # this exact button's `disabled` attribute, with every assertion
-        # above it already green.) `_library_export_running`/`notified`
-        # landing is necessarily the FIRST thing `_apply_library_export_success`
-        # does -- the button's own `disabled` flag is only synced afterwards,
-        # inside `_update_library_export_canvas_after_run`'s targeted DOM
-        # update, which races the submit-press's OWN "entering running"
-        # `refresh(recompose=True)` for the same widget. Under light load the
-        # completion signal and the DOM write land together; under heavy
-        # contention they can observably separate. Bounded-wait the button's
-        # OWN attribute directly rather than trusting the state-flag wait
-        # above as a proxy for it.
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                screen.query_one("#library-export-submit", Button).disabled is False
-            ),
-            message=lambda: (
-                "Export submit button never re-enabled after the run completed "
-                f"(still disabled={screen.query_one('#library-export-submit', Button).disabled})."
-            ),
-        )
+    assert outcome["success"] is True
+    assert outcome["registry_recorded"] is False
+    assert len(service.create_calls) == 1
+    assert notified == [
+        (f"Exported chatbook to {output_path}", {"severity": "information"}),
+        (
+            "Export saved, but couldn't be registered — it won't appear under Artifacts.",
+            {"severity": "warning"},
+        ),
+    ]
+    assert screen._library_export_running is False
+    assert screen._library_export_error == ""
+    assert screen._library_export_status == ""
+    screen._update_library_export_canvas_after_run.assert_called_once_with()
 
 
 @pytest.mark.asyncio
