@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.DB.Evals_DB import SCHEMA_VERSION, EvalsDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
 
 #: The exact v3 shape of Evals_DB._create_schema, minus `run_group_id` and
@@ -284,15 +284,20 @@ def test_v3_database_really_lacks_run_group_id_before_it_is_opened(tmp_path):
 
 def test_opening_a_v3_database_migrates_to_v4_and_adds_run_group_id(tmp_path):
     """The ALTER TABLE path: EvalsDB opening a real, hand-built v3 file must
-    reach SCHEMA_VERSION 4, add `eval_runs.run_group_id`, and create its
-    index -- the exact upgrade every existing user's database takes."""
+    pass through the v4 step, add `eval_runs.run_group_id`, and create its
+    index -- the exact upgrade every existing user's database takes. The
+    final PRAGMA user_version is compared against the live SCHEMA_VERSION
+    rather than a literal 4: opening a v3 database runs every migration up
+    to the current version in one pass (task-1691 added a v5 step after
+    this test was written), and this test's own concern is the v3->v4
+    ALTER specifically, not freezing the module's overall version."""
     path = str(tmp_path / "v3.db")
     ids = _build_v3_database(path)
 
     db = EvalsDB(db_path=path, client_id="test")
     conn = db.get_connection()
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     columns = {row[1] for row in conn.execute("PRAGMA table_info(eval_runs)")}
     assert "run_group_id" in columns
@@ -341,7 +346,7 @@ def test_reopening_a_migrated_v3_database_is_idempotent(tmp_path):
 
     first = EvalsDB(db_path=path, client_id="test")
     first_conn = first.get_connection()
-    assert first_conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert first_conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # A second, independent EvalsDB instance opening the same file must not
     # raise (the guarded `if "run_group_id" not in existing` check in
@@ -351,7 +356,7 @@ def test_reopening_a_migrated_v3_database_is_idempotent(tmp_path):
     second = EvalsDB(db_path=path, client_id="test")
     second_conn = second.get_connection()
 
-    assert second_conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert second_conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     columns = {row[1] for row in second_conn.execute("PRAGMA table_info(eval_runs)")}
     assert "run_group_id" in columns
     indexes = [
