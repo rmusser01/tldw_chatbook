@@ -501,9 +501,9 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_fail = screen_module.fail_interrupted_briefings
 
-        def _recording_fail(db, watchlist_id=None):
+        def _recording_fail(db, watchlist_id=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._briefing_in_flight))
-            return real_fail(db, watchlist_id)
+            return real_fail(db, watchlist_id, exclude=exclude)
 
         monkeypatch.setattr(
             screen_module, "fail_interrupted_briefings", _recording_fail
@@ -611,6 +611,80 @@ async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
 
         assert db.get_briefing(live_id)["status"] == "generating", (
             "a row the guard says is live must survive a concurrent load"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_watchlist_survives_an_artifacts_open():
+    """Phase 4 Task 1, survey finding (a): the sibling of the test above,
+    but for a LIVE claim this screen instance did NOT take -- standing in
+    for a scheduled run once phase 4's scheduler exists. Claimed directly
+    via the service (`briefing_service._claim_briefing`), not through
+    `_briefing_in_flight`: that flag is this screen's own dispatch-time UX
+    guard and is deliberately untouched by this scenario, since nothing on
+    screen is dispatching anything.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        live_id = db.insert_briefing(watchlist_id)
+        assert not screen._briefing_in_flight, (
+            "this scenario is a claim with no screen dispatch behind it"
+        )
+        with briefing_service._claim_briefing(watchlist_id):
+            await screen._load_briefings()
+            assert db.get_briefing(live_id)["status"] == "generating", (
+                "a claimed watchlist must survive an Artifacts open"
+            )
+
+        # Once the claim releases, a plain load recovers it normally --
+        # the claim never outlives the process (Locked decision 1).
+        await screen._load_briefings()
+        assert db.get_briefing(live_id)["status"] == "failed"
+        assert db.get_briefing(live_id)["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_the_row(
+    monkeypatch,
+):
+    """Phase 4 Task 1, survey finding (b): pressing Generate while another
+    in-process caller holds this watchlist's claim must hit the EXISTING
+    `blocking` refusal -- not silently mark the live row interrupted and
+    start a second generation over the top of it.
+
+    Asserts the SPECIFIC `blocking` toast (`severity="warning"`, "already
+    in progress"), not merely "some refusal happened": `generate_briefing`
+    itself also refuses a claimed watchlist (`GenerationInFlightError`), so
+    a looser assertion would still pass with the screen's OWN `blocking`
+    check deleted entirely, as long as the worker went on to call
+    `generate_briefing` and hit ITS claim collision instead -- a different,
+    generic-error-toast path this test must tell apart from the one it
+    names.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        live_id = db.insert_briefing(watchlist_id)
+        with briefing_service._claim_briefing(watchlist_id):
+            await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert chat.calls == [], "nothing may be generated while claimed elsewhere"
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already in progress" in message
+        assert db.get_briefing(live_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
         )
 
 
@@ -1746,6 +1820,61 @@ async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
 
 
 @pytest.mark.asyncio
+async def test_a_cast_press_during_a_claimed_briefing_refuses_not_run_concurrently(
+    monkeypatch,
+):
+    """Phase 4 Task 1, survey finding (c): before this fix, Cast had NO
+    refusal at all for this case (`watchlists_collections_screen.py`'s own
+    comment above `_cast_sweep_is_safe` used to document the absence
+    explicitly) -- a press during a genuinely in-flight cast for the SAME
+    briefing would start a second, concurrent one. Claimed directly via the
+    service (`briefing_cast._claim_cast`), standing in for another
+    in-process caster; `_cast_in_flight` is deliberately untouched, since
+    this is not the SAME screen instance's own dispatch-time guard being
+    exercised (that is `test_second_cast_while_in_flight_refuses_naming_
+    the_running_one`, above).
+
+    Asserts the SPECIFIC `blocking` toast (`severity="warning"`, "already
+    being cast"), not merely "some refusal happened": `generate_script`
+    itself also refuses a claimed briefing (`GenerationInFlightError`), so
+    a looser assertion would still pass with the screen's OWN `blocking`
+    check deleted entirely, as long as the worker went on to call
+    `generate_script` and hit ITS claim collision instead -- a different,
+    generic-error-toast path this test must tell apart from the one it
+    names (this is what pins mutation (iii)).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        live_script_id = db.insert_briefing_script(
+            briefing_id, preset_id=None, preset_name="Solo", roster_snapshot_json="[]"
+        )
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        with briefing_cast._claim_cast(briefing_id):
+            await _press_cast(screen, pilot, app, briefing_id)
+
+        assert cast_chat.calls == [], "nothing may be cast while claimed elsewhere"
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already being cast" in message
+        assert db.get_briefing_script(live_script_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
+        )
+
+
+@pytest.mark.asyncio
 async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_guard_is_
     claimed_before_the_worker_runs`: the handler is synchronous with no
@@ -1816,9 +1945,9 @@ async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None):
+        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg)
+            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -1875,9 +2004,9 @@ async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None):
+        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg)
+            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -2928,9 +3057,9 @@ async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_l
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None):
+        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg)
+            return real_sweep(db_arg, script_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 
@@ -2981,9 +3110,9 @@ async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkey
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None):
+        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg)
+            return real_sweep(db_arg, script_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 

@@ -22,6 +22,7 @@ rules).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -46,11 +47,13 @@ from tldw_chatbook.Subscriptions.briefing_audio import (
     STATUS_FAILED,
     STATUS_GENERATING,
     AudioGenerationError,
+    active_audio_claims,
     briefing_audio_dir,
     fail_interrupted_audio,
     generate_script_audio,
 )
 from tldw_chatbook.Subscriptions.briefing_audio import TurnSynthesisError
+from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_service import LoadedTTSProfile
@@ -723,3 +726,175 @@ async def test_generate_script_audio_logs_no_turn_content_on_failure(
     assert "synthesis failed" in log_text
     assert "TurnSynthesisError" in log_text
     assert canary not in log_text
+
+
+# --- In-process audio claims (spec #2 phase 4, Task 1) -----------------------
+#
+# Mirrors `test_briefing_service.py`'s own claims section exactly, scoped to
+# a script id (a synthesis attempt's collision unit) instead of a watchlist
+# id.
+
+
+def test_active_audio_claims_is_an_empty_snapshot_by_default():
+    assert active_audio_claims() == frozenset()
+
+
+def test_fail_interrupted_audio_spares_a_claimed_script_both_directions(tmp_path):
+    """Survey finding (a)'s audio-scoped sibling."""
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+    zombie = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    assert fail_interrupted_audio(db, exclude={script_id}) == 0
+    assert db.get_briefing_audio(zombie)["status"] == "generating"
+
+    assert fail_interrupted_audio(db) == 1
+    assert db.get_briefing_audio(zombie)["status"] == "failed"
+    assert db.get_briefing_audio(zombie)["error"] == "interrupted"
+
+
+async def test_a_second_synthesis_for_a_claimed_script_raises_before_any_row_insert(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    rows_before = len(db.list_briefing_audio(script_id))
+
+    with briefing_audio._claim_audio(script_id):
+        assert script_id in active_audio_claims()
+        with pytest.raises(GenerationInFlightError, match=str(script_id)):
+            await generate_script_audio(
+                db,
+                script_id,
+                tts_service=object(),
+                profile_service=profile_service,
+                synthesize=_RecordingSynthesize(),
+            )
+
+    assert len(db.list_briefing_audio(script_id)) == rows_before
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_after_a_successful_render(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_after_a_synthesis_failure(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize(fail_at=0, fail_exc=TurnSynthesisError("boom"))
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_when_a_db_error_escapes(
+    tmp_path, monkeypatch
+) -> None:
+    """Mirrors `test_generate_script_audio_propagates_a_real_db_error`, plus
+    the claim-release assertion: a stuck claim would wedge scheduling for
+    this script forever."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    closed_connection = db._get_connection()
+    closed_connection.close()
+    monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
+    db._local = threading.local()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+    assert script_id not in active_audio_claims()
+
+
+async def test_a_concurrent_synthesis_for_the_same_script_is_refused(
+    tmp_path, monkeypatch
+) -> None:
+    """Pins that the claim is held through the whole synthesis pass,
+    exactly like `test_briefing_service.py`'s own concurrency pin."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    assert script_id in active_audio_claims()
+    with pytest.raises(GenerationInFlightError, match=str(script_id)):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_RecordingSynthesize(),
+        )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+    assert script_id not in active_audio_claims()

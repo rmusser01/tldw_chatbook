@@ -48,8 +48,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Collection, Iterator, Mapping, Sequence
 
 from loguru import logger
 
@@ -314,10 +315,22 @@ def _selection_mode(db: "SubscriptionsDB", watchlist_id: int) -> str:
 def _default_provider() -> str:
     """The app's configured default chat endpoint.
 
-    Read from `config.default_api_endpoint` (config.py:5324), the same value
-    the rest of the app treats as "the default provider", and read at call
-    time so a config reload is picked up. No provider name is hardcoded
-    here; config.py owns the fallback.
+    Read from `config.default_api_endpoint` (config.py:5410-5422), the same
+    value the rest of the app treats as "the default provider". That module
+    global is assigned exactly once, at `config.py` import time, from
+    whatever the config file held then; nothing in this codebase ever
+    reassigns it afterward (a "Reload config" action re-reads the file into
+    a fresh `settings` dict, but never touches this already-bound global),
+    so calling this function twice in the same process returns the same
+    value both times regardless of any config change in between -- there is
+    no "call-time" freshness to pick up here. It is still read here, through
+    `app_config.default_api_endpoint`, rather than imported once into this
+    module's own namespace: that is what lets a test monkeypatch
+    `app_config.default_api_endpoint` directly (see
+    `test_briefing_service.py`'s `local-llama` fixture) and have this
+    function observe the patched value -- and it costs nothing, since the
+    underlying value cannot legitimately change anyway. No provider name is
+    hardcoded here; config.py owns the fallback.
 
     Shared with `briefing_cast.generate_script` (spec #2 phase 2a): a cast's
     provider resolution falls back through the same chain -- explicit args,
@@ -328,6 +341,87 @@ def _default_provider() -> str:
     from .. import config as app_config
 
     return str(app_config.default_api_endpoint)
+
+
+# --- In-process generation claims (spec #2 phase 4, Locked decision 1) -----
+#
+# Manual generation (the screen) and, from phase 4 on, the scheduler share
+# one process and one event loop (`app.py`'s `SchedulerLoop.run()` runs as a
+# coroutine worker). A module-level `set[int]` of watchlist ids currently
+# being generated is enough to stop every IN-PROCESS collision -- the
+# accepted phase-1 limitation about a *second app instance* against the same
+# database file is untouched by this: a claim cannot outlive the process, so
+# a genuine crash still looks exactly like a crash to
+# `fail_interrupted_briefings`.
+#
+# Mutated ONLY on the event loop. `_claim_briefing` below never awaits
+# between its membership check and its `.add()`, so two coroutines can never
+# interleave between them -- that is the whole reason this needs no lock.
+# Never mutate `_ACTIVE_BRIEFING_CLAIMS` from a thread (e.g. from inside a
+# function `asyncio.to_thread` runs, such as `_start_generation`): doing so
+# would race with the event-loop-only invariant this comment states.
+
+_ACTIVE_BRIEFING_CLAIMS: set[int] = set()
+
+
+class GenerationInFlightError(RuntimeError):
+    """Raised when a watchlist already has a briefing generation claimed.
+
+    In-process only (Locked decision 1): this means "this same process,
+    this same event loop, already has a `generate_briefing` call in flight
+    for this watchlist" -- not "some other process is writing to the
+    database" (spec #2 phase 1's accepted limitation for that case is
+    unchanged). `str(exc)` names the watchlist id, since that is safe to
+    show a user verbatim, mirroring `ScriptCastError`'s and
+    `AudioGenerationError`'s own honest-message contracts.
+    """
+
+
+def active_briefing_claims() -> frozenset[int]:
+    """Snapshot of watchlist ids a live `generate_briefing` call currently holds.
+
+    A plain, already-copied `frozenset` -- safe to read from any thread,
+    unlike `_ACTIVE_BRIEFING_CLAIMS` itself. Callers take this snapshot on
+    the event loop, before handing control to a thread, and pass it as
+    `fail_interrupted_briefings`'s `exclude` (Locked decision 2): that
+    function is sync and runs under `asyncio.to_thread`, while the claim set
+    is mutated only on the event loop, so a cross-thread read of the live
+    set would be racy in a way a snapshot taken beforehand never is.
+    """
+    return frozenset(_ACTIVE_BRIEFING_CLAIMS)
+
+
+@contextmanager
+def _claim_briefing(watchlist_id: int) -> Iterator[None]:
+    """Claim `watchlist_id` for the duration of one generation attempt.
+
+    Raises before the caller does anything else -- in particular, before
+    `generate_briefing` ever inserts a `briefings` row -- so a refused
+    attempt never orphans one (the phase-1 no-orphan-row contract, extended
+    to the claim itself). The check-then-add pair below contains no
+    `await`, so it is atomic with respect to every other coroutine on this
+    event loop; that is the whole reason this needs no lock (see the
+    section comment above).
+
+    Used as `generate_briefing`'s own claim, and directly by tests that need
+    to simulate another in-process caller already holding a watchlist (e.g.
+    a scheduled run) without going through a real generation.
+
+    Args:
+        watchlist_id: The watchlist about to be generated for.
+
+    Raises:
+        GenerationInFlightError: If `watchlist_id` is already claimed.
+    """
+    if watchlist_id in _ACTIVE_BRIEFING_CLAIMS:
+        raise GenerationInFlightError(
+            f"a briefing is already being generated for watchlist {watchlist_id}"
+        )
+    _ACTIVE_BRIEFING_CLAIMS.add(watchlist_id)
+    try:
+        yield
+    finally:
+        _ACTIVE_BRIEFING_CLAIMS.discard(watchlist_id)
 
 
 def _error_text(exc: BaseException) -> str:
@@ -566,6 +660,15 @@ async def generate_briefing(
     Returns:
         The finished `briefings` row as a dict, whatever its status.
 
+    Raises:
+        GenerationInFlightError: If another in-process caller (this same
+            event loop -- e.g. a second dispatch, or, from phase 4 on, a
+            scheduled run) already holds `watchlist_id`'s claim. Raised
+            BEFORE any row is inserted, mirroring the pre-row-insert refusal
+            shape `ScriptCastError`/`AudioGenerationError` already use for
+            their own pre-flight checks -- so a refused attempt never
+            orphans a `generating` row.
+
     Whole-branch review fix 1: every DB call here is plain synchronous
     SQLite, and the only genuinely async step is `_invoke_chat` (which
     itself offloads the real network call). Each stage's DB work is grouped
@@ -576,102 +679,114 @@ async def generate_briefing(
     below still wraps `_invoke_chat` ONLY, so a database error from any of
     the `to_thread` calls still propagates to the caller uncaught, exactly
     as it did when these were plain statements.
+
+    Phase 4: the whole body runs inside `_claim_briefing(watchlist_id)`, so
+    the claim is held from before the first `await` through every return
+    path -- success, chat failure, and a DB error escaping uncaught -- and
+    released in that context manager's own `finally`. Releasing any earlier
+    (e.g. right before the chat call) would let a second concurrent caller
+    for the same watchlist slip past the check while this attempt is still
+    running, defeating the whole point of the claim.
     """
-    briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
-        _start_generation, db, watchlist_id, preset_id, now
-    )
-    # The id actually recorded on the row: `None` for both "no preset was
-    # requested" and "the requested preset no longer resolves" -- a stale
-    # back-reference to a deleted preset is worse than no reference at all.
-    recorded_preset_id = preset_id if preset is not None else None
-    preset_provider = preset.get("provider") if preset else None
-    preset_model = preset.get("model") if preset else None
-    style_notes = preset.get("style_notes") if preset else None
+    with _claim_briefing(watchlist_id):
+        briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
+            _start_generation, db, watchlist_id, preset_id, now
+        )
+        # The id actually recorded on the row: `None` for both "no preset was
+        # requested" and "the requested preset no longer resolves" -- a stale
+        # back-reference to a deleted preset is worse than no reference at all.
+        recorded_preset_id = preset_id if preset is not None else None
+        preset_provider = preset.get("provider") if preset else None
+        preset_model = preset.get("model") if preset else None
+        style_notes = preset.get("style_notes") if preset else None
 
-    # `None` means "selection found no line to record" -- curated mode with
-    # no prior briefing, or a genuinely empty window. Writing the prior
-    # watermark back keeps the row self-describing (it states the line it
-    # covers through) without moving the line: `latest_completed_watermark`
-    # takes a MAX, so an echo is a no-op to it either way.
-    covers_through = selection.covers_through_item_id
-    if covers_through is None:
-        covers_through = prior_watermark
+        # `None` means "selection found no line to record" -- curated mode with
+        # no prior briefing, or a genuinely empty window. Writing the prior
+        # watermark back keeps the row self-describing (it states the line it
+        # covers through) without moving the line: `latest_completed_watermark`
+        # takes a MAX, so an echo is a no-op to it either way.
+        covers_through = selection.covers_through_item_id
+        if covers_through is None:
+            covers_through = prior_watermark
 
-    if not selection.items:
+        if not selection.items:
+            row = await asyncio.to_thread(
+                _finish_empty, db, briefing_id, mode, recorded_preset_id, covers_through, selection
+            )
+            logger.info(f"briefing {briefing_id}: empty window for watchlist {watchlist_id}")
+            return row
+
+        system, user = build_briefing_prompt(
+            selection.items, selection.featured_ids, selection.overflow_count
+        )
+        if style_notes:
+            # Appended rather than folded into `build_briefing_prompt` (whose
+            # contract phase 1 owns and phase 2a does not touch): the preset's
+            # guidance is a property of THIS call's cast, not of prompt assembly
+            # itself.
+            system = f"{system}\n\n## Style notes\n\n{style_notes}"
+        endpoint = provider or preset_provider or _default_provider()
+        resolved_model = model or preset_model
+        model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
+
+        try:
+            raw = await _invoke_chat(
+                chat, endpoint=endpoint, model=resolved_model, system=system, user=user
+            )
+        except Exception as exc:  # noqa: BLE001 - every provider failure is a row
+            # No traceback: the log file sink runs with diagnose=True, which would
+            # dump frame locals into the log file -- and the frame here is
+            # `_invoke_chat`, whose locals are the prompt. That would put item
+            # titles and excerpts in a file the user never chose to send anywhere,
+            # falsifying this module's egress claim. The provider's own message
+            # still reaches the user, on the row, where they are already looking.
+            logger.warning(
+                f"briefing {briefing_id}: generation failed against {endpoint}: "
+                f"{type(exc).__name__}"
+            )
+            return await asyncio.to_thread(
+                _finish_failure, db, briefing_id, mode, recorded_preset_id, model_used, _error_text(exc)
+            )
+
+        body = extract_response_content(raw).strip()
+        if not body:
+            # Recording this `complete` would show an empty artifact with no
+            # error to explain it -- and would advance the window past items
+            # nothing ever reported.
+            logger.warning(f"briefing {briefing_id}: {endpoint} returned an empty response")
+            return await asyncio.to_thread(
+                _finish_failure,
+                db,
+                briefing_id,
+                mode,
+                recorded_preset_id,
+                model_used,
+                f"{endpoint} returned an empty response",
+            )
+
         row = await asyncio.to_thread(
-            _finish_empty, db, briefing_id, mode, recorded_preset_id, covers_through, selection
-        )
-        logger.info(f"briefing {briefing_id}: empty window for watchlist {watchlist_id}")
-        return row
-
-    system, user = build_briefing_prompt(
-        selection.items, selection.featured_ids, selection.overflow_count
-    )
-    if style_notes:
-        # Appended rather than folded into `build_briefing_prompt` (whose
-        # contract phase 1 owns and phase 2a does not touch): the preset's
-        # guidance is a property of THIS call's cast, not of prompt assembly
-        # itself.
-        system = f"{system}\n\n## Style notes\n\n{style_notes}"
-    endpoint = provider or preset_provider or _default_provider()
-    resolved_model = model or preset_model
-    model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
-
-    try:
-        raw = await _invoke_chat(
-            chat, endpoint=endpoint, model=resolved_model, system=system, user=user
-        )
-    except Exception as exc:  # noqa: BLE001 - every provider failure is a row
-        # No traceback: the log file sink runs with diagnose=True, which would
-        # dump frame locals into the log file -- and the frame here is
-        # `_invoke_chat`, whose locals are the prompt. That would put item
-        # titles and excerpts in a file the user never chose to send anywhere,
-        # falsifying this module's egress claim. The provider's own message
-        # still reaches the user, on the row, where they are already looking.
-        logger.warning(
-            f"briefing {briefing_id}: generation failed against {endpoint}: "
-            f"{type(exc).__name__}"
-        )
-        return await asyncio.to_thread(
-            _finish_failure, db, briefing_id, mode, recorded_preset_id, model_used, _error_text(exc)
-        )
-
-    body = extract_response_content(raw).strip()
-    if not body:
-        # Recording this `complete` would show an empty artifact with no
-        # error to explain it -- and would advance the window past items
-        # nothing ever reported.
-        logger.warning(f"briefing {briefing_id}: {endpoint} returned an empty response")
-        return await asyncio.to_thread(
-            _finish_failure,
+            _finish_success,
             db,
             briefing_id,
             mode,
             recorded_preset_id,
             model_used,
-            f"{endpoint} returned an empty response",
+            covers_through,
+            selection,
+            body,
         )
-
-    row = await asyncio.to_thread(
-        _finish_success,
-        db,
-        briefing_id,
-        mode,
-        recorded_preset_id,
-        model_used,
-        covers_through,
-        selection,
-        body,
-    )
-    logger.info(
-        f"briefing {briefing_id}: complete -- {len(selection.items)} items, "
-        f"{selection.overflow_count} overflow, watermark {covers_through}"
-    )
-    return row
+        logger.info(
+            f"briefing {briefing_id}: complete -- {len(selection.items)} items, "
+            f"{selection.overflow_count} overflow, watermark {covers_through}"
+        )
+        return row
 
 
 def fail_interrupted_briefings(
-    db: "SubscriptionsDB", watchlist_id: int | None = None
+    db: "SubscriptionsDB",
+    watchlist_id: int | None = None,
+    *,
+    exclude: Collection[int] = (),
 ) -> int:
     """Fail every `generating` briefing as `interrupted`; return the count.
 
@@ -684,6 +799,16 @@ def fail_interrupted_briefings(
         db: An open `SubscriptionsDB`.
         watchlist_id: Scope the sweep to one watchlist. `None` sweeps all,
             which is what a startup pass wants.
+        exclude: Watchlist ids to spare even though their row reads
+            `generating` -- phase 4's claim-aware sweep (Locked decision 2).
+            A `generating` row whose watchlist is in this collection is a
+            LIVE, in-process generation, not a crash zombie, and must
+            survive unconditionally, in every scope. Callers snapshot
+            `active_briefing_claims()` on the event loop and pass the
+            result here; this function is sync and runs under
+            `asyncio.to_thread`, so it never reads the live claim set
+            itself. Defaults to `()`, so every pre-phase-4 caller is
+            unchanged.
 
     Returns:
         How many rows were failed.
@@ -696,6 +821,10 @@ def fail_interrupted_briefings(
     if watchlist_id is not None:
         sql += " AND watchlist_id = ?"
         params.append(watchlist_id)
+    if exclude:
+        placeholders = ",".join("?" for _ in exclude)
+        sql += f" AND watchlist_id NOT IN ({placeholders})"
+        params.extend(exclude)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

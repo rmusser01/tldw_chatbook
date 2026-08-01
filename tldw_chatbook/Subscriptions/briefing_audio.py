@@ -169,14 +169,16 @@ import asyncio
 import json
 import wave
 from collections.abc import Mapping
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Collection, Iterator
 
 from loguru import logger
 
 from tldw_chatbook.config import get_user_data_dir
 from tldw_chatbook.Subscriptions.briefing_cast import STATUS_COMPLETE as _SCRIPT_STATUS_COMPLETE
+from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.Subscriptions.briefing_voices import (
     VoiceResolutionError,
     VoiceSelection,
@@ -1107,6 +1109,56 @@ def audio_file_path_is_safe(file_path: str | Path) -> bool:
     return is_safe_path(file_path, briefing_audio_dir())
 
 
+# --- In-process audio claims (spec #2 phase 4) -----------------------------
+#
+# Mirrors `briefing_service`'s own claim set exactly -- see that module's
+# "In-process generation claims" section comment for the full reasoning.
+# Scoped to `script_id`: a synthesis collision is "this script's audio is
+# already being rendered", the same unit `fail_interrupted_audio` already
+# sweeps by. `GenerationInFlightError` is imported from `briefing_service`
+# rather than mirrored, for the same reason `briefing_cast` reuses it
+# (one type a caller can catch across all three generation kinds).
+
+_ACTIVE_AUDIO_CLAIMS: set[int] = set()
+
+
+def active_audio_claims() -> frozenset[int]:
+    """Snapshot of script ids a live `generate_script_audio` call currently holds.
+
+    See `briefing_service.active_briefing_claims` for the snapshot
+    reasoning; this is its audio-scoped sibling, passed as
+    `fail_interrupted_audio`'s `exclude`.
+    """
+    return frozenset(_ACTIVE_AUDIO_CLAIMS)
+
+
+@contextmanager
+def _claim_audio(script_id: int) -> Iterator[None]:
+    """Claim `script_id` for the duration of one synthesis attempt.
+
+    See `briefing_service._claim_briefing` for the full reasoning (no
+    `await` between the membership check and the `.add()`, so no lock is
+    needed); this is the identical shape, scoped to a script id. Also
+    usable directly by tests that need to simulate another in-process
+    caller already holding a script.
+
+    Args:
+        script_id: The script whose audio is about to be synthesized.
+
+    Raises:
+        GenerationInFlightError: If `script_id` is already claimed.
+    """
+    if script_id in _ACTIVE_AUDIO_CLAIMS:
+        raise GenerationInFlightError(
+            f"audio is already being synthesized for script {script_id}"
+        )
+    _ACTIVE_AUDIO_CLAIMS.add(script_id)
+    try:
+        yield
+    finally:
+        _ACTIVE_AUDIO_CLAIMS.discard(script_id)
+
+
 async def generate_script_audio(
     db: Any,
     script_id: int,
@@ -1148,103 +1200,111 @@ async def generate_script_audio(
         AudioGenerationError: If the script does not exist, is not
             `complete`, or its stored turns cannot be parsed. No row is
             written in any of these cases.
+        GenerationInFlightError: If another in-process caller already
+            holds `script_id`'s audio claim (phase 4's `_claim_audio`).
+            Raised before `_load_script_for_audio` ever runs, so no
+            `briefing_audio` row is written for the refused attempt
+            either.
     """
-    script, turns, roster_snapshot = await asyncio.to_thread(
-        _load_script_for_audio, db, script_id
-    )
-
-    if not PYDUB_AVAILABLE:
-        # Qodo review round 1, FIX A: this must run before
-        # `resolve_roster_voices` and before the first `synthesize` call --
-        # see `_record_missing_pydub_failure`'s own docstring for why. The
-        # pre-flight refusals above (script missing/not complete/no turns)
-        # still raise with no row at all; from here on, a `briefing_audio`
-        # row always exists for this attempt.
-        logger.warning(f"script {script_id}: pydub is not installed; audio cannot be synthesized")
-        return await asyncio.to_thread(_record_missing_pydub_failure, db, script_id)
-
-    try:
-        selections = await resolve_roster_voices(
-            roster_snapshot, profile_service=profile_service
-        )
-    except VoiceResolutionError as exc:
-        # No message content logged: see the module docstring's egress
-        # note -- a `VoiceResolutionError`'s own message names the speaker
-        # (and, for a deleted profile, its id).
-        logger.warning(f"script {script_id}: voice resolution failed: {type(exc).__name__}")
-        return await asyncio.to_thread(
-            _record_voice_resolution_failure, db, script_id, _error_text(exc)
+    with _claim_audio(script_id):
+        script, turns, roster_snapshot = await asyncio.to_thread(
+            _load_script_for_audio, db, script_id
         )
 
-    audio_id = await asyncio.to_thread(
-        db.create_briefing_audio,
-        script_id,
-        voice_snapshot_json=dump_voice_snapshot(selections),
-    )
+        if not PYDUB_AVAILABLE:
+            # Qodo review round 1, FIX A: this must run before
+            # `resolve_roster_voices` and before the first `synthesize` call --
+            # see `_record_missing_pydub_failure`'s own docstring for why. The
+            # pre-flight refusals above (script missing/not complete/no turns)
+            # still raise with no row at all; from here on, a `briefing_audio`
+            # row always exists for this attempt.
+            logger.warning(f"script {script_id}: pydub is not installed; audio cannot be synthesized")
+            return await asyncio.to_thread(_record_missing_pydub_failure, db, script_id)
 
-    by_speaker: dict[str, VoiceSelection] = {
-        selection.speaker: selection for selection in selections
-    }
+        try:
+            selections = await resolve_roster_voices(
+                roster_snapshot, profile_service=profile_service
+            )
+        except VoiceResolutionError as exc:
+            # No message content logged: see the module docstring's egress
+            # note -- a `VoiceResolutionError`'s own message names the speaker
+            # (and, for a deleted profile, its id).
+            logger.warning(f"script {script_id}: voice resolution failed: {type(exc).__name__}")
+            return await asyncio.to_thread(
+                _record_voice_resolution_failure, db, script_id, _error_text(exc)
+            )
 
-    try:
-        segments: list[bytes] = []
-        for index, turn in enumerate(turns):
-            speaker = turn["speaker"]
-            selection = by_speaker.get(speaker)
-            if selection is None:
-                raise AudioGenerationError(
-                    f"turn {index}: no voice assigned for speaker {speaker!r}"
-                )
-            segment = await synthesize(tts_service, selection, turn["text"], turn_index=index)
-            segments.append(segment)
-        payload = concat_wav_segments(segments)
-    except Exception as exc:  # noqa: BLE001 - every synthesis failure is a row
-        # No message content logged: a `TurnSynthesisError`'s own message
-        # names the speaker and turn index -- that is a caller-facing
-        # error (stored on the row), not a log line.
-        logger.warning(
-            f"script {script_id} audio {audio_id}: synthesis failed: {type(exc).__name__}"
+        audio_id = await asyncio.to_thread(
+            db.create_briefing_audio,
+            script_id,
+            voice_snapshot_json=dump_voice_snapshot(selections),
         )
-        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
 
-    directory = await asyncio.to_thread(briefing_audio_dir)
-    path = directory / f"script-{script_id}-audio-{audio_id}.wav"
-    try:
-        await asyncio.to_thread(
-            atomic_private_write_bytes,
-            path,
-            payload,
-            application_owned_directory=directory,
-        )
-    except Exception as exc:  # noqa: BLE001 - a write failure is a row, not a raise
-        logger.warning(
-            f"script {script_id} audio {audio_id}: audio write failed: {type(exc).__name__}"
-        )
-        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+        by_speaker: dict[str, VoiceSelection] = {
+            selection.speaker: selection for selection in selections
+        }
 
-    try:
-        duration = wav_duration_seconds(payload)
-    except AudioStitchError as exc:
-        logger.warning(
-            f"script {script_id} audio {audio_id}: duration read failed: {type(exc).__name__}"
-        )
-        await asyncio.to_thread(_remove_file_quietly, path)
-        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+        try:
+            segments: list[bytes] = []
+            for index, turn in enumerate(turns):
+                speaker = turn["speaker"]
+                selection = by_speaker.get(speaker)
+                if selection is None:
+                    raise AudioGenerationError(
+                        f"turn {index}: no voice assigned for speaker {speaker!r}"
+                    )
+                segment = await synthesize(tts_service, selection, turn["text"], turn_index=index)
+                segments.append(segment)
+            payload = concat_wav_segments(segments)
+        except Exception as exc:  # noqa: BLE001 - every synthesis failure is a row
+            # No message content logged: a `TurnSynthesisError`'s own message
+            # names the speaker and turn index -- that is a caller-facing
+            # error (stored on the row), not a log line.
+            logger.warning(
+                f"script {script_id} audio {audio_id}: synthesis failed: {type(exc).__name__}"
+            )
+            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
 
-    try:
-        return await asyncio.to_thread(
-            _finish_audio_success, db, audio_id, str(path), duration, len(turns)
-        )
-    except Exception:
-        # A genuine DB error finalizing the row: propagate uncaught (the
-        # caller's worker wraps it -- see the module docstring) but the
-        # file must not be left orphaned on disk behind a row stuck
-        # `generating` forever.
-        await asyncio.to_thread(_remove_file_quietly, path)
-        raise
+        directory = await asyncio.to_thread(briefing_audio_dir)
+        path = directory / f"script-{script_id}-audio-{audio_id}.wav"
+        try:
+            await asyncio.to_thread(
+                atomic_private_write_bytes,
+                path,
+                payload,
+                application_owned_directory=directory,
+            )
+        except Exception as exc:  # noqa: BLE001 - a write failure is a row, not a raise
+            logger.warning(
+                f"script {script_id} audio {audio_id}: audio write failed: {type(exc).__name__}"
+            )
+            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+
+        try:
+            duration = wav_duration_seconds(payload)
+        except AudioStitchError as exc:
+            logger.warning(
+                f"script {script_id} audio {audio_id}: duration read failed: {type(exc).__name__}"
+            )
+            await asyncio.to_thread(_remove_file_quietly, path)
+            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+
+        try:
+            return await asyncio.to_thread(
+                _finish_audio_success, db, audio_id, str(path), duration, len(turns)
+            )
+        except Exception:
+            # A genuine DB error finalizing the row: propagate uncaught (the
+            # caller's worker wraps it -- see the module docstring) but the
+            # file must not be left orphaned on disk behind a row stuck
+            # `generating` forever.
+            await asyncio.to_thread(_remove_file_quietly, path)
+            raise
 
 
-def fail_interrupted_audio(db: Any, script_id: int | None = None) -> int:
+def fail_interrupted_audio(
+    db: Any, script_id: int | None = None, *, exclude: Collection[int] = ()
+) -> int:
     """Fail every `generating` audio row as `interrupted`; return the count.
 
     Mirrors `briefing_cast.fail_interrupted_scripts` exactly: a worker that
@@ -1258,6 +1318,13 @@ def fail_interrupted_audio(db: Any, script_id: int | None = None) -> int:
         script_id: Scope the sweep to one script's audio rows. `None`
             sweeps every script's audio, which is what a startup pass
             wants.
+        exclude: Script ids to spare even though their audio row reads
+            `generating` -- phase 4's claim-aware sweep. A `generating`
+            row whose script is in this collection is a LIVE, in-process
+            render, not a crash zombie. Callers snapshot
+            `active_audio_claims()` on the event loop and pass the result
+            here. Defaults to `()`, so every pre-phase-4 caller is
+            unchanged.
 
     Returns:
         How many rows were failed.
@@ -1270,6 +1337,10 @@ def fail_interrupted_audio(db: Any, script_id: int | None = None) -> int:
     if script_id is not None:
         sql += " AND script_id = ?"
         params.append(script_id)
+    if exclude:
+        placeholders = ",".join("?" for _ in exclude)
+        sql += f" AND script_id NOT IN ({placeholders})"
+        params.extend(exclude)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

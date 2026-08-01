@@ -22,6 +22,8 @@ same item identities.
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +39,8 @@ from tldw_chatbook.Subscriptions.briefing_selection import (
 )
 from tldw_chatbook.Subscriptions.briefing_service import (
     EXCERPT_CHAR_CAP,
+    GenerationInFlightError,
+    active_briefing_claims,
     build_briefing_prompt,
     extract_citation_ids,
     fail_interrupted_briefings,
@@ -818,3 +822,139 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
         "generate_briefing's DB work must run off the event-loop thread "
         "(asyncio.to_thread), not synchronously on the loop"
     )
+
+
+# --- In-process generation claims (spec #2 phase 4, Task 1) ------------------
+#
+# `generate_briefing` claims `watchlist_id` before doing anything else, and
+# releases it in a `finally` regardless of outcome. `fail_interrupted_
+# briefings` gained an `exclude` so a sweep can spare a watchlist a live
+# claim protects. Every test below is a "load-bearing" test named in the
+# task brief.
+
+
+def test_active_briefing_claims_is_an_empty_snapshot_by_default():
+    assert active_briefing_claims() == frozenset()
+
+
+def test_fail_interrupted_briefings_spares_a_claimed_watchlist_both_directions(
+    tmp_path,
+):
+    """Survey finding (a): a claimed watchlist's `generating` row survives
+    the sweep when passed via `exclude` -- and is swept when it is not."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    zombie = db.insert_briefing(watchlist)  # stands in for a live claim's own row
+
+    assert fail_interrupted_briefings(db, exclude={watchlist}) == 0
+    assert db.get_briefing(zombie)["status"] == "generating"
+
+    assert fail_interrupted_briefings(db, exclude={watchlist}) == 0
+    assert fail_interrupted_briefings(db) == 1
+    assert db.get_briefing(zombie)["status"] == "failed"
+    assert db.get_briefing(zombie)["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_a_second_generation_for_a_claimed_watchlist_raises_before_any_row_insert(
+    tmp_path,
+):
+    """Phase-1's no-orphan-row contract, extended to the claim itself: the
+    refusal must happen before `generate_briefing` ever calls
+    `db.insert_briefing`."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    rows_before = len(db.list_briefings(watchlist))
+
+    with briefing_service._claim_briefing(watchlist):
+        assert watchlist in active_briefing_claims()
+        with pytest.raises(GenerationInFlightError, match=str(watchlist)):
+            await generate_briefing(db, watchlist, chat=_FakeChat())
+
+    assert len(db.list_briefings(watchlist)) == rows_before
+    assert watchlist not in active_briefing_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_claim_is_released_after_a_successful_generation(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    row = await generate_briefing(db, watchlist, chat=_FakeChat())
+
+    assert row["status"] == "complete"
+    assert watchlist not in active_briefing_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_claim_is_released_after_a_chat_failure(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    row = await generate_briefing(
+        db, watchlist, chat=_FakeChat(error=RuntimeError("upstream 503"))
+    )
+
+    assert row["status"] == "failed"
+    assert watchlist not in active_briefing_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+    """A stuck claim would wedge scheduling for this watchlist forever --
+    worse than the bug this design fixes -- so a genuine DB error escaping
+    must still release it."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    closed_connection = db._get_connection()
+    closed_connection.close()
+    monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
+    db._local = threading.local()  # evict every thread's cached (open) connection
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        await generate_briefing(db, watchlist, chat=_FakeChat())
+
+    assert watchlist not in active_briefing_claims()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(tmp_path):
+    """Pins that the claim is held THROUGH the chat call (released in
+    `finally`, not right before it): with a slow, real overlapping first
+    call still mid-flight, a second concurrent `generate_briefing` for the
+    SAME watchlist must be refused rather than run alongside it -- the
+    double-LLM-call / double-watermark-write bug this design exists to
+    prevent."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_chat(**kwargs):
+        entered.set()
+        await release.wait()
+        return CANNED_BODY
+
+    first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
+    await entered.wait()
+
+    assert watchlist in active_briefing_claims()
+    with pytest.raises(GenerationInFlightError, match=str(watchlist)):
+        await generate_briefing(db, watchlist, chat=_FakeChat())
+
+    release.set()
+    row = await first
+    assert row["status"] == "complete"
+    assert watchlist not in active_briefing_claims()

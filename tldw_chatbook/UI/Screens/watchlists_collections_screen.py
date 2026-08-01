@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,11 +36,13 @@ from ...Constants import (
 from ...runtime_policy.types import PolicyDeniedError
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
+    active_audio_claims,
     fail_interrupted_audio,
     generate_script_audio,
 )
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
+    active_cast_claims,
     fail_interrupted_scripts,
     generate_script,
 )
@@ -54,6 +56,7 @@ from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     STATUS_COMPLETE,
     STATUS_GENERATING,
+    active_briefing_claims,
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
@@ -4691,20 +4694,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _zombie_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_briefings` may run right now.
 
-        `fail_interrupted_briefings` fails EVERY `generating` row for a
-        watchlist unconditionally -- it cannot itself tell a crashed
-        worker's row from a live one, both read `generating`. The Generate
-        path (`_sweep_and_guard`) never needs this guard: it always runs at
-        the very front of `_generate_briefing`, before that worker's own
-        row is inserted, so there is nothing of "its own" yet to protect.
-        The Artifacts-load path (`_load_briefings`) has no such ordering
-        guarantee -- it can run at any time, including while a generation
-        THIS screen started is still mid-flight and genuinely owns a
-        `generating` row -- so it consults the same signal
-        `handle_generate_briefing_requested` already trusts before ever
-        dispatching a worker, rather than inventing a second, possibly
-        weaker way to tell a zombie from a live row (whole-branch review
-        fix 3).
+        `fail_interrupted_briefings`'s own `exclude` (phase 4) now spares any
+        watchlist a LIVE in-process claim holds -- this screen's own, or a
+        future scheduled run's -- so it no longer fails EVERY `generating`
+        row unconditionally the way it did before claims existed. This flag
+        is a narrower, purely local check on top of that: it answers "is
+        THIS screen instance mid-generation", which the Generate path
+        (`_sweep_and_guard`) never needs -- it always runs at the very front
+        of `_generate_briefing`, before that worker's own row is inserted,
+        so there is nothing of "its own" yet to protect. The Artifacts-load
+        path (`_load_briefings`) has no such ordering guarantee -- it can
+        run at any time, including while a generation THIS screen started is
+        still mid-flight -- so it consults this flag too, on top of the
+        claim-aware `exclude`, rather than relying on the claim alone
+        (whole-branch review fix 3).
         """
         return not self._briefing_in_flight
 
@@ -4718,13 +4721,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         path was wired (`_sweep_and_guard`). Gated by
         `_zombie_sweep_is_safe` so a load racing a live generation this
         screen started cannot clobber that generation's own row.
+
+        `active_briefing_claims()` is snapshotted HERE, on the UI thread,
+        before the sweep is dispatched to a worker thread (Locked decision
+        2): the claim set is mutated only on the event loop, so a live read
+        of it from the executor thread `asyncio.to_thread` uses would be
+        racy in a way this snapshot never is. Passed through as `exclude`
+        so a genuinely live claim -- e.g. a scheduled run once phase 4's
+        scheduler exists -- survives an Artifacts open instead of being
+        falsified as interrupted (survey finding (a)).
         """
         if not self._zombie_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_briefings, db, watchlist_id)
+        claims = active_briefing_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_briefings, db, watchlist_id, exclude=claims
+        )
 
     def _sweep_and_guard(
-        self, db: Any, watchlist_id: int
+        self, db: Any, watchlist_id: int, exclude: Collection[int]
     ) -> tuple[list[str], list[str]]:
         """Zombie sweep, then the generating-check. Runs off the UI thread.
 
@@ -4733,6 +4748,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the thing guarded and the guard -- so the caller sweeps FIRST, and
         only then asks whether anything is still generating. A row orphaned
         by a crashed worker can therefore never wedge the guard shut.
+
+        `exclude` -- the caller's `active_briefing_claims()` snapshot,
+        taken before this whole method was dispatched to a worker thread --
+        is passed straight to `fail_interrupted_briefings`. This screen's
+        own claim for THIS watchlist has not been taken yet at this point
+        (`generate_briefing` takes it, later, inside the same worker), so
+        the only thing `exclude` can protect here is ANOTHER in-process
+        caller's live claim on the same watchlist. A row that survives the
+        sweep for that reason is not a crash zombie -- it is a live
+        generation this screen must not duplicate -- and it correctly ends
+        up in `blocking`, triggering the existing refusal toast rather than
+        letting Generate proceed over the top of it (survey finding (b)).
 
         Returns:
             `(recovered, blocking)` -- labels for the rows this sweep failed
@@ -4745,7 +4772,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for row in db.list_briefings(watchlist_id)
             if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
         ]
-        fail_interrupted_briefings(db, watchlist_id)
+        fail_interrupted_briefings(db, watchlist_id, exclude=exclude)
         blocking = [
             self._briefing_row_label(row)
             for row in db.list_briefings(watchlist_id)
@@ -4786,7 +4813,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             try:
                 recovered, blocking = await asyncio.to_thread(
-                    self._sweep_and_guard, db, watchlist_id
+                    self._sweep_and_guard, db, watchlist_id, active_briefing_claims()
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
@@ -4854,18 +4881,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # `handle_generate_briefing_requested`'s docstring gives -- a check made
     # inside the worker body leaves a window where two presses both pass.
     #
-    # One real difference from Generate: `briefing_scripts` has no
-    # one-generating-row-per-briefing invariant the way `briefings` has one
+    # One real difference from Generate remains: `briefing_scripts` has no
+    # one-COMPLETE-row-per-briefing invariant the way `briefings` has one
     # per watchlist (a briefing can be cast many times, with different
     # rosters, and `briefing_cast.py`'s own module docstring says so
-    # explicitly). So there is no `_sweep_and_guard`-style `blocking` check
-    # here -- recovering a zombie script does not itself refuse THIS cast
-    # attempt the way recovering a zombie briefing refuses THIS generation
-    # attempt. The zombie sweep still runs, in TWO separate seams, pinned
-    # separately by this task's own tests: `_load_briefings` sweeps whenever
-    # Artifacts loads (gated on `_cast_sweep_is_safe`, the `_zombie_sweep_
-    # is_safe` sibling), and `_cast_script` below sweeps again at the front
-    # of every cast, exactly where `_sweep_and_guard` runs for Generate.
+    # explicitly) -- recovering a genuine zombie script does not itself
+    # refuse a FRESH cast attempt the way recovering a zombie briefing
+    # refuses a fresh generation. What phase 4 Task 1 adds is narrower: a
+    # `_sweep_and_guard`-style `blocking` check for the one case that IS a
+    # real problem -- a cast for THIS SAME briefing that is already
+    # genuinely in flight (this screen's own, or another in-process
+    # caller's, once phase 4's scheduler exists) must refuse rather than run
+    # a second, concurrent cast over the top of it (survey finding (c):
+    # before this, there was no such refusal at all). The zombie sweep still
+    # runs in the same TWO seams it always has: `_load_briefings` whenever
+    # Artifacts loads (gated on `_cast_sweep_is_safe`), and `_cast_script`
+    # below at the front of every cast -- both now claim-aware via
+    # `active_cast_claims()`, exactly like Generate's own sweeps.
 
     def _cast_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_scripts` may run right now.
@@ -4883,10 +4915,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Zombie recovery for the Artifacts-load path's scripts, off the
         UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
         to one briefing's scripts rather than one watchlist's briefings.
+
+        `active_cast_claims()` is snapshotted HERE, on the UI thread, before
+        the sweep is dispatched -- see that method's own docstring for why
+        a snapshot, not a live read, is required.
         """
         if not self._cast_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+        claims = active_cast_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_scripts, db, briefing_id, exclude=claims
+        )
+
+    @staticmethod
+    def _script_row_label(row: Mapping[str, Any]) -> str:
+        """Name one script the way a toast has to: which row, and when.
+
+        Sibling of `_briefing_row_label`, for the identical reason.
+        """
+        return (
+            f"script {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard_cast(
+        self, db: Any, briefing_id: int, exclude: Collection[int]
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check, for a cast. Runs off the
+        UI thread. Sibling of `_sweep_and_guard` -- see that method's own
+        docstring for the full reasoning; this is the identical shape,
+        scoped to one briefing's scripts instead of one watchlist's
+        briefings (phase 4 Task 1, survey finding (c)).
+
+        Returns:
+            `(recovered, blocking)`, exactly like `_sweep_and_guard`.
+        """
+        stuck = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_scripts(db, briefing_id, exclude=exclude)
+        blocking = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
 
     def _cast_load_character(self, character_id: int) -> dict[str, Any] | None:
         """`generate_script`'s `load_character` seam: a plain, idempotent
@@ -5032,6 +5107,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `complete`, or the preset does not exist) -- a message safe to show
         verbatim (see that exception's own docstring), not a database
         failure to hide behind a generic toast.
+
+        Phase 4 Task 1 (survey finding (c)): the sweep is now followed by a
+        `blocking` check, mirroring `_generate_briefing`'s own -- a row that
+        SURVIVES `_sweep_and_guard_cast`'s sweep because it is claimed by a
+        live in-process cast refuses THIS attempt instead of starting a
+        second, concurrent one over the top of it. Deliberately NOT
+        mirroring `_generate_briefing`'s `recovered` branch too: unlike a
+        briefing, `briefing_scripts` has no one-COMPLETE-row-per-briefing
+        invariant (a briefing may be cast many times), so a zombie this
+        sweep actually recovers (i.e. NOT `blocking` -- nothing claims it)
+        must not itself refuse a fresh cast the way a recovered zombie
+        briefing refuses a fresh generation; the same press both recovers
+        the zombie AND casts a real script, exactly as it always has
+        (`test_casting_recovers_a_zombie_script_via_its_own_sweep`).
         """
         chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
         load_character = (
@@ -5039,7 +5128,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         try:
             try:
-                await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+                _recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard_cast, db, briefing_id, active_cast_claims()
+                )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
                     f"Script guard failed for briefing {briefing_id}: "
@@ -5049,6 +5140,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Failed to check this briefing's scripts. Nothing was "
                     "started.",
                     severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep because a live in-process claim holds
+                # it -- not ours to duplicate. Mirrors `_generate_briefing`'s
+                # own `blocking` refusal; see this method's own docstring for
+                # why there is no `recovered`-branch sibling here.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already being cast for this "
+                    "briefing. Nothing else was started.",
+                    severity="warning",
                     markup=False,
                 )
                 return
@@ -5098,7 +5201,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # script`'s own comment names: `_load_briefings` sweeps whenever
     # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
     # audio` below sweeps again at its own front, exactly where `_cast_
-    # script` sweeps for Cast.
+    # script` sweeps for Cast. Both are now claim-aware via
+    # `active_audio_claims()` (phase 4 Task 1), so a live in-process render
+    # -- this screen's own, or another in-process caller's -- survives
+    # either sweep unconditionally.
+    #
+    # Phase 4 Task 1 investigated whether Synthesize needs the SAME
+    # `blocking` refusal Cast just gained (survey finding (c)'s sibling
+    # question): structurally, yes -- `_synthesize_audio` has no `blocking`
+    # check either, so two presses could in principle start two concurrent
+    # renders for the same script. It is left AS-IS here: the task's own
+    # scope named Cast specifically, or "sweep gains `exclude`" everywhere,
+    # not a second new blocking check; adding one is a natural, small
+    # follow-up with the identical shape as `_sweep_and_guard_cast`.
 
     def _audio_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_audio` may run right now.
@@ -5114,10 +5229,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Zombie recovery for the Artifacts-load path's audio, off the UI
         thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
         one script's audio renders rather than one briefing's scripts.
+
+        `active_audio_claims()` is snapshotted HERE, on the UI thread,
+        before the sweep is dispatched -- see `_fail_interrupted_briefings_
+        if_safe`'s own docstring for why a snapshot, not a live read, is
+        required.
         """
         if not self._audio_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+        claims = active_audio_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_audio, db, script_id, exclude=claims
+        )
 
     @on(SynthesizeAudioRequested)
     def handle_synthesize_audio_requested(
@@ -5189,10 +5312,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         parsed) -- a message safe to show verbatim (see that exception's
         own docstring), not a database failure to hide behind a generic
         toast.
+
+        The sweep is claim-aware (`active_audio_claims()`), like every
+        other sweep call site (phase 4 Task 1) -- but, unlike `_cast_
+        script`, there is no `blocking` check after it; see this class's
+        own comment above `_audio_sweep_is_safe` for what was found and why
+        that is left for a follow-up.
         """
         try:
             try:
-                await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+                claims = active_audio_claims()
+                await asyncio.to_thread(
+                    fail_interrupted_audio, db, script_id, exclude=claims
+                )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
                     f"Audio guard failed for script {script_id}: "

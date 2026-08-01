@@ -25,6 +25,7 @@ do for an async, thread-hopping caller).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import sqlite3
@@ -35,10 +36,12 @@ from loguru import logger
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import briefing_cast
 from tldw_chatbook.Subscriptions.briefing_cast import (
     ScriptCastError,
     STATUS_COMPLETE,
     STATUS_FAILED,
+    active_cast_claims,
     build_cast_prompt,
     dump_roster,
     fail_interrupted_scripts,
@@ -47,6 +50,7 @@ from tldw_chatbook.Subscriptions.briefing_cast import (
     parse_script_turns,
     validate_roster,
 )
+from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 pytestmark = pytest.mark.unit
@@ -687,3 +691,132 @@ def test_fail_interrupted_scripts_only_touches_generating_rows(tmp_path):
     assert fail_interrupted_scripts(db) == 1
     assert db.get_briefing_script(other_zombie)["status"] == "failed"
     assert db.get_briefing_script(other_zombie)["error"] == "interrupted"
+
+
+# --- In-process cast claims (spec #2 phase 4, Task 1) ------------------------
+#
+# Mirrors `test_briefing_service.py`'s own claims section exactly, scoped to
+# a briefing id (a cast's collision unit) instead of a watchlist id.
+
+
+def test_active_cast_claims_is_an_empty_snapshot_by_default():
+    assert active_cast_claims() == frozenset()
+
+
+def test_fail_interrupted_scripts_spares_a_claimed_briefing_both_directions(tmp_path):
+    """Survey finding (a)'s cast-scoped sibling."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    zombie = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+
+    assert fail_interrupted_scripts(db, exclude={briefing_id}) == 0
+    assert db.get_briefing_script(zombie)["status"] == "generating"
+
+    assert fail_interrupted_scripts(db) == 1
+    assert db.get_briefing_script(zombie)["status"] == "failed"
+    assert db.get_briefing_script(zombie)["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_a_second_cast_for_a_claimed_briefing_raises_before_any_row_insert(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+    rows_before = len(db.list_briefing_scripts(briefing_id))
+
+    with briefing_cast._claim_cast(briefing_id):
+        assert briefing_id in active_cast_claims()
+        with pytest.raises(GenerationInFlightError, match=str(briefing_id)):
+            await generate_script(
+                db, briefing_id, preset_id=preset_id, chat=_FakeChat()
+            )
+
+    assert len(db.list_briefing_scripts(briefing_id)) == rows_before
+    assert briefing_id not in active_cast_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_cast_claim_is_released_after_a_successful_cast(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    row = await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
+
+    assert row["status"] == STATUS_COMPLETE
+    assert briefing_id not in active_cast_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_cast_claim_is_released_after_a_cast_failure(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=_FakeChat(error=RuntimeError("upstream 503")),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert briefing_id not in active_cast_claims()
+
+
+@pytest.mark.asyncio
+async def test_the_cast_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    closed_connection = db._get_connection()
+    closed_connection.close()
+    monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
+    db._local = threading.local()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
+
+    assert briefing_id not in active_cast_claims()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
+    """Pins that the claim is held through the chat call, exactly like
+    `test_briefing_service.py`'s own concurrency pin."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_chat(**kwargs):
+        entered.set()
+        await release.wait()
+        return json.dumps(CANNED_TURNS)
+
+    first = asyncio.ensure_future(
+        generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
+    )
+    await entered.wait()
+
+    assert briefing_id in active_cast_claims()
+    with pytest.raises(GenerationInFlightError, match=str(briefing_id)):
+        await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+    assert briefing_id not in active_cast_claims()
