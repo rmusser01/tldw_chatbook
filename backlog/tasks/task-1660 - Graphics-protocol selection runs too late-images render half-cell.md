@@ -51,7 +51,7 @@ selection happens, and those checks are lazy by default anyway.
 - [x] A missing optional dependency or a non-responding terminal degrades
       safely to the existing mosaic/pixels fallbacks
 - [x] App startup shows no stray escape-query bytes
-- [ ] User confirms a non-pixelated avatar in real Kitty/iTerm2
+- [x] User confirms a non-pixelated avatar in real Kitty/iTerm2
 
 ## Implementation Notes
 

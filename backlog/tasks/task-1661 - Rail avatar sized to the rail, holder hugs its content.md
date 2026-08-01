@@ -42,7 +42,7 @@ The bust framing the user sees is the character card's own artwork.
       portrait cannot claim the whole rail
 - [x] The holder hugs its content instead of expanding to the section
 - [x] Both render paths agree on framing (contain, per user choice)
-- [ ] User confirms the portrait fills the rail in real Kitty/iTerm2
+- [x] User confirms the portrait fills the rail in real Kitty/iTerm2
 
 ## Implementation Notes
 
