@@ -3109,3 +3109,169 @@ async def test_capture_continuations_checkbox_survives_a_prompt_mode_flip_rebuil
         )
         assert screen.query_one("#evals-bench-probes", TextArea).text == "typed probe"
         assert screen.query_one(BenchEditor).is_dirty() is True
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL, live-verification: the checkbox could not actually be toggled
+# through the real UI at all (see `_evals.tcss`'s own `#evals-bench-capture-
+# continuations:focus` comment for the full two-part root cause). Every test
+# above that touches this checkbox sets/reads `.value` PROGRAMMATICALLY --
+# none of them drive a real click or keypress and then assert the value
+# flipped, which is precisely the gap that let this ship. These do.
+# ---------------------------------------------------------------------------
+
+
+def _rendered_row_text(app, y: int) -> str:
+    """Joins one compositor row's segment text into a single string --
+    what was ACTUALLY painted at that screen row, not `Static.renderable`
+    (which stays the same `Content` object regardless of focus; the
+    invisible-while-focused bug this section guards against was a pure
+    compositor-level effect -- a focus `outline`/`border` painting OVER
+    the label -- that `.renderable` alone would never catch). Mirrors
+    `test_lab_mode_strip.py`'s own `_rendered_text` helper (this Textual
+    version has no `App.export_text()`), scoped to one row rather than
+    the whole screen so an assertion here cannot be satisfied by the
+    label appearing somewhere else entirely."""
+    strip = app.screen._compositor.render_strips()[y]
+    return "".join(segment.text for segment in strip)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (160, 45)], ids=["235x52", "160x45"])
+async def test_real_click_toggles_the_checkbox_and_the_flip_survives_save(
+    evals_app, evals_db, bench_with_available_add_target, size
+):
+    """The headline regression test: a REAL `pilot.click` (MouseDown ->
+    MouseUp -> Click, the same synthetic sequence a real terminal's mouse
+    driver produces -- see `Pilot._post_mouse_events`) on the checkbox,
+    not a direct `.value =` assignment, must (1) flip `.value` to `True`,
+    (2) flip `is_dirty()` to `True`, (3) leave the checkbox's own label
+    genuinely painted while it holds focus (the invisible-while-focused
+    half of the bug -- asserted against the compositor's real output, not
+    geometry alone), (4) survive a REAL click on Save and land in the
+    persisted `BenchConfig` read back through `load_bench` (never the
+    widget), and (5) leave the targets section's Add picker AND "+ New
+    target" mini-form still reachable inside the pane afterward -- the
+    documented prior regression (`CAPTURE_CONTINUATIONS_LABEL`'s own
+    docstring) this fix must not reintroduce. `bench_with_available_add_
+    target` gives BOTH the Add picker (an addable target exists) and the
+    mini-form (always rendered) to check.
+
+    Parametrized over 235x52 (the size live verification used) and
+    160x45 (this file's own default "realistic" size, and the size the
+    prior regression was measured at)."""
+    task_id, existing_id, _addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        app = evals_app
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        assert checkbox.value is False
+
+        clicked = await pilot.click("#evals-bench-capture-continuations")
+        await pilot.pause()
+        assert clicked, "the click did not land on the checkbox itself"
+        assert checkbox.value is True
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        # Painted content, not just geometry: the label must genuinely be
+        # ON SCREEN while the checkbox holds focus (it does, right after
+        # a click).
+        assert checkbox.has_focus is True
+        assert checkbox.region.height == 1, (
+            "the checkbox grew taller than its own fixed height while "
+            f"focused: {checkbox.region}"
+        )
+        row_text = _rendered_row_text(app, checkbox.region.y)
+        assert CAPTURE_CONTINUATIONS_LABEL in row_text, (
+            f"the checkbox's own label is not painted at its row while "
+            f"focused -- got {row_text!r}"
+        )
+
+        save_button = screen.query_one("#evals-bench-save", Button)
+        save_clicked = await pilot.click(save_button)
+        await pilot.pause()
+        assert save_clicked, "the click did not land on the Save button"
+        assert not screen.query_one("#evals-bench-form-error").display
+
+        saved = load_bench(evals_db, task_id)
+        assert saved.capture_continuations is True
+        assert set(saved.target_ids) == {existing_id}
+
+        # The targets section's Add picker AND "+ New target" mini-form
+        # must both be REACHABLE afterward -- but "reachable" for this
+        # specific single-target/single-addable-target shape at 160x45
+        # means "via #evals-bench-editor's own established scroll", not
+        # "both fit in one screenful unscrolled": confirmed live (a
+        # throwaway diagnostic script, plain Save, no checkbox touched at
+        # all) that the Add picker fits unscrolled while the mini-form's
+        # own Create button sits exactly ONE row past this pane's clip
+        # rectangle (`max_scroll_y == 1`) at 160x45, BEFORE this session's
+        # own checkbox fix and unrelated to it -- the SEVERE prior
+        # regression `CAPTURE_CONTINUATIONS_LABEL`'s docstring documents
+        # was the create-target control pushed OFF THE SCROLLABLE RANGE
+        # ENTIRELY (unreachable even scrolled to `max_scroll_y`), not "one
+        # row of scroll needed", and this fix must not reintroduce THAT.
+        # Mirrors `test_target_rows_stay_reachable_at_4_and_8_targets`'s
+        # own established "reachable via this pane's one scroll level"
+        # convention rather than asserting a stricter "always fits
+        # unscrolled" claim this exact section has never actually made.
+        detail_pane = screen.query_one("#evals-detail-pane")
+        editor = screen.query_one("#evals-bench-editor")
+        add_button = screen.query_one("#evals-bench-add-target-button")
+        create_button = screen.query_one("#evals-bench-create-target")
+
+        assert add_button.region.width > 0 and add_button.region.height > 0
+        assert detail_pane.region.contains_region(add_button.region), (
+            f"Add picker button at {add_button.region} escapes the detail "
+            f"pane's clip region {detail_pane.region} after a real "
+            f"checkbox click+Save at {size}"
+        )
+
+        editor.scroll_to(y=editor.max_scroll_y, animate=False)
+        await pilot.pause()
+        create_button = screen.query_one("#evals-bench-create-target")
+        assert create_button.region.width > 0 and create_button.region.height > 0
+        assert detail_pane.region.contains_region(create_button.region), (
+            f"scrolling to the editor's own end never brought the "
+            f"create-target button at {create_button.region} into the "
+            f"detail pane's clip region {detail_pane.region} at {size} "
+            f"-- THIS is the severe prior regression (unreachable even "
+            f"scrolled), not merely 'needs a scroll'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_toggle_key_flips_the_checkbox_value(
+    evals_app, bench_with_mixed_readiness
+):
+    """The keyboard half of the same real-interaction gap: focusing the
+    checkbox and sending the actual toggle key (`ToggleButton.BINDINGS`:
+    ``"enter,space"``) -- via `pilot.press`, a real key event, never
+    `.value =` -- must flip `.value`, exactly like a real click does."""
+    task_id, _ = bench_with_mixed_readiness  # raw mode
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        checkbox.focus()
+        await pilot.pause()
+        assert checkbox.has_focus is True
+        assert checkbox.value is False
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert checkbox.value is True
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        # The other bound key (`enter`) toggles it back -- both halves of
+        # `ToggleButton.BINDINGS` genuinely wired, not just one.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert checkbox.value is False

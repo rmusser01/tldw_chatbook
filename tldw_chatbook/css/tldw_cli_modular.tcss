@@ -12558,6 +12558,60 @@ Button:disabled {
     margin-bottom: 1;
 }
 
+/* CRITICAL, found by live verification against a real llama.cpp: the rule
+   above alone made the checkbox unreachable through the UI -- the opt-in
+   this whole task exists to add could never actually be turned on.
+
+   Two SEPARATE focus-only decorations, neither controlled by the rule
+   above, were fighting this widget's fixed `height: 1`:
+
+   1. `Checkbox`'s OWN `compact=True` DEFAULT_CSS re-adds a border on
+      focus (`&.-textual-compact { border: none !important; &:focus {
+      border: tall $border; ...} }`) -- confirmed live (`checkbox.region`
+      before/after `.focus()`) that this genuinely GREW the widget's
+      painted region to 2 rows despite `height: 1` above (a fixed
+      `height` does not stop Textual growing the box to fit a border
+      added by a LATER-applied `:focus` rule). `border: none` here,
+      scoped to `:focus`, reclaims the fixed 1-row box.
+   2. Independently, `core/_reset.tcss`'s global `*:focus { outline:
+      solid $ds-focus-accent; }` fallback -- ALREADY documented there as
+      painting "OVER the widget's outermost rendered lines" for exactly
+      this failure mode (see that file's own `DataTable`/TASK-1034
+      cross-reference) -- was what erased the label/state glyph entirely
+      while focused: confirmed live by reading the compositor's own
+      painted strip at the checkbox's row, before and after this fix
+      (`▐X▌ Capture a continuation...` vs. blank). `outline: none` here
+      restores it; the widget's OWN compact `:focus` rule already
+      recolours the label (bold underline, tinted background -- also
+      confirmed live in the compositor's per-segment `Style`), so a real,
+      content-safe focus cue survives losing the outline, matching this
+      reset rule's own documented "prefer content-safe recolouring"
+      guidance rather than leaving focus with no cue at all.
+
+   Both were purely VISUAL bugs on their own, but together they broke
+   REAL keyboard/mouse interaction, not just appearance: fix #1's height
+   growth shifted every sibling below the checkbox down by one row WHILE
+   it held focus; clicking `#evals-bench-save` immediately afterward
+   computes a single fixed screen offset for its whole Down/Up/Click
+   sequence (`Pilot._post_mouse_events`, and identically for a real
+   terminal's own mouse driver) -- if the checkbox's OWN blur (triggered
+   by that same click moving focus away from it) shrinks it back to 1 row
+   BETWEEN that sequence's events, the Save button has already shifted up
+   from under the click's fixed offset by the time the terminal `Click`
+   event needed to fire `Button.Pressed` arrives, so `_on_save_pressed`
+   never runs at all -- confirmed live (a temporary print inside that
+   handler) that it was NEVER CALLED after a checkbox click, not merely
+   called with a stale value. `capture_continuations` read back through
+   `load_bench` was `False` after every attempt for exactly this reason:
+   Save itself was silently swallowed, regardless of whether the
+   checkbox's own `.value` was already `True`. Fixing the height growth
+   (mutation #1 above) removes the reflow that swallows the NEXT click
+   entirely, independent of the outline fix. */
+#evals-bench-capture-continuations:focus {
+    border: none;
+    outline: none;
+}
+
 #evals-bench-form-error {
     margin-bottom: 1;
 }
