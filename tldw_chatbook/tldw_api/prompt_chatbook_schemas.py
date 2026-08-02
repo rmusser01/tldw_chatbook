@@ -27,6 +27,17 @@ class PromptCreateRequest(BaseModel):
     prompt_definition: Optional[Dict[str, Any]] = None
 
 
+def serialize_prompt_request(
+    request_data: PromptCreateRequest, *, for_update: bool
+) -> Dict[str, Any]:
+    """Serialize a prompt request exactly as the shared API client sends it."""
+    return request_data.model_dump(
+        exclude_none=True,
+        exclude_unset=for_update,
+        mode="json",
+    )
+
+
 class PromptPreviewRequest(BaseModel):
     """Request for previewing a prompt without persisting it."""
 

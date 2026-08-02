@@ -136,14 +136,29 @@ def _normalize_measurement(value: Any) -> CanonicalJSONByteMeasurement | None:
     descriptor = _plain_mapping(value)
     if descriptor is None:
         return None
-    expected = {
-        "name": "canonical_json_utf8_v1",
-        "encoding": "utf-8",
-        "ensure_ascii": False,
-        "sort_keys": True,
-        "separators": [",", ":"],
-    }
-    return CANONICAL_JSON_UTF8_V1 if dict(descriptor) == expected else None
+    separators = descriptor.get("separators")
+    is_exact = (
+        set(descriptor) == {
+            "name",
+            "encoding",
+            "ensure_ascii",
+            "sort_keys",
+            "separators",
+        }
+        and type(descriptor.get("name")) is str
+        and descriptor["name"] == "canonical_json_utf8_v1"
+        and type(descriptor.get("encoding")) is str
+        and descriptor["encoding"] == "utf-8"
+        and type(descriptor.get("ensure_ascii")) is bool
+        and descriptor["ensure_ascii"] is False
+        and type(descriptor.get("sort_keys")) is bool
+        and descriptor["sort_keys"] is True
+        and type(separators) is list
+        and len(separators) == 2
+        and all(type(item) is str for item in separators)
+        and separators == [",", ":"]
+    )
+    return CANONICAL_JSON_UTF8_V1 if is_exact else None
 
 
 def _smaller_positive_limit(value: Any, fallback: int) -> int:
@@ -194,6 +209,8 @@ def validate_console_artifact_payload(
     payload: dict[str, Any], capabilities: PromptSourceCapabilities
 ) -> dict[str, Any]:
     """Validate one Console block-v2 save without truncating or inferring support."""
+    if payload.get("prompt_format") != "structured":
+        raise PromptCapabilityError(capabilities.backend, "valid Console block artifact")
     decoded = decode_prompt_artifact(payload)
     raw_definition = decoded.raw_definition
     kind = raw_definition.get("kind") if raw_definition is not None else None
@@ -208,7 +225,11 @@ def validate_console_artifact_payload(
             capabilities.backend,
             f"artifact type {payload.get('artifact_type', 'prompt')!r}",
         )
-    if decoded.state != "supported_v2" or raw_definition is None:
+    if (
+        decoded.state != "supported_v2"
+        or raw_definition is None
+        or decoded.definition is None
+    ):
         raise PromptCapabilityError(capabilities.backend, "valid Console block artifact")
     if capabilities.json_byte_measurement != CANONICAL_JSON_UTF8_V1:
         raise PromptCapabilityError(
@@ -224,15 +245,61 @@ def validate_console_artifact_payload(
                 f"{field} exceeds {capabilities.compiled_lane_limit} characters."
             )
 
+    normalized_definition = {
+        "schema_version": decoded.definition.schema_version,
+        "kind": decoded.definition.kind,
+        "lanes": [
+            {
+                "id": lane.id,
+                "blocks": [
+                    {
+                        **{
+                            "id": block.id,
+                            "title": block.title,
+                            "syntax": block.syntax,
+                            "content": block.content,
+                        },
+                        **(
+                            {"xml_tag": block.xml_tag}
+                            if block.xml_tag is not None
+                            else {}
+                        ),
+                        **(
+                            {"mapping_hint": block.mapping_hint}
+                            if block.mapping_hint is not None
+                            else {}
+                        ),
+                    }
+                    for block in lane.blocks
+                ],
+            }
+            for lane in decoded.definition.lanes
+        ],
+    }
     normalized_payload = dict(payload)
-    normalized_payload["prompt_definition"] = dict(raw_definition)
+    normalized_payload.update(
+        {
+            "artifact_type": decoded.artifact_type,
+            "prompt_format": "structured",
+            "prompt_schema_version": decoded.definition.schema_version,
+            "prompt_definition": normalized_definition,
+            "system_prompt": decoded.compiled_system,
+            "user_prompt": decoded.compiled_user,
+        }
+    )
     definition_size = canonical_json_utf8_size(normalized_payload["prompt_definition"])
     if definition_size > capabilities.definition_limit:
         raise ValueError(
             "prompt_definition exceeds "
             f"{capabilities.definition_limit} UTF-8 bytes."
         )
-    request_size = canonical_json_utf8_size(normalized_payload)
+    return normalized_payload
+
+
+def validate_prompt_request_size(
+    payload: Mapping[str, Any], capabilities: PromptSourceCapabilities
+) -> None:
+    """Reject an exact outgoing save mapping that exceeds the source limit."""
+    request_size = canonical_json_utf8_size(payload)
     if request_size > capabilities.request_limit:
         raise ValueError(f"request exceeds {capabilities.request_limit} UTF-8 bytes.")
-    return normalized_payload

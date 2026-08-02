@@ -31,6 +31,7 @@ from .prompt_source_capabilities import (
     local_prompt_capabilities,
     normalize_server_prompt_capabilities,
     validate_console_artifact_payload,
+    validate_prompt_request_size,
 )
 from .server_prompt_adapter import normalize_artifact_type
 
@@ -79,6 +80,17 @@ def _prompt_create_request_from_payload(payload: dict[str, Any]) -> PromptCreate
     if not payload.get("name"):
         raise ValueError("Prompt name is required for server prompt saves.")
     return PromptCreateRequest(**payload)
+
+
+def _serialize_server_prompt_request(
+    payload: dict[str, Any], *, for_update: bool
+) -> dict[str, Any]:
+    # Deferred import: keep the runtime API schema boundary out of module import.
+    from ..tldw_api.prompt_chatbook_schemas import serialize_prompt_request
+
+    return serialize_prompt_request(
+        _prompt_create_request_from_payload(payload), for_update=for_update
+    )
 
 
 class ServerPromptService:
@@ -776,7 +788,7 @@ class PromptScopeService:
     ) -> list[dict[str, Any]]:
         """Search one source, using paginated server listing for an empty query."""
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == PromptBackend.SERVER and not query:
+        if normalized_mode == PromptBackend.SERVER and not query.strip():
             page = await self.list_prompts(
                 mode=normalized_mode,
                 page=1,
@@ -877,15 +889,23 @@ class PromptScopeService:
         definition_kind = (
             raw_definition.get("kind") if raw_definition is not None else None
         )
+        definition_version = (
+            raw_definition.get("schema_version")
+            if raw_definition is not None
+            else None
+        )
         is_console_v2_candidate = (
             type(payload.get("prompt_schema_version")) is int
             and payload.get("prompt_schema_version") == 2
+        ) or (
+            type(definition_version) is int and definition_version == 2
         ) or definition_kind in {
             "block_prompt",
             "block_recipe",
             "single_text_recipe",
         }
-        if payload.get("prompt_format") == "structured" and is_console_v2_candidate:
+        capabilities = None
+        if is_console_v2_candidate:
             capabilities = await self.get_capabilities(mode=normalized_mode)
             payload = validate_console_artifact_payload(payload, capabilities)
         if (
@@ -894,6 +914,12 @@ class PromptScopeService:
             and expected_version is not None
         ):
             payload["expected_version"] = expected_version
+        if capabilities is not None:
+            if normalized_mode == PromptBackend.SERVER:
+                payload = _serialize_server_prompt_request(
+                    payload, for_update=action == "update"
+                )
+            validate_prompt_request_size(payload, capabilities)
         if action == "create":
             response = await self._maybe_await(service.create_prompt(payload))
         else:

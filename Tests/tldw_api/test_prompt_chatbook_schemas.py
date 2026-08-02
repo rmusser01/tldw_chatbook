@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PromptPreviewRequest,
     PromptResponse,
     PromptVersionResponse,
+    serialize_prompt_request,
 )
 
 
@@ -59,6 +60,7 @@ class TestPromptChatbookSchemas:
                 "id": 3,
                 "uuid": "recipe-3",
                 "name": "Recipe",
+                "version": 4,
                 "artifact_type": "recipe",
                 "has_system_prompt": False,
                 "has_user_prompt": True,
@@ -91,11 +93,24 @@ class TestPromptChatbookSchemas:
 
         assert request.artifact_type == "recipe"
         assert brief.model_dump()["artifact_type"] == "recipe"
+        assert brief.version == 4
         assert brief.has_user_prompt is True
         assert detail.prompt_definition == definition
         assert detail.has_system_prompt is False
         assert version.artifact_type == "recipe"
         assert version.has_user_prompt is True
+
+    def test_prompt_request_serializer_matches_create_and_update_wire_defaults(self):
+        request = PromptCreateRequest(name="Prompt")
+
+        assert serialize_prompt_request(request, for_update=False) == {
+            "name": "Prompt",
+            "artifact_type": "prompt",
+            "prompt_format": "legacy",
+        }
+        assert serialize_prompt_request(request, for_update=True) == {
+            "name": "Prompt"
+        }
 
     def test_chatbook_export_request_preserves_content_selections(self):
         request = ChatbookExportRequest(

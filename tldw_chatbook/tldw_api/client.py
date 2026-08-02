@@ -160,6 +160,7 @@ from .prompt_chatbook_schemas import (
     PromptPreviewRequest,
     PromptResponse,
     PromptVersionResponse,
+    serialize_prompt_request,
 )
 from .flashcards_schemas import (
     FlashcardBulkUpdateItemRequest,
@@ -11445,7 +11446,7 @@ class TLDWAPIClient:
         response = await self._request(
             "POST",
             "/api/v1/prompts",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=serialize_prompt_request(request_data, for_update=False),
         )
         return PromptResponse.model_validate(response)
 
@@ -11468,9 +11469,7 @@ class TLDWAPIClient:
         return await self._request(
             "PUT",
             f"/api/v1/prompts/{prompt_identifier}",
-            json_data=request_data.model_dump(
-                exclude_none=True, exclude_unset=True, mode="json"
-            ),
+            json_data=serialize_prompt_request(request_data, for_update=True),
         )
 
     async def delete_prompt(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:

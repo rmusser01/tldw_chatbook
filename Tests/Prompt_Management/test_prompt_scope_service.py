@@ -1019,6 +1019,30 @@ async def test_empty_server_query_uses_paginated_list_not_search():
 
 
 @pytest.mark.asyncio
+async def test_whitespace_only_server_query_lists_but_nonempty_bytes_are_unchanged():
+    server = FakeServerPromptService()
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    listed = await service.search_prompts(mode="server", query=" \t\n", limit=7)
+    await service.search_prompts(mode="server", query="  alpha  ", limit=9)
+
+    assert listed[0]["name"] == "Server Prompt"
+    assert server.calls == [
+        ("list_prompts", 1, 7, False, "last_modified", "desc"),
+        ("get_prompts_health",),
+        (
+            "search_prompts",
+            {
+                "search_query": "  alpha  ",
+                "page": 1,
+                "results_per_page": 9,
+                "include_deleted": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unsupported_or_policy_denied_server_search_is_typed_unavailable():
     unsupported = PromptScopeService(
         FakeLocalPromptService(),
@@ -1148,3 +1172,150 @@ async def test_server_canonical_byte_limits_reject_without_truncation_or_mutatio
 
     assert definition["lanes"][1]["blocks"][0]["content"] == "é" * 40
     assert not any(call[0] == "create_prompt" for call in server.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_format", [None, "legacy"])
+async def test_block_v2_evidence_rejects_missing_or_legacy_format_before_mutation(
+    prompt_format,
+):
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService())
+
+    with pytest.raises(PromptCapabilityError, match="valid Console block artifact"):
+        await service.save_prompt(
+            mode="local",
+            name="Inconsistent block",
+            artifact_type="prompt",
+            prompt_format=prompt_format,
+            prompt_schema_version=2,
+            prompt_definition=block_definition(),
+            user_prompt="caller text",
+        )
+
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller_user", ["stale caller lane", "x" * 20_001])
+async def test_block_save_persists_compiler_lanes_not_caller_compatibility_fields(
+    caller_user,
+):
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService())
+
+    await service.save_prompt(
+        mode="local",
+        name="Canonical lanes",
+        artifact_type="prompt",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=block_definition(content="tiny compiled lane"),
+        system_prompt="stale system lane",
+        user_prompt=caller_user,
+    )
+
+    persisted = local.calls[0][1]
+    assert persisted["system_prompt"] == ""
+    assert persisted["user_prompt"] == "tiny compiled lane"
+
+
+@pytest.mark.asyncio
+async def test_definition_limit_measures_and_persists_final_normalized_model():
+    definition = block_definition(content="tiny")
+    block = definition["lanes"][1]["blocks"][0]
+    block["xml_tag"] = None
+    block["mapping_hint"] = None
+    expected_definition = block_definition(content="tiny")
+    normalized_size = canonical_json_utf8_size(expected_definition)
+    assert canonical_json_utf8_size(definition) > normalized_size
+
+    server = FakeServerPromptService(
+        health=modern_prompt_health(definition_limit=normalized_size)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    await service.save_prompt(
+        mode="server",
+        name="Normalized definition",
+        artifact_type="prompt",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        user_prompt="caller value",
+    )
+
+    sent = next(call[1] for call in server.calls if call[0] == "create_prompt")
+    assert sent["prompt_definition"] == expected_definition
+    assert sent["user_prompt"] == "tiny"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_identifier", [None, "server-uuid-9"])
+async def test_request_limit_measures_exact_create_or_update_mapping_after_defaults(
+    prompt_identifier,
+):
+    definition = block_definition(content="tiny")
+    pre_default_mapping = {
+        "name": "Default boundary",
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": definition,
+    }
+    pre_default_size = canonical_json_utf8_size(pre_default_mapping)
+    server = FakeServerPromptService(
+        health=modern_prompt_health(request_limit=pre_default_size)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    with pytest.raises(ValueError, match=f"request exceeds {pre_default_size}"):
+        await service.save_prompt(
+            mode="server",
+            prompt_identifier=prompt_identifier,
+            name="Default boundary",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+        )
+
+    assert not any(
+        call[0] in {"create_prompt", "update_prompt"} for call in server.calls
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": 0,
+            "sort_keys": True,
+            "separators": [",", ":"],
+        },
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": False,
+            "sort_keys": 1,
+            "separators": [",", ":"],
+        },
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": False,
+            "sort_keys": True,
+            "separators": (",", ":"),
+        },
+    ],
+)
+async def test_measurement_descriptor_requires_exact_json_types(measurement):
+    server = FakeServerPromptService(
+        health=modern_prompt_health(measurement=measurement)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+
+    assert capabilities.json_byte_measurement is None
