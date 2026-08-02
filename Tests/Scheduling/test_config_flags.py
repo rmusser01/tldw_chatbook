@@ -67,30 +67,54 @@ def test_briefing_projection_is_only_wired_when_the_flag_is_on() -> None:
     pins the *pattern* ``app.py`` must keep instead -- the exact shape
     already established for ``watchlist_handler``/``watchlist_projection``
     (``watchlist_projection if watchlist_handler is not None else None``):
-    a handler is constructed only inside the flag's own ``if``, and
+    a handler is constructed only when a live projection exists, and
     ``SchedulerLoop`` is handed the projection only when that handler
     exists. ``Tests/Scheduling/test_scheduler_loop.py``'s
     ``test_queue_with_no_briefing_projection_loads_no_briefing_jobs`` pins
     the other half: that passing ``None`` genuinely loads nothing,
     regardless of what the projection would otherwise report.
+
+    task-1810 moved ``briefing_projection``'s construction earlier, ahead of
+    ``SchedulingService`` (which now takes it as a constructor argument), so
+    the flag gate on the projection itself is a ternary assigned directly to
+    ``briefing_projection`` rather than a ``None`` placeholder overwritten
+    inside an ``if briefing_schedules_enabled:`` block. ``briefing_handler``
+    still follows the older "placeholder, then overwritten inside a guard"
+    shape -- just gated on the (already flag-derived) projection being
+    non-``None``, rather than re-reading the flag a second time.
     """
     from tldw_chatbook import app as app_module
 
     source = inspect.getsource(app_module)
 
-    assert "briefing_projection = None" in source
-    assert "briefing_handler = None" in source
-
-    # Both assignments live inside one `if briefing_schedules_enabled:` block,
-    # with nothing but simple statements between the `if` and each
-    # assignment -- i.e. neither is reachable when the flag is off.
-    gate_block = re.search(
-        r"if\s+briefing_schedules_enabled:\n((?:[ \t]+\S.*\n)+)",
+    # `briefing_projection` is `None` whenever `briefing_schedules_enabled`
+    # is `False` -- pinned as a ternary assigned straight to the name, since
+    # (unlike `briefing_handler`) there is no separate placeholder-then-
+    # overwrite step for it anymore.
+    projection_gate = re.search(
+        r"briefing_projection\s*=\s*\(\s*"
+        r"BriefingProjection\(subscriptions_db\)\s*"
+        r"if\s+briefing_schedules_enabled\s*"
+        r"else\s+None\s*\)",
         source,
     )
-    assert gate_block is not None, "no `if briefing_schedules_enabled:` block found"
+    assert projection_gate is not None, (
+        "briefing_projection must be None whenever briefing_schedules_enabled is False"
+    )
+
+    assert "briefing_handler = None" in source
+
+    # `briefing_handler` is built only inside a block guarded on the
+    # projection already being live -- i.e. only when the flag was on, never
+    # independently of it.
+    gate_block = re.search(
+        r"if\s+briefing_projection is not None:\n((?:[ \t]+\S.*\n)+)",
+        source,
+    )
+    assert gate_block is not None, (
+        "no `if briefing_projection is not None:` block found"
+    )
     body = gate_block.group(1)
-    assert "briefing_projection = BriefingProjection(" in body
     assert "briefing_handler = BriefingJobHandler(" in body
 
     assert re.search(

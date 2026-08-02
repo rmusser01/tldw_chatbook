@@ -5,12 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
+from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 
 @pytest.fixture
@@ -453,6 +456,180 @@ async def test_list_tasks_filters_watchlist_by_owner(db):
     projection.list_jobs.assert_called_once_with(owner_id="server:1")
 
 
+# --- briefing projection (task-1810): scheduled briefings on the unified list ---
+#
+# Mirrors the watchlist-projection tests immediately above -- same shape,
+# same sort/merge behavior, one extra source. `_cadenced_watchlist` and
+# `_force_briefing_created_at` mirror the equivalent helpers in
+# `test_briefing_projection.py`.
+
+
+def _cadenced_watchlist(subs_db, name="Watch", cadence_seconds=3600):
+    """Create a watchlist with a non-NULL briefing cadence (opted in)."""
+    watchlist_id = WatchlistBundleService(subs_db).create(name=name)["id"]
+    subs_db.set_watchlist_briefing_settings(
+        watchlist_id, briefing_cadence_seconds=cadence_seconds
+    )
+    return watchlist_id
+
+
+def _force_briefing_created_at(subs_db, briefing_id, timestamp):
+    """Overwrite a `briefings` row's `created_at` directly (second resolution)."""
+    subs_db.conn.execute(
+        "UPDATE briefings SET created_at = ? WHERE id = ?", (timestamp, briefing_id)
+    )
+    subs_db.conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_includes_briefing_projection(db):
+    """list_tasks merges reminders with briefing projections and sorts by
+    next_run_at -- the mock-based structural mirror of
+    test_list_tasks_includes_watchlist_projection above."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    projection = MagicMock(spec=BriefingProjection)
+    projection.list_jobs.return_value = [
+        ScheduledTask(
+            id="briefing:1",
+            title="Briefing Job",
+            type="briefing_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 7, 20, 13, 0, tzinfo=timezone.utc),
+            owner_id="local",
+        )
+    ]
+    svc.briefing_projection = projection
+
+    tasks = await svc.list_tasks()
+
+    assert len(tasks) == 2
+    assert tasks[0].title == "Briefing Job"
+    assert tasks[1].title == "Reminder"
+    projection.list_jobs.assert_called_once_with(owner_id="local")
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_filters_briefing_by_owner(db):
+    """list_tasks passes the current owner_id to the briefing projection too."""
+    svc = SchedulingService(db=db, runtime_source="server:1")
+    projection = MagicMock(spec=BriefingProjection)
+    projection.list_jobs.return_value = []
+    svc.briefing_projection = projection
+
+    tasks = await svc.list_tasks()
+
+    assert tasks == []
+    projection.list_jobs.assert_called_once_with(owner_id="server:1")
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_includes_both_watchlist_and_briefing_projections(db):
+    """The two projections are additive, not mutually exclusive -- both
+    branches extend the same unified list."""
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    watchlist_projection = MagicMock(spec=WatchlistProjection)
+    watchlist_projection.list_jobs.return_value = [
+        ScheduledTask(
+            id="watchlist:1",
+            title="Watchlist Job",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=None,
+            owner_id="local",
+        )
+    ]
+    briefing_projection = MagicMock(spec=BriefingProjection)
+    briefing_projection.list_jobs.return_value = [
+        ScheduledTask(
+            id="briefing:1",
+            title="Briefing Job",
+            type="briefing_job",
+            status=TaskStatus.WAITING,
+            next_run_at=None,
+            owner_id="local",
+        )
+    ]
+    svc.watchlist_projection = watchlist_projection
+    svc.briefing_projection = briefing_projection
+
+    tasks = await svc.list_tasks()
+
+    types = {task.type for task in tasks if isinstance(task, ScheduledTask)}
+    assert types == {"watchlist_job", "briefing_job"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_includes_a_cadenced_briefing_schedule_ac1(db, tmp_path):
+    """AC #1: a watchlist with a non-NULL briefing_cadence_seconds shows up
+    as a scheduled task on the unified list, alongside reminders and
+    watchlist checks."""
+    subs_db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = _cadenced_watchlist(subs_db, name="Acme Watch", cadence_seconds=3600)
+    complete_id = subs_db.insert_briefing(watchlist_id, status="complete")
+    _force_briefing_created_at(subs_db, complete_id, "2026-01-01 00:00:00")
+
+    projection = BriefingProjection(subs_db)
+    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    tasks = await svc.list_tasks()
+
+    briefing_tasks = [t for t in tasks if getattr(t, "type", None) == "briefing_job"]
+    assert len(briefing_tasks) == 1
+    assert briefing_tasks[0].id == f"briefing:{watchlist_id}"
+    assert briefing_tasks[0].title == "Acme Watch"
+    reminder_tasks = [t for t in tasks if isinstance(t, ReminderTask)]
+    assert len(reminder_tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_briefing_schedule_next_run_at_matches_the_projection_ac2(db, tmp_path):
+    """AC #2: the projected briefing task's next-run time on the unified
+    list matches BriefingProjection.list_jobs' own calculation for the same
+    data -- asserted against the projection directly, never re-derived
+    here (a re-derivation could independently agree with a broken
+    passthrough by coincidence)."""
+    subs_db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = _cadenced_watchlist(subs_db, name="Acme Watch", cadence_seconds=7200)
+    complete_id = subs_db.insert_briefing(watchlist_id, status="complete")
+    _force_briefing_created_at(subs_db, complete_id, "2026-01-01 00:00:00")
+
+    projection = BriefingProjection(subs_db)
+    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+
+    tasks = await svc.list_tasks()
+    [briefing_task] = [t for t in tasks if getattr(t, "type", None) == "briefing_job"]
+
+    # The projection's OWN calculation for the same data, called
+    # independently -- not a re-derivation of the expected value by hand.
+    # Deterministic (not `now`-dependent) because the watchlist has a
+    # `complete` briefing on record, so `next_run_at` is
+    # `last_completed_at + cadence`, unaffected by wall-clock timing.
+    [expected_task] = projection.list_jobs(owner_id="local")
+    assert briefing_task.next_run_at == expected_task.next_run_at
+    assert briefing_task.next_run_at == datetime(
+        2026, 1, 1, 2, 0, 0, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+async def test_null_cadence_watchlist_absent_from_scheduling_screen_ac4(db, tmp_path):
+    """AC #4: a watchlist with a NULL cadence (scheduling off) does not
+    appear on the unified list at all."""
+    subs_db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    WatchlistBundleService(subs_db).create(name="Never Scheduled")  # no cadence set
+
+    projection = BriefingProjection(subs_db)
+    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+
+    tasks = await svc.list_tasks()
+
+    assert all(getattr(t, "type", None) != "briefing_job" for t in tasks)
+
+
 @pytest.mark.asyncio
 async def test_created_reminder_is_picked_up_by_priority_queue(db):
     """Locally created reminders must have next_run_at set so the queue loads them."""
@@ -519,3 +696,36 @@ def test_server_client_is_always_present(db):
     svc = SchedulingService(db=db, runtime_source="local", server_client=None)
     assert isinstance(svc.server_client, SchedulingServerClient)
     assert svc.server_client.notifications_service is None
+
+
+def test_app_wiring_briefing_projection_is_live_not_a_frozen_none():
+    """Seam-level liveness proof for the app.py construction-order fix
+    (task-1810): `_wire_watchlists_and_notifications_services` must pass a
+    REAL `BriefingProjection` into `SchedulingService` at construction time,
+    not `None` frozen in because the projection used to be built AFTER the
+    service. That is the exact bug class task-1810's own dispatch brief
+    flags as already having shipped once elsewhere in this same method (the
+    kept-briefings branch's construction-order bug) -- this test reds
+    against the naive fix (pass `briefing_projection=briefing_projection`
+    at the OLD call site, before `briefing_projection` is assigned) just as
+    it would red against never wiring the parameter at all.
+
+    `_build_test_app`'s fake `get_cli_setting` passes through whatever
+    default the caller supplies for any key other than
+    `general.default_tab` (see its own docstring) -- `briefing_schedules_enabled`
+    defaults to `True` in `app.py`, so this exercises the real, enabled-by-
+    default production path, not a special-cased test config.
+    """
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+
+    assert app.scheduling_service.briefing_projection is not None
+    assert isinstance(app.scheduling_service.briefing_projection, BriefingProjection)
+    # And it is the SAME instance `SchedulerLoop`'s queue was wired with --
+    # not two independently constructed projections that happen to both be
+    # real, which would hide a subtler drift between the two consumers.
+    assert (
+        app.scheduling_service.briefing_projection
+        is app.scheduler_loop.queue.briefing_projection
+    )
