@@ -112,6 +112,9 @@ transcription_faster_whisper = [
 transcription_parakeet_onnx = [
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
 ]
+transcription_transcribe_cpp = [
+    "transcribe-cpp==0.1.3",  # Optional direct-local GGUF runtime
+]
 transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
 ]

@@ -26,7 +26,7 @@ def _now_iso() -> str:
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
@@ -110,7 +110,7 @@ class AgentRunsDB(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (3);
 
                 CREATE TABLE IF NOT EXISTS agent_runs (
                     id TEXT PRIMARY KEY,
@@ -131,6 +131,27 @@ class AgentRunsDB(BaseDB):
                     ON agent_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent
                     ON agent_runs(parent_run_id);
+
+                -- v3 (TASK-1971, Agent Change Review): one row per
+                -- (run, root) pair recording that turn's shadow-repo
+                -- baseline/end snapshots. CREATE IF NOT EXISTS on every
+                -- open IS this DB's migration mechanism (see the v1->v2
+                -- note below).
+                CREATE TABLE IF NOT EXISTS change_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    root TEXT NOT NULL,
+                    baseline_sha TEXT NOT NULL,
+                    end_sha TEXT NOT NULL,
+                    files_changed INTEGER NOT NULL DEFAULT 0,
+                    adds INTEGER NOT NULL DEFAULT 0,
+                    dels INTEGER NOT NULL DEFAULT 0,
+                    reverted TEXT NOT NULL DEFAULT '',
+                    tracking_error TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
+                    ON change_snapshots(run_id);
                 """
             )
             # v1->v2: this DB has no migration framework -- _initialize_schema
@@ -146,6 +167,90 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
                 )
+
+    def record_change_snapshot(
+        self,
+        *,
+        run_id: str,
+        root: str,
+        baseline_sha: str,
+        end_sha: str,
+        files_changed: int = 0,
+        adds: int = 0,
+        dels: int = 0,
+        tracking_error: str = "",
+    ) -> None:
+        """Record one root's turn snapshot pair (TASK-1971).
+
+        Args:
+            run_id: The owning agent run.
+            root: Canonical root path.
+            baseline_sha: The B snapshot tip ("" when tracking failed).
+            end_sha: The E snapshot tip ("" when tracking failed).
+            files_changed: Changed-file count between B and E.
+            adds: Total added lines.
+            dels: Total deleted lines.
+            tracking_error: Non-empty when tracking failed for this root.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO change_snapshots
+                    (run_id, root, baseline_sha, end_sha, files_changed,
+                     adds, dels, tracking_error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    root,
+                    baseline_sha,
+                    end_sha,
+                    files_changed,
+                    adds,
+                    dels,
+                    tracking_error,
+                    _now_iso(),
+                ),
+            )
+
+    def change_snapshots_for_run(self, run_id: str) -> list[dict]:
+        """Return a run's change-snapshot rows, oldest first.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            One dict per (run, root) row.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM change_snapshots WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def change_snapshots_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's change-snapshot rows for turn history.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Rows joined with their runs, oldest first — the Review screen's
+            "Last turn" selector data.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cs.*, ar.created_at AS run_created_at, ar.status AS run_status
+                FROM change_snapshots cs
+                JOIN agent_runs ar ON ar.id = cs.run_id
+                WHERE ar.conversation_id = ?
+                ORDER BY cs.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:

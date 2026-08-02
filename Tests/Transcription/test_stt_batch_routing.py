@@ -105,6 +105,28 @@ def test_exact_faster_whisper_retains_requested_language_and_task() -> None:
     assert route.target_language == "en"
 
 
+@pytest.mark.parametrize("language", [None, "", "en", "DE", "auto"])
+def test_transcribe_cpp_is_an_exact_manual_only_route(language: str | None) -> None:
+    route = resolve_batch_stt_route(provider="transcribe-cpp", language=language)
+
+    assert route.requested_provider == "transcribe-cpp"
+    assert route.provider == "transcribe-cpp"
+    assert route.model is None
+    assert route.requested_language == (language or "en").strip().lower() or "en"
+    assert route.precision == "native"
+    assert route.local_files_only is True
+    assert route.reason == "explicit_transcribe_cpp"
+
+
+def test_transcribe_cpp_rejects_translation_without_fallback() -> None:
+    with pytest.raises(BatchSTTRoutingError, match="does not support translation"):
+        resolve_batch_stt_route(
+            provider="transcribe-cpp",
+            language="de",
+            target_language="en",
+        )
+
+
 @pytest.mark.parametrize(
     ("provider", "parakeet_defaults_enabled"),
     [

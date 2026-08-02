@@ -890,7 +890,12 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return _copy_job(updated)
 
-    def requeue(self, job_id: str) -> LibraryIngestJob | None:
+    def requeue(
+        self,
+        job_id: str,
+        *,
+        ingest_options: dict[str, Any] | None = None,
+    ) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
         Only works on a ``FAILED``, not-yet-hidden, not-``permanent`` job --
@@ -920,6 +925,9 @@ class LibraryIngestJobRegistry:
 
         Args:
             job_id: The failed job to requeue.
+            ingest_options: Optional replacement option snapshot for an explicit
+                user-selected recovery action. Omitted retries preserve the
+                source snapshot unchanged.
 
         Returns:
             The newly appended ``QUEUED`` job (a copy), or ``None`` when
@@ -952,7 +960,9 @@ class LibraryIngestJobRegistry:
             chunk_enabled=source.chunk_enabled,
             chunk_size=source.chunk_size,
             detected_type=source.detected_type,
-            ingest_options=source.ingest_options,
+            ingest_options=deepcopy(
+                source.ingest_options if ingest_options is None else ingest_options
+            ),
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,

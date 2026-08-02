@@ -8,6 +8,7 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from loguru import logger
@@ -27,6 +28,11 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_v2_provision,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
+from tldw_chatbook.STT.transcribe_cpp_config import (
+    configure_model_path as configure_transcribe_cpp_model_path,
+    is_gguf_file,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
@@ -1164,6 +1170,22 @@ class SpeechSetupStep(SetupStep):
         # made THROUGH THIS STEP during this run -- see commit()'s use via
         # first_run_speech_step_state.should_persist_speech_config.
         self._acted_this_run = False
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        transcription = (
+            app_config.get("transcription", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        direct_config = (
+            transcription.get("transcribe_cpp", {})
+            if isinstance(transcription, Mapping)
+            else {}
+        )
+        self._transcribe_cpp_configured = bool(
+            direct_config.get("model_path")
+            if isinstance(direct_config, Mapping)
+            else False
+        )
 
     def compose_step(self) -> ComposeResult:
         """Render the title/prefill/status/action block, then the language
@@ -1228,6 +1250,20 @@ class SpeechSetupStep(SetupStep):
                     id="setup-speech-use-as-default",
                     variant="primary",
                 )
+            yield Static(
+                "Existing local transcribe.cpp GGUF configured."
+                if self._transcribe_cpp_configured
+                else "No existing local transcribe.cpp GGUF configured.",
+                id="setup-speech-transcribe-cpp-status",
+                classes="setup-subtitle",
+                markup=False,
+            )
+            yield Button(
+                "Choose another GGUF…"
+                if self._transcribe_cpp_configured
+                else "Use an existing transcribe.cpp GGUF…",
+                id="setup-speech-choose-transcribe-cpp-gguf",
+            )
             yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
             with RadioSet(id="setup-speech-language-choice", classes="setup-choice-list"):
@@ -1523,6 +1559,59 @@ class SpeechSetupStep(SetupStep):
         self._acted_this_run = True
         self.notify(
             "Parakeet v2 will become your default when you continue.",
+            severity="information",
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#setup-speech-choose-transcribe-cpp-gguf")
+    def _choose_transcribe_cpp_gguf_pressed(self) -> None:
+        """Open a GGUF-only picker for optional direct-local transcription."""
+
+        async def picker_callback(selected_path: Path | None) -> None:
+            if selected_path is not None:
+                self._configure_transcribe_cpp_gguf(selected_path)
+
+        self.app.push_screen(
+            FileOpen(
+                location=Path.home(),
+                title="Choose transcribe.cpp GGUF",
+                filters=Filters(("GGUF models", is_gguf_file)),
+            ),
+            picker_callback,
+        )
+
+    @work(
+        thread=True,
+        group="setup-speech-transcribe-cpp-gguf",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _configure_transcribe_cpp_gguf(self, selected_path: Path) -> None:
+        """Admit and persist a selected GGUF off the Textual event loop."""
+        try:
+            configure_transcribe_cpp_model_path(selected_path)
+        except Exception:
+            self.app.call_from_thread(
+                self._apply_transcribe_cpp_gguf_result,
+                False,
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_transcribe_cpp_gguf_result,
+            True,
+        )
+
+    def _apply_transcribe_cpp_gguf_result(self, configured: bool) -> None:
+        """Apply a path-free direct-local GGUF configuration result."""
+        if not configured:
+            self.notify(
+                "That GGUF cannot be used by transcribe.cpp. Choose another GGUF.",
+                severity="warning",
+            )
+            return
+        self._transcribe_cpp_configured = True
+        self.notify(
+            "Local GGUF configured for transcribe.cpp.",
             severity="information",
         )
         self.refresh(recompose=True)

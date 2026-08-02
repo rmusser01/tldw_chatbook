@@ -109,6 +109,7 @@ class ExecutionDevice(str, Enum):
     CPU = "cpu"
     CUDA = "cuda"
     METAL = "metal"
+    VULKAN = "vulkan"
 
 
 class DeviceFailureOrigin(str, Enum):

@@ -87,18 +87,33 @@ def test_metadata_ip_blocked_even_when_trusted(monkeypatch):
     assert not d.allowed and d.reason == "metadata"
 
 
-def test_metadata_hostname_blocked_pre_resolution(monkeypatch):
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://metadata.google.internal/computeMetadata/",
+        "http://metadata.azure.com/metadata/instance",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://100.100.100.200/latest/meta-data/",
+        "http://[fd00:ec2::254]/latest/meta-data/",
+    ),
+)
+def test_metadata_endpoints_blocked_pre_resolution(monkeypatch, url):
+    """Reject metadata endpoints without attempting DNS resolution.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the resolver.
+        url: Canonical metadata endpoint URL under test.
+    """
+
     def _boom(host):  # pragma: no cover - must not be called
-        raise AssertionError("resolved a metadata hostname")
+        raise AssertionError("resolved a metadata endpoint")
 
     monkeypatch.setattr(egress, "_resolve", _boom)
-    d = evaluate_url_policy("http://metadata.google.internal/computeMetadata/")
+    d = evaluate_url_policy(url)
     assert not d.allowed and d.reason == "metadata"
 
 
 def test_ip_literal_hosts_classified_directly():
-    d4 = evaluate_url_policy("http://169.254.169.254/latest/meta-data/")
-    assert not d4.allowed and d4.reason == "metadata"
     d6 = evaluate_url_policy("http://[::1]:8080/")
     assert not d6.allowed and d6.reason == "private"
 

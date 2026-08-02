@@ -44,6 +44,7 @@ class _MessageRecordingHost(App):
         self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
         self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
         self.parakeet_install_requests = 0
+        self.transcribe_cpp_gguf_requests = 0
 
     def compose(self) -> ComposeResult:
         yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
@@ -61,6 +62,12 @@ class _MessageRecordingHost(App):
         self, _event: LibraryIngestCanvas.ParakeetInstallRequested
     ) -> None:
         self.parakeet_install_requests += 1
+
+    @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
+    def _record_transcribe_cpp_gguf_request(
+        self, _event: LibraryIngestCanvas.TranscribeCppGGUFRequested
+    ) -> None:
+        self.transcribe_cpp_gguf_requests += 1
 
 
 def _default_form() -> LibraryIngestFormState:
@@ -702,6 +709,78 @@ async def test_retry_button_hidden_for_unsupported_file_type():
         assert len(pilot.app.query("#library-ingest-retry-ingest-job-1")) == 0
         # The structured-error surface is still available.
         assert pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+
+
+@pytest.mark.asyncio
+async def test_transcribe_cpp_failure_renders_only_eligible_recovery_actions():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/private/voice.wav",
+        state=IngestJobState.FAILED,
+        error="The selected GGUF cannot be used by transcribe.cpp.",
+        permanent=False,
+        error_detail={
+            "category": "stt_failure",
+            "code": "artifact_incompatible",
+            "message": "The selected GGUF cannot be used by transcribe.cpp.",
+            "actions": ["choose_another_gguf", "retry_faster_whisper"],
+        },
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        choose = pilot.app.query_one(
+            "#library-ingest-choose-gguf-ingest-job-1", Button
+        )
+        retry = pilot.app.query_one(
+            "#library-ingest-retry-faster-whisper-ingest-job-1", Button
+        )
+        assert "Choose another GGUF" in str(choose.label)
+        assert str(retry.label) == "Retry with faster-whisper"
+        assert not list(pilot.app.query("#library-ingest-retry-ingest-job-1"))
+
+
+@pytest.mark.asyncio
+async def test_transcribe_cpp_provider_shows_path_free_configured_picker():
+    form = _default_form()
+    form.type_options = {
+        "audio_video": {"transcription_provider": "transcribe-cpp"}
+    }
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/voice.wav"]},
+            warnings=[],
+            errors=[],
+            total_size=1,
+            truncated=False,
+            total_files=1,
+        ),
+        transcribe_cpp_configured=True,
+    )
+    app = _MessageRecordingHost(state)
+
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            button = pilot.app.query_one(
+                "#opt-audio_video-choose-transcribe-cpp-gguf", Button
+            )
+            status = pilot.app.query_one(
+                "#opt-audio_video-transcribe-cpp-status", Static
+            )
+            assert "Choose another GGUF" in str(button.label)
+            assert "configured" in str(status.renderable).lower()
+            assert "/" not in str(status.renderable)
+
+            button.press()
+            await pilot.pause()
+
+    assert app.transcribe_cpp_gguf_requests == 1
 
 
 @pytest.mark.asyncio

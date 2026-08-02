@@ -317,12 +317,52 @@ class LocalAudioProcessor:
         transcription_precision: Optional[str] = None,
         transcription_local_files_only: bool = False,
         transcription_batch_route_resolved: bool = False,
+        transcription_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Process multiple audio inputs (URLs or local files).
+        """Process multiple audio inputs from URLs or local files.
+
+        Args:
+            inputs: Audio URLs or local file paths to process.
+            transcription_provider: Exact STT provider or semantic default.
+            transcription_model: Provider-specific model identifier.
+            transcription_model_dir: Optional local model directory.
+            transcription_language: Language code or ``auto``.
+            translation_target_language: Optional translation target language.
+            perform_chunking: Whether to chunk the resulting transcript.
+            chunk_method: Optional transcript chunking strategy.
+            max_chunk_size: Maximum chunk size for the selected strategy.
+            chunk_overlap: Requested overlap between adjacent chunks.
+            use_adaptive_chunking: Whether to enable adaptive chunk sizing.
+            use_multi_level_chunking: Whether to emit multiple chunk levels.
+            chunk_language: Optional language hint for chunking.
+            diarize: Whether to request speaker diarization.
+            vad_use: Whether to request voice activity detection.
+            timestamp_option: Whether to request transcript timestamps.
+            start_time: Optional media start-time bound.
+            end_time: Optional media end-time bound.
+            perform_analysis: Whether to analyze the transcript after STT.
+            api_name: Optional analysis provider identifier.
+            api_key: Optional analysis provider credential.
+            custom_prompt: Optional analysis user prompt.
+            system_prompt: Optional analysis system prompt.
+            summarize_recursively: Whether to recursively summarize chunks.
+            use_cookies: Whether media download may use configured cookies.
+            cookies: Optional cookies source for media download.
+            keep_original: Whether to retain the normalized audio artifact.
+            custom_title: Optional title override.
+            author: Optional author override.
+            temp_dir: Optional caller-owned processing directory.
+            transcription_progress_callback: Optional STT progress callback.
+            transcription_precision: Optional normalized precision choice.
+            transcription_local_files_only: Whether network model access is
+                forbidden for this route.
+            transcription_batch_route_resolved: Whether Library routing already
+                resolved provider/model semantics.
+            transcription_context: Optional worker-private direct-local model
+                path and retry-lineage values.
 
         Returns:
-            Dict with processing results
+            A dictionary containing per-input processing results and errors.
         """
         results = []
         errors = []
@@ -354,6 +394,7 @@ class LocalAudioProcessor:
                         transcription_precision=transcription_precision,
                         transcription_local_files_only=transcription_local_files_only,
                         transcription_batch_route_resolved=transcription_batch_route_resolved,
+                        transcription_context=transcription_context,
                         perform_chunking=perform_chunking,
                         chunk_method=chunk_method,
                         max_chunk_size=max_chunk_size,
@@ -497,6 +538,23 @@ class LocalAudioProcessor:
             transcription_start = time.time()
             try:
                 logger.info("[AUDIO] Calling _transcribe_audio()")
+                context = kwargs.get("transcription_context") or {}
+                direct_local_kwargs = (
+                    {
+                        "model_path": context.get("model_path"),
+                        "attempt_id": context.get("attempt_id"),
+                        "batch_id": context.get("batch_id"),
+                        "job_id": context.get("job_id"),
+                        "retry_of_attempt_id": context.get("retry_of_attempt_id"),
+                        "retry_of_job_id": context.get("retry_of_job_id"),
+                        "retry_source_failure_provenance": context.get(
+                            "retry_source_failure_provenance"
+                        ),
+                        "timestamps": kwargs.get("timestamp_option", True),
+                    }
+                    if provider == "transcribe-cpp"
+                    else {}
+                )
                 transcription_result = self._transcribe_audio(
                     audio_path,
                     provider=provider,
@@ -514,12 +572,20 @@ class LocalAudioProcessor:
                     vad_filter=kwargs.get("vad_use", False),
                     diarize=kwargs.get("diarize", False),
                     progress_callback=transcription_progress_callback,
+                    **direct_local_kwargs,
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
-                logger.opt(exception=True).error(
-                    f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}"
-                )
+                error_detail = getattr(e, "error_detail", None)
+                if isinstance(error_detail, dict):
+                    logger.error(
+                        "[AUDIO] Direct-local transcription failed: code={}",
+                        error_detail.get("code", "inference_failed"),
+                    )
+                else:
+                    logger.opt(exception=True).error(
+                        f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}"
+                    )
                 raise
 
             transcription_time = time.time() - transcription_start
@@ -550,6 +616,12 @@ class LocalAudioProcessor:
 
             result["segments"] = transcription_result.get("segments", [])
             result["content"] = transcription_result.get("text", "")
+            result["transcription_model"] = transcription_result.get(
+                "transcription_model"
+            )
+            result["transcription_provenance"] = transcription_result.get(
+                "transcription_provenance"
+            )
 
             logger.info(
                 f"[AUDIO] Final result content length: {len(result['content'])} chars, segments: {len(result['segments'])}"
@@ -637,9 +709,21 @@ class LocalAudioProcessor:
                     result["warnings"].append(f"Could not save audio file: {str(e)}")
 
         except Exception as e:
-            logger.opt(exception=True).error(f"Error processing audio: {str(e)}")
+            error_detail = getattr(e, "error_detail", None)
+            if isinstance(error_detail, dict):
+                logger.error(
+                    "[AUDIO] Direct-local processing failed: code={}",
+                    error_detail.get("code", "inference_failed"),
+                )
+            else:
+                logger.opt(exception=True).error(f"Error processing audio: {str(e)}")
             result["status"] = "Error"
             result["error"] = str(e)
+            if isinstance(error_detail, dict):
+                result["error_detail"] = error_detail
+            failed_attempt = getattr(e, "stt_failure_provenance", None)
+            if isinstance(failed_attempt, dict):
+                result["stt_failure_provenance"] = failed_attempt
 
         return result
 
@@ -658,6 +742,46 @@ class LocalAudioProcessor:
         logger.info(
             f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}"
         )
+
+        if kwargs.get("provider") == "transcribe-cpp":
+            from tldw_chatbook.STT.persistence import (
+                build_transcription_provenance_document,
+            )
+            from tldw_chatbook.STT.transcribe_cpp import transcribe_file
+
+            model_path = kwargs.get("model_path")
+            attempt_id = kwargs.get("attempt_id")
+            if not isinstance(attempt_id, str) or not attempt_id:
+                attempt_id = f"direct-local-{uuid.uuid4().hex}"
+            normalized = transcribe_file(
+                audio_path=Path(audio_path),
+                model_path=Path(model_path) if model_path else None,
+                attempt_id=attempt_id,
+                batch_id=kwargs.get("batch_id"),
+                job_id=kwargs.get("job_id"),
+                retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
+                retry_of_job_id=kwargs.get("retry_of_job_id"),
+                language=kwargs.get("language") or "en",
+                timestamps=bool(kwargs.get("timestamps", True)),
+                ffmpeg_path=get_cli_setting("media_processing.ffmpeg_path"),
+            )
+            provenance = build_transcription_provenance_document(
+                normalized,
+                failed_attempt=kwargs.get("retry_source_failure_provenance"),
+            )
+            return {
+                "text": normalized.text,
+                "segments": [
+                    {
+                        "start": segment.start_seconds,
+                        "end": segment.end_seconds,
+                        "text": segment.text,
+                    }
+                    for segment in normalized.segments
+                ],
+                "transcription_model": normalized.provenance.model_id,
+                "transcription_provenance": provenance,
+            }
 
         # Wrap progress callback to check for cancellation
         def cancellable_progress_callback(progress, message, data=None):

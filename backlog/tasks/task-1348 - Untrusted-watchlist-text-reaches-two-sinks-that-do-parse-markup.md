@@ -1,7 +1,7 @@
 ---
 id: TASK-1348
 title: Untrusted watchlist text reaches two sinks that do parse markup
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
@@ -32,7 +32,29 @@ moment that task lands.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Item-derived text reaching DataTable cells is escaped at that boundary, with a test using a markup-shaped feed title that fails without it
-- [ ] #2 A decision is recorded on whether remote markdown bodies may produce real hyperlinks, and the Markdown branch matches it
-- [ ] #3 The rule is stated once where a future contributor will find it: escape at sinks that parse, not at sinks that do not
+- [x] #1 Item-derived text reaching DataTable cells is escaped at that boundary, with a test using a markup-shaped feed title that fails without it
+- [x] #2 A decision is recorded on whether remote markdown bodies may produce real hyperlinks, and the Markdown branch matches it
+- [x] #3 The rule is stated once where a future contributor will find it: escape at sinks that parse, not at sinks that do not
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1 (the one real remaining gap): `items_pane.py`'s DataTable `add_row` now wraps every
+item-derived string cell in `rich.markup.escape` -- a feed title `[bold red]BREAKING[/]` or a
+source name `[link=...]` is displayed as literal text instead of being markup-parsed. status /
+created_at / the queued glyph are app-controlled but escaped too, so every non-constant cell is
+uniformly safe and no future editor has to re-audit which column carries remote text. Pinned by
+`test_markup_shaped_item_text_is_escaped_at_the_datatable_boundary` (fails if the boundary escape
+is removed -- mutation-verified).
+
+AC#2 + AC#3 were ALREADY satisfied on dev before this task was picked up: `content_pane.py`'s
+`_MARKDOWN_HYPERLINKS = False` (line 63, used at the `Markdown(...)` call ~line 133) is the
+recorded decision that remote markdown bodies must NOT emit real OSC-8 hyperlinks (phishing-anchor
+reasoning documented in full there), and `render_article`'s docstring states the governing rule
+once for a future contributor: escape/​defend at the sink that actually parses, not at sinks that
+do not. This task's items_pane comment cross-references that rule rather than restating it.
+
+Files: `tldw_chatbook/UI/Watchlists_Modules/items_pane.py`,
+`Tests/Watchlists/test_watchlists_items_pane.py`.
+<!-- SECTION:NOTES:END -->

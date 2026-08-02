@@ -273,6 +273,27 @@ def test_parakeet_file_model_construction_uses_loader(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """The file path routes model construction through the lazy loader.
+
+    TASK-1804: ``numpy`` is an OPTIONAL dependency (it appears only under
+    ``[project.optional-dependencies]``), and ``transcription_service``
+    guards it with ``NUMPY_AVAILABLE``. This test builds a real array via
+    ``service_module.np.zeros`` and so genuinely requires it -- without the
+    skip it fails with ``'NoneType' object has no attribute 'zeros'`` in a
+    supported, numpy-less install, which reads as a product defect rather
+    than an undeclared test dependency.
+
+    Args:
+        service_module: The transcription service module fixture (imports
+            once; returns the cached ``sys.modules`` entry when already
+            loaded, so import-time flags like ``NUMPY_AVAILABLE`` reflect
+            the process's first import).
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Temporary directory for the fake audio file.
+    """
+
+    if not service_module.NUMPY_AVAILABLE:  # optional dependency
+        pytest.skip("numpy is an optional dependency and is not installed")
     debug_messages: list[str] = []
     monkeypatch.setattr(
         service_module.logger,
@@ -307,6 +328,27 @@ def test_parakeet_file_model_construction_uses_loader(
 def test_parakeet_buffer_model_construction_uses_loader(
     service_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The buffer path routes model construction through the lazy loader.
+
+    TASK-1804: ``_transcribe_buffer_with_parakeet_mlx`` raises
+    ``TranscriptionError("NumPy is required for buffer transcription")``
+    *before* it reaches ``_ensure_parakeet_mlx_import``, so in a numpy-less
+    install the loader sentinel below can never fire and the assertion
+    fails with ``assert None is RuntimeError('parakeet loader reached')``.
+    That is the guard working as designed, not the loader being bypassed --
+    numpy is optional (see ``[project.optional-dependencies]``), so this
+    test has to declare the dependency it actually needs.
+
+    Args:
+        service_module: The transcription service module fixture (imports
+            once; returns the cached ``sys.modules`` entry when already
+            loaded, so import-time flags like ``NUMPY_AVAILABLE`` reflect
+            the process's first import).
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    if not service_module.NUMPY_AVAILABLE:  # optional dependency
+        pytest.skip("numpy is an optional dependency and is not installed")
     service = _service(service_module, monkeypatch)
     sentinel = RuntimeError("parakeet loader reached")
     ensure_import = Mock(side_effect=sentinel)

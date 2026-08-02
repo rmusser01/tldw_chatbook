@@ -148,6 +148,8 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
         permanent = classify_parse_failure(exc)
+        stt_error_detail = getattr(exc, "error_detail", None)
+        stt_failure_provenance = getattr(exc, "stt_failure_provenance", None)
         category = (
             "unsupported_file_type"
             if str(exc).strip().startswith("Unsupported file type")
@@ -155,14 +157,19 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(exc, FileNotFoundError)
             else "parse_error"
         )
-        return {
+        failure = {
             "ok": False,
             "error": message,
             "permanent": permanent,
-            "error_detail": {
+            "error_detail": stt_error_detail
+            if isinstance(stt_error_detail, dict)
+            else {
                 "category": category,
                 "message": message,
                 "exception_type": exc.__class__.__name__,
             },
         }
+        if isinstance(stt_failure_provenance, dict):
+            failure["stt_failure_provenance"] = stt_failure_provenance
+        return failure
     return {"ok": True, "payload": payload}

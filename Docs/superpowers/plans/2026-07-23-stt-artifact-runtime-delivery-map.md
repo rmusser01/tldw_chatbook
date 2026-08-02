@@ -14,13 +14,19 @@ independently reviewable Backlog tasks.
 leases, STT provider boundaries, process ownership, persistence, dependency
 profiles, routing, migration, and legacy removal.
 
+> **2026-08-02 direct-path amendment:** ADR-041 changes the transcribe.cpp
+> critical path. TASK-597 now admits an explicit local GGUF without managed
+> storage. TASK-604 delivers real Library batch transcription through the
+> existing spawn-isolated one-heavy-job lane and no longer depends on TASK-601.
+> TASK-601 remains later executor hardening; TASK-1915 adds managed catalog,
+> download, and import last. The amended rows below supersede the original
+> store-first ordering for those tasks.
+
 ## Planning policy
 
-- TASK-505 is the only active delivery slice and has a complete executable
-  implementation plan.
-- TASK-593 through TASK-605 remain `To Do`. Each receives its own executable
-  implementation plan only after it moves to `In Progress`, before production
-  code changes begin.
+- Backlog task files are the source of truth for current status.
+- Each delivery slice receives its own executable implementation plan only
+  after it moves to `In Progress` and before production code changes begin.
 - A task may be split further before implementation if its file map or
   acceptance criteria cannot remain one independently testable pull request.
 - No task may weaken ADR-025 or silently cross an explicit dependency boundary.
@@ -36,20 +42,21 @@ profiles, routing, migration, and legacy removal.
 | [TASK-594](../../../backlog/tasks/task-594%20-%20Build-shared-model-artifact-descriptors-and-lifecycle.md) | Artifact descriptors, immutable lifecycle, readiness, inventory, deletion | TASK-505 |
 | [TASK-595](../../../backlog/tasks/task-595%20-%20Add-verified-managed-model-downloads-and-recovery.md) | Verified managed downloads, resume, staging, recovery | TASK-594 |
 | [TASK-596](../../../backlog/tasks/task-596%20-%20Renovate-the-local-model-artifact-browser.md) | Curated/remote/installed artifact browser | TASK-595 |
-| [TASK-597](../../../backlog/tasks/task-597%20-%20Add-bounded-local-GGUF-artifact-import.md) | Bounded GGUF local import | TASK-594, TASK-596 |
+| [TASK-597](../../../backlog/tasks/task-597%20-%20Validate-explicit-local-transcribe.cpp-GGUF-files.md) | Bounded direct-local GGUF admission | — |
 | [TASK-598](../../../backlog/tasks/task-598%20-%20Add-descriptor-backed-local-ONNX-bundle-import.md) | Descriptor-backed ONNX bundle import | TASK-594, TASK-596 |
 | [TASK-599](../../../backlog/tasks/task-599%20-%20Introduce-provider-neutral-STT-contracts-and-coordinator.md) | STT contracts, registry, routing, coordinator, compatibility facade | — |
 | [TASK-600](../../../backlog/tasks/task-600%20-%20Persist-STT-provenance-and-retry-lineage.md) | Transcript provenance and durable retry lineage | TASK-599 |
 | [TASK-601](../../../backlog/tasks/task-601%20-%20Add-generation-fenced-local-STT-executor.md) | App-owned heavy executor, residency, generation fencing, child cleanup | TASK-505, TASK-594, TASK-599 |
 | [TASK-602](../../../backlog/tasks/task-602%20-%20Integrate-Parakeet-ONNX-batch-routing.md) | Parakeet ONNX provider and batch routing | TASK-593, TASK-595, TASK-599, TASK-600, TASK-601 |
 | [TASK-603](../../../backlog/tasks/task-603%20-%20Restore-bounded-Parakeet-ONNX-dictation-buffers.md) | Bounded dictation-buffer compatibility | TASK-602 |
-| [TASK-604](../../../backlog/tasks/task-604%20-%20Add-curated-optional-transcribe.cpp-STT-provider.md) | Optional curated transcribe.cpp provider | TASK-595, TASK-599, TASK-600, TASK-601 |
+| [TASK-604](../../../backlog/tasks/task-604%20-%20Add-direct-local-transcribe.cpp-batch-STT-provider.md) | Direct-local transcribe.cpp provider plus real Library batch wiring | TASK-597, TASK-599, TASK-600 |
 | [TASK-605](../../../backlog/tasks/task-605%20-%20Promote-Parakeet-ONNX-defaults-and-remove-legacy-providers.md) | Default promotion, config migration, legacy removal | TASK-596, TASK-597, TASK-598, TASK-602, TASK-603, TASK-604 |
+| [TASK-1915](../../../backlog/tasks/task-1915%20-%20Add-managed-transcribe.cpp-GGUF-acquisition-after-provider.md) | Curated catalog, verified download, and managed local GGUF import | TASK-596, TASK-597, TASK-604 |
 
-The two independent starting tracks are TASK-505 and TASK-593. TASK-599 can
-also proceed without waiting for artifact storage, but Parakeet and
-transcribe.cpp integration remain blocked on their artifact and process
-dependencies.
+The original independent starting tracks were TASK-505 and TASK-593, with
+TASK-599 also able to proceed without artifact storage. Under ADR-041,
+transcribe.cpp's direct-local path is now TASK-597 → TASK-604. It is not
+blocked on the managed artifact or dedicated-executor tracks.
 
 ## Planned file ownership
 
@@ -64,15 +71,16 @@ changes them.
 | TASK-594 | `tldw_chatbook/Model_Artifacts/descriptors.py`, `store.py`, `service.py` | `Tests/Model_Artifacts/test_descriptors.py`, `test_store.py`, `test_service.py` |
 | TASK-595 | `tldw_chatbook/Model_Artifacts/downloads.py`, `recovery.py` | Local HTTP-fixture download and crash-recovery tests |
 | TASK-596 | `tldw_chatbook/UI/Screens/artifacts_screen.py`, artifact-browser view models | `Tests/UI/test_artifacts_screen.py`, service fakes |
-| TASK-597 | `tldw_chatbook/Model_Artifacts/gguf_import.py` | Bounded parser, containment, TOCTOU, and cleanup tests |
+| TASK-597 | `tldw_chatbook/Model_Artifacts/gguf_admission.py` | Bounded parser, path/identity containment, privacy, platform-candidate, and import-boundary tests |
 | TASK-598 | `tldw_chatbook/Model_Artifacts/onnx_import.py` | Descriptor-backed bundle, corruption, containment, and rollback tests |
 | TASK-599 | `tldw_chatbook/STT/contracts.py`, `registry.py`, `routing.py`, `coordinator.py`, `legacy_bridge.py` | `Tests/STT/test_contracts.py`, `test_registry.py`, `test_routing.py`, `test_coordinator.py` |
 | TASK-600 | `tldw_chatbook/STT/provenance.py`, media and ingest-job migrations, export/import schemas | Database, pruning, transaction, export/import, and API contract tests |
 | TASK-601 | `tldw_chatbook/STT/executor.py`, spawn-safe worker and child-process utilities | Process-generation, model-residency, lease, crash, cancellation, and child-tree tests |
 | TASK-602 | `tldw_chatbook/STT/providers/parakeet_onnx.py`, catalog entries, ingestion integration, package extras | Routing, VAD, batch, package-resolution, provider-contract, and platform smoke tests |
 | TASK-603 | Dictation controller integration over `LocalSTTExecutor` | Buffer, coalescing, backpressure, latency, cancellation, and coexistence tests |
-| TASK-604 | `tldw_chatbook/STT/providers/transcribe_cpp.py`, curated GGUF catalog, optional extra | Per-family capability, artifact, buffer/file, crash, and platform tests |
+| TASK-604 | `tldw_chatbook/STT/providers/transcribe_cpp.py`, optional extra, provider settings, existing Library ingest selector/routing/service seams | Selection/config privacy, complete production batch path, worker revalidation, native capability, crash containment, and wheel/ABI tests |
 | TASK-605 | Config migration, provider registration removal, dependency cleanup, release docs | Migration fixtures, stale-ID scans, full release-gate evidence |
+| TASK-1915 | Managed GGUF catalog/download/import over the shared artifact core | Download/import integrity, lifecycle, recovery, and platform tests |
 
 ## Cross-task invariants
 

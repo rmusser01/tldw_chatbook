@@ -442,6 +442,8 @@ class LibraryIngestCanvasState:
             from the registry snapshot, limited to 10. Dismissed jobs are
             intentionally excluded because the registry's ``jobs()`` snapshot
             already filters them out.
+        transcribe_cpp_configured: Whether a dedicated local GGUF path exists.
+            The path itself never enters this render state.
     """
 
     header: str
@@ -477,6 +479,7 @@ class LibraryIngestCanvasState:
     #: Whether to offer switching backends -- only meaningful when a
     #: server is actually configured.
     show_backend_switch: bool = False
+    transcribe_cpp_configured: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -739,6 +742,7 @@ def build_library_ingest_state(
     preflight_checking: bool | None = None,
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
+    transcribe_cpp_configured: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -765,6 +769,8 @@ def build_library_ingest_state(
         preflight_checking: Whether a pre-flight analysis is currently in
             progress. When ``None`` (the default), the value is taken from
             ``form.preflight_checking``.
+        transcribe_cpp_configured: Whether the dedicated direct-local model
+            setting exists. Only the boolean reaches render state.
 
     Returns:
         The canvas's full display state.
@@ -889,6 +895,7 @@ def build_library_ingest_state(
         type_groups=type_groups_list,
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
+        transcribe_cpp_configured=transcribe_cpp_configured,
     )
 
 

@@ -39,6 +39,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -74,7 +75,9 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     KeepBriefingRequested,
     KeptBriefingsRequested,
     PlayAudioRequested,
+    ServeFeedRequested,
     StopAudioRequested,
+    StopFeedServerRequested,
     SynthesizeAudioRequested,
     _audio_file_is_playable,
     audio_file_path_is_safe,
@@ -5260,6 +5263,238 @@ async def test_export_feed_directory_cancelled_error_propagates_uncaught(
 
     assert not (destination / "feed.xml").exists()
     app.notify.assert_not_called()
+
+
+# --- task-1760: serving the exported feed directory over localhost --------
+#
+# `Subscriptions.feed_server.FeedDirectoryServer` (its own dedicated test
+# file, `Tests/Subscriptions/test_feed_server.py`, covers the server itself
+# -- the real socket, the traversal matrix, the 405 gate) -- these tests
+# only exercise the UI wiring: the Serve/Stop buttons' disabled state, the
+# handler's own re-checks, and that pressing them actually starts/stops a
+# real server (proven with one real `httpx` round trip, not a mock).
+
+
+@pytest.mark.asyncio
+async def test_serve_and_stop_buttons_start_disabled_with_nothing_exported_or_running(
+    monkeypatch, tmp_path
+):
+    """Serve starts disabled with nothing exported yet (AC #2: nothing is
+    ever served without an explicit export having already happened), and
+    Stop starts disabled with nothing running -- proven by the server's
+    own `is_running` being `False`, i.e. no socket has been opened at all.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        assert screen._feed_server.is_running is False, (
+            "nothing may be listening before Serve is ever pressed"
+        )
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        serve_button = pane.query_one("#artifacts-serve-feed-button", Button)
+        stop_button = pane.query_one("#artifacts-stop-feed-button", Button)
+        assert serve_button.disabled is True, "nothing exported yet -> disabled"
+        assert stop_button.disabled is True, "nothing running -> disabled"
+        assert serve_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+        assert stop_button.compact
+
+
+@pytest.mark.asyncio
+async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path):
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.query_one("#artifacts-serve-feed-button", Button).disabled is False
+        assert pane.query_one("#artifacts-stop-feed-button", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
+    monkeypatch, tmp_path
+):
+    """End to end through the real buttons: Serve starts a real server for
+    the just-exported directory, the toast names the URL plus AC #4's
+    plain no-auth statement, a real `httpx` GET against that URL returns
+    the exported `feed.xml`, and Stop closes the socket.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+        await pilot.pause()
+        app.notify.reset_mock()  # discard the export's own toast
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-serve-feed-button", Button).press()
+        await pilot.pause()
+
+        assert screen._feed_server.is_running is True
+        url = screen._feed_server.url
+        assert url is not None and url.startswith("http://127.0.0.1:")
+
+        app.notify.assert_called_once()
+        args, kwargs = app.notify.call_args
+        assert url in args[0]
+        assert (
+            "No authentication — anyone who can reach this address can "
+            "read every file in this folder and its subfolders while it "
+            "is serving." in args[0]
+        )
+        # Loopback default -> no additional exposure sentence (task-1760
+        # review, M3: that sentence is reserved for a non-loopback bind).
+        assert "reachable from beyond this machine" not in args[0]
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+
+        response = httpx.get(url + "feed.xml", timeout=5.0)
+        assert response.status_code == 200
+        assert response.text == (destination / "feed.xml").read_text(encoding="utf-8")
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.query_one("#artifacts-serve-feed-button", Button).disabled is True
+        assert pane.query_one("#artifacts-stop-feed-button", Button).disabled is False
+
+        pane.query_one("#artifacts-stop-feed-button", Button).press()
+        await pilot.pause()
+
+        assert screen._feed_server.is_running is False
+        with pytest.raises(httpx.ConnectError):
+            httpx.get(url + "feed.xml", timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_screen_teardown_stops_a_still_running_feed_server(monkeypatch, tmp_path):
+    """A user who navigates away (or closes the app) without pressing Stop
+    must not leave a listening socket behind -- `on_unmount` closes it.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    feed_server = None
+    served_url = None
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-serve-feed-button", Button).press()
+        await pilot.pause()
+        assert screen._feed_server.is_running is True
+        feed_server = screen._feed_server
+        served_url = screen._feed_server.url
+        # Deliberately never pressing Stop -- teardown must do it instead.
+
+    assert feed_server.is_running is False
+    with pytest.raises(httpx.ConnectError):
+        httpx.get(served_url + "feed.xml", timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_a_second_serve_while_one_is_running_is_refused_naming_the_running_url(
+    tmp_path,
+):
+    """The task's own "one directory at a time" decision: a second Serve
+    (dispatched directly at the message level, since the button itself
+    already disables this case -- see `ServeFeedRequested`'s own docstring
+    on why the handler re-checks anyway) refuses and names the URL already
+    in use, rather than restarting on a different directory.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+    (destination / "feed.xml").write_text("<rss></rss>", encoding="utf-8")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, _pilot, _host):
+        screen._last_feed_export_directory = destination
+        try:
+            screen.handle_serve_feed_requested(ServeFeedRequested())
+            running_url = screen._feed_server.url
+            assert running_url is not None
+
+            app.notify.reset_mock()
+            screen.handle_serve_feed_requested(ServeFeedRequested())
+            app.notify.assert_called_once()
+            args, kwargs = app.notify.call_args
+            assert running_url in args[0]
+            assert kwargs.get("severity") == "warning"
+            assert kwargs.get("markup") is False
+        finally:
+            screen._feed_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_when_nothing_is_serving_toasts_a_refusal(tmp_path):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, _pilot, _host):
+        assert screen._feed_server.is_running is False
+        screen.handle_stop_feed_server_requested(StopFeedServerRequested())
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Nothing is being served" in args[0]
+    assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_serve_reads_bind_and_port_from_configured_bind_and_port(
+    monkeypatch, tmp_path
+):
+    """Proves the handler actually consults `feed_server.configured_bind_
+    and_port` (config defaults) rather than hardcoding loopback/ephemeral
+    -- without needing to bind a non-default address, which would make
+    this test environment-dependent.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+    (destination / "feed.xml").write_text("<rss></rss>", encoding="utf-8")
+
+    fake_defaults = Mock(return_value=("127.0.0.1", 0))
+    monkeypatch.setattr(screen_module, "configured_bind_and_port", fake_defaults)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, _pilot, _host):
+        screen._last_feed_export_directory = destination
+        try:
+            screen.handle_serve_feed_requested(ServeFeedRequested())
+            assert fake_defaults.call_count == 1
+        finally:
+            screen._feed_server.stop()
 
 
 # --- task-1780, Task 5: Keep + "Kept Briefings…" -----------------------------

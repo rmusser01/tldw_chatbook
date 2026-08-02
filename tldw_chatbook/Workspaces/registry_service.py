@@ -733,7 +733,22 @@ class LocalWorkspaceRegistryService:
             status=RuntimeBindingStatus.READY,
             metadata={"access": "rw" if allow_write else "ro"},
         )
-        return self.save_runtime_binding(binding)
+        binding_result = self.save_runtime_binding(binding)
+        # TASK-1971 (Agent Change Review): the FIRST shadow snapshot of a
+        # root happens here, at registration, on a background thread -- the
+        # first agent send must never absorb the cost of hashing a whole
+        # tree. Best-effort: failures log and are disclosed on first use.
+        try:
+            from tldw_chatbook.Workspaces.change_turn_tracker import (
+                initial_snapshot_in_background,
+            )
+
+            initial_snapshot_in_background(resolved)
+        except Exception:  # noqa: BLE001 -- registration must never fail on this
+            logger.opt(exception=True).debug(
+                "change_review: initial-snapshot hook failed at registration"
+            )
+        return binding_result
 
     def list_folder_bindings(
         self, workspace_id: str

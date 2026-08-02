@@ -285,6 +285,32 @@ class ExportFeedRequested(Message):
     """
 
 
+class ServeFeedRequested(Message):
+    """Posted when the user asks to serve the most recently exported feed
+    directory over localhost (task-1760).
+
+    Carries nothing, same shape as `ExportFeedRequested` and for the same
+    reason: which directory to serve is the screen's own state (the last
+    directory `export_feed_directory` wrote to), and whether one is even
+    available yet is already mirrored onto this pane's own `can_serve_
+    feed` reactive. Whether a server is ALREADY running is mirrored onto
+    `feed_server_running` -- `compose` disables this button while that is
+    `True` (see its own comment), but the screen's handler re-checks both
+    conditions anyway, the same "the button's disabled state and the
+    message it posts are two different frames" reasoning `handle_export_
+    feed_requested` already states for its own re-check.
+    """
+
+
+class StopFeedServerRequested(Message):
+    """Posted when the user asks to stop serving the feed directory.
+
+    Carries nothing, for the identical reason `StopAudioRequested` does:
+    there is exactly one feed server per screen (task-1760's own "one
+    directory at a time" decision), so there is nothing to name.
+    """
+
+
 class CitationActivated(Message):
     """Posted when the user activates a citation under the briefing body.
 
@@ -715,6 +741,29 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: see `KeptBriefingsRequested`'s own docstring on why that surface is
     #: scope-independent).
     chachanotes_available = reactive(False, recompose=True)
+    #: task-1760: whether the screen holds a directory `export_feed_
+    #: directory` has already written to this session -- the Serve button
+    #: needs SOMETHING to serve, and (unlike `has_audio_episodes`, which
+    #: asks whether an export is *possible*) this asks whether one has
+    #: actually happened yet. Screen-supplied, exactly like `has_audio_
+    #: episodes` above: this widget owns no filesystem state of its own,
+    #: and the directory is `Subscriptions.feed_server.FeedDirectoryServer`'s
+    #: to hold, not this pane's.
+    can_serve_feed = reactive(False, recompose=True)
+    #: task-1760: whether the screen's `FeedDirectoryServer` is currently
+    #: serving. Screen-supplied -- this pane never starts or stops the
+    #: server itself, it only posts `ServeFeedRequested`/`StopFeedServer
+    #: Requested` and renders whatever the screen reports back, the same
+    #: division of labour `selected_script`'s own module-docstring note
+    #: describes for audio PLAYBACK state (a recompose must never silently
+    #: reset "is something running" back to a default that disagrees with
+    #: reality).
+    feed_server_running = reactive(False, recompose=True)
+    #: task-1760: the running server's URL, or `None` when nothing is
+    #: being served. Screen-supplied alongside `feed_server_running` --
+    #: used only for the Stop button's tooltip (the toast that announces a
+    #: fresh URL is the screen's own responsibility, not this pane's).
+    feed_server_url = reactive[str | None](None, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -982,6 +1031,55 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     if not self.has_audio_episodes
                     else "Export this watchlist's audio episodes as a "
                     "podcast feed directory."
+                ),
+            )
+            # task-1760: Serve/Stop, adjacent to Export Feed for the same
+            # reason Export Feed itself lives here (review round 1,
+            # Important #1, above) -- serving a feed is the natural next
+            # step after exporting one, and this toolbar is the one place
+            # that is guaranteed reachable regardless of any briefing/
+            # script selection. Two buttons, not one toggling label,
+            # mirroring `#artifacts-audio-toolbar`'s own Play/Stop pair
+            # below: Serve disabled while already running OR with nothing
+            # exported yet; Stop disabled while nothing is running. This
+            # also means a SECOND `ServeFeedRequested` while one is
+            # already running is unreachable through the button itself --
+            # the screen's handler still re-checks (see that message's own
+            # docstring), since the button's disabled state and the
+            # message it posts are two different frames, same as every
+            # other guard on this pane.
+            if self.feed_server_running:
+                serve_tooltip = (
+                    "A feed is already being served. Stop it before "
+                    "serving a different export."
+                )
+            elif not self.can_serve_feed:
+                serve_tooltip = (
+                    "Export a feed directory first, then serve it over "
+                    "localhost."
+                )
+            else:
+                serve_tooltip = (
+                    "Serve the exported feed directory over localhost -- "
+                    "no authentication; anyone who can reach the address "
+                    "can read it while it is serving."
+                )
+            yield Button(
+                "Serve Feed",
+                id="artifacts-serve-feed-button",
+                compact=True,
+                disabled=self.feed_server_running or not self.can_serve_feed,
+                tooltip=serve_tooltip,
+            )
+            yield Button(
+                "Stop Serving",
+                id="artifacts-stop-feed-button",
+                compact=True,
+                disabled=not self.feed_server_running,
+                tooltip=(
+                    f"Stop serving {self.feed_server_url}."
+                    if self.feed_server_running and self.feed_server_url
+                    else "Nothing is being served."
                 ),
             )
 
@@ -1523,6 +1621,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(StopAudioRequested())
         elif button_id == "artifacts-export-feed-button":
             self.post_message(ExportFeedRequested())
+        elif button_id == "artifacts-serve-feed-button":
+            self.post_message(ServeFeedRequested())
+        elif button_id == "artifacts-stop-feed-button":
+            self.post_message(StopFeedServerRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:

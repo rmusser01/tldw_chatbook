@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
+import tldw_chatbook.app as app_module
 
 
 def _minimal_app(media_db: Any = None) -> TldwCli:
@@ -44,6 +45,26 @@ def _make_job(
         chunk_size=chunk_size,
         ingest_options=ingest_options or {},
     )
+
+
+def _direct_failed_attempt() -> dict[str, object]:
+    return {
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": "ingest-job-1",
+        "provider_id": "transcribe-cpp",
+        "model_id": "local-gguf:whisper",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "native",
+        "requested_device": "auto",
+        "effective_device": None,
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "error_code": "inference_failed",
+    }
 
 
 class TestIngestJobOptions:
@@ -249,6 +270,50 @@ class TestIngestJobOptions:
         assert options["language"] == "ja"
         assert options["translation_target_language"] == "en"
 
+    def test_transcribe_cpp_reads_dedicated_path_into_private_worker_context(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        secret_path = "/private/models/speech.gguf"
+        monkeypatch.setattr(
+            app_module,
+            "get_cli_setting",
+            lambda key, *args: secret_path
+            if key == "transcription.transcribe_cpp.model_path"
+            else args[0]
+            if args
+            else None,
+        )
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "transcribe-cpp",
+                    "language": "en",
+                    "timestamps": True,
+                }
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "transcribe-cpp"
+        assert options["transcription_model"] is None
+        assert options["transcription_precision"] == "native"
+        assert options["language"] == "en"
+        assert options["transcription_context"] == {
+            "model_path": secret_path,
+            "attempt_id": "ingest-job-test-attempt-1",
+            "batch_id": None,
+            "job_id": "ingest-job-test",
+            "retry_of_attempt_id": None,
+            "retry_of_job_id": None,
+            "retry_source_failure_provenance": None,
+        }
+        assert "transcription_model_path" not in options
+        assert secret_path not in str(job.ingest_options)
+
     def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
         self,
     ) -> None:
@@ -415,6 +480,46 @@ class TestSubmitLibraryIngestJob:
         assert job.error == "Media database is unavailable."
         # ingest_options should still be preserved on the failed job.
         assert job.ingest_options == {"generic": {"analyze": True}}
+
+    def test_explicit_faster_whisper_retry_overrides_only_provider_and_links_job(
+        self,
+    ) -> None:
+        app = _minimal_app(media_db="present")
+        original = app.submit_library_ingest_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "generic": {"chunk": True},
+                "audio_video": {
+                    "transcription_provider": "transcribe-cpp",
+                    "language": "en",
+                    "timestamps": True,
+                },
+            },
+        )
+        failed = app.library_ingest_jobs.mark_failed(
+            original.job_id,
+            error="Speech-to-text inference failed.",
+            stt_failure_provenance=_direct_failed_attempt(),
+        )
+
+        retry = app.retry_library_ingest_job_with_provider(
+            failed.job_id,
+            "faster-whisper",
+        )
+
+        assert retry.retry_of_job_id == failed.job_id
+        assert retry.retry_source_failure_provenance == _direct_failed_attempt()
+        assert retry.ingest_options == {
+            "generic": {"chunk": True},
+            "audio_video": {
+                "transcription_provider": "faster-whisper",
+                "language": "en",
+                "timestamps": True,
+            },
+        }
+        assert original.ingest_options["audio_video"]["transcription_provider"] == (
+            "transcribe-cpp"
+        )
 
 
 @pytest.mark.parametrize(
