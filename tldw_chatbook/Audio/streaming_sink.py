@@ -113,6 +113,8 @@ from typing import Any, AsyncIterator, Callable, Literal, Optional
 
 from loguru import logger
 
+from tldw_chatbook.Utils import optional_deps
+
 #: Sentinel pushed onto a sink's notify queue to tell its notify thread to
 #: exit its drain loop once every already-queued job has been processed.
 _NOTIFY_STOP = object()
@@ -218,7 +220,17 @@ def sink_available() -> bool:
 
     Uses `importlib.util.find_spec` rather than an actual import so callers
     can probe availability without paying (or risking) an import of the
-    audio backend.
+    audio backend. `optional_deps.py` has an equivalent non-importing
+    pattern (`_check_dependency_installed`, docstring: "reserved for native
+    runtimes whose import can initialize hardware or abort the
+    interpreter" -- exactly `sounddevice`'s situation, see
+    `_import_sounddevice()` below) but it is a private helper only ever
+    called from within `optional_deps.py` itself today, and there is no
+    public find_spec-only probe for `sounddevice` specifically (unlike,
+    say, `embeddings_rag_deps_installed()`/`parakeet_onnx_deps_installed()`
+    for other feature groups) -- so this keeps its own inline `find_spec`
+    call rather than reaching into `optional_deps` internals for a probe
+    it does not otherwise expose.
 
     Returns:
         `True` if `sounddevice` can be imported, `False` otherwise.
@@ -229,13 +241,45 @@ def sink_available() -> bool:
 def _import_sounddevice():
     """Lazily import and return the `sounddevice` module.
 
+    Delegates the actual import to `optional_deps.get_safe_import()` --
+    this project's shared entry point for optional third-party
+    dependencies (compliance finding F1) -- rather than a bare `import
+    sounddevice` statement, so `sounddevice` participates in the same
+    caching (`optional_deps.MODULES`) and availability bookkeeping
+    (`optional_deps.DEPENDENCIES_AVAILABLE`) every other optional
+    dependency does.
+
+    This function still wraps that call in its own broad `except
+    Exception`, deliberately broader than `optional_deps.check_dependency`'s
+    own `except (ImportError, ModuleNotFoundError)`: `sounddevice` is a
+    native-runtime dependency whose *import itself* calls PortAudio's
+    `Pa_Initialize()`, which raises `PortAudioError` -- a plain
+    `Exception` subclass, not an `ImportError` -- when the audio backend
+    cannot initialize (headless container, no ALSA, CoreAudio unavailable,
+    audio server down). That is the exact failure mode the whole-branch
+    review's C1 finding pinned (see the module docstring, and
+    `Tests/Audio/test_audio_init_lazy_import_safety.py`'s
+    `test_app_import_survives_a_portaudio_init_failure` /
+    `test_streaming_sink_import_alone_pulls_no_audio_backend`). Were this
+    function to rely solely on `optional_deps`' own narrower catch, a
+    `PortAudioError` raised by `get_safe_import()`'s internal
+    `__import__("sounddevice")` would propagate out of this function
+    uncaught -- and, since `open()` calls this outside its own
+    stream-building `try`/`except`, out of `open()` itself, raising into
+    the caller instead of failing closed into `SinkFailed`. That would
+    reintroduce C1's failure mode one call-site later: not at app-import
+    time (both pins above import-check that), but at `open()`-call time,
+    the first time a sink actually tries to play audio on a box where
+    PortAudio can't init. This function's own `except Exception` is
+    therefore load-bearing and must not be narrowed to match
+    `optional_deps`'.
+
     Returns:
         The imported `sounddevice` module, or `None` if it is not
         installed or fails to import for any reason.
     """
     try:
-        import sounddevice
-        return sounddevice
+        return optional_deps.get_safe_import("sounddevice")
     except Exception:
         return None
 
