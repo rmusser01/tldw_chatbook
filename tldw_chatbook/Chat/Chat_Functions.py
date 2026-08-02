@@ -78,6 +78,11 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_mlx_lm,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
+from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
+    is_sensitive_llm_request,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
 from .chat_persistence_service import ChatPersistenceService  # noqa: E402
@@ -129,6 +134,43 @@ API_CALL_HANDLERS = {
     "local_vllm": chat_with_vllm,
     "local_mlx_lm": chat_with_mlx_lm,
 }
+
+# Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
+# The parity test then forces every newly registered chat handler through the
+# sensitive auxiliary-request audit before it can silently join the dispatch
+# surface.
+SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "cohere",
+        "groq",
+        "openrouter",
+        "deepseek",
+        "mistral",
+        "mistralai",
+        "google",
+        "huggingface",
+        "moonshot",
+        "zai",
+        "llama_cpp",
+        "koboldcpp",
+        "oobabooga",
+        "tabbyapi",
+        "vllm",
+        "local-llm",
+        "ollama",
+        "aphrodite",
+        "custom-openai-api",
+        "custom-openai-api-2",
+        "mlx_lm",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "local_mlx_lm",
+    }
+)
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
 corresponding handler functions (e.g., `chat_with_openai`). This is used by
@@ -887,7 +929,10 @@ def chat_api_call(
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
-        error_text = getattr(e.response, "text", str(e))
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logger.error(
             "{} API call failed; status={}; reason=http_error",
             endpoint_lower,
@@ -926,8 +971,11 @@ def chat_api_call(
             endpoint_lower,
             type(e).__name__,
         )
+        error_detail = safe_llm_exception_message(e)
         raise ChatProviderError(
-            provider=endpoint_lower, message=f"Network error: {e}", status_code=504
+            provider=endpoint_lower,
+            message=f"Network error: {error_detail}",
+            status_code=504,
         )
     except (
         ChatAuthenticationError,
@@ -947,6 +995,35 @@ def chat_api_call(
             type(e_chat_direct).__name__,
             status_code,
         )
+        if is_sensitive_llm_request():
+            safe_message = f"{type(e_chat_direct).__name__} from {endpoint_lower}."
+            if isinstance(e_chat_direct, ChatAuthenticationError):
+                raise ChatAuthenticationError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatRateLimitError):
+                raise ChatRateLimitError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatBadRequestError):
+                raise ChatBadRequestError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatConfigurationError):
+                raise ChatConfigurationError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatProviderError):
+                raise ChatProviderError(
+                    provider=endpoint_lower,
+                    message=safe_message,
+                    status_code=status_code,
+                ) from None
+            raise ChatAPIError(
+                provider=endpoint_lower,
+                message=safe_message,
+                status_code=status_code,
+            ) from None
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
         logger.error(
@@ -962,9 +1039,10 @@ def chat_api_call(
                 message=f"Unsupported API endpoint: {endpoint_lower}",
             )
         else:
+            error_detail = safe_llm_exception_message(e)
             raise ChatBadRequestError(
                 provider=endpoint_lower,
-                message=f"{error_type} for {endpoint_lower}: {e}",
+                message=f"{error_type} for {endpoint_lower}: {error_detail}",
             )
     except Exception as e:
         logger.error(
@@ -972,9 +1050,13 @@ def chat_api_call(
             endpoint_lower,
             type(e).__name__,
         )
+        error_detail = safe_llm_exception_message(e)
         raise ChatAPIError(
             provider=endpoint_lower,
-            message=f"An unexpected internal error occurred in chat_api_call for {endpoint_lower}: {str(e)}",
+            message=(
+                "An unexpected internal error occurred in chat_api_call for "
+                f"{endpoint_lower}: {error_detail}"
+            ),
             status_code=500,
         )
 

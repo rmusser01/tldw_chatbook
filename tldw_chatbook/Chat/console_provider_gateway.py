@@ -8,9 +8,10 @@ import json
 import threading
 import weakref
 from collections.abc import Iterator, Mapping
+from contextvars import copy_context
 from dataclasses import dataclass, field, replace
-from types import GeneratorType
-from typing import Any, AsyncIterator, Callable
+from types import GeneratorType, MappingProxyType
+from typing import Any, AsyncIterator, Callable, Literal, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -37,6 +38,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
@@ -58,6 +60,8 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+MAX_AUXILIARY_OUTPUT_TOKENS = 131_072
+"""Hard ceiling for one auxiliary completion's requested output allowance."""
 
 
 @dataclass(slots=True)
@@ -302,6 +306,100 @@ class ConsoleProviderResolution:
     thinking_budget_tokens: int | None = None
     streaming: bool = True
     prompt_caching: bool | None = None
+
+
+def _freeze_auxiliary_value(value: Any) -> Any:
+    """Copy a request value into an immutable representation."""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_auxiliary_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_auxiliary_value(item) for item in value)
+    return value
+
+
+def _thaw_auxiliary_value(value: Any) -> Any:
+    """Return provider-compatible mutable containers from frozen request data."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_auxiliary_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_auxiliary_value(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True)
+class AuxiliaryCompletionRequest:
+    """Immutable, content-sensitive input to one auxiliary provider call."""
+
+    resolution: ConsoleProviderResolution = field(repr=False)
+    messages: tuple[Mapping[str, Any], ...] = field(repr=False)
+    response_format: Mapping[str, Any] | None = field(repr=False)
+    max_output_tokens: int
+    sensitive: Literal[True] = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.resolution, ConsoleProviderResolution):
+            raise TypeError("resolution must be a ConsoleProviderResolution")
+        if not self.resolution.ready:
+            raise ValueError("Pinned provider resolution is not ready.")
+        if (
+            not isinstance(self.resolution.model, str)
+            or not self.resolution.model.strip()
+        ):
+            raise ValueError("Pinned provider model is required.")
+        if not isinstance(self.messages, tuple) or not self.messages:
+            raise TypeError("messages must be a non-empty tuple")
+
+        frozen_messages: list[Mapping[str, Any]] = []
+        for message in self.messages:
+            if not isinstance(message, Mapping):
+                raise TypeError("Each auxiliary message must be a mapping.")
+            if set(message) != {"role", "content"}:
+                raise ValueError("Auxiliary messages contain only role and content.")
+            role = message.get("role")
+            content = message.get("content")
+            if not isinstance(role, str) or not role.strip():
+                raise ValueError("Auxiliary message role is required.")
+            if not isinstance(content, str):
+                raise TypeError("Auxiliary message content must be text.")
+            frozen_messages.append(
+                cast(Mapping[str, Any], _freeze_auxiliary_value(message))
+            )
+
+        if self.response_format is not None and not isinstance(
+            self.response_format, Mapping
+        ):
+            raise TypeError("response_format must be a mapping or None")
+        if isinstance(self.max_output_tokens, bool) or not isinstance(
+            self.max_output_tokens, int
+        ):
+            raise TypeError("max_output_tokens must be an integer")
+        if not 0 < self.max_output_tokens <= MAX_AUXILIARY_OUTPUT_TOKENS:
+            raise ValueError(
+                f"max_output_tokens must be between 1 and {MAX_AUXILIARY_OUTPUT_TOKENS}"
+            )
+        if self.sensitive is not True:
+            raise ValueError("Auxiliary completions must be sensitive.")
+
+        object.__setattr__(self, "messages", tuple(frozen_messages))
+        if self.response_format is not None:
+            object.__setattr__(
+                self,
+                "response_format",
+                cast(Mapping[str, Any], _freeze_auxiliary_value(self.response_format)),
+            )
+
+
+@dataclass(frozen=True)
+class AuxiliaryCompletionResult:
+    """Exact text and pinned provider identity returned by an auxiliary call."""
+
+    provider: str
+    model: str
+    text: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -1130,6 +1228,7 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        strict_response: bool = False,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -1142,6 +1241,8 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            strict_response: Raise when the provider response has no supported
+                assistant-content shape instead of treating it as empty.
 
         Returns:
             Assistant-visible completion text.
@@ -1164,7 +1265,156 @@ class ConsoleProviderGateway:
             ),
         )
         response.raise_for_status()
-        return self._content_from_completion_response(response) or ""
+        content = self._content_from_completion_response(response)
+        if content is None and strict_response:
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response.",
+                provider="llama_cpp",
+            )
+        return content or ""
+
+    async def complete_auxiliary(
+        self,
+        request: AuxiliaryCompletionRequest,
+    ) -> AuxiliaryCompletionResult:
+        """Run exactly one sensitive, non-streaming completion.
+
+        The captured resolution is the sole provider authority. This path
+        deliberately bypasses normal Console history, tools, streaming
+        normalization, fallback copy, and persistence.
+        """
+
+        if not isinstance(request, AuxiliaryCompletionRequest):
+            raise TypeError("request must be an AuxiliaryCompletionRequest")
+        resolution = replace(
+            request.resolution,
+            streaming=False,
+            max_tokens=request.max_output_tokens,
+        )
+        provider = resolution.provider
+        model = cast(str, resolution.model)
+        messages = cast(
+            list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
+        )
+        response: Any = _UNSUPPORTED_RESPONSE
+        try:
+            with sensitive_llm_request():
+                if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                    text = await self.complete_llamacpp_chat(
+                        base_url=resolution.base_url,
+                        model=model,
+                        messages=messages,
+                        temperature=resolution.temperature,
+                        top_p=resolution.top_p,
+                        min_p=resolution.min_p,
+                        top_k=resolution.top_k,
+                        max_tokens=request.max_output_tokens,
+                        strict_response=True,
+                    )
+                else:
+                    kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
+                    context = copy_context()
+                    response = await asyncio.to_thread(
+                        context.run,
+                        self._complete_sensitive_sync,
+                        kwargs,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", 502)
+            raise ChatProviderError(
+                safe_provider_error_copy(provider, exc),
+                provider=provider,
+                status_code=status_code if isinstance(status_code, int) else 502,
+            ) from None
+
+        if response is not _UNSUPPORTED_RESPONSE:
+            text = self._auxiliary_response_text(response)
+
+        if not isinstance(text, str):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response.",
+                provider=provider,
+            )
+        return AuxiliaryCompletionResult(provider=provider, model=model, text=text)
+
+    def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
+        """Invoke the final synchronous adapter under the sensitive policy."""
+
+        with sensitive_llm_request():
+            return self._chat_api_call(**dict(kwargs))
+
+    @staticmethod
+    def _auxiliary_response_text(response: Any) -> str:
+        """Extract exact assistant text from supported non-streaming shapes."""
+
+        if isinstance(response, str):
+            return response
+        if not isinstance(response, Mapping):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        message = first.get("message")
+        if not isinstance(message, Mapping) or not isinstance(
+            message.get("content"), str
+        ):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        return cast(str, message["content"])
+
+    @staticmethod
+    def _auxiliary_chat_api_kwargs(
+        request: AuxiliaryCompletionRequest,
+        resolution: ConsoleProviderResolution,
+    ) -> dict[str, Any]:
+        """Build the isolated, tool-free kwargs for one auxiliary adapter."""
+
+        payload = cast(list[dict[str, Any]], _thaw_auxiliary_value(request.messages))
+        system_parts: list[str] = []
+        while payload and payload[0].get("role") == "system":
+            content = cast(str, payload.pop(0).get("content"))
+            if content:
+                system_parts.append(content)
+        kwargs: dict[str, Any] = {
+            "api_endpoint": resolution.execution_key,
+            "system_message": "\n\n".join(system_parts) or None,
+            "messages_payload": payload,
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": False,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": request.max_output_tokens,
+            "seed": resolution.seed,
+            "presence_penalty": resolution.presence_penalty,
+            "frequency_penalty": resolution.frequency_penalty,
+            "reasoning_effort": resolution.reasoning_effort,
+            "reasoning_summary": resolution.reasoning_summary,
+            "verbosity": resolution.verbosity,
+            "thinking_effort": resolution.thinking_effort,
+            "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "response_format": (
+                _thaw_auxiliary_value(request.response_format)
+                if request.response_format is not None
+                else None
+            ),
+        }
+        return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
         self,

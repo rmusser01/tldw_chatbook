@@ -21,6 +21,14 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    llm_content_byte_count,
+    llm_retry_count,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+    safe_llm_url_host,
+)
 
 
 ####################
@@ -124,8 +132,9 @@ def _chat_with_openai_compatible_local_server(
     api_retry_delay: int = 1,
 ):
     start_time = time.time()
+    logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
-        f"{provider_name}: Chat request starting. API Base: {api_base_url}, Model: {model_name}"
+        f"{provider_name}: Chat request starting. API Base: {logged_api_base}, Model: {model_name}"
     )
 
     # Log request metrics
@@ -221,18 +230,28 @@ def _chat_with_openai_compatible_local_server(
         # This handles cases where the config provides just the server root.
         full_api_url = base_url.rstrip("/") + "/" + chat_completions_path
 
+    logged_api_url = safe_llm_url_host(full_api_url)
     logging.debug(
-        f"{provider_name}: Posting to {full_api_url}. Payload keys: {list(payload.keys())}"
+        f"{provider_name}: Posting to {logged_api_url}. Payload keys: {list(payload.keys())}"
     )
-    logging.debug(
-        f"{provider_name} Payload details (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}"
-    )
+    if is_sensitive_llm_request():
+        logging.debug(
+            f"{provider_name}: Sensitive request metadata: "
+            f"message_count={len(api_messages)}, "
+            f"content_bytes={llm_content_byte_count(api_messages)}, "
+            f"streaming={bool(streaming)}"
+        )
+    else:
+        logging.debug(
+            f"{provider_name} Payload details (excluding messages): "
+            f"{{k: v for k, v in payload.items() if k != 'messages'}}"
+        )
 
     try:
         session = requests.Session()
         # Configure retries
         retry_strategy = Retry(
-            total=api_retries,
+            total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[
                 429,
@@ -379,8 +398,13 @@ def _chat_with_openai_compatible_local_server(
             return response_data
     except requests.exceptions.HTTPError as e_http:
         # Logged by a higher level, but good to note here too
+        raw_error_text = getattr(e_http.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e_http)
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logging.error(
-            f"{provider_name}: HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}",
+            f"{provider_name}: HTTP Error: "
+            f"{getattr(e_http.response, 'status_code', 'N/A')} - {error_text[:500]}",
             exc_info=False,
         )
 
@@ -407,7 +431,11 @@ def _chat_with_openai_compatible_local_server(
         )
         raise  # Re-raise to be caught by chat_api_call's handler
     except requests.RequestException as e_req:
-        logging.error(f"{provider_name}: Request Exception: {e_req}", exc_info=True)
+        error_text = safe_llm_exception_message(e_req)
+        logging.error(
+            f"{provider_name}: Request Exception: {error_text}",
+            exc_info=not is_sensitive_llm_request(),
+        )
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -430,7 +458,7 @@ def _chat_with_openai_compatible_local_server(
         )
         raise ChatProviderError(
             provider=provider_name,
-            message=f"Network error making request to {provider_name}: {e_req}",
+            message=f"Network error making request to {provider_name}: {error_text}",
             status_code=503,
         )  # 503 Service Unavailable
     except (
@@ -438,9 +466,10 @@ def _chat_with_openai_compatible_local_server(
         KeyError,
         TypeError,
     ) as e_data:  # Issues with payload construction or response parsing
+        error_text = safe_llm_exception_message(e_data)
         logging.error(
-            f"{provider_name}: Data processing or configuration error: {e_data}",
-            exc_info=True,
+            f"{provider_name}: Data processing or configuration error: {error_text}",
+            exc_info=not is_sensitive_llm_request(),
         )
 
         # Log data error metrics
@@ -464,7 +493,7 @@ def _chat_with_openai_compatible_local_server(
         )
         raise ChatBadRequestError(
             provider=provider_name,
-            message=f"{provider_name} data or configuration error: {e_data}",
+            message=f"{provider_name} data or configuration error: {error_text}",
         )
 
 
@@ -923,14 +952,17 @@ def chat_with_kobold(
     # Other kobold params: typical_p, tfs, top_a, etc. could be added from cfg
 
     logging.debug(
-        f"KoboldAI (Native): Posting to {current_api_base_url}. Prompt (first 200 chars): '{final_prompt_string[:200]}...'"
+        "KoboldAI (Native) request metadata: "
+        f"host={safe_llm_url_host(current_api_base_url)}; "
+        f"model={current_model or 'default'}; streaming=false; "
+        f"message_count={len(input_data) + (1 if system_message else 0)}; "
+        f"content_bytes={llm_content_byte_count(final_prompt_string)}"
     )
-    logging.debug(f"KoboldAI (Native) Payload details: {payload}")
 
     try:
         session = requests.Session()
         retry_strategy = Retry(
-            total=api_retries,
+            total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
@@ -983,22 +1015,34 @@ def chat_with_kobold(
             }  # Assuming "stop"
         else:
             logging.error(
-                f"KoboldAI (Native): Unexpected response structure: {response_data}"
+                "KoboldAI (Native): Unexpected response structure; "
+                f"response_type={type(response_data).__name__}; "
+                f"content_bytes={llm_content_byte_count(response_data)}"
             )
+            response_detail = safe_llm_error_detail(response_data)
             raise ChatProviderError(
                 provider="kobold",
-                message=f"Unexpected response structure from KoboldAI (Native): {str(response_data)[:200]}",
+                message=(
+                    "Unexpected response structure from KoboldAI (Native): "
+                    f"{str(response_detail)[:200]}"
+                ),
             )
 
     except requests.exceptions.HTTPError as e_http:
+        status_code = getattr(e_http.response, "status_code", 500)
+        raw_error_text = getattr(e_http.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e_http)
+        error_detail = str(safe_llm_error_detail(raw_error_text))
         logging.error(
-            f"KoboldAI (Native): HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}",
+            "KoboldAI (Native): HTTP error; "
+            f"host={safe_llm_url_host(current_api_base_url)}; "
+            f"status={status_code}; detail={error_detail[:500]}",
             exc_info=False,
         )
 
         # Log HTTP error metrics
         duration = time.time() - start_time
-        status_code = getattr(e_http.response, "status_code", 500)
         log_counter(
             "kobold_api_error",
             labels={
@@ -1017,7 +1061,11 @@ def chat_with_kobold(
         )
         raise
     except requests.RequestException as e_req:
-        logging.error(f"KoboldAI (Native): Request Exception: {e_req}", exc_info=True)
+        error_detail = safe_llm_exception_message(e_req)
+        logging.error(
+            f"KoboldAI (Native): Request Exception: {error_detail}",
+            exc_info=not is_sensitive_llm_request(),
+        )
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -1032,12 +1080,14 @@ def chat_with_kobold(
         )
         raise ChatProviderError(
             provider="kobold",
-            message=f"Network error calling KoboldAI (Native): {e_req}",
+            message=f"Network error calling KoboldAI (Native): {error_detail}",
             status_code=503,
         )
     except (ValueError, KeyError, TypeError) as e_data:
+        error_detail = safe_llm_exception_message(e_data)
         logging.error(
-            f"KoboldAI (Native): Data or configuration error: {e_data}", exc_info=True
+            f"KoboldAI (Native): Data or configuration error: {error_detail}",
+            exc_info=not is_sensitive_llm_request(),
         )
 
         # Log data error metrics
@@ -1052,7 +1102,8 @@ def chat_with_kobold(
             labels={"model": current_model or "default", "error_type": "data_error"},
         )
         raise ChatBadRequestError(
-            provider="kobold", message=f"KoboldAI (Native) config/data error: {e_data}"
+            provider="kobold",
+            message=f"KoboldAI (Native) config/data error: {error_detail}",
         )
 
 
