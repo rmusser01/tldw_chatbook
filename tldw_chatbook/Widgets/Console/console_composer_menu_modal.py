@@ -32,6 +32,7 @@ ACTION_ATTACH_CONTEXT = "attach-context"
 #: Matches the `EPHEMERAL_BLOCKED_ACTIONS` registry key, so the
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
+ACTION_PROMPTS = "prompts"
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,11 @@ def build_composer_menu_entries(
         else "No Chatbook artifact is available to save yet"
     )
     entries = (
+        ComposerMenuEntry(
+            ACTION_PROMPTS,
+            "Prompts",
+            "Browse, improve, or build reusable prompts",
+        ),
         ComposerMenuEntry(
             ACTION_ATTACH_CONTEXT,
             "Attach",

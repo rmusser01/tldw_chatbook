@@ -35,6 +35,7 @@ def test_menu_lists_the_requested_actions_in_order():
     """
     ids = [e.action_id for e in build_composer_menu_entries()]
     assert ids == [
+        "prompts",
         ACTION_ATTACH_CONTEXT,
         ACTION_SAVE_CHATBOOK,
         ACTION_GENERATE_IMAGE,
@@ -42,6 +43,46 @@ def test_menu_lists_the_requested_actions_in_order():
         ACTION_NARRATE_CONVERSATION,
         ACTION_IMPERSONATE,
     ]
+
+
+@pytest.mark.unit
+def test_prompts_entry_is_stable_visible_and_descriptive():
+    """Prompt discovery is a stable first-class composer-menu action."""
+    entries = build_composer_menu_entries()
+
+    prompts = entries[0]
+    assert prompts.action_id == "prompts"
+    assert prompts.label == "Prompts"
+    assert prompts.enabled is True
+    assert prompts.description == "Browse, improve, or build reusable prompts"
+
+
+@pytest.mark.unit
+def test_prompts_preserves_normal_and_temporary_menu_prefixes():
+    """Temporary Save may prepend, but never displaces the normal order."""
+    normal = build_composer_menu_entries(can_save_chatbook=False)
+    temporary = build_composer_menu_entries(
+        ephemeral=True,
+        can_save_chatbook=False,
+    )
+
+    assert [entry.action_id for entry in normal[:3]] == [
+        "prompts",
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
+    ]
+    assert [entry.action_id for entry in temporary[:4]] == [
+        ACTION_SAVE_CHAT,
+        "prompts",
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
+    ]
+    assert [entry.action_id for entry in normal[1:]] == [
+        entry.action_id for entry in temporary[2:]
+    ]
+    # Existing temporary-chat policy still changes Save Chatbook's visible
+    # disabled reason; the new row must not flatten that distinction.
+    assert normal[2].description != temporary[3].description
 
 
 @pytest.mark.unit
@@ -1012,6 +1053,20 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     screen._dispatch_promote_console_temporary_session = lambda: calls.append(True)
 
     screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
+
+    assert calls == [True]
+
+
+@pytest.mark.unit
+def test_prompts_menu_choice_opens_exactly_one_browse_modal():
+    """The existing callback dispatch owns the one modal entry point."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._open_console_prompts_modal = lambda: calls.append(True)
+
+    screen._handle_console_composer_menu_choice("prompts")
 
     assert calls == [True]
 

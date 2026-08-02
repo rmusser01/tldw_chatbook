@@ -388,9 +388,11 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
     ACTION_NARRATE_CONVERSATION,
+    ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
     ConsoleComposerMenuModal,
 )
+from ...Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
@@ -5683,6 +5685,9 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_SAVE_CHAT:
             self._dispatch_promote_console_temporary_session()
             return
+        if action_id == ACTION_PROMPTS:
+            self._open_console_prompts_modal()
+            return
         # Attach and Save Chatbook moved out of the width-bounded action row
         # into this menu. Both route to the SAME handlers their buttons used,
         # so the menu is a second entry point rather than a second
@@ -5713,6 +5718,56 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-impersonate",
             )
+
+    def _open_console_prompts_modal(self) -> None:
+        """Open the source-aware Prompt Library without changing the draft."""
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+
+        async def capabilities(source: str) -> Any:
+            method = getattr(service, "get_capabilities", None)
+            if not callable(method):
+                raise ValueError(f"{source.title()} Prompt source is unavailable.")
+            return await method(mode=source)
+
+        async def list_page(source: str, page: int) -> Any:
+            method = getattr(service, "list_prompts", None)
+            if not callable(method):
+                raise ValueError(f"{source.title()} Prompt source is unavailable.")
+            return await method(mode=source, page=page, per_page=10)
+
+        async def search(source: str, query: str) -> Any:
+            method = getattr(service, "search_prompts", None)
+            if not callable(method):
+                raise ValueError(f"{source.title()} Prompt search is unavailable.")
+            return await method(mode=source, query=query, limit=25)
+
+        async def detail(source: str, identifier: str) -> Any:
+            method = getattr(service, "get_prompt", None)
+            if not callable(method):
+                raise ValueError(f"{source.title()} Prompt source is unavailable.")
+            return await method(mode=source, prompt_identifier=identifier)
+
+        async def save(**payload: Any) -> Any:
+            method = getattr(service, "save_prompt", None)
+            if not callable(method):
+                raise ValueError("The selected Prompt source cannot save.")
+            source = str(payload.pop("source", "local"))
+            return await method(mode=source, **payload)
+
+        def restore_focus(_result: None) -> None:
+            self._focus_console_composer_if_needed(force=True)
+
+        self.app.push_screen(
+            ConsolePromptsModal(
+                capabilities=capabilities,
+                list_page=list_page,
+                search=search,
+                detail=detail,
+                save=save,
+                improve_unavailable_reason=self._console_provider_blocker_copy(),
+            ),
+            callback=restore_focus,
+        )
 
     def _dispatch_promote_console_temporary_session(self) -> None:
         """Kick off the temporary-chat save as its own worker (F5, final review).

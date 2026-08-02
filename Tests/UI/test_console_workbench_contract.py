@@ -474,6 +474,21 @@ async def test_console_control_bar_exposes_compact_visible_actions():
         assert console.query_one("#console-control-attach-context").disabled is False
         assert console.query_one("#console-control-run-library-rag").disabled is False
         assert console.query_one("#console-control-help").disabled is False
+        assert not console.query("#console-control-prompts")
+
+
+def test_prompts_does_not_add_a_standalone_composer_or_top_action() -> None:
+    """Prompts belongs only to the existing composer hamburger menu."""
+    import inspect
+
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    source = inspect.getsource(ConsoleComposerBar.compose)
+    assert 'id="console-prompts"' not in source
+    assert 'id="console-composer-prompts"' not in source
+
+    state = build_console_workbench_state(control_state=_control_state())
+    assert "prompts" not in {action.id for action in state.actions}
 
 
 @pytest.mark.asyncio
