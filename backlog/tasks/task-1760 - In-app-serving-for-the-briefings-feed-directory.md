@@ -1,7 +1,7 @@
 ---
 id: TASK-1760
 title: 'In-app serving for the briefings feed directory'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 20:05'
 labels:
@@ -73,3 +73,12 @@ textual-serve entirely:
 - [ ] #4 A security review documents the default bind scope (localhost vs. wider), and states the
       no-auth-by-default posture explicitly rather than leaving it implicit
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. New `tldw_chatbook/Subscriptions/feed_server.py`: stdlib `ThreadingHTTPServer` on a daemon thread wrapping a locked-down `SimpleHTTPRequestHandler(directory=...)` subclass — GET/HEAD only, resolved-path prefix check on top of `translate_path` (symlink escapes rejected), no auth (posture stated), start()/stop() with ephemeral-or-configured port, bind 127.0.0.1 by default (`[briefings_feed_server]` config for port/bind; serving itself never auto-starts).
+2. UI: Serve/Stop action beside the phase-3 feed export on the watchlists Artifacts pane; toast shows the URL and the plain no-auth statement; state is session-only.
+3. Security review notes (AC #4) in the user guide's feed section + module docstring.
+4. Tests: real server on an ephemeral localhost port (round-trip via httpx), traversal matrix (.. / absolute / symlink-out), GET-only, opt-in default off, stop closes the socket.
+<!-- SECTION:PLAN:END -->
