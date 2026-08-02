@@ -75,6 +75,7 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
             "mlx-lm",
             "curated",
             "installed",
+            "remote",
             "download-models",
         ]
 
@@ -310,3 +311,43 @@ async def test_mounting_models_reaches_no_network_until_the_view_is_opened(monke
         await pilot.pause()
         await pilot.pause()
         assert len(calls) == 1, "re-opening the view browsed again"
+
+
+@pytest.mark.asyncio
+async def test_pressing_remote_still_waits_for_explicit_search(monkeypatch):
+    """Remote activation itself must remain metadata-I/O free."""
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+        HuggingFaceRemoteAdapter,
+    )
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    calls: list[str] = []
+
+    async def counted_search(self, query, *, token=None):
+        calls.append("search")
+        return ()
+
+    async def counted_resolve(self, repository, *, token=None):
+        calls.append("resolve")
+        raise AssertionError("Remote resolve ran before Search")
+
+    monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", counted_search)
+    monkeypatch.setattr(HuggingFaceRemoteAdapter, "resolve", counted_resolve)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        await pilot.pause()
+        remote_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+        )
+
+        remote_row.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        assert window.active_view == "remote"
+        assert window.query_one("#remote-models-view", RemoteView)
+        assert calls == []

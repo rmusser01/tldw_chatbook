@@ -758,6 +758,42 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
     assert [event.phase for event in events] == ["activate"]
 
 
+@pytest.mark.asyncio
+async def test_provision_install_only_skips_activation_and_active_selector(tmp_path, monkeypatch):
+    """``activate=False`` must leave an installed root usable but unselected.
+
+    This catches a regression that ignores the install-only flag and runs the
+    existing activation tail: activation would invoke the patched core method,
+    emit an ``activate`` event, and write the active-selector file.
+    """
+    root_ref = ArtifactRef("root-model", "r" * 40, "int8")
+    root_body = b"root-bytes-already-installed"
+    root_desc = _descriptor(root_ref, files_body=root_body)
+    core = ModelArtifactService(tmp_path / "root")
+    root_source = tmp_path / "root-source"
+    root_source.mkdir()
+    (root_source / "model.bin").write_bytes(root_body)
+    core.install(root_desc, root_source)
+
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+    catalog = DictCatalog({root_ref: root_desc})
+    consent = grant_consent(svc, root_ref, catalog)
+    events: list[AcquisitionProgress] = []
+
+    def activation_must_not_run(_root: ArtifactRef) -> ArtifactRef:
+        raise AssertionError("install-only provision must not activate")
+
+    monkeypatch.setattr(core, "activate", activation_must_not_run)
+
+    provisioned = await svc.provision(
+        root_ref, consent, catalog, progress=events.append, activate=False
+    )
+
+    assert provisioned == root_ref
+    assert all(event.phase != "activate" for event in events)
+    assert not core.active_path(root_ref.artifact_id).exists()
+
+
 # ---------------------------------------------------------------------------
 # _run_core_call: core.install/core.activate ArtifactError never escapes raw.
 # ---------------------------------------------------------------------------

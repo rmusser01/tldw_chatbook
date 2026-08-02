@@ -52,6 +52,7 @@ class ModelActivationControls(Widget):
         active: bool,
         ready: bool,
         pending: bool = False,
+        allow_activation: bool = True,
     ) -> None:
         """Create controls for one exact installed reference.
 
@@ -60,22 +61,25 @@ class ModelActivationControls(Widget):
             active: Whether this reference is already selected.
             ready: Whether verification/readiness allows activation.
             pending: Whether another lifecycle operation is running.
+            allow_activation: Whether this model is eligible for activation.
         """
         self.reference = reference
         self.active = active
         self.ready = ready
         self.pending = pending
+        self.allow_activation = allow_activation
         super().__init__()
 
     def compose(self) -> ComposeResult:
         """Compose the activation and deletion buttons."""
         with Horizontal():
-            yield Button(
-                "Active" if self.active else "Activate",
-                classes="model-activate",
-                variant="primary",
-                disabled=self.pending or self.active or not self.ready,
-            )
+            if self.allow_activation:
+                yield Button(
+                    "Active" if self.active else "Activate",
+                    classes="model-activate",
+                    variant="primary",
+                    disabled=self.pending or self.active or not self.ready,
+                )
             yield Button(
                 "Delete…",
                 classes="model-delete",
@@ -90,9 +94,9 @@ class ModelActivationControls(Widget):
             pending: Whether activation/deletion is pending.
         """
         self.pending = pending
-        activate = self.query_one(".model-activate", Button)
         delete = self.query_one(".model-delete", Button)
-        activate.disabled = pending or self.active or not self.ready
+        for activate in self.query(".model-activate"):
+            activate.disabled = pending or self.active or not self.ready
         delete.disabled = pending
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -100,7 +104,12 @@ class ModelActivationControls(Widget):
         event.stop()
         if self.pending:
             return
-        if event.button.has_class("model-activate") and self.ready and not self.active:
+        if (
+            self.allow_activation
+            and event.button.has_class("model-activate")
+            and self.ready
+            and not self.active
+        ):
             self.post_message(ActivationRequested(self.reference))
         elif event.button.has_class("model-delete"):
             self.post_message(DeletionRequested(self.reference))

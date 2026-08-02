@@ -273,6 +273,7 @@ class InstalledView(Widget):
                     row.reference,
                     active=row.active,
                     ready=row.ready,
+                    allow_activation=row.activation_allowed,
                     pending=(
                         self._loading
                         or self._operation_reference is not None
