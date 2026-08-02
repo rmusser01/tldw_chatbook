@@ -17,7 +17,12 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        AgentRunsChangeReviewProvider,
+    )
 
 from loguru import logger
 
@@ -2282,6 +2287,17 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
+        # TASK-1972 review round: ONE conversation-level query, grouped in
+        # memory -- the per-run lookup was an N+1 over sqlite on every
+        # resume (finding 3).
+        snap_by_run: dict[str, list[dict]] = {}
+        try:
+            for _row in self._db.change_snapshots_for_conversation(
+                conversation_id
+            ):
+                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+        except Exception:  # noqa: BLE001 -- resume must not die on this
+            snap_by_run = {}
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
@@ -2308,12 +2324,7 @@ class ConsoleAgentBridge:
                             ),
                         )
                     )
-            try:
-                snap_rows = self._db.change_snapshots_for_run(
-                    str(record.get("id"))
-                )
-            except Exception:  # noqa: BLE001 -- resume must not die on this
-                snap_rows = []
+            snap_rows = snap_by_run.get(str(record.get("id")), [])
             clean = [r for r in snap_rows if not r.get("tracking_error")]
             files = sum(int(r.get("files_changed") or 0) for r in clean)
             if files:
@@ -2329,6 +2340,22 @@ class ConsoleAgentBridge:
                         change_review_run_id=str(record.get("id")),
                     )
                 )
+            # Parity for the FAILURE shape too (review finding 2): live
+            # emits a disclosure row per failed root; resume must render
+            # byte-identical or a resumed transcript hides that a turn's
+            # tracking failed.
+            for _row in snap_rows:
+                if _row.get("tracking_error"):
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_change_tracking_failure_marker(
+                                str(_row.get("root", "")),
+                                str(_row.get("tracking_error", "")),
+                            ),
+                            status="complete",
+                        )
+                    )
             blocks.append((record.get("assistant_message_id"), block))
         return blocks
 
@@ -2382,7 +2409,9 @@ class ConsoleAgentBridge:
         """Whether this bridge tracks changes (tracker present = git found)."""
         return self._change_tracker is not None
 
-    def change_review_provider(self, conversation_id: str):
+    def change_review_provider(
+        self, conversation_id: str
+    ) -> "AgentRunsChangeReviewProvider | None":
         """Build the Review screen's data provider for a conversation.
 
         Args:

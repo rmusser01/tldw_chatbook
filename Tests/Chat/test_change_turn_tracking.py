@@ -735,3 +735,36 @@ async def _wait_for_screen(harness, pilot, screen_type, timeout: float = 8.0):
             return harness.screen
         await pilot.pause(0.05)
     return None
+
+
+def test_resume_re_derives_the_failure_row_too(tmp_path, root):
+    """Review finding: live emitted the ⚠ tracking-failed row but resume
+    did not -- a resumed transcript silently hid that a turn's tracking
+    failed, breaking the byte-identical marker parity rule."""
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    broken = ChangeTurnTracker(
+        service=ShadowRepoService(
+            data_dir=tmp_path / "app", git_executable="/nonexistent/git"
+        )
+    )
+    gateway = _SideEffectGateway([["fine."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, broken)
+    _run(bridge, session, aid, root)
+    live = [
+        m.content
+        for m in _tool_rows(store, session)
+        if "change tracking failed" in m.content
+    ]
+    assert live, "precondition: the live run disclosed the failure"
+
+    fresh = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m.content
+        for _anchor, block in fresh.resume_marker_messages("conv-1")
+        for m in block
+        if "change tracking failed" in m.content
+    ]
+    assert resumed == live, "the failure disclosure vanished on resume"
