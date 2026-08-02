@@ -133,6 +133,27 @@ _TRUNCATED_STRUCTURES = (
         + struct.pack("<IQ", STRING, 4)
         + b"abc",
     ),
+    (
+        "array-element-type",
+        _gguf_header(metadata=1)
+        + gguf_string("array")
+        + struct.pack("<I", ARRAY)
+        + b"\x00" * 3,
+    ),
+    (
+        "array-length",
+        _gguf_header(metadata=1)
+        + gguf_string("array")
+        + struct.pack("<II", ARRAY, UINT8)
+        + b"\x00" * 7,
+    ),
+    (
+        "array-element-payload",
+        _gguf_header(metadata=1)
+        + gguf_string("array")
+        + struct.pack("<IIQ", ARRAY, UINT16, 2)
+        + b"\x01\x00\x02",
+    ),
     ("tensor-name-length", _gguf_header(tensors=1) + b"\x00" * 7),
     ("tensor-name", _gguf_header(tensors=1) + struct.pack("<Q", 4) + b"abc"),
     (
@@ -342,6 +363,25 @@ def test_parser_rejects_unknown_array_element_type_even_when_empty():
         gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
 
 
+def test_parser_rejects_noncanonical_bool_scalar_byte():
+    payload = make_gguf(
+        extra_metadata=(MetadataFixture("bad-bool", BOOL, RawValueFixture(b"\x02")),)
+    )
+
+    with pytest.raises(gguf.GGUFParseError, match="BOOL"):
+        gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+
+def test_parser_rejects_noncanonical_bool_byte_in_array():
+    raw_array = RawValueFixture(struct.pack("<IQ", BOOL, 3) + b"\x00\x02\x01")
+    payload = make_gguf(
+        extra_metadata=(MetadataFixture("bad-bool-array", ARRAY, raw_array),)
+    )
+
+    with pytest.raises(gguf.GGUFParseError, match="BOOL"):
+        gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+
 @pytest.mark.parametrize(
     "metadata",
     [
@@ -419,7 +459,21 @@ def test_parser_rejects_wrong_retained_field_types(
         gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
 
 
-@pytest.mark.parametrize("alignment", [0, 3])
+@pytest.mark.parametrize("alignment", [8, 16, 24, 32])
+def test_parser_accepts_positive_eight_byte_alignment_multiples(alignment: int):
+    payload = make_raw_gguf(
+        metadata=(
+            _architecture_metadata(),
+            MetadataFixture("general.alignment", UINT32, alignment),
+        )
+    )
+
+    metadata = gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+    assert metadata.data_offset % alignment == 0
+
+
+@pytest.mark.parametrize("alignment", [0, 1, 2, 3, 4, 7, 9, 25])
 def test_parser_rejects_invalid_alignment(alignment: int):
     payload = make_raw_gguf(
         metadata=(
@@ -429,6 +483,19 @@ def test_parser_rejects_invalid_alignment(alignment: int):
     )
 
     with pytest.raises(gguf.GGUFParseError, match="alignment"):
+        gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+
+def test_parser_rejects_tensor_offset_not_aligned_to_general_alignment():
+    payload = make_raw_gguf(
+        metadata=(
+            _architecture_metadata(),
+            MetadataFixture("general.alignment", UINT32, 32),
+        ),
+        tensors=(TensorFixture(offset=1),),
+    )
+
+    with pytest.raises(gguf.GGUFParseError, match="tensor offset.*alignment"):
         gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
 
 

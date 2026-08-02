@@ -170,6 +170,11 @@ def _read_string(
 
 
 def _read_scalar(cursor: _GGUFCursor, value_type: int) -> object:
+    if value_type == _TYPE_BOOL:
+        encoded = cursor.read_exact(1)
+        if encoded not in {b"\x00", b"\x01"}:
+            raise GGUFParseError("GGUF BOOL value must be encoded as 0 or 1")
+        return encoded == b"\x01"
     fmt = _SCALAR_FORMATS[value_type]
     (value,) = cursor.unpack(fmt)
     return value
@@ -194,7 +199,18 @@ def _read_array(
         element_size = struct.calcsize(_SCALAR_FORMATS[element_type])
         payload_size = element_count * element_size
         metadata_budget.consume(payload_size)
-        cursor.skip_exact(payload_size)
+        if element_type == _TYPE_BOOL:
+            cursor.require_available(payload_size)
+            remaining = payload_size
+            while remaining:
+                chunk = cursor.read_exact(min(remaining, _READ_CHUNK_BYTES))
+                if any(value > 1 for value in chunk):
+                    raise GGUFParseError(
+                        "GGUF BOOL array values must be encoded as 0 or 1"
+                    )
+                remaining -= len(chunk)
+        else:
+            cursor.skip_exact(payload_size)
         return
 
     minimum_element_size = 8 if element_type == _TYPE_STRING else 12
@@ -285,8 +301,8 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         elif key in _RETAINED_TYPES:
             retained[key] = value
 
-    if alignment <= 0 or alignment & (alignment - 1):
-        raise GGUFParseError("GGUF alignment must be a positive power of two")
+    if alignment <= 0 or alignment % 8:
+        raise GGUFParseError("GGUF alignment must be a positive multiple of 8")
 
     for _ in range(tensor_count):
         _read_string(cursor)
@@ -295,7 +311,9 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
             raise GGUFBoundsError("GGUF tensor dimensions exceed limit")
         cursor.skip_exact(dimension_count * struct.calcsize("<Q"))
         cursor.unpack("<I")
-        cursor.unpack("<Q")
+        (tensor_offset,) = cursor.unpack("<Q")
+        if tensor_offset % alignment:
+            raise GGUFParseError("GGUF tensor offset violates general alignment")
 
     padding = -cursor.header_bytes % alignment
     data_offset = cursor.header_bytes + padding
