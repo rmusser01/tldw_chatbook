@@ -716,7 +716,7 @@ class LocalAudioProcessor:
                 attempt_id = f"direct-local-{uuid.uuid4().hex}"
             normalized = transcribe_file(
                 audio_path=Path(audio_path),
-                model_path=Path(model_path) if model_path else Path(),
+                model_path=Path(model_path) if model_path else None,
                 attempt_id=attempt_id,
                 batch_id=kwargs.get("batch_id"),
                 job_id=kwargs.get("job_id"),

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
+import sys
+import wave
 from pathlib import Path
+from types import SimpleNamespace
 
+import tldw_chatbook.app as app_module
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Local_Ingestion import local_file_ingestion
 from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import run_parse_job
 from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.STT.contracts import (
     ExecutionDevice,
     ProducedCapabilities,
@@ -242,3 +250,115 @@ def test_parse_worker_preserves_bounded_stt_failure_and_failed_attempt(
         "stt_failure_provenance": failed_attempt,
     }
     assert "/private/model-owner" not in str(result)
+
+
+def test_manual_library_job_reaches_fake_native_model_and_parent_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """One focused production-path proof from Library options to stored row."""
+    from tldw_chatbook.STT import transcribe_cpp
+
+    audio_path = tmp_path / "speech.wav"
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16_000)
+        wav_file.writeframes(b"\x00\x00" * 1_600)
+    model_path = tmp_path / "private-model.gguf"
+    model_path.write_bytes(b"fixture")
+    calls: list[str] = []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def run(self, _pcm, **_kwargs):
+            calls.append("run")
+            return SimpleNamespace(
+                text="vertical hello",
+                language="en",
+                segments=(
+                    SimpleNamespace(text="vertical hello", t0_ms=0, t1_ms=100),
+                ),
+                timings=SimpleNamespace(mel_ms=1.0, encode_ms=2.0, decode_ms=3.0),
+            )
+
+    class Model:
+        def __init__(self, path: str):
+            assert path == str(model_path)
+            calls.append("load")
+            self.arch = "whisper"
+            self.backend = "cpu"
+            self.device = SimpleNamespace(kind="cpu")
+            self.capabilities = SimpleNamespace(
+                native_sample_rate=16_000,
+                languages=("en",),
+                max_timestamp_kind="segment",
+                supports_language_detect=True,
+                supports_translate=True,
+                supports_streaming=False,
+                supports_spec_decode=False,
+                max_audio_ms=None,
+                translate_target_languages=("en",),
+            )
+
+        def session(self):
+            return Session()
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transcribe_cpp",
+        SimpleNamespace(Model=Model, set_log_callback=lambda _callback: None),
+    )
+    monkeypatch.setattr(
+        transcribe_cpp,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "get_cli_setting",
+        lambda key, *args: str(model_path)
+        if key == "transcription.transcribe_cpp.model_path"
+        else args[0]
+        if args
+        else None,
+    )
+
+    app = object.__new__(TldwCli)
+    job = LibraryIngestJob(
+        job_id="ingest-job-vertical",
+        source_path=str(audio_path),
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "transcribe-cpp",
+                "language": "en",
+                "timestamps": True,
+            }
+        },
+    )
+    options = app._ingest_job_options(job)
+
+    parsed = run_parse_job(job.source_path, options)
+
+    assert parsed["ok"] is True, parsed
+    db = MediaDatabase(":memory:", client_id="transcribe-cpp-vertical")
+    media_id, _, _ = local_file_ingestion.persist_parsed_media(parsed["payload"], db)
+    row = db.get_media_by_id(media_id)
+    provenance = json.loads(row["transcription_provenance_json"])
+    assert row["content"] == "vertical hello"
+    assert row["transcription_model"] == "local-gguf:whisper"
+    assert provenance["provider_id"] == "transcribe-cpp"
+    assert provenance["model_id"] == "local-gguf:whisper"
+    assert str(model_path) not in repr(provenance)
+    assert calls == ["load", "run", "close"]

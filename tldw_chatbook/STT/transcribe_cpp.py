@@ -120,9 +120,12 @@ def _device_from_model(model: object) -> ExecutionDevice:
     normalized = device.casefold() if isinstance(device, str) else ""
     mapping = {
         "cpu": ExecutionDevice.CPU,
+        "accel": ExecutionDevice.CPU,
+        "cpu_accel": ExecutionDevice.CPU,
         "cuda": ExecutionDevice.CUDA,
         "metal": ExecutionDevice.METAL,
         "mps": ExecutionDevice.METAL,
+        "vulkan": ExecutionDevice.VULKAN,
     }
     if normalized not in mapping:
         raise ValueError("unsupported transcribe.cpp execution device")
@@ -132,9 +135,9 @@ def _device_from_model(model: object) -> ExecutionDevice:
 def _timestamp_capabilities(maximum: object) -> frozenset[TimestampGranularity]:
     normalized = maximum.casefold() if isinstance(maximum, str) else "none"
     values = {TimestampGranularity.NONE}
-    if normalized in {"segment", "word"}:
+    if normalized in {"segment", "word", "token"}:
         values.add(TimestampGranularity.SEGMENT)
-    if normalized == "word":
+    if normalized in {"word", "token"}:
         values.add(TimestampGranularity.WORD)
     return frozenset(values)
 
@@ -419,7 +422,7 @@ def _failed_attempt_document(
 def transcribe_file(
     *,
     audio_path: Path,
-    model_path: Path,
+    model_path: Path | None,
     attempt_id: str,
     batch_id: str | None = None,
     job_id: str | None = None,
@@ -459,21 +462,27 @@ def transcribe_file(
             ),
         )
 
-    try:
-        runtime = importlib.import_module("transcribe_cpp")
-    except Exception as error:
+    if model_path is None:
         raise failure(
-            TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
-            actions=(_RETRY_FASTER_WHISPER,),
-        ) from error
+            TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+            actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+        )
 
     try:
         admission = validate_local_gguf(model_path)
-    except Exception as error:
+    except Exception:
         raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from error
+        ) from None
+
+    try:
+        runtime = importlib.import_module("transcribe_cpp")
+    except Exception:
+        raise failure(
+            TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+            actions=(_RETRY_FASTER_WHISPER,),
+        ) from None
 
     model: object | None = None
     adapter: TranscribeCppAdapter | None = None
@@ -493,7 +502,7 @@ def transcribe_file(
             model_load_seconds=load_seconds,
             ffmpeg_path=ffmpeg_path,
         )
-    except Exception as error:
+    except Exception:
         if model is not None and adapter is None:
             close = getattr(model, "close", None)
             if callable(close):
@@ -502,7 +511,7 @@ def transcribe_file(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             model_id=model_id,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from error
+        ) from None
 
     policy = default_routing_policy()
     declarations = CatalogDeclarations(
@@ -548,15 +557,15 @@ def transcribe_file(
             error.failure.code,
             model_id=model_id,
             actions=_failure_actions(error.failure.code),
-        ) from error
+        ) from None
     except TranscribeCppFailure:
         raise
-    except Exception as error:
+    except Exception:
         raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             model_id=model_id,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from error
+        ) from None
     finally:
         adapter.close()
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import tomllib
+import traceback
 import wave
 from pathlib import Path
 from types import SimpleNamespace
@@ -173,6 +174,111 @@ def test_loaded_capabilities_are_identical_in_declaration_and_probe() -> None:
     assert described.semantic_default_eligible is False
 
 
+@pytest.mark.parametrize(
+    ("native_maximum", "expected"),
+    [
+        ("none", {"none"}),
+        ("segment", {"none", "segment"}),
+        ("word", {"none", "segment", "word"}),
+        ("token", {"none", "segment", "word"}),
+    ],
+)
+def test_native_timestamp_maximum_maps_to_supported_contract_granularities(
+    native_maximum: str,
+    expected: set[str],
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+
+    mapped = module._timestamp_capabilities(native_maximum)
+
+    assert {granularity.value for granularity in mapped} == expected
+
+
+@pytest.mark.parametrize(
+    ("native_kind", "expected"),
+    [
+        ("cpu", "cpu"),
+        ("accel", "cpu"),
+        ("cpu_accel", "cpu"),
+        ("metal", "metal"),
+        ("mps", "metal"),
+        ("vulkan", "vulkan"),
+        ("cuda", "cuda"),
+    ],
+)
+def test_native_device_kind_maps_to_supported_contract_device(
+    native_kind: str,
+    expected: str,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    model = SimpleNamespace(device=SimpleNamespace(kind=native_kind))
+
+    mapped = module._device_from_model(model)
+
+    assert mapped.value == expected
+
+
+def test_missing_configured_model_fails_with_picker_action_before_runtime_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path)
+    imports: list[str] = []
+
+    def record_import(name: str) -> object:
+        imports.append(name)
+        return object()
+
+    monkeypatch.setattr(module.importlib, "import_module", record_import)
+
+    with pytest.raises(module.TranscribeCppFailure) as raised:
+        module.transcribe_file(
+            audio_path=audio_path,
+            model_path=None,
+            attempt_id="attempt-1",
+            language="en",
+        )
+
+    assert raised.value.code.value == "model_not_installed"
+    assert raised.value.actions == ("choose_another_gguf", "retry_faster_whisper")
+    assert imports == []
+
+
+def test_invalid_model_is_rejected_before_runtime_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    audio_path = tmp_path / "audio.wav"
+    model_path = tmp_path / "changed.gguf"
+    _write_pcm_wav(audio_path)
+    imports: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda _path: (_ for _ in ()).throw(ValueError("private path detail")),
+    )
+    monkeypatch.setattr(
+        module.importlib,
+        "import_module",
+        lambda name: imports.append(name),
+    )
+
+    with pytest.raises(module.TranscribeCppFailure) as raised:
+        module.transcribe_file(
+            audio_path=audio_path,
+            model_path=model_path,
+            attempt_id="attempt-1",
+            language="en",
+        )
+
+    assert raised.value.code.value == "artifact_incompatible"
+    assert raised.value.actions == ("choose_another_gguf", "retry_faster_whisper")
+    assert imports == []
+
+
 def test_native_import_failure_is_sanitized_and_path_private(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -181,6 +287,14 @@ def test_native_import_failure_is_sanitized_and_path_private(
     secret = tmp_path / "secret-model.gguf"
     audio_path = tmp_path / "audio.wav"
     _write_pcm_wav(audio_path)
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
 
     def unavailable(_name: str) -> object:
         raise ImportError(f"bad ABI near {secret}")
@@ -199,6 +313,11 @@ def test_native_import_failure_is_sanitized_and_path_private(
     assert str(secret) not in str(raised.value)
     assert str(secret) not in repr(raised.value)
     assert "bad ABI" not in str(raised.value)
+    rendered = "".join(
+        traceback.format_exception(raised.type, raised.value, raised.tb)
+    )
+    assert str(secret) not in rendered
+    assert "bad ABI" not in rendered
 
 
 def test_native_model_load_failure_closes_nothing_and_never_leaks_path(
@@ -239,4 +358,9 @@ def test_native_model_load_failure_closes_nothing_and_never_leaks_path(
     assert raised.value.actions == ("choose_another_gguf", "retry_faster_whisper")
     assert str(secret) not in str(raised.value)
     assert str(secret) not in repr(raised.value)
+    rendered = "".join(
+        traceback.format_exception(raised.type, raised.value, raised.tb)
+    )
+    assert str(secret) not in rendered
+    assert "native load failed" not in rendered
     assert [name for name, _value in calls] == ["model"]

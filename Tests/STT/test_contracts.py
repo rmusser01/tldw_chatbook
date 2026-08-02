@@ -128,7 +128,7 @@ def test_enums_have_exact_stable_string_values() -> None:
             "inference",
             "engine_crash",
         ),
-        ExecutionDevice: ("auto", "cpu", "cuda", "metal"),
+        ExecutionDevice: ("auto", "cpu", "cuda", "metal", "vulkan"),
         TranscriptionFailureCode: (
             "model_not_installed",
             "artifact_corrupt",
