@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterable
 
 from .gguf_admission import (
+    GGUFError,
     GGUFMetadata,
     _sanitize_display,
     normalize_platform_target,
@@ -32,7 +33,7 @@ _RUNTIME_CONSTRAINT_CLAUSE = re.compile(
 )
 
 
-class GGUFAmbiguousCuratedMatchError(ValueError):
+class GGUFAmbiguousCuratedMatchError(GGUFError):
     """Raised when curated registry entries conflict for identical bytes."""
 
 

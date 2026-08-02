@@ -987,6 +987,16 @@ def test_deferred_gguf_managed_import_is_source_only_and_unreferenced():
     } <= defined_functions
     assert "inspect_gguf" not in defined_functions
 
+    deferred_error = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "GGUFAmbiguousCuratedMatchError"
+    )
+    assert len(deferred_error.bases) == 1
+    assert isinstance(deferred_error.bases[0], ast.Name)
+    assert deferred_error.bases[0].id == "GGUFError"
+
     init_source = (model_artifacts / "__init__.py").read_text(encoding="utf-8")
     assert "_deferred_gguf_managed_import" not in init_source
 
