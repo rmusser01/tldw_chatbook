@@ -4742,7 +4742,28 @@ class TldwCli(
         briefing_handler = None
         if briefing_schedules_enabled:
             briefing_projection = BriefingProjection(subscriptions_db)
-            briefing_handler = BriefingJobHandler(subscriptions_db=subscriptions_db)
+            # `self.chachanotes_db` is assigned later in `__init__`,
+            # strictly AFTER `_wire_watchlists_and_notifications_services`
+            # (this method, called earlier in `__init__`) returns -- so it
+            # does not exist as an attribute on `self` yet at this point.
+            # A GETTER, not the instance itself, is what makes this safe:
+            # `BriefingJobHandler` calls `chachanotes_db_getter()` fresh
+            # every time a scheduled generation completes (long after
+            # `__init__` has finished), so this lambda's `getattr(self,
+            # "chachanotes_db", None)` re-reads whatever `self.
+            # chachanotes_db` has become by THEN, not whatever it was (or
+            # wasn't) at this wiring call. Passing the instance directly
+            # here (review round 1's finding) would freeze `None` into the
+            # handler forever, making auto-keep permanently inert in
+            # production regardless of what `self.chachanotes_db` later
+            # becomes. The handler tolerates the getter returning `None`
+            # at any given call -- auto-keep (task-1780, Task 3) simply
+            # skips that one attempt; nothing else about scheduled
+            # generation depends on it.
+            briefing_handler = BriefingJobHandler(
+                subscriptions_db=subscriptions_db,
+                chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
+            )
 
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(

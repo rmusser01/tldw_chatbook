@@ -331,7 +331,13 @@ class TestCharacterImport:
 
         assert conv_id is not None
         assert imported_char_id == char_id
-        assert db._CURRENT_SCHEMA_VERSION == 28
+        # task-1780 bumped the schema (kept_briefings/kept_scripts); this
+        # assertion only cares that no migration error occurred, so pin it
+        # dynamically rather than re-encoding a version number this test
+        # doesn't own. Compare the OPENED database's version to the class
+        # constant — `>= 28` was permanently true once the version passed
+        # 28, i.e. an inert check (task-1780 review round 1).
+        assert db._get_db_version(db.get_connection()) == db._CURRENT_SCHEMA_VERSION
         db.close_connection()
 
         reopened = CharactersRAGDB(db_path, client_id="tavern-import")

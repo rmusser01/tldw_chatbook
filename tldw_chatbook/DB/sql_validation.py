@@ -50,6 +50,8 @@ VALID_TABLES = {
         "flashcard_assets",
         "flashcard_templates",
         "flashcards",
+        "kept_briefings",
+        "kept_scripts",
         "keyword_collections",
         "keywords",
         "learning_paths",

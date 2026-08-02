@@ -33,6 +33,16 @@ Nothing here logs prompt, roster, or turn content -- only exception types
 -- for the same reason `briefing_service` avoids it: this app's log sink
 runs with `diagnose=True`, which dumps a failing frame's locals, and the
 frame at a cast failure holds the prompt.
+
+task-1780 (spec: "Re-casting without the watchlist") adds a second entry
+point, `generate_script_from_text`, casting directly from a ChaChaNotes
+`kept_briefings` row (see `Subscriptions/briefing_keep.py`) instead of a
+`Subscriptions_DB` `briefings` row, and writing into `kept_scripts` instead
+of `briefing_scripts`. It reuses this module's pure pieces verbatim
+(`build_cast_prompt`, `parse_script_turns`, `validate_roster`,
+`_resolve_character_texts`, `_snapshot_roster`) but keeps its own claim set
+and its own error-vs-row contract -- see that function's own section
+comment, below `generate_script`, for the full reasoning.
 """
 
 from __future__ import annotations
@@ -754,3 +764,381 @@ def fail_interrupted_scripts(
     if count:
         logger.info(f"failed {count} interrupted briefing script(s)")
     return count
+
+
+# --- Casting directly from a kept briefing (task-1780, Task 4) -------------
+#
+# `generate_script_from_text` casts a NEW script from a ChaChaNotes
+# `kept_briefings` row (`Subscriptions/briefing_keep.py` is the one writer
+# of that table) rather than a `Subscriptions_DB` `briefings` row, and
+# writes into `kept_scripts` instead of `briefing_scripts`. Everything
+# above this section is untouched by it: `generate_script` still owns
+# `briefing_scripts` exclusively, this owns `kept_scripts` exclusively, and
+# the two never share a row, a claim set, or an assumption about which
+# database's shape it is looking at.
+#
+# One structural difference matters enough to restate here as well as in
+# the function's own docstring: `briefing_scripts` has a `status` column
+# (`generating`/`complete`/`failed`), so `generate_script` can insert a
+# `generating` placeholder BEFORE the chat call and update it either way
+# afterward -- a `failed` row is still a row a user (or a zombie sweep) can
+# see. `kept_scripts` (the v28->v29 migration, deliberately) has NO status
+# column: there is no "this kept briefing has a script that failed" state
+# to represent, and inventing one would be a schema change this task does
+# not otherwise need. So a kept-briefing cast writes NOTHING until the
+# chat call AND the parse both succeed; a chat failure or a parse failure
+# raises straight out of `generate_script_from_text` instead of degrading
+# into a row, and the caller (Task 5's modal) is expected to catch that and
+# show it as a toast -- there is no `kept_scripts` place left to show it
+# instead. There is also, consequently, no `fail_interrupted_kept_scripts`
+# sibling to `fail_interrupted_scripts`: a crash mid-cast leaves NO partial
+# row behind to need recovering, since nothing was ever written.
+
+
+#: The roster a cast uses when `preset_id=None` -- Task 5's kept-briefings
+#: modal offers "app default" as a first-class choice in its preset
+#: `Select` (mirroring `ArtifactsPane`'s own `_APP_DEFAULT_PRESET_LABEL`
+#: idiom for briefing GENERATION's own preset picker), but casting a
+#: script -- unlike generating a briefing's text -- has no meaning without
+#: SOME roster (`validate_roster` refuses an empty one, and this function
+#: takes no separate `roster` parameter to supply one another way). A
+#: single unbound speaker named "Narrator" is the one roster this module's
+#: own principle already describes as needing no special handling: "a
+#: roster of one speaker produces narration through the identical path as
+#: a roster of many -- there is no special 'narration mode'" (module
+#: docstring); `test_briefing_cast.py`'s own `ONE_SPEAKER_ROSTER` uses the
+#: identical name for the identical reason.
+_APP_DEFAULT_SPEAKER_NAME = "Narrator"
+_APP_DEFAULT_ROSTER: list[dict] = [
+    {
+        "name": _APP_DEFAULT_SPEAKER_NAME,
+        "role_prompt": "",
+        "character_card_id": None,
+        "voice_profile_id": None,
+    }
+]
+
+#: `kept_scripts.preset_name` recorded for a `preset_id=None` cast -- the
+#: literal string the design spec and implementation plan both quote for
+#: this case.
+APP_DEFAULT_PRESET_NAME = "(app default)"
+
+
+# --- In-process kept-cast claims (task-1780, Task 4) -----------------------
+#
+# `_ACTIVE_KEPT_CAST_CLAIMS` is its OWN set, keyed by `kept_briefings.id`,
+# deliberately NOT sharing `_ACTIVE_CAST_CLAIMS` above. `kept_briefings.id`
+# (ChaChaNotes, this task's new table) and `briefings.id`
+# (`Subscriptions_DB`, phase 1) are autoincrement primary keys in two
+# entirely separate SQLite database FILES with no relationship to one
+# another whatsoever -- id 5 in one table says nothing about id 5 in the
+# other. Sharing one claim set would make casting kept briefing 5
+# spuriously collide with (block, or be blocked by) a live cast of
+# briefing 5: two completely unrelated rows that merely happen to share a
+# small integer. `GenerationInFlightError` IS still reused (not mirrored),
+# for the identical reason `_claim_cast`'s own section comment gives: a
+# caller wants ONE exception type to catch across every kind of "something
+# is already generating", not a third near-identical type.
+#
+# Mutated ONLY on the event loop, for the identical reason
+# `_ACTIVE_CAST_CLAIMS`'s own section comment states: the check-then-add
+# pair inside `_claim_kept_cast` never awaits, so no lock is needed, and
+# mutating this set from a thread (e.g. from inside a function
+# `asyncio.to_thread` runs) would race with that invariant.
+
+_ACTIVE_KEPT_CAST_CLAIMS: set[int] = set()
+
+
+def active_kept_cast_claims() -> frozenset[int]:
+    """Snapshot of kept briefing ids a live `generate_script_from_text` call holds.
+
+    Its own accessor, mirroring `active_cast_claims`'s shape exactly but
+    reading `_ACTIVE_KEPT_CAST_CLAIMS` -- see that set's own section
+    comment for why the two are never merged. No `fail_interrupted_*`
+    sibling consumes this today (unlike `active_cast_claims`, whose whole
+    purpose is excluding live claims from `fail_interrupted_scripts`'s
+    sweep): a kept cast never leaves a partial `kept_scripts` row for a
+    sweep to find in the first place (see this section's opening comment),
+    so there is nothing here for a startup sweep to spare. Provided anyway,
+    for the same "tests can simulate another in-process caller" reason
+    `active_cast_claims` is.
+    """
+    return frozenset(_ACTIVE_KEPT_CAST_CLAIMS)
+
+
+@contextmanager
+def _claim_kept_cast(kept_briefing_id: int) -> Iterator[None]:
+    """Claim `kept_briefing_id` for the duration of one kept-briefing cast.
+
+    Identical shape to `_claim_cast`, scoped to `_ACTIVE_KEPT_CAST_CLAIMS`
+    instead of `_ACTIVE_CAST_CLAIMS` -- see that set's own section comment
+    for why a shared set would be wrong here. Also usable directly by
+    tests that need to simulate another in-process caller already holding
+    a kept briefing.
+
+    Args:
+        kept_briefing_id: The `kept_briefings.id` about to be cast from.
+
+    Raises:
+        GenerationInFlightError: If `kept_briefing_id` is already claimed.
+    """
+    if kept_briefing_id in _ACTIVE_KEPT_CAST_CLAIMS:
+        raise GenerationInFlightError(
+            f"a script is already being cast for kept briefing {kept_briefing_id}"
+        )
+    _ACTIVE_KEPT_CAST_CLAIMS.add(kept_briefing_id)
+    try:
+        yield
+    finally:
+        _ACTIVE_KEPT_CAST_CLAIMS.discard(kept_briefing_id)
+
+
+def _start_cast_from_text(
+    chacha_db: Any,
+    subs_db: Any,
+    kept_briefing_id: int,
+    preset_id: Optional[int],
+) -> tuple[str, list[dict], set[str], Optional[str], Optional[str], Optional[str], str]:
+    """Everything before the chat call, for a cast-from-kept: validate, resolve.
+
+    Every check that must refuse WITHOUT ever creating a row runs here --
+    the same no-orphan-row contract `_start_script` upholds for a live
+    cast, taken one step further: unlike `_start_script`, this function
+    never inserts anything, even on success (see this module section's
+    opening comment on the asymmetry) -- it only reads and validates.
+
+    Args:
+        chacha_db: An open `CharactersRAGDB` holding the kept briefing.
+        subs_db: An open `SubscriptionsDB`, consulted ONLY for
+            `get_briefing_preset` -- Task 4's whole point (AC #4) is that
+            this succeeds after the watchlist AND the original preset used
+            to write this kept briefing are both already gone; `subs_db`
+            is used here purely to resolve whatever preset the CALLER
+            names right now, which may be an entirely different preset.
+        kept_briefing_id: The `kept_briefings.id` to cast from.
+        preset_id: A `briefing_presets.id` to resolve the roster,
+            provider, model, and style notes from, or `None` for the
+            app-default cast (see `APP_DEFAULT_PRESET_NAME`'s own
+            comment).
+
+    Returns:
+        `(body, roster, roster_names, provider, model, style_notes,
+        preset_name)`.
+
+    Raises:
+        ScriptCastError: If the kept briefing does not exist, its body is
+            empty or whitespace-only, `preset_id` is given but does not
+            resolve to a preset, or the resolved roster fails
+            `validate_roster`.
+    """
+    kept = chacha_db.get_kept_briefing(kept_briefing_id)
+    if kept is None:
+        raise ScriptCastError(f"kept briefing {kept_briefing_id} does not exist")
+
+    body = (kept.get("body_markdown") or "").strip()
+    if not body:
+        raise ScriptCastError(
+            f"kept briefing {kept_briefing_id} has an empty body; refusing to cast"
+        )
+
+    if preset_id is None:
+        provider = model = style_notes = None
+        preset_name = APP_DEFAULT_PRESET_NAME
+        roster = validate_roster(_APP_DEFAULT_ROSTER)
+    else:
+        preset = subs_db.get_briefing_preset(preset_id)
+        if preset is None:
+            raise ScriptCastError(f"briefing preset {preset_id} does not exist")
+        provider = preset.get("provider")
+        model = preset.get("model")
+        style_notes = preset.get("style_notes")
+        preset_name = preset["name"]
+        roster = validate_roster(load_roster(preset["roster_json"]))
+
+    roster_names = {speaker["name"] for speaker in roster}
+    return body, roster, roster_names, provider, model, style_notes, preset_name
+
+
+def _get_kept_script(chacha_db: Any, script_id: int) -> dict[str, Any]:
+    """Read a just-created `kept_scripts` row back by id.
+
+    Task 1's CRUD has no single-row getter for `kept_scripts` (only
+    `list_kept_scripts`, `create_kept_script`, `kept_script_source_ids`) --
+    this is a direct, parameterized SELECT against the fixed table name,
+    mirroring `briefing_keep._watchlist_name`'s own precedent for a read
+    no existing CRUD method covers.
+
+    Args:
+        chacha_db: An open `CharactersRAGDB`.
+        script_id: The `kept_scripts.id` just returned by
+            `create_kept_script`, so this row is guaranteed to exist.
+
+    Returns:
+        The row as a dict.
+    """
+    cursor = chacha_db.execute_query(
+        "SELECT * FROM kept_scripts WHERE id = ?", (script_id,)
+    )
+    return dict(cursor.fetchone())
+
+
+def _finish_cast_from_text(
+    chacha_db: Any,
+    kept_briefing_id: int,
+    preset_name: str,
+    roster: list[dict],
+    load_character: Optional[Callable[[int], Optional[dict]]],
+    turns: list[dict],
+    model_used: str,
+) -> dict[str, Any]:
+    """Snapshot the roster, write the newly cast script, and read it back.
+
+    The ONLY write this whole cast path ever performs -- called after a
+    successful chat call and a successful parse, never before (see this
+    module section's opening comment on the asymmetry). Grouped into one
+    `asyncio.to_thread` hop by its caller, exactly like `_start_script`
+    groups its own `_snapshot_roster` call together with its DB insert:
+    `load_character` is a plain, blocking, synchronous callable, so
+    resolving it here -- off the event loop -- rather than in
+    `generate_script_from_text`'s own coroutine body is what keeps this
+    function's caller from ever invoking it directly on the loop thread.
+
+    `source_script_id=NULL`: this script was cast directly from a kept
+    briefing's text, not mirrored from a `Subscriptions_DB`
+    `briefing_scripts` row.
+    """
+    snapshot_roster = _snapshot_roster(roster, load_character)
+    script_id = chacha_db.create_kept_script(
+        kept_briefing_id,
+        source_script_id=None,
+        preset_name=preset_name,
+        roster_snapshot_json=dump_roster(snapshot_roster),
+        turns_json=json.dumps(turns),
+        model_used=model_used,
+    )
+    return _get_kept_script(chacha_db, script_id)
+
+
+async def generate_script_from_text(
+    chacha_db: Any,
+    kept_briefing_id: int,
+    *,
+    preset_id: Optional[int],
+    subs_db: Any,
+    chat: Callable[..., Any] = chat_api_call,
+    load_character: Optional[Callable[[int], Optional[dict]]] = None,
+) -> dict[str, Any]:
+    """Cast a NEW script from a kept briefing's body, into `kept_scripts`.
+
+    The re-casting half of task-1780 (design spec: "Re-casting without the
+    watchlist"): a kept briefing has already survived its source
+    watchlist's deletion (`Subscriptions/briefing_keep.py`), and this is
+    what lets it be cast into a script AGAIN, later, with whatever preset
+    exists at that moment -- including a preset, or a watchlist, that did
+    not even exist when the briefing was originally written. `subs_db` is
+    consulted for exactly one thing, `get_briefing_preset(preset_id)`, to
+    resolve the roster and provider/model/style notes the caller asks for
+    right now; it is never read or written for anything else, which is
+    what lets AC #4 hold (casting still works after the original watchlist
+    AND the original preset are both deleted from `subs_db`).
+
+    Unlike `generate_script`, this function DOES raise for a chat or parse
+    failure, not only for a pre-flight refusal -- see this module
+    section's opening comment (above `_APP_DEFAULT_ROSTER`) for why:
+    `kept_scripts` has no `status` column, so there is no honest `failed`
+    row it could write instead. Every raise -- pre-flight (a missing kept
+    briefing, an empty body, a missing preset) or in-band (a provider
+    error, an unknown speaker, a malformed reply, a missing character
+    card) -- leaves `kept_scripts` completely untouched; the caller (Task
+    5's modal) is expected to catch it and show it as a toast, the way it
+    would any other failed action with no row of its own to carry the
+    error.
+
+    The kept briefing row itself (`kept_briefings`) is never written by
+    this function on ANY outcome -- success, a pre-flight refusal, or an
+    in-band failure -- mirroring `generate_script`'s "the briefing is
+    never touched" rule one level up: a kept briefing may be cast from any
+    number of times, successfully or not, without any of those attempts
+    leaving a mark on the kept artifact itself.
+
+    Args:
+        chacha_db: An open `CharactersRAGDB` holding the kept briefing (and
+            where the new `kept_scripts` row is written on success).
+        kept_briefing_id: The `kept_briefings.id` to cast from.
+        preset_id: A `briefing_presets.id` (resolved via `subs_db`)
+            supplying the roster, and, absent an explicit override, this
+            cast's own provider, model, and style notes. `None` casts a
+            single-speaker "Narrator" narration using the app's default
+            provider and no style notes -- see `APP_DEFAULT_PRESET_NAME`.
+        subs_db: An open `SubscriptionsDB`, consulted only to resolve
+            `preset_id`. See this docstring's own AC #4 note above.
+        chat: The chat seam. Defaults to `Chat_Functions.chat_api_call`;
+            may be sync or async. The only seam faked in tests.
+        load_character: Character card lookup by id, or `None` if
+            unavailable. A roster speaker bound to a `character_card_id`
+            that this cannot resolve fails the cast, naming the card --
+            identical semantics to `generate_script`'s own parameter of
+            the same name; the roster here always comes from the PRESET
+            being cast with, never from the kept briefing's own snapshot
+            (a kept briefing carries no roster of its own at all).
+
+    Returns:
+        The newly created `kept_scripts` row as a dict.
+
+    Raises:
+        ScriptCastError: If the kept briefing does not exist, its body is
+            empty, `preset_id` is given but does not resolve to a preset,
+            the resolved roster is invalid, a bound character card cannot
+            be resolved, or the model's reply fails to parse. No
+            `kept_scripts` row is written in any of these cases.
+        GenerationInFlightError: If another in-process caller already
+            holds `kept_briefing_id`'s cast claim (`_claim_kept_cast`,
+            this module's OWN claim set -- see its section comment for why
+            it is never `_ACTIVE_CAST_CLAIMS`). Raised before `_start_
+            cast_from_text` ever runs, so no `kept_scripts` row is written
+            for the refused attempt either.
+    """
+    with _claim_kept_cast(kept_briefing_id):
+        (
+            body,
+            roster,
+            roster_names,
+            provider,
+            model,
+            style_notes,
+            preset_name,
+        ) = await asyncio.to_thread(
+            _start_cast_from_text, chacha_db, subs_db, kept_briefing_id, preset_id
+        )
+
+        endpoint = provider or _default_provider()
+        model_used = f"{endpoint}/{model}" if model else endpoint
+
+        try:
+            character_texts = await _resolve_character_texts(roster, load_character)
+            system, user = build_cast_prompt(body, roster, style_notes, character_texts)
+            raw = await _invoke_chat(
+                chat, endpoint=endpoint, model=model, system=system, user=user
+            )
+            turns = parse_script_turns(extract_response_content(raw), roster_names)
+        except Exception as exc:  # noqa: BLE001 - re-raised; no row exists to record it on
+            # No traceback -- see the module docstring's egress note -- and
+            # no row either: unlike `generate_script`, there is no `kept_
+            # scripts` row already started for this to become a `failed`
+            # status on, so the exception propagates to the caller as-is.
+            logger.warning(
+                f"kept briefing {kept_briefing_id}: cast from text failed: "
+                f"{type(exc).__name__}"
+            )
+            raise
+
+        return await asyncio.to_thread(
+            _finish_cast_from_text,
+            chacha_db,
+            kept_briefing_id,
+            preset_name,
+            roster,
+            load_character,
+            turns,
+            model_used,
+        )

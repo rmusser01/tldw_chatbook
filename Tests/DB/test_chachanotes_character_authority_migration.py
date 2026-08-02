@@ -127,8 +127,11 @@ def test_fresh_database_reaches_v28_and_local_authority_survives_reopen(
     path = tmp_path / "fresh-v28.sqlite"
     db = CharactersRAGDB(path, client_id="authority-test")
 
-    assert db._CURRENT_SCHEMA_VERSION == 28
-    assert _version(db.get_connection()) == 28
+    # task-1780 bumped the schema past v28 (kept_briefings/kept_scripts);
+    # this test only cares that a fresh DB reaches "whatever is current"
+    # and that local authority survives reopen, so assert dynamically
+    # rather than re-pinning a version number this file doesn't own.
+    assert _version(db.get_connection()) == db._CURRENT_SCHEMA_VERSION
     authority_id = db.get_local_authority_id()
     assert 1 <= len(authority_id.encode("utf-8")) <= 256
     db.close_connection()
@@ -238,7 +241,11 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     db = CharactersRAGDB(path, client_id="migration-test")
     connection = db.get_connection()
 
-    assert _version(connection) == 28
+    # task-1780 bumped the schema past v28; a real CharactersRAGDB always
+    # migrates fully to whatever is current, so assert dynamically. The
+    # v28->v29 migration only adds new tables and never touches
+    # `conversations`, so the column-delta assertion below is unaffected.
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     after_columns = _conversation_columns(connection)
     assert after_columns - before_columns == {"assistant_authority_id"}
     authority_column = next(

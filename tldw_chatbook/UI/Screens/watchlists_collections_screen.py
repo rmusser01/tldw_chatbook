@@ -52,6 +52,7 @@ from ...Subscriptions.briefing_export import (
     default_briefing_filename,
     export_feed_directory,
 )
+from ...Subscriptions.briefing_keep import KeepRefused, keep_briefing
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     GenerationInFlightError,
@@ -98,6 +99,8 @@ from ..Watchlists_Modules.artifacts_pane import (
     ExportBriefingRequested,
     ExportFeedRequested,
     GenerateBriefingRequested,
+    KeepBriefingRequested,
+    KeptBriefingsRequested,
     ManagePresetsRequested,
     PlayAudioRequested,
     RefreshBriefingsRequested,
@@ -115,6 +118,7 @@ from ..Watchlists_Modules.items_pane import (
     ItemsPane,
     RefreshItemsRequested,
 )
+from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
 from ..Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
     MarkNotificationReadRequested,
@@ -501,6 +505,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a feed export are two independent actions a user could plausibly
         # run at the same time (different destinations, different files).
         self._feed_export_in_flight = False
+        # task-1780, Task 5: True from the moment Keep is pressed until
+        # `keep_briefing` (Task 2) returns or raises. Same claimed-before-
+        # `run_worker` discipline as every other in-flight guard on this
+        # screen (`_briefing_export_in_flight` immediately above is the
+        # closest sibling: keeping, like exporting, is a one-shot action on
+        # the selected briefing with no target-naming refusal needed --
+        # this screen only ever runs one Keep at a time, full stop).
+        self._keep_in_flight = False
         # Whether THIS watchlist has at least one export-ready audio
         # episode -- mirrored onto `ArtifactsPane.has_audio_episodes` by
         # `_load_briefings`. Read (never written) by `handle_export_feed_
@@ -1450,6 +1462,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.scripts_with_audio = self._scripts_with_audio
             artifacts_pane.citations = self._loaded_citations
             artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
+            artifacts_pane.chachanotes_available = self._chachanotes_db() is not None
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3235,6 +3248,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_watchlist_id() is not None
         )
 
+    def _chachanotes_db(self) -> Any:
+        """The live ChaChaNotes handle, or `None` (task-1780, Task 5).
+
+        `getattr(self.app_instance, "chachanotes_db", None)` -- the exact
+        idiom `_load_character_options`/`_cast_load_character` already use
+        on this screen -- pulled out into its own accessor now that a
+        THIRD caller (Keep/`KeptBriefingsModal`'s opener) needs the
+        identical read. Degrades to `None` in harnesses where the app
+        instance carries no such attribute at all.
+        """
+        return getattr(self.app_instance, "chachanotes_db", None)
+
     def _briefing_scope_label(self) -> str:
         """The pane's one-line statement of what it is showing, and from where."""
         watchlist_id = self._briefing_watchlist_id()
@@ -3628,6 +3653,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.scripts_with_audio = self._scripts_with_audio
         pane.citations = self._loaded_citations
         pane.has_audio_episodes = self._watchlist_has_audio_episodes
+        pane.chachanotes_available = self._chachanotes_db() is not None
 
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
@@ -4116,6 +4142,173 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         finally:
             self._briefing_export_in_flight = False
+
+    # --- Keeping a briefing into ChaChaNotes (task-1780, Task 5) ------------
+    #
+    # `briefing_keep.keep_briefing` (Task 2) is the one writer for
+    # `kept_briefings`/`kept_scripts`; this handler is only "mount/dismiss
+    # wiring" around it, the same division of labour every service on this
+    # screen already gets (`generate_briefing`/`generate_script` and their
+    # own handlers). Additive-idempotent and safe to press again on an
+    # already-kept briefing -- the honest re-keep toast below is what makes
+    # that safe to do BY DESIGN rather than by accident.
+
+    @on(KeepBriefingRequested)
+    def handle_keep_briefing_requested(self, event: KeepBriefingRequested) -> None:
+        """Re-check both requirements, claim the guard, then dispatch.
+
+        `ArtifactsPane.compose` already disables Keep without a complete
+        selection or without a ChaChaNotes handle, but this handler
+        re-checks both anyway -- the button's disabled state and the
+        message it posts are two different frames, exactly the same
+        reasoning `handle_export_briefing_requested`'s own docstring gives
+        for its identical re-check.
+
+        `_keep_in_flight` is claimed HERE, before `run_worker`, for the
+        same reason every other in-flight guard on this screen is: a check
+        made inside the worker body leaves a window where two presses both
+        pass before either sets the flag.
+        """
+        event.stop()
+        briefing = self._selected_briefing
+        subs_db = self._briefings_db()
+        chacha_db = self._chachanotes_db()
+        if (
+            briefing is None
+            or str(briefing.get("status") or "").strip().lower() != STATUS_COMPLETE
+            or subs_db is None
+            or chacha_db is None
+        ):
+            self._notify_watchlists(
+                "Select a completed briefing to keep it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._keep_in_flight:
+            self._notify_watchlists(
+                "A keep is already in progress. Nothing else was started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self._keep_in_flight = True
+        self.run_worker(
+            self._keep_briefing(subs_db, chacha_db, briefing["id"]),
+            group="wl-keep",
+        )
+
+    async def _keep_briefing(
+        self, subs_db: Any, chacha_db: Any, briefing_id: int
+    ) -> None:
+        """Worker body: keep, then toast honestly. Sibling of `_generate_
+        briefing`/`_cast_script`: one bare `except` around the DB call
+        turns a database error into a toast instead of taking the whole
+        app down (an exception escaping a Textual worker with the default
+        `exit_on_error=True` does exactly that).
+
+        `KeepRefused` is caught separately, first: `keep_briefing`'s own
+        honest, safe-to-show-verbatim pre-flight refusal (a missing
+        briefing, a non-`complete` status, or an empty body) -- none of
+        these are reachable through this handler's own re-check above in
+        practice (the selection was already re-verified `complete`), but
+        the selected briefing's status could still change between that
+        check and this worker actually running (a concurrent Refresh, or a
+        second window against the same database file), so this stays a
+        real, not merely defensive, branch.
+
+        The success toast reports the two branches `keep_briefing` itself
+        distinguishes (spec, and this task's own AC): `created=True` says
+        how many scripts came along; `created=False` (a re-keep) says the
+        briefing was already kept and reports only what was newly added --
+        the additive-idempotent re-keep, surfaced honestly rather than
+        claiming a fresh keep happened.
+        """
+        try:
+            try:
+                result = await asyncio.to_thread(
+                    keep_briefing, subs_db, chacha_db, briefing_id, origin="manual"
+                )
+            except KeepRefused as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+                return
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Keep failed for briefing {briefing_id}: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not keep this briefing: the database could not "
+                    "be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            scripts_added = result["scripts_added"]
+            if result["created"]:
+                message = f"Kept with {scripts_added} scripts"
+            else:
+                message = f"Already kept — added {scripts_added} new scripts"
+            self._notify_watchlists(message, severity="information", markup=False)
+        finally:
+            self._keep_in_flight = False
+
+    # --- Kept briefings modal (task-1780, Task 5) ---------------------------
+    #
+    # Deliberately scope-independent -- see `KeptBriefingsRequested`'s own
+    # docstring. Gated on nothing but a live ChaChaNotes handle: unlike
+    # `_open_briefing_preset_manager` (which refuses without `_briefings_db
+    # ()` too, since a preset IS a `SubscriptionsDB` row), this modal's own
+    # content lives entirely in ChaChaNotes, and `subs_db` here is merely an
+    # optional convenience the modal degrades gracefully without (see
+    # `KeptBriefingsModal`'s own module docstring).
+
+    @on(KeptBriefingsRequested)
+    def handle_kept_briefings_requested(self, event: KeptBriefingsRequested) -> None:
+        """Wire the toolbar's "Kept Briefings…" button to the modal opener.
+
+        No `exclusive=True` -- `_open_kept_briefings_modal` owns a modal via
+        `push_screen_wait`, and `_open_briefing_preset_manager`'s own
+        sibling handler states exactly why an exclusive worker is the wrong
+        tool for that: cancelling one mid-view would leave its modal on the
+        screen stack with nothing left to dismiss it.
+        """
+        event.stop()
+        chacha_db = self._chachanotes_db()
+        if chacha_db is None:
+            self._notify_watchlists(
+                "Connect a ChaChaNotes database to browse kept briefings.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self.run_worker(
+            self._open_kept_briefings_modal(chacha_db),
+            group="wl-kept-briefings",
+        )
+
+    async def _open_kept_briefings_modal(self, chacha_db: Any) -> None:
+        """Push `KeptBriefingsModal`, then forget it -- it owns its own
+        reads and writes, and this screen holds no kept-briefing state of
+        its own to refresh afterward (see the modal's own dismiss-protocol
+        docstring).
+
+        `subs_db` may be `None` (the watchlist bundle service itself is
+        unavailable) -- the modal is built to degrade around that, offering
+        only the app-default cast (see its own module docstring). `load_
+        character` reuses `_cast_load_character`, the SAME resolver the
+        screen's own live-cast path (`_cast_script`) already builds for an
+        identical reason: a roster speaker bound to a character card must
+        resolve against the SAME database this screen would use anywhere
+        else, not a second, differently-scoped lookup.
+        """
+        subs_db = self._briefings_db()
+        await self.app.push_screen_wait(
+            KeptBriefingsModal(
+                chacha_db,
+                subs_db=subs_db,
+                load_character=self._cast_load_character,
+            )
+        )
 
     # --- Exporting a watchlist's podcast feed directory (spec #2 phase -----
     # 3, Task 5). Sibling of the markdown-export flow immediately above in

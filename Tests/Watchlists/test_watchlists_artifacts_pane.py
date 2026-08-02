@@ -50,6 +50,7 @@ from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
 import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
@@ -70,6 +71,8 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ExportBriefingRequested,
     ExportFeedRequested,
     GenerateBriefingRequested,
+    KeepBriefingRequested,
+    KeptBriefingsRequested,
     PlayAudioRequested,
     StopAudioRequested,
     SynthesizeAudioRequested,
@@ -4980,3 +4983,403 @@ async def test_export_feed_directory_cancelled_error_propagates_uncaught(
 
     assert not (destination / "feed.xml").exists()
     app.notify.assert_not_called()
+
+
+# --- task-1780, Task 5: Keep + "Kept Briefings…" -----------------------------
+#
+# `briefing_keep.keep_briefing` (task-1780, Task 2) copies a `complete`
+# briefing (and its complete scripts) into ChaChaNotes' `kept_briefings`/
+# `kept_scripts` tables, so it survives this watchlist's deletion. The Keep
+# button lives in the SAME `#artifacts-toolbar` every button above it does
+# (no new `Horizontal`); its own second, independent requirement -- a live
+# ChaChaNotes handle, a database this pane has no access to at all -- is
+# `chachanotes_available`, screen-supplied exactly like `has_audio_
+# episodes` above it. `KeptBriefingsModal` itself (list/detail/cast/delete)
+# is exercised separately in `test_kept_briefings_modal.py`; this file only
+# covers the button's own gating and the screen's wiring around both
+# messages.
+
+
+def _chachanotes_db(tmp_path) -> CharactersRAGDB:
+    """A real, file-backed `CharactersRAGDB` -- `keep_briefing`'s own
+    `asyncio.to_thread` hop needs a real, thread-local-safe connection, the
+    same reason every sibling DB helper in this stream is never `:memory:`
+    (`test_briefing_keep.py`'s own module docstring states this in full).
+    """
+    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="artifacts-pane-test")
+
+
+@pytest.mark.asyncio
+async def test_keep_button_disabled_without_a_complete_selection_or_chachanotes(
+    tmp_path,
+):
+    """Keep starts disabled with nothing selected, stays disabled for a
+    `failed` row, stays disabled for a `complete` row with no ChaChaNotes
+    handle bound at all, and enables only once both conditions hold --
+    mirrors `test_export_button_is_disabled_without_a_complete_selection`
+    plus the one extra requirement Keep alone has.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    failed_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(failed_id, status="failed", error="boom")
+    complete_id = _seed_complete_briefing(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        keep_button = pane.query_one("#artifacts-keep-button", Button)
+        assert keep_button.disabled is True, "no selection -> disabled"
+        assert keep_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+
+        pane.select_briefing_by_id(str(failed_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.query_one("#artifacts-keep-button", Button).disabled is True, (
+            "a failed briefing has no body worth keeping"
+        )
+
+        pane.select_briefing_by_id(str(complete_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.query_one("#artifacts-keep-button", Button).disabled is True, (
+            "a complete selection alone is not enough without a ChaChaNotes "
+            "handle"
+        )
+
+        chacha_db = _chachanotes_db(tmp_path)
+        app.chachanotes_db = chacha_db
+        try:
+            # Patched onto the pane directly, the SAME idiom every other
+            # screen-supplied boolean on this pane already uses to update
+            # in place (mode/cadence/preset pickers all state explicitly:
+            # "patch it in place, never rebuild via `self.refresh(recompose
+            # =True)`") -- not a full workbench recompose.
+            await screen._load_briefings()
+            await pilot.pause()
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            assert (
+                pane.query_one("#artifacts-keep-button", Button).disabled is False
+            )
+        finally:
+            chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_pressing_keep_creates_a_kept_row_and_toasts_created_with_scripts(
+    tmp_path,
+):
+    """The created branch: a fresh keep reports how many scripts came
+    along, `markup=False` (the toast interpolates a plain integer, but the
+    convention this stream uses for every honest count/status toast is the
+    same regardless)."""
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = _seed_complete_briefing(app, watchlist_id, body="Body text")
+    script_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="Solo",
+        roster_snapshot_json='[{"name": "Narrator"}]',
+    )
+    db.update_briefing_script(
+        script_id,
+        status="complete",
+        turns_json='[{"speaker": "Narrator", "text": "Hi."}]',
+    )
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+        async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.select_briefing_by_id(str(briefing_id))
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.query_one("#artifacts-keep-button", Button).press()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+        kept = chacha_db.get_kept_briefing_by_source(briefing_id)
+        assert kept is not None
+        assert kept["origin"] == "manual"
+        assert kept["body_markdown"] == "Body text"
+        assert len(chacha_db.list_kept_scripts(kept["id"])) == 1
+
+        app.notify.assert_called_once()
+        args, kwargs = app.notify.call_args
+        assert args[0] == "Kept with 1 scripts"
+        assert kwargs.get("markup") is False
+        assert kwargs.get("severity") == "information"
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_pressing_keep_again_reports_already_kept_and_the_new_count(tmp_path):
+    """The additive re-keep, surfaced honestly (the design spec's own
+    named requirement): a second Keep press on an already-kept briefing
+    must say so, and report only the NEWLY added script count -- never
+    claim a fresh keep just happened.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+        async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.select_briefing_by_id(str(briefing_id))
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.query_one("#artifacts-keep-button", Button).press()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            app.notify.reset_mock()
+
+            # A script cast AFTER the first keep -- the additive-idempotent
+            # re-keep must pick this one up.
+            script_id = db.insert_briefing_script(
+                briefing_id,
+                preset_id=None,
+                preset_name="Solo",
+                roster_snapshot_json='[{"name": "Narrator"}]',
+            )
+            db.update_briefing_script(
+                script_id,
+                status="complete",
+                turns_json='[{"speaker": "Narrator", "text": "Hi."}]',
+            )
+
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.query_one("#artifacts-keep-button", Button).press()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+        args, kwargs = app.notify.call_args
+        assert args[0] == "Already kept — added 1 new scripts"
+        assert kwargs.get("markup") is False
+        assert kwargs.get("severity") == "information"
+        kept = chacha_db.get_kept_briefing_by_source(briefing_id)
+        assert len(chacha_db.list_kept_scripts(kept["id"])) == 1, (
+            "only the newly-cast script must be added"
+        )
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_the_keep_guard_is_claimed_before_the_worker_runs(tmp_path):
+    """Mechanism half, the deterministic sibling of `test_the_guard_is_
+    claimed_before_the_worker_runs` (Generate's own pin) and `test_the_
+    cast_guard_is_claimed_before_the_worker_runs` (Cast's): the handler is
+    synchronous with no `await`, so when it returns, no worker code can yet
+    have run. If the guard is claimed there, `_keep_in_flight` is already
+    `True` at that instant; if it were claimed inside the worker body
+    instead, it would still be `False` and a second call made in that same
+    window would wrongly dispatch a SECOND worker rather than being
+    refused -- this is the double-press mutation this task's own report
+    names.
+
+    Also pins re-arm both ways (the brief's own requirement): after the
+    accepted keep finishes, a THIRD call must be usable again (not still
+    refused), and (separately, below) a database error must re-arm the
+    guard too.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+        async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.select_briefing_by_id(str(briefing_id))
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen._selected_briefing is not None
+
+            screen.handle_keep_briefing_requested(KeepBriefingRequested())
+            assert screen._keep_in_flight is True, (
+                "the guard must be claimed by the handler, before "
+                "`run_worker` has scheduled anything"
+            )
+            assert chacha_db.get_kept_briefing_by_source(briefing_id) is None, (
+                "and no worker code can have run yet"
+            )
+
+            app.notify.reset_mock()
+            screen.handle_keep_briefing_requested(KeepBriefingRequested())
+            assert app.notify.call_count == 1
+            _args, kwargs = app.notify.call_args
+            assert kwargs.get("markup") is False
+            assert "already in progress" in _args[0]
+
+            deadline = time.monotonic() + 20.0
+            while time.monotonic() < deadline and screen._keep_in_flight:
+                await pilot.pause(0.02)
+            assert chacha_db.get_kept_briefing_by_source(briefing_id) is not None, (
+                "exactly the one accepted keep must have run"
+            )
+
+            # Re-armed: a further call now dispatches a fresh (re-)keep
+            # rather than being refused.
+            app.notify.reset_mock()
+            screen.handle_keep_briefing_requested(KeepBriefingRequested())
+            deadline = time.monotonic() + 20.0
+            while time.monotonic() < deadline and screen._keep_in_flight:
+                await pilot.pause(0.02)
+            assert app.notify.call_count == 1
+            _args, _kwargs = app.notify.call_args
+            assert "already in progress" not in _args[0], (
+                "must be usable again, not still refusing"
+            )
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_keep_guard_rearms_after_a_database_error(monkeypatch, tmp_path):
+    """A database error during keep must not wedge the guard shut forever
+    -- mirrors `test_a_database_error_during_generation_does_not_exit_the_
+    app`'s own re-arm assertion, for Keep's own guard.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(screen_module, "keep_briefing", _boom)
+
+        async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.select_briefing_by_id(str(briefing_id))
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.query_one("#artifacts-keep-button", Button).press()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen._keep_in_flight is False, "a failure must re-arm the guard"
+            assert host.is_running, "a keep failure must not exit the application"
+            app.notify.assert_called_once()
+            args, kwargs = app.notify.call_args
+            assert kwargs.get("severity") == "error"
+            assert kwargs.get("markup") is False
+            assert chacha_db.list_kept_briefings() == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_kept_briefings_button_disabled_without_chachanotes():
+    """No ChaChaNotes handle at all -> disabled, regardless of scope --
+    the mirror image of every "enabled" test below."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, _pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        button = pane.query_one("#artifacts-kept-briefings-button", Button)
+        assert button.disabled is True
+        assert button.compact
+
+
+@pytest.mark.asyncio
+async def test_kept_briefings_button_enabled_regardless_of_watchlist_scope(tmp_path):
+    """The design spec's own named requirement: "Kept Briefings…" is
+    reachable whether or not a watchlist is in scope. Unlike Generate
+    (disabled without one, on purpose, to explain itself), this button
+    lists ChaChaNotes content directly and needs no watchlist at all.
+    """
+    app = _build_test_app()
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+        async with _open_artifacts(app, None) as (screen, _pilot, _host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            assert (
+                pane.query_one("#artifacts-generate-button", Button).disabled is True
+            ), "the fixture must have no watchlist in scope"
+            kept_button = pane.query_one(
+                "#artifacts-kept-briefings-button", Button
+            )
+            assert kept_button.disabled is False
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_kept_briefings_button_opens_the_modal(monkeypatch, tmp_path):
+    """The toolbar's "Kept Briefings…" button calls the screen's opener,
+    handing it the live ChaChaNotes handle -- mirrors `test_presets_
+    button_opens_the_preset_manager`'s identical proof-through-the-
+    handler's-own-effect shape."""
+    app = _build_test_app()
+    chacha_db = _chachanotes_db(tmp_path)
+    app.chachanotes_db = chacha_db
+    try:
+        calls = []
+
+        async def _recording_open(self, chacha):
+            calls.append(chacha)
+
+        monkeypatch.setattr(
+            screen_module.WatchlistsCollectionsScreen,
+            "_open_kept_briefings_modal",
+            _recording_open,
+        )
+
+        async with _open_artifacts(app, None) as (screen, pilot, host):
+            pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+            pane.query_one("#artifacts-kept-briefings-button", Button).press()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert calls == [chacha_db]
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_kept_briefings_button_notifies_when_chachanotes_missing_at_press_time():
+    """Re-checked at dispatch, exactly like every other button on this
+    toolbar (`handle_export_briefing_requested`'s own docstring states why:
+    the button's disabled state and the message it posts are two different
+    frames). Calling the handler directly -- bypassing the disabled button
+    -- is what a stale disabled-state race would look like."""
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, _pilot, _host):
+        screen.handle_kept_briefings_requested(KeptBriefingsRequested())
+
+    app.notify.assert_called_once()
+    _args, kwargs = app.notify.call_args
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False
