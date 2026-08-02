@@ -607,3 +607,107 @@ def test_a_benchs_extra_tag_is_accepted(db, probe_run_group_with_extra_tags):
     )
     stored = load_turn_annotations(db, probe_run_group_with_extra_tags)
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+# --- delete_task cascades probe annotations (whole-branch review I4, task-6) --
+#
+# `probe_run_group` is opened under the `bench` fixture's task_id (see the
+# `probe_run_group` fixture above: it destructures `bench` for its
+# `task_id`). Requesting `bench` directly here, alongside `probe_run_group`,
+# yields that SAME cached task_id -- pytest caches a function-scoped fixture
+# once per test, however many other fixtures also depend on it -- so `bench`
+# is the right handle for "the bench `probe_run_group` runs under", not
+# `bench_id_of_that_run` (that fixture is a deliberately different bench,
+# carrying an extra tag, used by `probe_run_group_with_extra_tags`).
+
+
+@pytest.fixture
+def second_probe_run_group(db):
+    """A run group under a bench distinct from `probe_run_group`'s, so the
+    cascade-isolation test can prove deleting one bench does not touch
+    another's annotations.
+
+    Uses its own target name -- eval_models is UNIQUE on
+    (name, provider, model_id), and this fixture is deliberately combined
+    with `probe_run_group` (via `bench`) in the same test, which already
+    creates a target named "steered" (`_target_row`'s default).
+    """
+    config = _bench_config(name="a different bench")
+    task_id = save_character_bench(db, config)
+    group_id, _ = create_probe_run_group(
+        db,
+        task_id,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db, name="steered-2")],
+    )
+    return group_id
+
+
+@pytest.fixture
+def seeded_word_bench_id(db):
+    """A minimal word-bench `eval_tasks` row, written directly against
+    `create_task` the same way
+    `Tests/Evals/character_probe/test_bench_storage.py::
+    test_loading_a_word_bench_as_a_character_bench_raises` does. All this
+    test needs is a bench `delete_task` can target that is NOT a character
+    probe bench, to prove the cascade is scoped to that task's own run
+    groups rather than to every probe annotation row in the database."""
+    return db.create_task(
+        name="word bench",
+        description="",
+        task_type="logprob",
+        config_format="custom",
+        config_data={"bench_type": "word_bench"},
+    )
+
+
+def test_deleting_a_bench_removes_its_turn_annotations(db, probe_run_group, bench):
+    _config, task_id = bench
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character"], note="",
+    )
+    assert load_turn_annotations(db, probe_run_group)
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_turn_annotations(probe_run_group) == []
+
+
+def test_deleting_a_bench_removes_its_review_state(db, probe_run_group, bench):
+    _config, task_id = bench
+    mark_conversation_reviewed(db, probe_run_group, 1, 0, 0, "t-1", note="fine")
+    assert db.list_probe_review_state(probe_run_group)
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_review_state(probe_run_group) == []
+
+
+def test_deleting_a_bench_leaves_another_benchs_annotations_alone(
+    db, probe_run_group, bench, second_probe_run_group
+):
+    _config, task_id = bench
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+    )
+    annotate_turn(
+        db, second_probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["refused"], note="",
+    )
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_turn_annotations(second_probe_run_group)
+
+
+def test_deleting_a_word_bench_touches_no_probe_annotation_rows(
+    db, probe_run_group, seeded_word_bench_id
+):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+    )
+    db.delete_task(seeded_word_bench_id)
+    assert db.list_probe_turn_annotations(probe_run_group)

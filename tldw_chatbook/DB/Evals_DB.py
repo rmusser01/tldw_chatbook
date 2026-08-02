@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple
+from typing import TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple, Sequence
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -848,13 +848,52 @@ class EvalsDB:
             raise EvalsDBError(f"Failed to update task: {e}")
 
     def delete_task(self, task_id: str) -> bool:
-        """Soft delete a task."""
+        """Soft delete a task and hard-delete its character-probe annotations.
+
+        The task row itself is soft-deleted (``deleted_at`` set), matching
+        every other delete in this table. Any character-probe turn
+        annotations and review state belonging to the task's run groups are
+        hard-deleted in the same transaction: those two tables carry no
+        ``deleted_at`` column and nothing reads them for an "undeleted"
+        view, so a soft delete would just leave them permanently orphaned.
+        This asymmetry is intentional -- do not "fix" it into a soft delete
+        to match ``eval_tasks``.
+
+        Args:
+            task_id: The task (bench) to delete.
+
+        Returns:
+            bool: True if a live task matched and was deleted, False if no
+            such live task existed (already deleted, or never existed).
+
+        Raises:
+            EvalsDBError: If the delete failed for a reason other than "no
+                matching row".
+        """
         conn = self._get_connection()
+
+        # Resolve the task's run groups BEFORE the soft-delete below. This
+        # is not read-after-write squeamishness: eval_runs.task_id points
+        # at eval_tasks.id directly and does not care about
+        # eval_tasks.deleted_at, so the lookup would still work after the
+        # soft-delete too. It runs first anyway so "gather everything this
+        # task owns, then remove the task and what it owns" is one clear,
+        # ordered operation rather than something that happens to work
+        # because of an unrelated table's lack of a filter.
+        run_group_ids = [
+            row["run_group_id"]
+            for row in conn.execute(
+                "SELECT DISTINCT run_group_id FROM eval_runs "
+                "WHERE task_id = ? AND run_group_id IS NOT NULL",
+                (task_id,),
+            ).fetchall()
+        ]
+
         try:
             with conn:
                 cursor = conn.execute(
                     """
-                    UPDATE eval_tasks 
+                    UPDATE eval_tasks
                     SET deleted_at = datetime('now', 'utc'),
                         updated_at = datetime('now', 'utc')
                     WHERE id = ? AND deleted_at IS NULL
@@ -864,11 +903,56 @@ class EvalsDB:
 
                 if cursor.rowcount > 0:
                     logger.info(f"Deleted eval task: {task_id}")
+                    # Cascades the task's character-probe annotations in
+                    # the same transaction (nested `with conn:` blocks on
+                    # one sqlite3 connection share the current transaction
+                    # rather than opening a separate one, so a failure here
+                    # rolls back the soft-delete above too).
+                    self.delete_probe_annotations_for_run_groups(run_group_ids)
                     return True
                 return False
 
         except Exception as e:
             raise EvalsDBError(f"Failed to delete task: {e}")
+
+    def delete_probe_annotations_for_run_groups(
+        self, run_group_ids: Sequence[str]
+    ) -> int:
+        """Hard-delete every character-probe annotation for these run groups.
+
+        Annotations and review state describe one run's answers and mean
+        nothing without them, so they are removed with the run rather than
+        left orphaned -- see ``delete_task``, the only caller today.
+
+        Args:
+            run_group_ids: The run groups whose annotations and review
+                state should be removed. Falsy entries (``None``, ``""``)
+                are ignored; an empty sequence is a no-op.
+
+        Returns:
+            int: Rows removed across both tables. Zero is a normal result
+            -- a run group nobody reviewed has no annotations.
+        """
+        ids = [str(rg) for rg in run_group_ids if rg]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        removed = 0
+        conn = self._get_connection()
+        with conn:
+            # Table names below come from this two-element literal tuple in
+            # the function's own body, never from a caller; only the
+            # run_group_id values are parameters.
+            for table in (
+                "eval_probe_turn_annotations",
+                "eval_probe_review_state",
+            ):
+                cursor = conn.execute(
+                    f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
+                    ids,
+                )
+                removed += cursor.rowcount
+        return removed
 
     def get_task(
         self, task_id: str, include_deleted: bool = False
