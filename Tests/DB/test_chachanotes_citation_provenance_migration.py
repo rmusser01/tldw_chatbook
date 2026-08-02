@@ -403,8 +403,11 @@ def test_fresh_database_reaches_v28_with_stable_identity_context(
     db = _fresh_db(tmp_path / "fresh.sqlite")
     connection = db.get_connection()
 
-    assert db._CURRENT_SCHEMA_VERSION == 28
-    assert _version(connection) == 28
+    # task-1780 bumped the schema to v29 (kept_briefings/kept_scripts); this
+    # test only cares that a fresh DB reaches "whatever is current" and still
+    # carries the v27 provenance tables, so assert dynamically rather than
+    # re-pinning a version number this file doesn't own.
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert PROVENANCE_TABLES <= _table_names(connection)
     row = connection.execute("SELECT * FROM rag_identity_context").fetchone()
     assert row["context_name"] == "default"
@@ -423,7 +426,9 @@ def test_v24_upgrade_reaches_v28_and_uses_exact_citation_sql_schema(
     db = _fresh_db(path)
     connection = db.get_connection()
 
-    assert _version(connection) == 28
+    # task-1780 bumped the schema past v28; assert dynamically rather than
+    # re-pinning a version number this file doesn't own.
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert PROVENANCE_TABLES <= _table_names(connection)
     assert "message_generation_metadata" in _table_names(connection)
     conversation_columns = {

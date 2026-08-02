@@ -162,7 +162,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 28  # Adds local conversation character authority.
+    _CURRENT_SCHEMA_VERSION = 29  # Adds kept_briefings/kept_scripts (task-1780).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2552,6 +2552,51 @@ UPDATE db_schema_version
    AND version = 18;
 """
 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v28_to_v29_kept_briefings.sql.
+    # Deliberately no sync columns (client_id/version/deleted) and no FTS --
+    # see the migration file's header comment for the full rationale.
+    # `kept_scripts.kept_briefing_id` IS a real intra-ChaChaNotes FK with
+    # ON DELETE CASCADE; `source_briefing_id`/`source_script_id` are plain
+    # ints kept for tracing only, never FKs (the source rows live in a
+    # different database file, Subscriptions_DB).
+    _MIGRATE_V28_TO_V29_SQL = """
+CREATE TABLE IF NOT EXISTS kept_briefings(
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_briefing_id     INTEGER NOT NULL UNIQUE,
+  watchlist_name         TEXT,
+  body_markdown          TEXT NOT NULL,
+  covers_through_item_id INTEGER,
+  covers_from_ts         DATETIME,
+  selection_mode         TEXT,
+  model_used             TEXT,
+  item_count             INTEGER NOT NULL DEFAULT 0,
+  featured_count         INTEGER NOT NULL DEFAULT 0,
+  overflow_count         INTEGER NOT NULL DEFAULT 0,
+  origin                 TEXT NOT NULL CHECK(origin IN ('manual','scheduled')),
+  original_created_at    DATETIME,
+  kept_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kept_briefings_kept_at ON kept_briefings(kept_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS kept_scripts(
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  kept_briefing_id     INTEGER NOT NULL REFERENCES kept_briefings(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  source_script_id     INTEGER UNIQUE,
+  preset_name          TEXT NOT NULL,
+  roster_snapshot_json TEXT NOT NULL,
+  turns_json           TEXT NOT NULL,
+  model_used           TEXT,
+  original_created_at  DATETIME,
+  kept_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kept_scripts_briefing ON kept_scripts(kept_briefing_id);
+UPDATE db_schema_version
+   SET version = 29
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 28;
+"""
+
     def __init__(
         self,
         db_path: Union[str, Path],
@@ -4171,6 +4216,44 @@ UPDATE db_schema_version
                 f"Migration from V27 to V28 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v28_to_v29(self, conn: sqlite3.Connection) -> None:
+        """Migrate schema V28→V29: add ``kept_briefings``/``kept_scripts``
+        (task-1780) -- user-kept copies of Subscriptions_DB briefings/scripts
+        that must outlive watchlist deletion. Pure additive ``CREATE TABLE``;
+        no backfill needed since these tables have no prior rows. No sync
+        triggers are added; this is a deliberate, local-only divergence (see
+        the migration file's header comment)."""
+        logger.info(
+            f"Migrating schema from V28 to V29 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        try:
+            conn.executescript(self._MIGRATE_V28_TO_V29_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V28→V29] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 29:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V28→V29] Migration version check failed. Expected 29, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V28→V29] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V28→V29] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V28 to V29 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V28→V29] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V28 to V29 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4329,6 +4412,7 @@ UPDATE db_schema_version
                     25: self._migrate_from_v25_to_v26,
                     26: self._migrate_from_v26_to_v27,
                     27: self._migrate_from_v27_to_v28,
+                    28: self._migrate_from_v28_to_v29,
                 }
 
                 if current_db_version == 0:
@@ -12851,6 +12935,326 @@ UPDATE db_schema_version
             "topics": topic_stats,
             "sessions": session_stats,
         }
+
+    # --- Kept Briefings / Kept Scripts (task-1780) ---
+    # User-kept copies of Subscriptions_DB `briefings`/`briefing_scripts`
+    # rows that must survive watchlist deletion. See
+    # Docs/superpowers/specs/2026-08-01-kept-briefings-design.md and the
+    # v28->v29 migration (`migrations/chachanotes_v28_to_v29_kept_briefings.sql`)
+    # for the schema rationale: no sync columns, no FTS, and a real
+    # intra-ChaChaNotes `ON DELETE CASCADE` from kept_scripts to
+    # kept_briefings. These methods are plain CRUD; idempotent "keep"
+    # semantics (skip-if-already-kept, additive script mirroring) belong to
+    # the higher-level keep service (`Subscriptions/briefing_keep.py`).
+    #
+    # `covers_from_ts`/`original_created_at`/`kept_at` are declared
+    # DATETIME. Every CharactersRAGDB connection opens with
+    # `sqlite3.PARSE_DECLTYPES` and this process registers a DATETIME
+    # converter (`DB/sqlite_datetime_fix.py`), so a caller-supplied
+    # ISO-8601 string with an explicit offset/``Z`` comes back from a
+    # `get_*`/`list_*` read as a tz-aware `datetime.datetime`, not the
+    # original string -- the same behavior every other DATETIME column in
+    # this database already has (e.g. `conversations.created_at`).
+
+    _ALLOWED_KEPT_BRIEFING_ORIGINS = ("manual", "scheduled")
+
+    def create_kept_briefing(
+        self,
+        *,
+        source_briefing_id: int,
+        watchlist_name: Optional[str],
+        body_markdown: str,
+        covers_through_item_id: Optional[int] = None,
+        covers_from_ts: Optional[str] = None,
+        selection_mode: Optional[str] = None,
+        model_used: Optional[str] = None,
+        item_count: int = 0,
+        featured_count: int = 0,
+        overflow_count: int = 0,
+        origin: str,
+        original_created_at: Optional[str] = None,
+    ) -> int:
+        """Insert a new kept briefing row.
+
+        `source_briefing_id` is the cross-DB idempotency key callers use to
+        avoid double-keeping the same Subscriptions_DB briefing (see
+        `get_kept_briefing_by_source`); this method always inserts and does
+        not check for an existing row itself -- a duplicate
+        `source_briefing_id` raises `ConflictError`.
+
+        Args:
+            source_briefing_id: The originating `Subscriptions_DB`
+                `briefings.id`, kept only for tracing -- a plain int, never
+                a foreign key, since the source row lives in a different
+                database file.
+            watchlist_name: Denormalized watchlist name at keep time; the
+                watchlist itself may be deleted later.
+            body_markdown: The briefing's rendered markdown body.
+            covers_through_item_id: Denormalized coverage-window bound.
+            covers_from_ts: Denormalized coverage-window bound.
+            selection_mode: Denormalized item-selection mode used to build
+                the briefing.
+            model_used: Denormalized model identifier used to generate the
+                briefing.
+            item_count: Denormalized covered-item count.
+            featured_count: Denormalized featured-item count.
+            overflow_count: Denormalized overflow-item count.
+            origin: How the keep happened; must be ``"manual"`` (user
+                pressed Keep) or ``"scheduled"`` (auto-mirrored on a
+                scheduled generation's completion).
+            original_created_at: The original briefing's `created_at`
+                timestamp, denormalized so it can be displayed without the
+                Subscriptions_DB.
+
+        Returns:
+            The integer id of the newly inserted `kept_briefings` row.
+
+        Raises:
+            InputError: If `origin` is not one of the allowed values.
+            ConflictError: If `source_briefing_id` already has a kept row.
+            CharactersRAGDBError: For other database errors.
+        """
+        if origin not in self._ALLOWED_KEPT_BRIEFING_ORIGINS:
+            raise InputError(
+                f"origin must be one of {self._ALLOWED_KEPT_BRIEFING_ORIGINS}, got {origin!r}."
+            )
+        query = """
+            INSERT INTO kept_briefings(
+                source_briefing_id, watchlist_name, body_markdown,
+                covers_through_item_id, covers_from_ts, selection_mode,
+                model_used, item_count, featured_count, overflow_count,
+                origin, original_created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            source_briefing_id,
+            watchlist_name,
+            body_markdown,
+            covers_through_item_id,
+            covers_from_ts,
+            selection_mode,
+            model_used,
+            item_count,
+            featured_count,
+            overflow_count,
+            origin,
+            original_created_at,
+        )
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(query, params)
+                return int(cursor.lastrowid)
+        except sqlite3.IntegrityError as exc:
+            if "unique constraint failed" in str(exc).lower():
+                raise ConflictError(
+                    f"A kept briefing already exists for source_briefing_id={source_briefing_id}.",
+                    entity="kept_briefings",
+                    entity_id=source_briefing_id,
+                ) from exc
+            raise CharactersRAGDBError(
+                f"Failed to create kept briefing: {exc}"
+            ) from exc
+
+    def get_kept_briefing_by_source(
+        self, source_briefing_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return the kept briefing for a source briefing id, if any.
+
+        Args:
+            source_briefing_id: The originating Subscriptions_DB
+                `briefings.id`.
+
+        Returns:
+            The kept briefing row as a dict, or None if it was never kept.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_briefings WHERE source_briefing_id = ?",
+            (source_briefing_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def get_kept_briefing(self, kept_id: int) -> Optional[Dict[str, Any]]:
+        """Return a kept briefing by its own id.
+
+        Args:
+            kept_id: The `kept_briefings.id` primary key.
+
+        Returns:
+            The kept briefing row as a dict, or None if not found.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_briefings WHERE id = ?",
+            (kept_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def list_kept_briefings(
+        self, *, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List kept briefings, most recently kept first.
+
+        Ordered by `kept_at DESC, id DESC` -- the `id` tiebreak keeps
+        ordering stable (by insertion identity) for rows sharing a
+        `kept_at` timestamp, which `CURRENT_TIMESTAMP`'s second-level
+        resolution makes possible under fast successive keeps.
+
+        Args:
+            limit: Maximum number of rows to return.
+            offset: Number of rows to skip.
+
+        Returns:
+            A list of kept briefing dicts, most recently kept first.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_briefings ORDER BY kept_at DESC, id DESC "
+            "LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def delete_kept_briefing(self, kept_id: int) -> bool:
+        """Hard-delete a kept briefing, cascading its kept scripts.
+
+        This is a real `DELETE`, not a soft-delete flag flip -- kept rows
+        do not participate in ChaChaNotes sync (see the v28->v29
+        migration). Any `kept_scripts` rows referencing this briefing are
+        removed by the `ON DELETE CASCADE` foreign key; this connection
+        pool always runs with `PRAGMA foreign_keys = ON` (see
+        `_get_thread_connection`), so the cascade is enforced by SQLite
+        itself, not application code.
+
+        Args:
+            kept_id: The `kept_briefings.id` primary key to delete.
+
+        Returns:
+            True if a row was deleted, False if no such row existed.
+        """
+        with self.transaction() as cursor:
+            cursor.execute("DELETE FROM kept_briefings WHERE id = ?", (kept_id,))
+            return cursor.rowcount > 0
+
+    def create_kept_script(
+        self,
+        kept_briefing_id: int,
+        *,
+        source_script_id: Optional[int] = None,
+        preset_name: str,
+        roster_snapshot_json: str,
+        turns_json: str,
+        model_used: Optional[str] = None,
+        original_created_at: Optional[str] = None,
+    ) -> int:
+        """Insert a new kept script row under a kept briefing.
+
+        `source_script_id` is nullable: a script cast directly from a kept
+        briefing (rather than mirrored from a Subscriptions_DB script) has
+        no source id. SQLite's UNIQUE constraint treats NULLs as mutually
+        distinct, so any number of NULL-source scripts may coexist under
+        the same (or different) kept briefing; a non-NULL duplicate raises
+        `ConflictError`.
+
+        Args:
+            kept_briefing_id: The owning `kept_briefings.id`.
+            source_script_id: The originating Subscriptions_DB
+                `briefing_scripts.id`, or None if cast directly from the
+                kept briefing.
+            preset_name: Denormalized cast preset name.
+            roster_snapshot_json: Denormalized roster snapshot, already
+                JSON-encoded by the caller.
+            turns_json: Denormalized script turns, already JSON-encoded by
+                the caller.
+            model_used: Denormalized model identifier used for the cast.
+            original_created_at: The original script's `created_at`
+                timestamp, denormalized so it can be displayed without the
+                Subscriptions_DB.
+
+        Returns:
+            The integer id of the newly inserted `kept_scripts` row.
+
+        Raises:
+            ConflictError: If `source_script_id` is not None and already
+                has a kept row.
+            CharactersRAGDBError: If `kept_briefing_id` does not reference
+                an existing kept briefing (foreign key violation), or for
+                other database errors.
+        """
+        query = """
+            INSERT INTO kept_scripts(
+                kept_briefing_id, source_script_id, preset_name,
+                roster_snapshot_json, turns_json, model_used,
+                original_created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            kept_briefing_id,
+            source_script_id,
+            preset_name,
+            roster_snapshot_json,
+            turns_json,
+            model_used,
+            original_created_at,
+        )
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(query, params)
+                return int(cursor.lastrowid)
+        except sqlite3.IntegrityError as exc:
+            if "unique constraint failed" in str(exc).lower():
+                raise ConflictError(
+                    f"A kept script already exists for source_script_id={source_script_id}.",
+                    entity="kept_scripts",
+                    entity_id=source_script_id,
+                ) from exc
+            raise CharactersRAGDBError(
+                f"Failed to create kept script: {exc}"
+            ) from exc
+
+    def list_kept_scripts(
+        self, kept_briefing_id: int, *, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List kept scripts for a kept briefing, most recently kept first.
+
+        Ordered by `kept_at DESC, id DESC`, mirroring
+        `list_kept_briefings`.
+
+        Args:
+            kept_briefing_id: The owning `kept_briefings.id`.
+            limit: Maximum number of rows to return.
+            offset: Number of rows to skip.
+
+        Returns:
+            A list of kept script dicts, most recently kept first.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_scripts WHERE kept_briefing_id = ? "
+            "ORDER BY kept_at DESC, id DESC LIMIT ? OFFSET ?",
+            (kept_briefing_id, limit, offset),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def kept_script_source_ids(self, kept_briefing_id: int) -> set[int]:
+        """Return the non-NULL source script ids kept under a briefing.
+
+        Backs the keep service's additive-idempotency check: a script cast
+        directly from a kept briefing has `source_script_id = NULL` and
+        must never be treated as "already kept" for a subscriptions-side
+        source id.
+
+        Args:
+            kept_briefing_id: The owning `kept_briefings.id`.
+
+        Returns:
+            The set of non-NULL `source_script_id` values kept under this
+            briefing.
+        """
+        cursor = self.execute_query(
+            "SELECT source_script_id FROM kept_scripts "
+            "WHERE kept_briefing_id = ? AND source_script_id IS NOT NULL",
+            (kept_briefing_id,),
+        )
+        return {int(row[0]) for row in cursor.fetchall()}
 
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---
