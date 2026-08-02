@@ -1079,7 +1079,7 @@ git add "backlog/tasks/task-865 - Sweep-hardcoded-~-.config-tldw_cli-and-~-.loca
 git commit -m "docs(config): close TASK-865 path ownership sweep"
 ```
 
-- [ ] **Step 8: Verify the final commit state**
+- [x] **Step 8: Verify the final commit state**
 
 ```bash
 git status --short --branch
@@ -1097,3 +1097,4 @@ Expected: clean worktree, reviewable task-scoped commit series, and no uncommitt
 - The no-migration/no-Sync audit against locked review base `23fa33c13945806ca90cf79dbcba3ade1c808739` found no Notes/Sync diff and no user-data copy, move, import, or delete behavior. Source deletion is limited to ADR-040's rejected unreachable implementations.
 - Tests use production functions/methods or the full application. The focused help test directly exercises a real `ImprovedDictationWindow` Widget with only its notification collaborator supplied; it does not create, subclass, or imitate a Textual `App`.
 - Step 8 uses the locked review base rather than moving `origin/dev`, as directed for a stable final review range. Current `origin/dev` relation is reported separately.
+- First Step 8 pass after closeout commit `d088a82d9`: worktree clean; `git log 23fa33c13..HEAD` showed the 22-commit TASK-865 series; `git diff --check 23fa33c13..HEAD` exited 0. Local `origin/dev` was `da79bc434`, one commit beyond the locked base, so its relation was reported separately as 1 left / 22 right with merge base `23fa33c13945806ca90cf79dbcba3ade1c808739`.
