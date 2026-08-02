@@ -4742,7 +4742,24 @@ class TldwCli(
         briefing_handler = None
         if briefing_schedules_enabled:
             briefing_projection = BriefingProjection(subscriptions_db)
-            briefing_handler = BriefingJobHandler(subscriptions_db=subscriptions_db)
+            # `self.chachanotes_db` is assigned later in `__init__`
+            # (after the `notes_service`/prompts/media parallel-init phase
+            # settles), strictly AFTER
+            # `_wire_watchlists_and_notifications_services` (this method,
+            # called earlier in `__init__`) returns -- so it does not exist
+            # as an attribute on `self` yet at this point, and a bare
+            # `self.chachanotes_db` reference would raise `AttributeError`.
+            # `getattr(self, "chachanotes_db", None)` is the same defensive
+            # read already used elsewhere in this file for the identical
+            # reason (`_wire_chat_conversation_services`,
+            # `_local_flashcards_due_count`). The handler tolerates `None`
+            # -- auto-keep (task-1780, Task 3) is simply disabled for this
+            # process; nothing else about scheduled generation depends on
+            # it.
+            briefing_handler = BriefingJobHandler(
+                subscriptions_db=subscriptions_db,
+                chachanotes_db=getattr(self, "chachanotes_db", None),
+            )
 
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(

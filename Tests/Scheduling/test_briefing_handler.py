@@ -31,11 +31,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler import (
     BriefingJobHandler,
 )
 from tldw_chatbook.Subscriptions import briefing_service
+from tldw_chatbook.Subscriptions.briefing_keep import KeepRefused
 from tldw_chatbook.Subscriptions.briefing_service import (
     GenerationInFlightError,
     generate_briefing,
@@ -471,3 +473,311 @@ async def test_empty_result_writes_an_empty_row_end_to_end(tmp_path):
     assert len(rows) == 1
     assert rows[0]["status"] == "empty"
     assert rows[0]["error"] is None
+
+
+# --- Task 3: auto-keep on scheduled completion -------------------------------
+#
+# `BriefingJobHandler` gains an optional `chachanotes_db`; once a spawned
+# generation resolves `complete`, `_run_generation` mirrors it into
+# ChaChaNotes via `briefing_keep.keep_briefing(..., origin="scheduled")`
+# (spec: Keep-service "Auto path"). Every real DB here is file-backed at
+# `tmp_path`, never `:memory:` and never the live user data directory --
+# matching both this file's own convention above and
+# `Tests/Subscriptions/test_briefing_keep.py`'s.
+
+
+def _chacha_db(tmp_path) -> CharactersRAGDB:
+    """A real, file-backed ChaChaNotes handle for auto-keep assertions.
+
+    Mirrors `Tests/Subscriptions/test_briefing_keep.py`'s own `_chacha_db`
+    helper.
+    """
+    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="briefing-handler-test")
+
+
+def _seed_complete_briefing(
+    db: SubscriptionsDB,
+    watchlist_id: int,
+    *,
+    body: str = "# Digest\n\nSomething happened.\n",
+) -> int:
+    """A real `complete` `briefings` row, seeded directly (bypassing
+    generation) so a test can drive the handler's auto-keep wiring through
+    a fake `generate` without a real or faked chat call. Mirrors
+    `Tests/Subscriptions/test_briefing_keep.py::_complete_briefing`.
+    """
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown=body)
+    return briefing_id
+
+
+def _canned_chat(**kwargs) -> str:
+    """A stand-in for `chat_api_call` that always succeeds with a
+    non-empty reply -- the one faked seam, same convention as
+    `test_briefing_service.py`'s own `_FakeChat`."""
+    return "# Weekly Digest\n\nAcme shipped a new thing this week.\n"
+
+
+@pytest.mark.asyncio
+async def test_a_complete_scheduled_generation_is_auto_kept_with_scheduled_origin(
+    tmp_path,
+):
+    """Task 3's headline path, through the REAL `generate_briefing` (only
+    `chat` faked, this stream's "fake exactly three seams" rule): a
+    scheduled generation that resolves `complete` is mirrored into
+    ChaChaNotes with `origin="scheduled"`, unprompted -- the spec's
+    Keep-service "Auto path"."""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Acme Watch")["id"]
+        source_id = db.add_subscription(
+            name="acme", type="rss", source="https://acme.example/feed.xml"
+        )
+        WatchlistBundleService(db).add_source(watchlist_id, source_id)
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://items.example/acme/1",
+                    "title": "Something Happened",
+                    "content": "body of something",
+                    "content_hash": "hash-1",
+                    "content_kind": "article",
+                    "content_format": "text",
+                },
+                run_id=None,
+                now=datetime.now(timezone.utc).isoformat(),
+            )
+
+        handler = BriefingJobHandler(
+            subscriptions_db=db,
+            generate=functools.partial(generate_briefing, chat=_canned_chat),
+            chachanotes_db=chacha_db,
+        )
+
+        await handler.handle(_task(watchlist_id))
+        await _drain(handler)
+
+        rows = db.list_briefings(watchlist_id)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "complete"
+        briefing_id = rows[0]["id"]
+
+        kept = chacha_db.list_kept_briefings()
+        assert len(kept) == 1
+        assert kept[0]["source_briefing_id"] == briefing_id
+        assert kept[0]["origin"] == "scheduled"
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_auto_keep_skips_empty_scheduled_results(tmp_path):
+    """Named invariant (plan Task 3 / spec): auto-keep must never mirror
+    an `empty` scheduled row. `_auto_keep` branches on the row's own
+    `status` before ever touching a thread hop or ChaChaNotes, so an
+    empty window never reaches `keep_briefing` at all -- through the REAL
+    `generate_briefing`, exactly like this file's own
+    `test_empty_result_writes_an_empty_row_end_to_end` above, plus the
+    ChaChaNotes assertion Task 3 adds."""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Quiet Watch")["id"]
+        db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
+
+        handler = BriefingJobHandler(subscriptions_db=db, chachanotes_db=chacha_db)
+
+        await handler.handle(_task(watchlist_id))
+        await _drain(handler)
+
+        rows = db.list_briefings(watchlist_id)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "empty"
+        assert chacha_db.list_kept_briefings() == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_an_auto_keep_failure_never_escapes_and_leaves_the_row_untouched(
+    tmp_path,
+):
+    """Containment discipline extended to auto-keep: an exception escaping
+    `keep_briefing` (anything other than its own `KeepRefused`) must never
+    reach the spawned task -- `asyncio.gather` in `_drain` would raise if
+    it did -- must never flip `_run_generation`'s own metric away from
+    `"completed"` (the GENERATION did not fail; only the best-effort
+    mirror did), and must never touch the `briefings` row, pinned by full
+    equality rather than just a status check.
+
+    Mutation check performed by hand (Edit-revert cycle, not committed):
+    removing `_auto_keep`'s outer `except Exception` -- or widening the
+    inner `except KeepRefused` to a bare `except Exception` so it
+    swallows this `RuntimeError` too before the *outer* handler notices --
+    both reproduce a real regression; the first is caught by `_drain`
+    re-raising, the second by `counter.assert_called_once_with(...,
+    labels={"status": "completed"})` still passing when it should (a
+    swallow-everywhere mutation does not change the metric, so that
+    assertion alone would not catch it -- the `_drain` re-raise is what
+    catches it). Both were verified RED against the un-mutated fix and
+    restored; `git status --short` was clean before and after.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Acme Watch")["id"]
+        briefing_id = _seed_complete_briefing(db, watchlist_id)
+        row_before = db.get_briefing(briefing_id)
+
+        async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+            return dict(row_before)
+
+        handler = BriefingJobHandler(
+            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+        )
+
+        with (
+            patch(
+                "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch(
+                "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.log_counter"
+            ) as counter,
+        ):
+            await handler.handle(_task(watchlist_id))
+            await _drain(handler)  # would raise (via asyncio.gather) if uncontained
+
+        counter.assert_called_once_with(
+            "briefing_schedule_runs", labels={"status": "completed"}
+        )
+        assert db.get_briefing(briefing_id) == row_before
+        assert chacha_db.list_kept_briefings() == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
+    """The belt-and-braces branch: `_auto_keep`'s own local status check
+    already keeps `empty`/`failed` rows from ever reaching `keep_briefing`,
+    but the keep service refuses independently too (its own re-read can
+    legitimately disagree, e.g. a genuine race) -- and that must land as
+    the same silent, DEBUG-only no-op as any other skip, not the louder
+    WARNING path a truly unexpected keep failure gets. Patches
+    `keep_briefing` directly to raise `KeepRefused`, rather than
+    engineering a real race, mirroring how
+    `test_an_auto_keep_failure_never_escapes_and_leaves_the_row_untouched`
+    faked an arbitrary failure -- the two tests together pin both of
+    `_auto_keep`'s `except` branches."""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Acme Watch")["id"]
+        briefing_id = _seed_complete_briefing(db, watchlist_id)
+        row_before = db.get_briefing(briefing_id)
+
+        async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+            return dict(row_before)
+
+        handler = BriefingJobHandler(
+            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+        )
+
+        debug_lines: list[str] = []
+        warning_or_louder: list[str] = []
+        debug_sink = logger.add(debug_lines.append, level="DEBUG", catch=False)
+        warning_sink = logger.add(warning_or_louder.append, level="WARNING", catch=False)
+        try:
+            with patch(
+                "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing",
+                side_effect=KeepRefused("raced"),
+            ):
+                await handler.handle(_task(watchlist_id))
+                await _drain(handler)  # would raise if uncontained
+        finally:
+            logger.remove(debug_sink)
+            logger.remove(warning_sink)
+
+        assert any("Auto-keep refused" in line for line in debug_lines)
+        assert warning_or_louder == []
+        assert db.get_briefing(briefing_id) == row_before
+        assert chacha_db.list_kept_briefings() == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_no_chachanotes_handle_skips_keep_without_crashing():
+    """`chachanotes_db=None` -- the default, and what `app.py` passes when
+    its own ChaChaNotes handle is not yet constructed at the point this
+    handler is wired up -- must never crash the handler and must never
+    attempt a keep; generation still completes normally."""
+
+    async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+        return {"id": 1, "status": "complete", "body_markdown": "irrelevant"}
+
+    handler = BriefingJobHandler(
+        subscriptions_db=_db_with_default_preset(None), generate=fake_generate
+    )
+    assert handler._chachanotes_db is None
+
+    with (
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing"
+        ) as keep_mock,
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.log_counter"
+        ) as counter,
+    ):
+        await handler.handle(_task(7))
+        await _drain(handler)
+
+    keep_mock.assert_not_called()
+    counter.assert_called_once_with(
+        "briefing_schedule_runs", labels={"status": "completed"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_second_scheduled_run_auto_keeps_the_new_briefing_too(tmp_path):
+    """No idempotency confusion across DISTINCT briefings for the same
+    watchlist: two scheduled runs, each producing its own `complete` row,
+    must each be auto-kept. `keep_briefing`'s additive-idempotency (Task
+    2) is about RE-keeping the SAME `source_briefing_id`; it must not be
+    mistaken here for collapsing two genuinely different briefings into
+    one kept row."""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Acme Watch")["id"]
+        first_id = _seed_complete_briefing(
+            db, watchlist_id, body="# Digest 1\n\nFirst week.\n"
+        )
+        second_id = _seed_complete_briefing(
+            db, watchlist_id, body="# Digest 2\n\nSecond week.\n"
+        )
+        rows_by_call = iter([db.get_briefing(first_id), db.get_briefing(second_id)])
+
+        async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+            return dict(next(rows_by_call))
+
+        handler = BriefingJobHandler(
+            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+        )
+
+        await handler.handle(_task(watchlist_id))
+        await _drain(handler)
+        await handler.handle(_task(watchlist_id))
+        await _drain(handler)
+
+        kept = chacha_db.list_kept_briefings()
+        assert len(kept) == 2
+        kept_source_ids = {row["source_briefing_id"] for row in kept}
+        assert kept_source_ids == {first_id, second_id}
+        assert {row["origin"] for row in kept} == {"scheduled"}
+    finally:
+        chacha_db.close_connection()
