@@ -85,3 +85,43 @@ def test_add_and_update_message_round_trip_usage_json(tmp_path):
         expected_version=row["version"],
     )
     assert db.get_message_by_id(msg_id)["usage_json"] == '{"uncached_input": 99}'
+
+
+def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypatch):
+    """F8: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so a v29 database that
+    already carries ``usage_json`` -- a half-applied migration, or a row added
+    by a concurrent build of this branch -- used to abort the whole upgrade
+    with "duplicate column name". The runner now checks
+    ``PRAGMA table_info(messages)`` and skips only the DDL, never the version
+    bump, so such a database still lands at v30.
+    """
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v29_database(db_path, monkeypatch)
+
+    # Hand-apply the column while the schema still says v29.
+    with monkeypatch.context() as v29_patch:
+        v29_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 29)
+        db = CharactersRAGDB(db_path, client_id="pre-applied")
+        connection = db.get_connection()
+        connection.execute("ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL")
+        connection.commit()
+        assert _version(connection) == 29
+        assert "usage_json" in _message_columns(connection)
+        db.close_connection()
+
+    db = CharactersRAGDB(db_path, client_id="migration-test")  # must not raise
+    connection = db.get_connection()
+    assert _version(connection) == 30
+    assert "usage_json" in _message_columns(connection)
+    # And the column is still usable, not left in some half-migrated state.
+    conv_id = db.add_conversation({"title": "t"})
+    msg_id = db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "assistant",
+            "content": "hi",
+            "usage_json": '{"output": 7}',
+        }
+    )
+    assert db.get_message_by_id(msg_id)["usage_json"] == '{"output": 7}'
+    db.close_connection()

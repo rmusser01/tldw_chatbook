@@ -4279,8 +4279,27 @@ UPDATE db_schema_version
             f"Migrating schema from V29 to V30 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V29_TO_V30_SQL)
-            logger.debug(f"[{self._SCHEMA_NAME} V29→V30] Migration script executed.")
+            # The .sql file is the plain, unguarded ALTER (see its header
+            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
+            # ADD COLUMN` is not conditional in SQLite, so a database that
+            # already carries `usage_json` at v29 -- a partially-applied
+            # migration, or a row added by a concurrent build of this branch --
+            # would abort the whole upgrade with "duplicate column name".
+            # Skipping just the DDL (never the version bump) lands such a
+            # database at v30 exactly like a clean one.
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "usage_json" in existing_columns:
+                logger.info(
+                    f"[{self._SCHEMA_NAME} V29→V30] messages.usage_json already present; "
+                    "skipping the ALTER and applying the version bump only."
+                )
+            else:
+                conn.executescript(self._MIGRATE_V29_TO_V30_SQL)
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
+                )
 
             version_cursor = conn.execute(
                 """
