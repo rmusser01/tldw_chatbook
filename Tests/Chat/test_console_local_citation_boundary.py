@@ -1989,7 +1989,17 @@ def _assert_clean_lifecycle_call(controller, store, gateway, observed):
     ]
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["signals"] is not _OMITTED
-    assert gateway.calls[1]["signals"] is _OMITTED
+    # `_run_direct_provider_reply` now unconditionally passes a `signals=`
+    # kwarg (a fresh `ConsoleProviderStreamSignals()` when the caller didn't
+    # supply one) instead of omitting it when unset, so the lifecycle call
+    # (regenerate/edit_resend/continue/retry) no longer arrives as
+    # `_OMITTED`. The leak-detection intent this test guards is unchanged:
+    # that fresh signals object must not be the SAME object as the one used
+    # for the earlier citation-repair session's initial generation -- an
+    # identity check against call 0's signals still fails this test if the
+    # repair session's signals were ever reused on a lifecycle path.
+    assert gateway.calls[1]["signals"] is not _OMITTED
+    assert gateway.calls[1]["signals"] is not gateway.calls[0]["signals"]
     assert _active_citation_repair_session(controller) is None
     assert store._terminal_citation_finalizers == {}
     assert store._provisional_terminal_selection_ids == set()
