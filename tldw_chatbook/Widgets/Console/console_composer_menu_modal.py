@@ -248,13 +248,21 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
         same no-action exit Escape already provides. Clicks anywhere inside
         the menu box (rows, header, padding, the disabled-reason lines) are
         not exits, so containment is tested against the box's region rather
-        than the clicked widget's identity.
+        than the clicked widget's identity. A click that carries no screen
+        coordinates (synthesized clicks under textual-web arrive that way)
+        cannot be located, so it keeps the menu open rather than guessing:
+        a wrong dismissal would eat a click aimed at a menu row, while a
+        kept-open menu still has Escape and the backdrop as exits.
 
         Args:
             event: The screen-level click, carrying absolute coordinates.
         """
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if screen_x is None or screen_y is None:
+            return
         menu = self.query_one("#console-composer-menu")
-        if menu.region.contains(event.screen_x, event.screen_y):
+        if menu.region.contains(screen_x, screen_y):
             return
         event.stop()
         self.dismiss(None)

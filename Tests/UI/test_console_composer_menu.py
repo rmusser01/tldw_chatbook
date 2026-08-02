@@ -4,6 +4,7 @@ tasks 1680-1683.
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -1118,11 +1119,11 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
         ConsoleComposerMenuModal,
     )
 
-    class _Host(App):
+    class BackdropHost(App):
         pass
 
     received: list[str | None] = []
-    app = _Host()
+    app = BackdropHost()
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
             ConsoleComposerMenuModal(attachment_kind="none"), callback=received.append
@@ -1134,6 +1135,14 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
         # Inside the menu box (its header line) -- stays open.
         menu = modal.query_one("#console-composer-menu")
         await pilot.click(offset=(menu.region.x + 2, menu.region.y + 1))
+        await pilot.pause()
+        assert app.screen is modal
+        assert received == []
+
+        # A click with no screen coordinates (synthesized clicks under
+        # textual-web arrive that way) cannot be located: it must keep the
+        # menu open rather than guess, and must not raise.
+        modal.on_click(SimpleNamespace(screen_x=None, screen_y=None))
         await pilot.pause()
         assert app.screen is modal
         assert received == []
