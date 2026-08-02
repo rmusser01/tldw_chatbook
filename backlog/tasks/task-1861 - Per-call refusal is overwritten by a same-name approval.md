@@ -1,7 +1,7 @@
 ---
 id: TASK-1861
 title: 'Approval: refusing one call is overwritten by approving another of the same tool'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 21:30'
 labels:

@@ -893,19 +893,43 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                 assert select.size.width == 26, (
                     f"decision Select width {select.size.width} != pinned 26"
                 )
-                # Left-to-right order, no overlap: header, then args, then the
-                # decision Select, each starting no earlier than the previous
-                # widget's right edge, and the Select stays inside the row.
-                assert header.region.x <= args.region.x
-                assert args.region.x >= header.region.right
-                assert select.region.x >= args.region.right
+                # TASK-1846: the row is three stacked lines now -- header,
+                # arguments, then `.approval-row-controls` -- so neither text
+                # widget shares a line with a fixed-width control. The
+                # left-to-right ordering this used to assert (`args.x >=
+                # header.right`) no longer describes the layout, so the
+                # guarantee it was protecting -- nothing overlaps anything --
+                # is asserted directly instead.
                 assert select.region.right <= row.region.right
+                assert args.region.y >= header.region.bottom, (
+                    "the arguments did not drop below the header"
+                )
+                assert select.region.y >= args.region.bottom, (
+                    "the controls did not drop below the arguments"
+                )
+                # The whole point of the split: arguments get the row, not a
+                # leftover share of it after 54 cells of fixed-width controls.
+                assert args.region.width >= row.region.width - 2, (
+                    f"arguments got {args.region.width} of {row.region.width} "
+                    "cells -- the controls are still eating the row"
+                )
+                for a, b in ((header, args), (select, args), (header, select)):
+                    assert not (
+                        a.region.x < b.region.right
+                        and b.region.x < a.region.right
+                        and a.region.y < b.region.bottom
+                        and b.region.y < a.region.bottom
+                    ), f"{a.classes} overlaps {b.classes}: {a.region} vs {b.region}"
 
                 # T9: height bounds -- each row must stay compact (height: auto;
                 # min-height: 1) instead of ballooning to 1fr (which would balloon
                 # to fill the card height and push the actions bar far down).
                 # Empirically measured before this fix: rows ballooning to height 9-10.
-                assert row.size.height <= 4, (
+                # TASK-1846: 4 -> 6. The row gained a line when the
+                # arguments moved to their own, and a collapsed `xN` row may
+                # legitimately render several argument sets. A row that has
+                # lost `height: auto` balloons to 15, so this still catches it.
+                assert row.size.height <= 6, (
                     f"approval row ballooned to height {row.size.height} under "
                     "bundled CSS -- height: auto; min-height: 1; is not winning"
                 )
@@ -916,7 +940,11 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # #approval-batch-actions bar far down. Empirically measured before
             # this fix: container ballooning to height 19, actions pushed to y=20.
             batch_rows = card.query_one("#approval-batch-rows")
-            assert batch_rows.size.height <= len(rows) * 3 + 2, (
+            # TASK-1846: per-row budget 3 -> 6 (a row is two lines now and a
+            # collapsed row may carry several argument sets). Still catches a
+            # balloon: the container is capped at 15, so two ballooned rows
+            # clamp to 15 and blow this bound.
+            assert batch_rows.size.height <= len(rows) * 6 + 2, (
                 f"approval-batch-rows container ballooned to height "
                 f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
                 "-- height: auto; min-height: 0; is not winning"
@@ -981,8 +1009,10 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
             assert fast_approve.region.right <= row.region.right
             assert fast_deny.region.right <= row.region.right
 
-            # Compact, one-line-tall row (same discipline as the sibling test).
-            assert row.size.height <= 4, (
+            # Compact row (same discipline as the sibling test). TASK-1846
+            # made it two lines -- headline + full-width arguments -- so the
+            # bound moves 4 -> 6; a row that lost `height: auto` is 15.
+            assert row.size.height <= 6, (
                 f"single-row approval row ballooned to height {row.size.height} "
                 "under bundled CSS"
             )
