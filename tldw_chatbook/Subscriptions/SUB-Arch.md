@@ -37,7 +37,7 @@ The Subscriptions module provides a comprehensive content monitoring and ingesti
 
 ### Key Capabilities
 - **Multi-format Support**: RSS, Atom, JSON Feed, URL monitoring, Podcast feeds
-- **Security-First Design**: XXE prevention, SSRF protection, encrypted credentials
+- **Security-First Design**: Dependency-controlled XML parser hardening, SSRF protection, encrypted credentials
 - **Intelligent Processing**: LLM analysis, keyword extraction, content summarization
 - **Automated Workflows**: Scheduled checks, auto-ingestion, briefing generation
 - **Resilient Operations**: Circuit breakers, rate limiting, error recovery
@@ -178,7 +178,7 @@ graph TD
 - `InputValidator`: User input sanitization
 
 **Security Features**:
-- XXE prevention via defusedxml
+- Optional `defusedxml` parser hardening with module-specific standard-library fallbacks
 - SSRF protection with IP range blocking
 - Input sanitization and validation
 - Credential encryption at rest
@@ -305,7 +305,7 @@ graph LR
     C --> D[Rate Limiting]
     D --> E[HTTP Request]
     E --> F[Response Validation]
-    F --> G[XXE Prevention]
+    F --> G[XML Parsing]
     G --> H[Content Sanitization]
     H --> I[Safe Storage]
 ```
@@ -317,10 +317,12 @@ graph LR
    - Hostname resolution and IP checking
    - Private IP range blocking
 
-2. **XXE Prevention**:
-   - defusedxml for safe XML parsing
-   - DTD processing disabled
-   - External entity resolution blocked
+2. **XML Parsing**:
+   - Subscription parser modules prefer optional `defusedxml` when it is installed.
+   - Standard-library fallback behavior is module-specific and does not provide an
+     equivalent unconditional protection guarantee.
+   - Parser selection is dependency-controlled; no configuration setting,
+     including a legacy subscriptions security table, controls it.
 
 3. **Rate Limiting**:
    - Per-domain token buckets
