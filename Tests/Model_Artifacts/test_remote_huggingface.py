@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import gc
 import hashlib
 import json
 import traceback
+import tracemalloc
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     RemoteDiscoveryError,
     RemoteModelSummary,
     ResolvedRemoteModel,
+    _read_bounded_json,
     build_remote_catalog,
     is_exact_repository,
 )
@@ -179,6 +182,55 @@ async def test_search_parser_failures_have_no_cause_or_upstream_marker(
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert "secret-marker" not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"[" + (b"9182736450" * 500) + b"]",
+        (b"[" * 10_000) + b"0" + (b"]" * 10_000),
+    ],
+    ids=["over-limit-integer", "deep-nesting"],
+)
+async def test_search_hostile_json_failures_are_fresh_sanitized_errors(
+    body: bytes,
+) -> None:
+    """Over-limit integers and deep nesting must not escape parser normalization."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(lambda _: httpx.Response(200, content=body))
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.search("whisper")
+
+    rendered = "".join(traceback.format_exception(raised.value))
+    assert raised.value.code == "invalid_response"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "9182736450" not in rendered
+    assert "maximum recursion depth" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_bounded_json_reader_limits_peak_memory_for_one_byte_chunks() -> None:
+    """One-byte chunk delivery must stay within bounded reader memory."""
+    body = b"[" + (b" " * 100_000) + b"]"
+
+    class OneByteResponse:
+        async def aiter_bytes(self):
+            for value in body:
+                yield bytearray((value,))
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        assert await _read_bounded_json(OneByteResponse()) == []  # type: ignore[arg-type]
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak_bytes < 2_000_000
 
 
 @pytest.mark.asyncio
@@ -631,6 +683,24 @@ async def test_resolve_ignores_gguf_without_complete_lfs_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_rejects_lfs_size_above_signed_64_bit_maximum() -> None:
+    """An oversized declared file must never reach catalog or consent rendering."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(
+            lambda _: httpx.Response(
+                200,
+                json=_model_info([_lfs_file("huge.gguf", size=2**63)]),
+            )
+        )
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.resolve("acme/model")
+
+    assert (raised.value.code, raised.value.details) == ("no_eligible_gguf", ())
+
+
+@pytest.mark.asyncio
 async def test_resolve_records_total_before_deterministic_candidate_cap() -> None:
     """Catches a display cap that hides the true candidate count or changes ordering."""
     siblings = [_lfs_file(f"{index:03d}.gguf") for index in range(101, -1, -1)]
@@ -650,15 +720,6 @@ async def test_resolve_records_total_before_deterministic_candidate_cap() -> Non
 
 def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() -> None:
     """Catches mutable IDs/URLs, unsafe names, or compatibility claims for remote bytes."""
-    resolved = ResolvedRemoteModel(
-        repository="acme/model",
-        commit="a" * 40,
-        license_id="apache-2.0",
-        review_url="https://huggingface.co/acme/model/tree/" + ("a" * 40),
-        candidates=(),
-        total_candidate_count=0,
-        warnings=(),
-    )
     candidate = RemoteGGUFCandidate(
         label="acme/model · nested/pack",
         files=(
@@ -666,6 +727,15 @@ def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() ->
             RemoteGGUFFile("nested/pack-00002-of-00002.gguf", 12, "2" * 64),
         ),
         total_bytes=23,
+    )
+    resolved = ResolvedRemoteModel(
+        repository="acme/model",
+        commit="a" * 40,
+        license_id="apache-2.0",
+        review_url="https://huggingface.co/acme/model/tree/" + ("a" * 40),
+        candidates=(candidate,),
+        total_candidate_count=1,
+        warnings=(),
     )
 
     catalog = build_remote_catalog(resolved, candidate)
@@ -714,6 +784,58 @@ def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() ->
         "Runtime compatibility has not been verified. Configuration is required."
     )
     assert catalog.descriptor(artifact.reference) is artifact
+
+
+def test_build_remote_catalog_rejects_candidate_outside_resolution() -> None:
+    """A stale or fabricated candidate must not cross the pure catalog boundary."""
+    selected = RemoteGGUFCandidate(
+        label="acme/model · selected.gguf",
+        files=(RemoteGGUFFile("selected.gguf", 7, "7" * 64),),
+        total_bytes=7,
+    )
+    stale = RemoteGGUFCandidate(
+        label="acme/model · stale.gguf",
+        files=(RemoteGGUFFile("stale.gguf", 8, "8" * 64),),
+        total_bytes=8,
+    )
+    resolved = ResolvedRemoteModel(
+        repository="acme/model",
+        commit="a" * 40,
+        license_id="apache-2.0",
+        review_url="https://huggingface.co/acme/model/tree/" + ("a" * 40),
+        candidates=(selected,),
+        total_candidate_count=1,
+        warnings=(),
+    )
+
+    with pytest.raises(ValueError, match="candidate"):
+        build_remote_catalog(resolved, stale)
+
+
+def test_build_remote_catalog_preserves_single_member_standard_shard_name() -> None:
+    """A valid one-of-one shard must retain the standard managed shard filename."""
+    candidate = RemoteGGUFCandidate(
+        label="acme/model · model",
+        files=(
+            RemoteGGUFFile("model-00001-of-00001.gguf", 9, "9" * 64),
+        ),
+        total_bytes=9,
+    )
+    resolved = ResolvedRemoteModel(
+        repository="acme/model",
+        commit="a" * 40,
+        license_id="apache-2.0",
+        review_url="https://huggingface.co/acme/model/tree/" + ("a" * 40),
+        candidates=(candidate,),
+        total_candidate_count=1,
+        warnings=(),
+    )
+
+    catalog = build_remote_catalog(resolved, candidate)
+
+    assert [item.path for item in catalog.artifact.files] == [
+        "model-00001-of-00001.gguf"
+    ]
 
 
 @pytest.mark.asyncio

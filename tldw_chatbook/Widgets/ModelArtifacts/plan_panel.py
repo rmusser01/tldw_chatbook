@@ -25,6 +25,7 @@ class ModelPlanPanel(Static):
         report: PreflightReport,
         *,
         model_label: str,
+        selected_file_details: tuple[tuple[str, int, str, str], ...] = (),
         id: str | None = None,
     ) -> None:
         """Build the panel from preflight state only.
@@ -32,6 +33,8 @@ class ModelPlanPanel(Static):
         Args:
             report: Immutable acquisition preflight report.
             model_label: User-visible model name.
+            selected_file_details: Optional upstream path, byte count, digest,
+                and pinned source URL values for only the selected candidate.
             id: Optional Textual widget id.
         """
         rows = plan_rows(report)
@@ -56,6 +59,18 @@ class ModelPlanPanel(Static):
                     "",
                 )
             )
+        if selected_file_details:
+            lines.append("Selected upstream files:")
+            for path, size_bytes, sha256, source_url in selected_file_details:
+                lines.extend(
+                    (
+                        f"Path: {path}",
+                        f"Bytes: {size_bytes}",
+                        f"SHA-256: {sha256}",
+                        f"Pinned source URL: {source_url}",
+                        "",
+                    )
+                )
         lines.extend(
             (
                 f"Download: {_mib(totals.download_bytes)}",

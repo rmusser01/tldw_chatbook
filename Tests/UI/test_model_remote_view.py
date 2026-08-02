@@ -7,11 +7,13 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+    HuggingFaceRemoteAdapter,
     RemoteDiscoveryError,
     RemoteGGUFCandidate,
     RemoteGGUFFile,
@@ -469,6 +471,74 @@ async def test_discovery_errors_render_sanitized_retry_guidance(
 
 
 @pytest.mark.asyncio
+async def test_no_eligible_error_renders_bounded_incomplete_shard_details() -> None:
+    """Validated missing-shard recovery details must follow the generic LFS rule."""
+    detail = "owner/repository · model-q4 missing 00002 00004"
+    error = RemoteDiscoveryError("no_eligible_gguf", details=(detail,))
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            None,
+            error,
+        )
+        await pilot.pause()
+        status = view.query_one("#remote-model-status", Static)
+        rendered = str(status.renderable)
+
+    generic = "Files must be LFS-backed with size and SHA-256 metadata."
+    assert generic in rendered
+    assert detail in rendered
+    assert rendered.index(generic) < rendered.index(detail)
+    assert status._render_markup is False
+
+
+@pytest.mark.asyncio
+async def test_oversized_lfs_size_recovers_without_rendering_a_candidate() -> None:
+    """Hostile declared sizes must be rejected before the Remote view formats them."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "sha": _COMMIT,
+                "siblings": [
+                    {
+                        "rfilename": "huge.gguf",
+                        "lfs": {"size": 2**63, "sha256": _DIGEST},
+                    }
+                ],
+                "cardData": None,
+            },
+        )
+
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        )
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+        candidates = list(view.query(".remote-candidate").results(Button))
+
+    assert "No eligible GGUF files were found" in rendered
+    assert str(2**63) not in rendered
+    assert candidates == []
+
+
+@pytest.mark.asyncio
 async def test_incomplete_shard_warnings_render_bounded_candidate_and_indexes() -> None:
     """Dropping resolution warnings must hide the actionable missing-shard evidence."""
     warning = "owner/repository · model-q4 missing 00002 00004"
@@ -490,6 +560,38 @@ async def test_incomplete_shard_warnings_render_bounded_candidate_and_indexes() 
         rendered = _text(view)
 
     assert warning in rendered
+
+
+@pytest.mark.asyncio
+async def test_candidate_cap_discloses_deterministic_first_hundred() -> None:
+    """A truncated candidate list must disclose its deterministic upstream order."""
+    candidates = tuple(
+        RemoteGGUFCandidate(
+            label=f"owner/repository · {index:03d}.gguf",
+            files=(RemoteGGUFFile(f"{index:03d}.gguf", 1, _DIGEST),),
+            total_bytes=1,
+        )
+        for index in range(100)
+    )
+    resolved = ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=f"https://huggingface.co/owner/repository/tree/{_COMMIT}",
+        candidates=candidates,
+        total_candidate_count=137,
+        warnings=(),
+    )
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view._resolved = resolved
+        view._refresh_with_status("Select one GGUF candidate.")
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert "First 100 of 137, sorted by upstream path" in rendered
 
 
 @pytest.mark.asyncio
@@ -520,6 +622,32 @@ async def test_candidate_selection_freezes_catalog_and_disables_all_replacement_
         assert view.query_one("#remote-model-query", Input).disabled is True
         assert view.query_one("#remote-model-search", Button).disabled is True
         assert view.query_one(".remote-candidate", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_stale_candidate_press_is_rejected_at_the_ui_boundary() -> None:
+    """A queued button event from an old resolution must not start preflight."""
+    old_resolved = _resolved("old/repository")
+    current_resolved = _resolved("current/repository")
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    view._preflight_model = MagicMock()
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view._resolved = old_resolved
+        view._refresh_with_status("Old resolution")
+        await pilot.pause()
+        stale_button = view.query_one(".remote-candidate", Button)
+
+        view._resolved = current_resolved
+        view._refresh_with_status("Current resolution")
+        await pilot.pause()
+        view._candidate_pressed(Button.Pressed(stale_button))
+        await pilot.pause()
+
+    view._preflight_model.assert_not_called()
+    assert view._selected_catalog is None
+    assert view._operation_reference is None
 
 
 @pytest.mark.asyncio
@@ -617,7 +745,9 @@ def test_preflight_modal_requires_acknowledgment_only_for_unknown_license(
     from tldw_chatbook.UI.Screens import model_remote_view as module
     from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
 
-    catalog = _catalog(license_id=license_id)
+    resolved = _resolved(license_id=license_id)
+    candidate = resolved.candidates[0]
+    catalog = build_remote_catalog(resolved, candidate)
     report = _report_for(catalog, tmp_path / "managed")
     fake_app = MagicMock()
     monkeypatch.setattr(module.RemoteView, "app", property(lambda self: fake_app))
@@ -625,11 +755,19 @@ def test_preflight_modal_requires_acknowledgment_only_for_unknown_license(
     view._selected_catalog = catalog
     view._operation_reference = report.root
 
-    view._apply_preflight_result(report, None)
+    view._apply_preflight_result(report, None, candidate)
 
     modal, callback = fake_app.push_screen.call_args.args
     assert isinstance(modal, ModelInstallModal)
     assert modal.required_acknowledgment == expected_acknowledgment
+    assert modal.selected_file_details == (
+        (
+            "model-q4.gguf",
+            1024,
+            _DIGEST,
+            f"https://huggingface.co/owner/repository/resolve/{_COMMIT}/model-q4.gguf",
+        ),
+    )
     assert callback == view._confirm_install
 
 

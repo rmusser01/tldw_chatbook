@@ -56,6 +56,7 @@ class ModelInstallModal(ModalScreen[bool]):
         confirm_id: str = "model-install-confirm",
         cancel_id: str = "model-install-cancel",
         required_acknowledgment: str | None = None,
+        selected_file_details: tuple[tuple[str, int, str, str], ...] = (),
     ) -> None:
         """Build a consent prompt from an immutable preflight report.
 
@@ -67,6 +68,8 @@ class ModelInstallModal(ModalScreen[bool]):
             cancel_id: Cancel button id for the consuming surface.
             required_acknowledgment: Optional text that must be acknowledged
                 before installing.
+            selected_file_details: Optional selected-only upstream file values
+                to show before confirmation.
         """
         self.report = report
         self.model_label = model_label
@@ -74,6 +77,7 @@ class ModelInstallModal(ModalScreen[bool]):
         self.confirm_id = confirm_id
         self.cancel_id = cancel_id
         self.required_acknowledgment = required_acknowledgment
+        self.selected_file_details = selected_file_details
         self._acknowledged = required_acknowledgment is None
         super().__init__()
 
@@ -89,7 +93,11 @@ class ModelInstallModal(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         """Compose the plan and decision controls."""
         with Vertical(id=self.container_id, classes="model-install-modal"):
-            yield ModelPlanPanel(self.report, model_label=self.model_label)
+            yield ModelPlanPanel(
+                self.report,
+                model_label=self.model_label,
+                selected_file_details=self.selected_file_details,
+            )
             if self.required_acknowledgment is not None:
                 yield Checkbox(self.required_acknowledgment)
             with Horizontal(classes="model-install-actions"):

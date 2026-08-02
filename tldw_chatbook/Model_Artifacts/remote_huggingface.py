@@ -34,6 +34,8 @@ _MAX_PATH_BYTES = 1_024
 _MAX_LICENSE_CHARACTERS = 128
 _MAX_LABEL_CHARACTERS = 160
 _MAX_COUNTER = (2**63) - 1
+# Hugging Face LFS byte counts must fit the signed 64-bit artifact size domain.
+_MAX_LFS_SIZE_BYTES = (2**63) - 1
 _MAX_LAST_MODIFIED_CHARACTERS = 64
 _MAX_ERROR_DETAILS = 20
 _MAX_ERROR_DETAIL_CHARACTERS = 552
@@ -75,7 +77,7 @@ class RemoteModelSummary:
 
 @dataclass(frozen=True)
 class RemoteGGUFFile:
-    """One LFS-backed GGUF payload eligible for managed acquisition."""
+    """One LFS-backed GGUF payload with a signed 64-bit byte count."""
 
     upstream_path: str
     size_bytes: int
@@ -279,18 +281,22 @@ def _raise_for_status(status_code: int) -> None:
 
 async def _read_bounded_json(response: httpx.Response) -> object:
     """Read one decoded metadata JSON body without exceeding its byte budget."""
-    chunks: list[bytes] = []
-    size = 0
+    body = bytearray()
     async for chunk in response.aiter_bytes():
-        size += len(chunk)
-        if size > _MAX_METADATA_BYTES:
+        if len(body) + len(chunk) > _MAX_METADATA_BYTES:
             raise RemoteDiscoveryError("response_too_large")
-        chunks.append(chunk)
+        body.extend(chunk)
     try:
-        return json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        parse_error = RemoteDiscoveryError("invalid_response")
-    raise parse_error
+        decoded = bytes(body).decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = None
+    body.clear()
+    if decoded is not None:
+        try:
+            return json.loads(decoded)
+        except (ValueError, RecursionError):
+            decoded = None
+    raise RemoteDiscoveryError("invalid_response")
 
 
 def _validate_error_details(details: tuple[str, ...]) -> None:
@@ -495,6 +501,7 @@ def _parse_sibling(sibling: object) -> tuple[str | None, RemoteGGUFFile | None]:
     if (
         type(size_bytes) is not int
         or size_bytes < 0
+        or size_bytes > _MAX_LFS_SIZE_BYTES
         or not isinstance(sha256, str)
         or _SHA256_RE.fullmatch(sha256) is None
     ):
@@ -567,10 +574,16 @@ def build_remote_catalog(
     """
     if type(resolved) is not ResolvedRemoteModel or type(candidate) is not RemoteGGUFCandidate:
         raise ValueError("resolved and candidate must be remote discovery values")
+    if candidate not in resolved.candidates:
+        raise ValueError("candidate is not part of the resolved model")
     if not is_exact_repository(resolved.repository) or _COMMIT_RE.fullmatch(resolved.commit) is None:
         raise ValueError("resolved repository identity is invalid")
     files = tuple(sorted(candidate.files, key=lambda item: item.upstream_path))
-    if not files or any(type(item) is not RemoteGGUFFile for item in files):
+    if (
+        not files
+        or len(files) > _MAX_SHARDS
+        or any(type(item) is not RemoteGGUFFile for item in files)
+    ):
         raise ValueError("candidate files are invalid")
     if (
         candidate.total_bytes != sum(item.size_bytes for item in files)
@@ -578,6 +591,7 @@ def build_remote_catalog(
             not _is_valid_upstream_path(item.upstream_path)
             or type(item.size_bytes) is not int
             or item.size_bytes < 0
+            or item.size_bytes > _MAX_LFS_SIZE_BYTES
             or _SHA256_RE.fullmatch(item.sha256) is None
             for item in files
         )
@@ -637,7 +651,8 @@ def _bounded_candidate_label(label: str) -> str:
 
 
 def _managed_paths(files: tuple[RemoteGGUFFile, ...]) -> tuple[str, ...]:
-    if len(files) == 1:
+    first_match = _SHARD_RE.fullmatch(files[0].upstream_path.rsplit("/", 1)[-1])
+    if len(files) == 1 and first_match is None:
         return ("model.gguf",)
     paths: list[str] = []
     for remote_file in files:

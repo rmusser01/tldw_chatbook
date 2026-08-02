@@ -194,6 +194,12 @@ class RemoteView(Widget):
         yield Static(f"License: {license_label}", markup=False)
         yield Static(f"Source review page: {resolved.review_url}", markup=False)
         yield Static("Provenance: Local integrity recorded", markup=False)
+        if resolved.total_candidate_count > len(resolved.candidates):
+            yield Static(
+                f"First {len(resolved.candidates)} of "
+                f"{resolved.total_candidate_count}, sorted by upstream path",
+                markup=False,
+            )
         for warning in resolved.warnings:
             yield Static(f"Incomplete shard set: {warning}", markup=False)
         for candidate in resolved.candidates:
@@ -274,6 +280,7 @@ class RemoteView(Widget):
         if (
             type(candidate) is not RemoteGGUFCandidate
             or self._resolved is None
+            or candidate not in self._resolved.candidates
             or self._operation_reference is not None
         ):
             return
@@ -289,7 +296,7 @@ class RemoteView(Widget):
         self._operation_reference = catalog.artifact.reference
         self._set_metadata_controls_disabled(True)
         self._set_status("Preparing the managed install plan…")
-        self._preflight_model(catalog)
+        self._preflight_model(catalog, candidate)
 
     @work(thread=True, group="remote_model_search", exit_on_error=False)
     def _search_remote(self, query: str, generation: int) -> None:
@@ -440,7 +447,11 @@ class RemoteView(Widget):
         )
 
     @work(thread=True, group="remote_model_install", exclusive=True, exit_on_error=False)
-    def _preflight_model(self, catalog: ResolvedRemoteCatalog) -> None:
+    def _preflight_model(
+        self,
+        catalog: ResolvedRemoteCatalog,
+        candidate: RemoteGGUFCandidate,
+    ) -> None:
         """Resolve the frozen candidate plan off the Textual event loop."""
         try:
             report = asyncio.run(self._preflight(catalog))
@@ -456,11 +467,22 @@ class RemoteView(Widget):
                     exc,
                     model_label=catalog.artifact.model_id,
                 ),
+                candidate,
             )
             return
-        self.app.call_from_thread(self._apply_preflight_result, report, None)
+        self.app.call_from_thread(
+            self._apply_preflight_result,
+            report,
+            None,
+            candidate,
+        )
 
-    def _apply_preflight_result(self, report, error: str | None) -> None:
+    def _apply_preflight_result(
+        self,
+        report,
+        error: str | None,
+        candidate: RemoteGGUFCandidate | None = None,
+    ) -> None:
         """Show the shared consent modal or release the frozen selection."""
         catalog = self._selected_catalog
         if (
@@ -483,11 +505,30 @@ class RemoteView(Widget):
             if catalog.artifact.license_id == "NOASSERTION"
             else None
         )
+        selected_file_details: tuple[tuple[str, int, str, str], ...] = ()
+        if candidate is not None:
+            remote_files = tuple(
+                sorted(candidate.files, key=lambda item: item.upstream_path)
+            )
+            selected_file_details = tuple(
+                (
+                    remote_file.upstream_path,
+                    remote_file.size_bytes,
+                    remote_file.sha256,
+                    catalog.sources[catalog.artifact.reference][artifact_file.path],
+                )
+                for remote_file, artifact_file in zip(
+                    remote_files,
+                    catalog.artifact.files,
+                    strict=True,
+                )
+            )
         self.app.push_screen(
             ModelInstallModal(
                 report,
                 model_label=catalog.artifact.model_id,
                 required_acknowledgment=acknowledgment,
+                selected_file_details=selected_file_details,
             ),
             self._confirm_install,
         )
@@ -611,10 +652,16 @@ def _discovery_error_message(error: BaseException) -> str:
     if error.code in {"invalid_response", "response_too_large"}:
         return "This repository cannot be safely inspected."
     if error.code == "no_eligible_gguf":
-        return (
+        message = (
             "No eligible GGUF files were found. Files must be LFS-backed with "
             "size and SHA-256 metadata."
         )
+        if error.details:
+            details = "\n".join(
+                f"Incomplete shard set: {detail}" for detail in error.details
+            )
+            message = f"{message}\n{details}"
+        return message
     if error.retryable or error.code in {"network_error", "rate_limited"}:
         return "Remote request failed. Retry."
     if error.code in {"invalid_query", "invalid_repository"}:

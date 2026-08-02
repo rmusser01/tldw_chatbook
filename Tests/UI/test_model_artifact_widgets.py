@@ -52,14 +52,24 @@ def _report(
 
 
 class _PanelApp(App):
-    def __init__(self, report: PreflightReport) -> None:
+    def __init__(
+        self,
+        report: PreflightReport,
+        *,
+        selected_file_details: tuple[tuple[str, int, str, str], ...] = (),
+    ) -> None:
         self.report = report
+        self.selected_file_details = selected_file_details
         super().__init__()
 
     def compose(self) -> ComposeResult:
         from tldw_chatbook.Widgets.ModelArtifacts import ModelPlanPanel
 
-        yield ModelPlanPanel(self.report, model_label="Parakeet v2")
+        yield ModelPlanPanel(
+            self.report,
+            model_label="Parakeet v2",
+            selected_file_details=self.selected_file_details,
+        )
 
 
 class _ModalApp(App):
@@ -121,6 +131,37 @@ async def test_plan_panel_labels_noassertion_as_unknown_and_separates_review_url
     assert "License: Unknown / not declared" in text
     assert "Source review page: https://example.test/license" in text
     assert "License: NOASSERTION" not in text
+
+
+@pytest.mark.asyncio
+async def test_plan_panel_renders_selected_file_details_as_plain_bounded_text(
+    tmp_path: Path,
+) -> None:
+    """Selected upstream identity and integrity values must be visible before consent."""
+    digest = "a" * 64
+    source = (
+        "https://huggingface.co/owner/repository/resolve/"
+        + ("b" * 40)
+        + "/nested/model%20%5Bq4%5D.gguf"
+    )
+    app = _PanelApp(
+        _report(tmp_path / "managed"),
+        selected_file_details=(
+            ("nested/model [q4].gguf", 1_234_567, digest, source),
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(".model-plan-panel", Static)
+        text = str(panel.renderable)
+
+    assert "Selected upstream files:" in text
+    assert "Path: nested/model [q4].gguf" in text
+    assert "Bytes: 1234567" in text
+    assert f"SHA-256: {digest}" in text
+    assert f"Pinned source URL: {source}" in text
+    assert panel._render_markup is False
 
 
 @pytest.mark.asyncio
