@@ -593,7 +593,11 @@ class TestSpeechSummaryRow:
         rows = {
             r.label: r
             for r in build_summary_rows(
-                cfg, {}, rag_deps_installed=False, speech_installed=True
+                cfg,
+                {},
+                rag_deps_installed=False,
+                speech_installed=True,
+                speech_runtime_installed=True,
             )
         }
         row = rows["Speech transcription"]
@@ -616,7 +620,11 @@ class TestSpeechSummaryRow:
         rows = {
             r.label: r
             for r in build_summary_rows(
-                cfg, {}, rag_deps_installed=False, speech_installed=False
+                cfg,
+                {},
+                rag_deps_installed=False,
+                speech_installed=False,
+                speech_runtime_installed=True,
             )
         }
         row = rows["Speech transcription"]
@@ -626,6 +634,65 @@ class TestSpeechSummaryRow:
         # Models screen (Lab -> Models -> Installed).
         assert "Lab" in row.detail
         assert "Settings" not in row.detail
+        assert "not installed" in row.detail
+
+    def test_configured_and_installed_but_runtime_missing_is_attention(self):
+        """Important 4 residual (re-review): install the extra, complete
+        setup (persisted + artifact installed), then remove the extra --
+        the step now says "runtime not installed" while, without this fix,
+        Summary would still claim configured/ready in the SAME run. Summary
+        readiness must agree with the step's own runtime probe."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_ATTENTION
+
+        cfg = {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                "default_language": "en",
+            }
+        }
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                cfg,
+                {},
+                rag_deps_installed=False,
+                speech_installed=True,
+                speech_runtime_installed=False,
+            )
+        }
+        row = rows["Speech transcription"]
+        assert row.state == ROW_ATTENTION
+        assert "runtime" in row.detail.lower()
+        assert "Lab" in row.detail
+
+    def test_runtime_missing_takes_priority_over_not_installed(self):
+        """Both problems at once must still produce ONE honest row, not a
+        row that claims "not installed" when the deeper problem (the
+        runtime that would run it is absent) is what the user needs to
+        fix first."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_ATTENTION
+
+        cfg = {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                "default_language": "en",
+            }
+        }
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                cfg,
+                {},
+                rag_deps_installed=False,
+                speech_installed=False,
+                speech_runtime_installed=False,
+            )
+        }
+        row = rows["Speech transcription"]
+        assert row.state == ROW_ATTENTION
+        assert "runtime" in row.detail.lower()
 
 
 class TestProviderSummaryConfigured:

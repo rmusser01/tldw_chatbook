@@ -190,6 +190,55 @@ class TestSpeechPrefillStatus:
         text = speech_prefill_status(prefill)
         assert "faster-whisper" in text
 
+    def test_not_installed_yet_mentions_installing_or_activating(self):
+        """Default state (nothing installed/active, nothing acted this run):
+        the original "installing or activating here" copy is still accurate
+        -- both are genuinely still possible paths."""
+        prefill = SpeechPrefill(
+            provider_id="remote-whisper", model_id="whisper-1", language="auto"
+        )
+        text = speech_prefill_status(prefill)
+        assert "installing or activating" in text
+
+    def test_installed_and_active_does_not_claim_installing_or_activating(self):
+        """Review NEW-2: when the artifact is already installed AND active,
+        neither "installing" nor "activating" is a real action (Activate is
+        disabled) -- the old sentence promised an outcome no control could
+        deliver. installed_active=True must drop that false claim."""
+        prefill = SpeechPrefill(
+            provider_id="remote-whisper", model_id="whisper-1", language="auto"
+        )
+        text = speech_prefill_status(prefill, installed_active=True)
+        assert "installing or activating" not in text
+        assert "remote-whisper" in text
+        assert "Parakeet v2" in text
+
+    def test_acted_this_run_reports_pending_switch(self):
+        """After the user opts in this run (installed, activated, or used
+        the new "use as default" affordance), the sentence must describe
+        what WILL happen, not repeat a now-stale offer."""
+        prefill = SpeechPrefill(
+            provider_id="remote-whisper", model_id="whisper-1", language="auto"
+        )
+        text = speech_prefill_status(
+            prefill, installed_active=True, acted_this_run=True
+        )
+        assert "will become your default" in text.lower()
+        assert "remote-whisper" in text
+
+    def test_already_matching_ignores_the_new_flags(self):
+        """The "already your default" early return is unaffected by
+        installed_active/acted_this_run -- there's nothing to switch."""
+        prefill = SpeechPrefill(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v2",
+            language="en",
+        )
+        text = speech_prefill_status(
+            prefill, installed_active=True, acted_this_run=True
+        )
+        assert "Already" in text
+
 
 class TestShouldPersistSpeechConfig:
     """Important 3's no-clobber gate, isolated as a pure decision."""

@@ -248,6 +248,190 @@ async def test_broken_or_not_ready_artifact_still_offers_activation_controls():
 
 
 # ---------------------------------------------------------------------------
+# Review NEW-2: installed+active+configured-elsewhere must not promise an
+# action ("installing or activating") that no control on screen offers.
+# Chosen fix: a real "Use Parakeet v2 as my default" affordance that sets
+# _acted_this_run -- makes the prefill sentence's promise true instead of
+# just rewording it away.
+# ---------------------------------------------------------------------------
+
+_USE_AS_DEFAULT_ID = "#setup-speech-use-as-default"
+
+
+def _elsewhere_wizard() -> SimpleNamespace:
+    return _wizard(
+        app_instance=MagicMock(
+            app_config={
+                "transcription": {
+                    "default_provider": "remote-whisper",
+                    "default_model": "whisper-1",
+                    "default_language": "auto",
+                }
+            }
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_offered_when_active_and_configured_elsewhere():
+    step = _step(
+        installed=[_installed_item(active=True, ready=True)],
+        wizard=_elsewhere_wizard(),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        button = step.query_one(_USE_AS_DEFAULT_ID, Button)
+        assert not button.disabled
+        assert "Use Parakeet v2 as my default" in str(button.label)
+        text = "\n".join(str(s.render()) for s in step.query(Static))
+        assert "installing or activating" not in text
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_not_offered_when_already_the_default():
+    """prefill already matches parakeet-onnx -- nothing to switch."""
+    wizard = _wizard(
+        app_instance=MagicMock(
+            app_config={
+                "transcription": {
+                    "default_provider": "parakeet-onnx",
+                    "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                    "default_language": "en",
+                }
+            }
+        )
+    )
+    step = _step(installed=[_installed_item(active=True, ready=True)], wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert not step.query(_USE_AS_DEFAULT_ID)
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_not_offered_when_not_active():
+    """Installed but not yet active: Activate is the real path, not this."""
+    step = _step(
+        installed=[_installed_item(active=False, ready=True)],
+        wizard=_elsewhere_wizard(),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert not step.query(_USE_AS_DEFAULT_ID)
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_not_offered_when_nothing_installed():
+    step = _step(installed=(), wizard=_elsewhere_wizard())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert not step.query(_USE_AS_DEFAULT_ID)
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_not_offered_when_runtime_missing():
+    """Never offer switching to a provider the runtime cannot execute."""
+    step = _step(
+        installed=[_installed_item(active=True, ready=True)],
+        wizard=_elsewhere_wizard(),
+        runtime_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert not step.query(_USE_AS_DEFAULT_ID)
+
+
+@pytest.mark.asyncio
+async def test_use_as_default_not_offered_once_already_acted_this_run():
+    step = _step(
+        installed=[_installed_item(active=True, ready=True)],
+        wizard=_elsewhere_wizard(),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert step.query(_USE_AS_DEFAULT_ID)
+        step._acted_this_run = True
+        step.refresh(recompose=True)
+        await pilot.pause(0.2)
+        assert not step.query(_USE_AS_DEFAULT_ID)
+
+
+@pytest.mark.asyncio
+async def test_pressing_use_as_default_sets_acted_flag_and_updates_copy():
+    step = _step(
+        installed=[_installed_item(active=True, ready=True)],
+        wizard=_elsewhere_wizard(),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        assert step._acted_this_run is False
+
+        await pilot.click(_USE_AS_DEFAULT_ID)
+        await pilot.pause(0.2)
+
+        assert step._acted_this_run is True
+        assert not step.query(_USE_AS_DEFAULT_ID)
+        text = "\n".join(str(s.render()) for s in step.query(Static))
+        assert "will become your default" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_commit_persists_after_use_as_default_without_reinstalling(monkeypatch):
+    """End-to-end proof the affordance actually makes the promise true:
+    pressing it, then Next (commit()), persists the recommended selection
+    with no install/activate worker involved."""
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    active_dir = Path("/fake/active")
+    monkeypatch.setattr(
+        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+    )
+    wizard = _elsewhere_wizard()
+    step = _step(
+        installed=[_installed_item(active=True, ready=True)], wizard=wizard
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        await pilot.click(_USE_AS_DEFAULT_ID)
+        await pilot.pause(0.2)
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    committed = wizard.commit_config.call_args.args[0]
+    assert committed == {
+        "transcription": {
+            "default_provider": "parakeet-onnx",
+            "default_model": "nemo-parakeet-tdt-0.6b-v2",
+            "default_language": "en",
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
 # Runtime-dependency gate (Important 4): mirrors RagStep's own
 # embeddings_rag_deps_installed() gate exactly -- missing extra means no
 # download is ever offered, regardless of curated/artifact-service state.
@@ -289,6 +473,26 @@ async def test_runtime_extra_present_offers_the_normal_install_flow():
         step.on_show()
         await pilot.pause(0.2)
         assert step.query_one("#setup-speech-install", Button)
+
+
+@pytest.mark.asyncio
+async def test_missing_runtime_status_is_not_markup_parsed():
+    """Review NEW-1: the extras name and pinned profile contain literal
+    brackets ("tldw_chatbook[transcription_parakeet_onnx]",
+    "onnx-asr[cpu]==0.12.0"). Rich markup parses "[...]" as a tag and
+    silently deletes unrecognized ones unless the Static is built with
+    markup=False -- the same fix this file already applies to
+    "#setup-summary-rows" for the identical trap. Without it the user is
+    told to install an extras package with no extra named, and to run
+    pip install 'onnx-asr==0.12.0' (missing the pinned [cpu] profile)."""
+    step = _step(runtime_installed=lambda: False)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        status = step.query_one("#setup-speech-status", Static)
+        rendered = str(status.render())
+        assert "tldw_chatbook[transcription_parakeet_onnx]" in rendered
+        assert "onnx-asr[cpu]==0.12.0" in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +935,90 @@ def test_forced_reload_requested_while_loading_is_not_dropped():
     step._loading = False
     step._apply_installed_state(None, None)
     step._load_installed_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Review NEW-3: during a forced reload, the stale _installed_item must not
+# render enabled controls -- InstalledView's own pending computation
+# includes its own loading flag for the identical reason.
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_pending_true_while_loading_even_with_no_operation():
+    step = _step()
+    assert step._operation is None
+    step._loading = True
+    assert step._lifecycle_pending is True
+
+
+def test_lifecycle_pending_false_when_idle():
+    step = _step()
+    assert step._lifecycle_pending is False
+
+
+@pytest.mark.asyncio
+async def test_install_button_disabled_during_a_forced_reload():
+    """A just-completed install/activate leaves _operation=None but
+    _loading=True until the reload's own callback runs -- the stale
+    "Not installed." + Install button state must not be clickable then."""
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step._loading = True  # simulate a forced reload in flight
+        step.refresh(recompose=True)
+        await pilot.pause(0.1)
+        button = step.query_one("#setup-speech-install", Button)
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_activation_controls_pending_during_a_forced_reload():
+    step = _step(installed=[_installed_item(active=False, ready=True)])
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step._loading = True
+        step.refresh(recompose=True)
+        await pilot.pause(0.1)
+        controls = step.query_one(ModelActivationControls)
+        assert controls.pending is True
+
+
+def test_deletion_requested_ignored_while_a_reload_is_in_flight(monkeypatch):
+    fake_app = _patch_app(monkeypatch)
+    step = _step()
+    step._loading = True
+    event = MagicMock(reference=parakeet_v2_reference())
+
+    step._deletion_requested(event)
+
+    fake_app.push_screen.assert_not_called()
+
+
+def test_activation_requested_ignored_while_a_reload_is_in_flight():
+    step = _step()
+    step._activate_model = MagicMock()
+    step._loading = True
+    event = MagicMock(reference=parakeet_v2_reference())
+
+    step._activation_requested(event)
+
+    step._activate_model.assert_not_called()
+
+
+def test_install_pressed_ignored_while_a_reload_is_in_flight():
+    step = _step()
+    step._preflight_install = MagicMock()
+    step._loading = True
+
+    step._install_pressed()
+
+    step._preflight_install.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
