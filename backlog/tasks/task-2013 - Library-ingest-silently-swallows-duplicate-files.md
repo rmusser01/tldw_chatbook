@@ -47,9 +47,23 @@ computes `sha256(content)` internally — so the writer's fallback (and the
 now mirrors the DB's exact hash computation from `payload["content"]`, falls
 back from the URL lookup to `get_media_by_hash`, and labels the duplicate's
 progress "Already in Library — matched an existing item; nothing new was
-imported." Side effect: done jobs now carry a real `content_hash` stamp.
+imported."
 Files: `tldw_chatbook/app.py` (`_run_library_ingest_queue`),
 `Tests/Library/test_library_ingest_runner.py`
 (`test_duplicate_content_at_different_path_resolves_existing_media_id`).
 Verified: new test red→green (red failed on exactly `None == 1`); full
 runner file 67/67.
+
+Review follow-up (Qodo, PR #1241): the hash is computed lazily — only on
+the duplicate-with-URL-miss path — so the single-writer critical path pays
+no extra O(n) pass on fresh ingests (their stamp stays `None`, the pre-PR
+behavior; duplicate rows stamp the hash they resolved by, which the
+screen's open-in-library fallback can reuse). The lookup's catch is
+narrowed to `(DatabaseError, InputError)` with a warning log carrying
+job_id/source/truncated hash; a lookup failure keeps the job DONE and
+duplicate-labelled but unlinked (pinned by
+`test_duplicate_hash_lookup_db_error_keeps_job_done_without_media_id`,
+runner file 68/68). Declined with evidence: wrapping the read in
+`transaction()` — `app.py` contains no `transaction()` usage, the
+adjacent pre-existing `get_media_by_url` read is equally unwrapped, and
+the `get_media_by_*` APIs manage their own connections.

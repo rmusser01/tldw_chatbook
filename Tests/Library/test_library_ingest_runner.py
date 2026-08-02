@@ -2635,3 +2635,38 @@ async def test_duplicate_content_at_different_path_resolves_existing_media_id(
         )
 
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_hash_lookup_db_error_keeps_job_done_without_media_id(
+    tmp_path: Path,
+) -> None:
+    """(task-2013, review follow-up) A ``DatabaseError`` from the hash-fallback
+    lookup must not fail the job (the media row exists -- the DB deduped
+    against it) and must not be swallowed into a fake match: the job stays
+    DONE, unlinked, still labelled a duplicate."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
+
+    db = _make_db(tmp_path)
+    body = "identical body " * 20
+    first = _write_text_file(tmp_path, "report.txt", body)
+    second = _write_text_file(tmp_path, "copy_of_report.txt", body)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first_job = app.submit_library_ingest_job(source_path=str(first))
+        await _wait_for_job_state(app, pilot, first_job.job_id, IngestJobState.DONE)
+
+        def _boom(_content_hash, **_kwargs):
+            raise DatabaseError("simulated lookup failure")
+
+        db.get_media_by_hash = _boom
+
+        second_job = app.submit_library_ingest_job(source_path=str(second))
+        second_done = await _wait_for_job_state(
+            app, pilot, second_job.job_id, IngestJobState.DONE
+        )
+        assert second_done.media_id is None
+        assert second_done.progress["message"].startswith("Already in Library")
+
+        await _wait_for_runner_idle(app, pilot)

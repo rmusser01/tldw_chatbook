@@ -139,7 +139,11 @@ from tldw_chatbook.Chat.console_live_work import (
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    DatabaseError as MediaDatabaseError,
+    InputError as MediaInputError,
+    MediaDatabase,
+)
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -3251,28 +3255,49 @@ class LibraryIngestQueueMixin:
                     # against an ``AttributeError`` on a stale/racy reference.
                     was_duplicate = media_id is None
                     content_hash = payload.get("content_hash")
-                    if content_hash is None and isinstance(
-                        payload.get("content"), str
-                    ):
-                        # The parse payload carries no hash; the DB computes
-                        # sha256(content) itself inside
-                        # ``add_media_with_keywords``. Mirror that exact
-                        # computation so the duplicate fallback below looks
-                        # up the same value the DB deduped on.
-                        content_hash = hashlib.sha256(
-                            payload["content"].encode()
-                        ).hexdigest()
                     if media_id is None and self.media_db is not None:
                         existing = self.media_db.get_media_by_url(payload["url"])
-                        if existing is None and content_hash:
-                            try:
-                                existing = self.media_db.get_media_by_hash(
-                                    content_hash
-                                )
-                            except Exception:
-                                existing = None
+                        if existing is None:
+                            if content_hash is None and isinstance(
+                                payload.get("content"), str
+                            ):
+                                # The parse payload carries no hash; the DB
+                                # computes sha256(content) itself inside
+                                # ``add_media_with_keywords``. Mirror that
+                                # exact computation, but only on this
+                                # duplicate-with-URL-miss path -- never on
+                                # the plain success path, which runs on the
+                                # single-SQLite-writer critical path and
+                                # would pay a second O(n) pass per file.
+                                content_hash = hashlib.sha256(
+                                    payload["content"].encode()
+                                ).hexdigest()
+                            if content_hash:
+                                try:
+                                    existing = self.media_db.get_media_by_hash(
+                                        content_hash
+                                    )
+                                except (
+                                    MediaDatabaseError,
+                                    MediaInputError,
+                                ) as exc:
+                                    # The media row exists (the DB deduped
+                                    # against it), so a failed lookup must
+                                    # not fail the job -- but a silent miss
+                                    # leaves a DONE row with no media_id and
+                                    # no diagnostic trail.
+                                    logger.warning(
+                                        "Library ingest duplicate-resolution "
+                                        "hash lookup failed "
+                                        f"(job_id={job.job_id}, "
+                                        f"source={job.source_path}, "
+                                        f"hash={content_hash[:12]}…): {exc}"
+                                    )
+                                    existing = None
                         if existing is not None:
                             media_id = existing.get("id")
+                            if content_hash is None:
+                                content_hash = existing.get("content_hash")
                     if was_duplicate:
                         progress = {
                             "message": (
