@@ -42,6 +42,7 @@ exercising the actual poll loop.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,49 @@ class _FakeLegacyPlayer:
             self.events.append("observed_finished")
             return PlaybackState.FINISHED
         return PlaybackState.PLAYING
+
+    def stop(self):
+        self.stop_calls += 1
+        self._current_file = None
+        self._finished = False
+        return True
+
+
+class _SequenceFaithfulPlayer:
+    """Models `SimpleAudioPlayer.play()`'s REAL internal sequence
+    (`self.stop()` -> `[before_popen hook]` -> "Popen") deterministically
+    (task-4 review round 3, F3's window-resolution probe shape), so a stop
+    request can be injected at an EXACT point in that sequence without
+    racing a real background thread or a real subprocess. `before_popen`
+    runs strictly BETWEEN the internal `stop()` and the simulated `Popen`
+    (the file becoming "owned") -- exactly the window a same-tick
+    `player.stop()` call has nothing to kill in.
+    """
+
+    def __init__(self, *, before_popen=None) -> None:
+        self._current_file = None
+        self._finished = False
+        self._before_popen = before_popen
+        self.stop_calls = 0
+
+    def play(self, file_path) -> bool:
+        self.stop()  # play()'s own internal self.stop(), first -- real behavior
+        if self._before_popen is not None:
+            self._before_popen()
+        # "Popen": the file is now genuinely owned by the player.
+        self._current_file = file_path
+        self._finished = False
+        return True
+
+    def get_current_file(self):
+        return self._current_file
+
+    def get_state(self):
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+
+        if self._current_file is None:
+            return PlaybackState.IDLE
+        return PlaybackState.FINISHED if self._finished else PlaybackState.PLAYING
 
     def stop(self):
         self.stop_calls += 1
@@ -516,36 +560,34 @@ async def test_completion_reports_false_when_the_clip_is_displaced_before_finish
 
 
 # ---------------------------------------------------------------------------
-# F3+N2 (re-review round 2, task-4-review.md) -- round 1's fix (registering
-# `_last_played` before the handoff, plus an unconditional fallback gated
-# on `_last_played is None`) did NOT close the barge-in window: moving the
-# registration earlier made `_stop_prior_legacy_clip` take its TRACKED
-# branch during the handoff, whose `stop_audio_playback_if_current`
-# identity check fails until the player actually owns the file (it does
-# not yet, mid-handoff) -- a silent no-op, and the fallback (gated on
-# NOTHING tracked) was now unreachable in exactly the window it targeted.
-# Worse, that same blanket fallback reached from `_stream_response_via_
-# sink` (the shared path EVERY TTS caller uses) could stop a completely
-# UNRELATED clip playing on the process-global player singleton (N2).
-#
-# Redesigned: `_legacy_handoff_in_flight`, a handler-level flag set for the
-# full duration of the play-and-poll call, gates an unconditional stop --
-# but ONLY for the bare/global-stop call site (`bare_stop=True`, passed
-# only by `handle_tts_playback`'s bare-stop branch); `_stream_response_via_
-# sink`'s call keeps the ORIGINAL tracked-only, deliberate-no-op-when-
-# nothing-tracked behavior unchanged (N2's fix), while the bare-stop path
-# now genuinely interrupts a handoff-in-progress clip (F3's fix).
+# F3+N2 (round 2)/F3+D1+D2 (round 3, task-4-review.md) -- round 1's fix
+# (registering `_last_played` before the handoff, plus an unconditional
+# fallback gated on `_last_played is None`) did NOT close the barge-in
+# window; round 2's flag-gated unconditional `player.stop()` REACHED the
+# player but had nothing to kill in the pre-`Popen` sub-window (`play()`'s
+# own `self.stop()` -> pre-`Popen` delay -> `Popen` sequence), so `play()`
+# proceeded past its own internal `self.stop()` and started the clip
+# regardless -- round 2's net effect was an ineffective stop, not a no-op,
+# in that specific window (a narrowing in mechanism, unchanged in audible
+# effect). Round 3 closes it from the WORKER side: a per-handoff
+# `threading.Event` (`stop_requested`), checked by `_play_legacy_clip_and_
+# await_completion` immediately after `player.play()` returns (Popen has
+# then definitely happened, or `play()` itself failed) and on every poll
+# iteration after. `_legacy_handoff_stop_events` (a SET, not the round-2
+# bool -- see D1 below) tracks every currently in-flight handoff's own
+# event; a bare stop sets ALL of them.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_last_played_is_still_registered_before_the_file_reaches_the_player(
+async def test_last_played_and_the_handoff_event_are_registered_before_the_file_reaches_the_player(
     handler, monkeypatch, tmp_path,
 ):
     """Not the fix itself (see below) -- but this ordering is still worth
     keeping: `_last_played` reflects the truth as early as possible for
     anything else that reads it directly (the message-scoped stop branch,
-    the 5s cleanup)."""
+    the 5s cleanup), and the handoff's own event must be registered before
+    any concurrent stop could possibly need to find it."""
     audio_file = tmp_path / "clip.mp3"
     audio_file.write_bytes(b"fake audio data")
     fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
@@ -560,51 +602,46 @@ async def test_last_played_is_still_registered_before_the_file_reaches_the_playe
         )
     )
     # Let the task run up to its own first real suspension point
-    # (`_run_blocking_tts_io`'s executor hop) -- everything before that,
-    # including the `_last_played` assignment and setting the handoff
-    # flag, runs synchronously with no other await in between, so a
-    # handful of no-op yields reliably lands here without any wall-clock
-    # dependency.
+    # (the executor hop) -- everything before that, including the
+    # `_last_played` assignment and registering the handoff's own event,
+    # runs synchronously with no other await in between, so a handful of
+    # no-op yields reliably lands here without any wall-clock dependency.
     for _ in range(5):
         await asyncio.sleep(0)
 
     async with handler._audio_files_lock:
         assert handler._last_played == ("msg-1", audio_file)
-    assert handler._legacy_handoff_in_flight is True, (
-        "the handoff flag must be set for the duration of the play-and-"
-        "poll call -- this is what F3's actual fix gates on"
+    assert len(handler._legacy_handoff_stop_events) == 1, (
+        "the handoff's own event must be registered for the duration of "
+        "the play-and-poll call -- this is what F3's fix gates on"
     )
 
     await task
     assert results == [True]
+    assert handler._legacy_handoff_stop_events == set(), (
+        "the event must be discarded once the handoff completes"
+    )
 
 
 @pytest.mark.asyncio
-async def test_bare_stop_during_an_in_flight_handoff_stops_even_when_the_tracked_identity_check_would_fail(
+async def test_bare_stop_during_an_in_flight_handoff_reaches_the_unconditional_stop_guard(
     handler, monkeypatch, tmp_path,
 ):
-    """The core F3 fix, isolated deterministically. A real end-to-end
-    version of this probe (drive `_play_utterance_legacy_artifact` as a
-    background task, then race a real `handle_tts_playback` stop against
-    it) turned out NOT to be reliably mutation-sensitive: with only a
+    """Deterministic guard-level pin (kept per the reviewer's binding
+    test-strength note: this models the GUARD -- that a bare stop reaches
+    an unconditional `player.stop()` call and sets the in-flight handoff's
+    own event -- not the full outcome; see the outcome-level pin below for
+    that). A real end-to-end version of this probe (drive `_play_
+    utterance_legacy_artifact` as a background task, then race a real
+    `handle_tts_playback` stop against it) turned out NOT to be reliably
+    mutation-sensitive in round 2's version of this test: with only a
     handful of `asyncio.sleep(0)` yields, the real background thread
-    (dispatched via `asyncio.to_thread`) frequently already called
-    `player.play()` by the time the stop landed, so the PRE-EXISTING
-    tracked branch's identity check (`stop_audio_playback_if_current`)
-    would ALSO have stopped it -- masking a reverted flag-gate mutation
-    (confirmed: that mutation survived the end-to-end version, 45/45).
-    OS-thread scheduling cannot be pinned deterministically from the event
-    loop side without real synchronization primitives, which would
-    reintroduce exactly the wall-clock-flakiness this whole review round
-    has been eliminating.
-
-    Modeled directly instead: `_last_played` is set (round 1's fix, still
-    in place) but the fake player's `get_current_file()` returns something
-    else -- EXACTLY what the real `SimpleAudioPlayer` reports before
-    `play()` has actually run (`get_current_file()` only ever reflects
-    the LAST clip `play()`/`stop()` touched). This reproduces the failure
-    mode of the tracked branch precisely, without needing real thread
-    timing at all.
+    frequently already called `player.play()` by the time the stop
+    landed, so the PRE-EXISTING tracked branch's identity check would ALSO
+    have stopped it, masking a reverted flag-gate mutation. Modeled
+    directly instead: the fake player's `get_current_file()` returns
+    `None` -- EXACTLY what the real `SimpleAudioPlayer` reports before
+    `play()` has actually run.
     """
     audio_file = tmp_path / "clip.mp3"
     stop_calls: list = []
@@ -623,14 +660,62 @@ async def test_bare_stop_during_an_in_flight_handoff_stops_even_when_the_tracked
     )
     async with handler._audio_files_lock:
         handler._last_played = ("msg-1", audio_file)  # round 1's early registration
-    handler._legacy_handoff_in_flight = True  # round 2's flag
+    stop_requested = threading.Event()
+    handler._legacy_handoff_stop_events.add(stop_requested)
+    try:
+        await handler._stop_prior_legacy_clip(bare_stop=True)
 
-    await handler._stop_prior_legacy_clip(bare_stop=True)
+        assert stop_calls == ["stop"], (
+            "a bare stop during an in-flight handoff must reach the "
+            "unconditional player.stop() call, even though the tracked "
+            "branch's identity check would fail here (task-4 review F3)"
+        )
+        assert stop_requested.is_set(), (
+            "the bare stop must also set the in-flight handoff's own "
+            "stop_requested event -- the WORKER, which alone knows when "
+            "Popen actually ran, is what closes the pre-Popen race (see "
+            "the outcome-level pin below)"
+        )
+    finally:
+        handler._legacy_handoff_stop_events.discard(stop_requested)
 
-    assert stop_calls == ["stop"], (
-        "a bare stop during an in-flight handoff must silence the player "
-        "unconditionally, even though the tracked branch's identity "
-        "check would fail here (task-4 review F3)"
+
+def test_a_stop_requested_before_popen_results_in_silence_not_a_played_through_clip():
+    """The round-3 F3 OUTCOME-level pin (binding per the reviewer's
+    test-strength note): a stop request delivered between `play()` entry
+    and `Popen` must result in silence, not a clip that plays through to
+    the poll's own timeout. Faithful to `SimpleAudioPlayer`'s REAL internal
+    sequence (`play()` = `self.stop()` -> pre-`Popen` delay -> `Popen`)
+    via `_SequenceFaithfulPlayer` below, with `stop_requested` set from
+    WITHIN the pre-`Popen` hook -- exactly the window the reviewer's probe
+    demonstrated: a same-tick `player.stop()` call there has nothing to
+    kill, since `Popen` has not happened yet, and `play()` proceeds past
+    its own internal `self.stop()` regardless. This is what a guard-only
+    test (like the one above) cannot catch: it never exercises `_play_
+    legacy_clip_and_await_completion`'s own post-`play()` check at all.
+    """
+    stop_requested = threading.Event()
+
+    def _barge_in_before_popen() -> None:
+        stop_requested.set()
+
+    player = _SequenceFaithfulPlayer(before_popen=_barge_in_before_popen)
+
+    result = tts_events_module._play_legacy_clip_and_await_completion(
+        player,
+        Path("clip.mp3"),
+        timeout_seconds=5.0,
+        stop_requested=stop_requested,
+    )
+
+    assert result is False, (
+        "a stop delivered between play() entry and Popen must result in "
+        "silence, not a played-through clip (task-4 review round 3, F3)"
+    )
+    assert player.get_current_file() is None, "the player must actually be silenced"
+    assert player.stop_calls == 2, (
+        "play()'s own internal self.stop() (1) plus the worker's post-"
+        "play() catch-up stop (2)"
     )
 
 
@@ -668,16 +753,16 @@ async def test_bare_stop_without_an_in_flight_handoff_keeps_the_tracked_only_beh
     handler, monkeypatch,
 ):
     """Regression guard: the unconditional branch must be gated on BOTH
-    `bare_stop=True` AND `_legacy_handoff_in_flight` -- a bare stop with
-    nothing tracked and no handoff in progress (the ordinary idle case)
-    must stay a no-op, not reach for the player unconditionally."""
+    `bare_stop=True` AND at least one in-flight handoff -- a bare stop
+    with nothing tracked and no handoff in progress (the ordinary idle
+    case) must stay a no-op, not reach for the player unconditionally."""
     fake_player = _FakeLegacyPlayer()
     monkeypatch.setattr(
         "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
     )
     async with handler._audio_files_lock:
         handler._last_played = None
-    assert handler._legacy_handoff_in_flight is False
+    assert handler._legacy_handoff_stop_events == set()
 
     await handler._stop_prior_legacy_clip(bare_stop=True)
 
@@ -708,11 +793,92 @@ async def test_bare_stop_still_uses_the_tracked_branch_when_something_is_tracked
     )
     async with handler._audio_files_lock:
         handler._last_played = ("msg-1", clip)
-    assert handler._legacy_handoff_in_flight is False
+    assert handler._legacy_handoff_stop_events == set()
 
     await handler._stop_prior_legacy_clip(bare_stop=True)
 
     assert stop_calls == ["stop"], "exactly one stop call, via the tracked-clip path"
+
+
+# ---------------------------------------------------------------------------
+# D1 (Minor, task-4-review.md round 3) -- `_legacy_handoff_in_flight` (round
+# 2's design) was a single bool, cleared UNCONDITIONALLY in a `finally`: the
+# FIRST of two overlapping handoffs to exit cleared protection for the
+# other, still-in-flight one. Fixed: a SET of per-handoff events, where
+# discarding one entry can never disturb another's.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_completing_handoff_does_not_clear_a_different_still_in_flight_handoffs_registration(
+    handler, monkeypatch,
+):
+    event_a = threading.Event()
+    event_b = threading.Event()
+    handler._legacy_handoff_stop_events.add(event_a)
+    handler._legacy_handoff_stop_events.add(event_b)
+
+    # Handoff A "exits" -- the same `.discard()` call its own `finally`
+    # makes.
+    handler._legacy_handoff_stop_events.discard(event_a)
+
+    assert handler._legacy_handoff_stop_events == {event_b}, (
+        "discarding one handoff's event must never clear a DIFFERENT, "
+        "still-in-flight handoff's registration (task-4 review D1)"
+    )
+
+    # A bare stop landing now must still reach the unconditional branch
+    # (gated on the set being non-empty) and set B's own event.
+    fake_player = _FakeLegacyPlayer()
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+    async with handler._audio_files_lock:
+        handler._last_played = None
+
+    await handler._stop_prior_legacy_clip(bare_stop=True)
+
+    assert event_b.is_set(), "the still-in-flight handoff's event must be set"
+    assert fake_player.stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_real_handoffs_own_finally_discards_only_its_own_event(
+    handler, monkeypatch, tmp_path,
+):
+    """The actual PRODUCTION code path D1 touches: `_play_utterance_
+    legacy_artifact`'s own `finally` block must discard ONLY the event it
+    itself registered, never clear the whole set -- the round-2 bug was
+    specifically an unconditional clear triggered by the FIRST of two
+    overlapping handoffs to exit. (The test above pins the SET's own
+    correct semantics in isolation; this one drives the real call so a
+    regression back to `.clear()` in the production `finally` is actually
+    caught, not just the data structure's own already-correct behavior.)
+    """
+    audio_file = tmp_path / "clip.mp3"
+    fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+
+    # A DIFFERENT, still-in-flight handoff's event, registered directly --
+    # simulates a genuinely overlapping second call without needing to
+    # orchestrate two real concurrent handoffs against one single-slot
+    # fake player.
+    other_handoffs_event = threading.Event()
+    handler._legacy_handoff_stop_events.add(other_handoffs_event)
+
+    on_finished, results = _counting_on_finished()
+    await handler._play_utterance_legacy_artifact(
+        "msg-1", audio_file, "Hi there.", on_finished
+    )
+
+    assert results == [True]
+    assert other_handoffs_event in handler._legacy_handoff_stop_events, (
+        "a completing handoff's own finally must discard ONLY its own "
+        "event, never a different, still-in-flight handoff's "
+        "registration (task-4 review D1)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -853,10 +1019,10 @@ async def test_cancelling_mid_poll_promptly_stops_the_player(handler, monkeypatc
     # handoff -- loop rather than a fixed count, bounded so a genuine
     # regression fails fast instead of hanging.
     for _ in range(500):
-        if handler._legacy_handoff_in_flight:
+        if handler._legacy_handoff_stop_events:
             break
         await asyncio.sleep(0)
-    assert handler._legacy_handoff_in_flight is True
+    assert handler._legacy_handoff_stop_events
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -867,6 +1033,100 @@ async def test_cancelling_mid_poll_promptly_stops_the_player(handler, monkeypatc
         "poll's own bound (task-4 review N4)"
     )
     assert results == [False], "on_finished must still fire exactly once via the finally net"
+
+
+# ---------------------------------------------------------------------------
+# D2 (Nit, task-4-review.md round 3) -- N4's prompt cancel-stop was
+# unconditional: displacing the clip AND cancelling in the same tick (before
+# the poll's own next iteration would have noticed the displacement) could
+# kill UNRELATED audio. Fixed: `if player.get_current_file() in (None,
+# audio_file)` guards both the async-side cancel handler's direct stop and
+# the worker's own `stop_requested`-triggered stop calls.
+# ---------------------------------------------------------------------------
+
+
+class _SynchronizedFakePlayer:
+    """Lets a test deterministically rendezvous with the REAL worker
+    thread `_play_legacy_clip_and_await_completion` runs on, instead of
+    racing OS-thread scheduling (task-4 review round 3, D2): `play()`
+    signals `played_event` (this handoff has genuinely reached the
+    player) and then BLOCKS on `release_event` until the test releases
+    it -- so a test can act (displace the clip, cancel) at a precisely
+    known point, deterministically, before letting the worker proceed.
+    """
+
+    def __init__(self) -> None:
+        self._current_file = None
+        self._finished = False
+        self.played_event = threading.Event()
+        self.release_event = threading.Event()
+        self.stop_calls = 0
+
+    def play(self, file_path) -> bool:
+        self._current_file = file_path
+        self.played_event.set()
+        self.release_event.wait(timeout=5.0)
+        return True
+
+    def get_current_file(self):
+        return self._current_file
+
+    def get_state(self):
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+
+        return PlaybackState.FINISHED if self._finished else PlaybackState.PLAYING
+
+    def stop(self):
+        self.stop_calls += 1
+        self._current_file = None
+        return True
+
+
+@pytest.mark.asyncio
+async def test_cancelling_after_the_clip_was_displaced_does_not_kill_the_new_clip(
+    handler, monkeypatch,
+):
+    chunks = [b"ID3", b"restofmp3bytes"]
+    response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    fake_player = _SynchronizedFakePlayer()
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+
+    task = asyncio.create_task(
+        handler.speak_utterance("Discarded.", on_finished=lambda ok: None)
+    )
+
+    # Deterministic rendezvous with the real worker thread: it is now
+    # genuinely blocked INSIDE its own play() call, having already
+    # recorded our clip as current.
+    await asyncio.to_thread(fake_player.played_event.wait, 5.0)
+    assert fake_player.played_event.is_set()
+
+    # An UNRELATED clip displaces ours -- set directly (no play() call
+    # needed) so this happens deterministically BEFORE the worker's own
+    # play() call has even returned, let alone reached any check of its
+    # own.
+    unrelated_clip = Path("unrelated-clip.mp3")
+    fake_player._current_file = unrelated_clip
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Only NOW let the worker's still-blocked play() call return, so its
+    # OWN post-play() stop_requested check (also D2-guarded) runs against
+    # the same, still-displaced state.
+    fake_player.release_event.set()
+    await asyncio.sleep(0)
+
+    assert fake_player.get_current_file() == unrelated_clip, (
+        "the unrelated clip that displaced ours must survive cancellation "
+        "(task-4 review D2)"
+    )
 
 
 # ---------------------------------------------------------------------------

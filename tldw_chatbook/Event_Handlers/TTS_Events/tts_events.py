@@ -4,6 +4,7 @@
 # Imports
 import asyncio
 import re
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import partial
@@ -395,18 +396,30 @@ class TTSEventHandler:
         # by the same lock as `_audio_files` (related bookkeeping, always
         # touched together).
         self._last_played: Optional[tuple[str, Path]] = None
-        # Task-4 review round 2 (F3+N2): set for the FULL duration of
-        # `_play_utterance_legacy_artifact`'s play-and-poll call (from just
-        # before `player.play()` runs to just after the poll returns), not
-        # merely the initial handoff -- registering `_last_played` early
-        # (round 1's F3 fix) made a concurrent bare stop take the TRACKED
-        # branch, whose identity check (`stop_audio_playback_if_current`)
-        # fails until the player actually owns the file, silently no-oping
-        # for the player's whole `play()` pre-`Popen` delay AND the
-        # `_run_blocking_tts_io` executor hop -- the exact window this flag
-        # closes. Read/written only from the event loop (plain bool, no
-        # lock needed -- asyncio coroutines never truly run concurrently).
-        self._legacy_handoff_in_flight: bool = False
+        # Task-4 review round 2 (F3+N2), round 3 (D1): one `threading.Event`
+        # per IN-FLIGHT `_play_utterance_legacy_artifact` play-and-poll call
+        # (added just before `player.play()` runs, discarded just after the
+        # poll returns) -- a SET, not a single bool, because a bool cleared
+        # unconditionally in a `finally` left the FIRST of two overlapping
+        # handoffs to exit clearing protection for the other (round-2's
+        # `_legacy_handoff_in_flight` bug, confirmed by a forced-overlap
+        # probe; `speak_utterance` is a public entry and two concurrent
+        # calls are reachable even though the sequencer serializes them in
+        # practice). A bare/global stop (`bare_stop=True`) sets EVERY
+        # in-flight event -- "stop everything" is a bare stop's whole
+        # semantics -- so `_stop_prior_legacy_clip` gates its unconditional
+        # branch on this set being non-empty, and each handoff's own worker
+        # thread (round 3's F3 fix, `_play_legacy_clip_and_await_
+        # completion`) checks ITS OWN event to close the window a
+        # same-tick `player.stop()` call cannot: a stop issued BEFORE
+        # `Popen` has no process to kill, and `play()` proceeds past its
+        # own internal `self.stop()` and starts the clip regardless --
+        # only the worker, which alone knows when `Popen` actually
+        # happened, can catch that. Read/written only from the event loop
+        # (the SET itself, that is -- the `Event` objects it holds are
+        # deliberately cross-thread: `threading.Event.set()`/`.is_set()`
+        # are the whole point).
+        self._legacy_handoff_stop_events: set[threading.Event] = set()
         self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
@@ -1629,18 +1642,32 @@ class TTSEventHandler:
         directly here rather than round-tripping through a posted
         `TTSPlaybackEvent` since generation already runs on its own worker.
 
-        Task-4 review round 2 (F3+N2), replacing round 1's fix (which did
-        not close the window it targeted -- see git history for the
-        analysis): `bare_stop` is `True` for exactly one caller,
-        `handle_tts_playback`'s bare/global-stop branch. When it is true
-        AND `_legacy_handoff_in_flight` is set (`_play_utterance_legacy_
-        artifact`'s play-and-poll is in progress), this stops the shared
-        player UNCONDITIONALLY -- the identity check
-        `stop_audio_playback_if_current` normally uses cannot succeed yet
-        (the player does not own the file until `play()` returns), so the
-        tracked branch below would silently no-op for the whole handoff
-        window otherwise. `SimpleAudioPlayer.stop()` is a cheap, safe no-op
-        when nothing is actually loaded/playing.
+        Task-4 review round 2 (F3+N2)/round 3 (F3, D1), replacing earlier
+        fixes that did not close the window they targeted -- see git
+        history for the analysis of each. `bare_stop` is `True` for
+        exactly one caller, `handle_tts_playback`'s bare/global-stop
+        branch. When it is true AND `_legacy_handoff_stop_events` is
+        non-empty (one or more `_play_utterance_legacy_artifact` calls
+        have a play-and-poll in progress -- see `__init__`'s docstring for
+        why this is a SET, not a single flag), this:
+
+        1. Sets EVERY in-flight handoff's own `threading.Event` -- each
+           worker thread (`_play_legacy_clip_and_await_completion`) checks
+           its own event immediately after `player.play()` returns (round
+           3's F3 fix: a same-tick `player.stop()` call issued BEFORE
+           `Popen` has no process to kill, and `play()` proceeds past its
+           own internal `self.stop()` regardless -- only the worker, which
+           alone knows when `Popen` actually happened, can catch that) and
+           on each subsequent poll iteration.
+        2. ALSO stops the shared player directly, unconditionally, right
+           here -- the identity check `stop_audio_playback_if_current`
+           normally uses cannot succeed yet in the pre-`Popen` window (the
+           player does not own the file until `play()` returns), so the
+           tracked branch below would silently no-op for the whole handoff
+           window otherwise; this direct call is what makes a POST-`Popen`
+           barge-in prompt (~0ms) rather than waiting for the worker's own
+           next poll tick. `SimpleAudioPlayer.stop()` is a cheap, safe
+           no-op when nothing is actually loaded/playing.
 
         Deliberately NOT applied when `bare_stop` is false (the OTHER
         caller, `_stream_response_via_sink`, on the shared path EVERY TTS
@@ -1654,7 +1681,10 @@ class TTSEventHandler:
         message-scoped-stop sibling documents ("stopping message A must
         never silence a different, still-playing message B").
         """
-        if bare_stop and self._legacy_handoff_in_flight:
+        if bare_stop and self._legacy_handoff_stop_events:
+            for stop_requested in list(self._legacy_handoff_stop_events):
+                stop_requested.set()
+
             from tldw_chatbook.TTS.audio_player import get_audio_player
 
             get_audio_player().stop()
@@ -1697,33 +1727,50 @@ class TTSEventHandler:
         at handoff instead of completion truncated every sentence but the
         last).
 
-        Task-4 review round 2 (F3+N2): `_legacy_handoff_in_flight` is set
-        for the full duration of the play-and-poll call below (see its own
-        docstring in `__init__`) so a concurrent bare/global stop can
-        silence this clip unconditionally through `_stop_prior_legacy_clip`
-        even before the player actually owns the file -- round 1's fix
-        (registering `_last_played` early) did not close this window; it
-        just moved the no-op from one guard to another (see git history).
+        Task-4 review round 2 (F3+N2)/round 3 (F3, D1): a fresh
+        `threading.Event` (`stop_requested`) is created for THIS handoff
+        and registered in `_legacy_handoff_stop_events` (a set, per-handoff
+        -- see `__init__`'s docstring for why a single bool was wrong) for
+        the full duration of the play-and-poll call below, so a concurrent
+        bare/global stop can reach this specific handoff even before the
+        player actually owns the file. Two earlier fixes did not close
+        this window (see git history for each): round 1's early `_last_
+        played` registration just moved the no-op from one guard to
+        another; round 2's handler-side-only `player.stop()` fires but has
+        no process to kill in the pre-`Popen` sub-window, so `play()`
+        proceeds past its own internal `self.stop()` and starts the clip
+        regardless. Round 3 closes it from the WORKER side instead --
+        `_play_legacy_clip_and_await_completion` checks `stop_requested`
+        immediately after `player.play()` returns (Popen has then
+        definitely either happened or failed) and on every poll iteration,
+        which is the only vantage point that actually knows when `Popen`
+        ran.
 
-        Task-4 review N4: the play-and-poll call is offloaded via a bare
-        `asyncio.create_task(asyncio.to_thread(...))` + `asyncio.shield`
-        here, NOT the shared `_run_blocking_tts_io` seam every other
-        blocking call in this class uses. That seam's cancellation
-        handling does a BOUNDED JOIN (`_TTS_IO_CANCELLATION_JOIN_TIMEOUT_
-        SECONDS`, up to 1s) before its own `on_cancelled_result` hook ever
-        fires -- fine for a quick artifact write, but it means cancelling
-        this coroutine would NOT promptly silence a clip that could still
-        be playing for many more seconds. Reimplemented narrowly here so
-        the `except asyncio.CancelledError` below runs IMMEDIATELY when
-        this coroutine is cancelled (e.g. via `cleanup_tts_resources()`
-        cancelling the `_active_tasks`-registered generation task, task-4
-        review F4), stopping the player without waiting out any of the
-        poll's own bound. The abandoned worker is retained in this file's
-        existing `_retained_tts_io_tasks` set so it is never garbage-
-        collected mid-flight even though nothing awaits it once this
-        coroutine unwinds -- it settles on its own once the prompt
-        `player.stop()` below makes the poll observe the state change on
-        its very next iteration.
+        Task-4 review N4 (round 2), D2 guard (round 3): the play-and-poll
+        call is offloaded via a bare `asyncio.create_task(asyncio.to_
+        thread(...))` + `asyncio.shield` here, NOT the shared `_run_
+        blocking_tts_io` seam every other blocking call in this class
+        uses. That seam's cancellation handling does a BOUNDED JOIN
+        (`_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS`, up to 1s) before its
+        own `on_cancelled_result` hook ever fires -- fine for a quick
+        artifact write, but it means cancelling this coroutine would NOT
+        promptly silence a clip that could still be playing for many more
+        seconds. Reimplemented narrowly here so the `except asyncio.
+        CancelledError` below runs IMMEDIATELY when this coroutine is
+        cancelled (e.g. via `cleanup_tts_resources()` cancelling the
+        `_active_tasks`-registered generation task, task-4 review F4),
+        setting `stop_requested` (closing the SAME pre-`Popen` race F3
+        closes, regardless of whether cancellation lands before, during,
+        or after the worker's own `play()` call) and stopping the player
+        directly -- but ONLY when it still owns THIS clip, or owns nothing
+        yet (D2: a DIFFERENT clip could have displaced ours in the same
+        tick, before the poll's own next iteration would have noticed;
+        stopping unconditionally would kill that unrelated clip). The
+        abandoned worker is retained in this file's existing `_retained_
+        tts_io_tasks` set so it is never garbage-collected mid-flight even
+        though nothing awaits it once this coroutine unwinds -- it settles
+        on its own once the prompt stop (or `stop_requested`) makes the
+        poll observe the state change.
 
         Args:
             speed: Task-4 review N3 -- the resolved provider speed, folded
@@ -1736,7 +1783,8 @@ class TTSEventHandler:
         from tldw_chatbook.TTS.audio_player import get_audio_player
 
         stop_live_sink()
-        self._legacy_handoff_in_flight = True
+        stop_requested = threading.Event()
+        self._legacy_handoff_stop_events.add(stop_requested)
         try:
             async with self._audio_files_lock:
                 self._last_played = (message_id, audio_file)
@@ -1749,26 +1797,33 @@ class TTSEventHandler:
                     player,
                     audio_file,
                     timeout_seconds=timeout_seconds,
+                    stop_requested=stop_requested,
                 )
             )
             ok = False
             try:
                 ok = await asyncio.shield(worker)
             except asyncio.CancelledError:
-                # Task-4 review N4: stop the player IMMEDIATELY, off the
-                # event loop -- no bounded join first. The poll running on
-                # `worker`'s own thread notices the state change on its
-                # next iteration (bounded by `_LEGACY_PLAYBACK_POLL_
-                # INTERVAL_SECONDS`) and returns on its own.
+                # Task-4 review N4 (round 2) + D2 (round 3): stop the
+                # player IMMEDIATELY, off the event loop -- no bounded
+                # join first -- but only when it still owns OUR clip (or
+                # owns nothing yet, the pre-`Popen` case) -- D2: cancelling
+                # while a DIFFERENT clip has already displaced ours in the
+                # same tick must not kill that unrelated clip. Also sets
+                # `stop_requested` so the worker's own F3 check catches
+                # this regardless of exactly when cancellation landed
+                # relative to the worker's own `play()` call.
+                stop_requested.set()
                 self._retained_tts_io_tasks.add(worker)
                 worker.add_done_callback(self._retained_tts_io_tasks.discard)
-                await asyncio.to_thread(player.stop)
+                if player.get_current_file() in (None, audio_file):
+                    await asyncio.to_thread(player.stop)
                 raise
             except Exception:
                 logger.warning("Legacy TTS playback failed for one utterance")
                 ok = False
         finally:
-            self._legacy_handoff_in_flight = False
+            self._legacy_handoff_stop_events.discard(stop_requested)
 
         self._schedule_legacy_playback_cleanup(message_id)
         on_finished(bool(ok))
@@ -2554,6 +2609,7 @@ def _play_legacy_clip_and_await_completion(
     audio_file: Path,
     *,
     timeout_seconds: float,
+    stop_requested: threading.Event | None = None,
     poll_interval_seconds: float = _LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS,
 ) -> bool:
     """Blocking: start playback on `player` and wait (bounded) for this clip
@@ -2575,35 +2631,75 @@ def _play_legacy_clip_and_await_completion(
     `_run_blocking_tts_io` offload seam, the same one `sink.open()` already
     uses for exactly this "blocking work belongs on a worker thread" reason.
 
+    Task-4 review round 3 (F3, the third pass on this finding): `player.
+    play()` (the REAL `SimpleAudioPlayer`) itself calls `self.stop()`
+    FIRST, then does file/format checks and (on macOS with `afplay`) a
+    `time.sleep(0.1)`, and only THEN calls `Popen`. A stop request that
+    lands on the event-loop side, calling `player.stop()` directly, DURING
+    that pre-`Popen` window has no process to kill -- a no-op -- and
+    `play()` proceeds past its own internal `self.stop()` and starts the
+    clip regardless, playing through to this poll's own timeout. Only this
+    WORKER (which alone knows when `Popen` actually ran, since it is the
+    one that called `play()`) can close that window: `stop_requested` is
+    checked immediately after `player.play()` returns (at that point,
+    `Popen` has definitively either happened or `play()` itself failed --
+    either way this second `player.stop()` call is not a no-op if a stop
+    truly was requested mid-handoff) and again on every poll iteration
+    thereafter, for a barge-in landing later.
+
     Args:
         player: A `SimpleAudioPlayer`-shaped object (`play`, `get_state`,
-            `get_current_file`) -- injected rather than looked up via
-            `get_audio_player()` internally so tests can pass a fake.
+            `get_current_file`, `stop`) -- injected rather than looked up
+            via `get_audio_player()` internally so tests can pass a fake.
         audio_file: The clip this call is responsible for.
         timeout_seconds: Poll bound -- see `_legacy_playback_timeout_
             seconds`. Because an explicit `stop()` resets `get_state()` to
             `IDLE` and clears `get_current_file()` immediately
             (`audio_player.py`'s own `stop()`), a barge-in exits this poll
             promptly rather than pinning the worker for the full bound.
+        stop_requested: Set by `_stop_prior_legacy_clip`'s bare-stop branch
+            (task-4 review round 3) for THIS specific handoff. `None` is
+            treated the same as an event that is never set.
         poll_interval_seconds: Sleep between checks.
 
     Returns:
-        `False` if `play()` itself never started the clip, or if the clip
-        stopped being current for any OTHER reason before reaching
-        `FINISHED` -- an explicit stop, or displacement by a different
-        clip (a barge-in, a race with another `play()` call, or the
-        single-slot player's own next caller). `True` for a natural finish,
-        or -- best-effort -- if the poll bound was reached while the clip
-        was STILL current and still `PLAYING` (assume it played through
-        rather than penalize a long clip for an under-estimated bound).
+        `False` if `play()` itself never started the clip, if a stop was
+        requested (checked immediately after `play()` returns, and on
+        every subsequent poll iteration), or if the clip stopped being
+        current for any OTHER reason before reaching `FINISHED` --
+        displacement by a different clip (a race with another `play()`
+        call, or the single-slot player's own next caller). `True` for a
+        natural finish, or -- best-effort -- if the poll bound was reached
+        while the clip was STILL current and still `PLAYING` (assume it
+        played through rather than penalize a long clip for an
+        under-estimated bound).
     """
     from tldw_chatbook.TTS.audio_player import PlaybackState
 
     started = player.play(audio_file)
     if not started:
         return False
+    if stop_requested is not None and stop_requested.is_set():
+        # A stop landed in the pre-`Popen` window while `play()` was still
+        # running -- `Popen` has now definitively either happened or
+        # failed, so THIS `stop()` call has something real to act on (or
+        # is a safe no-op if `play()` itself failed). Task-4 review D2:
+        # identity-guarded, same as the async-side cancel handler -- by
+        # the time this worker notices, a DIFFERENT clip could already
+        # have displaced ours (another handoff's own `play()`, or an
+        # unrelated caller of the same process-global singleton); this
+        # utterance still completes as stopped/interrupted (`return
+        # False`) either way, but must not reach out and kill audio that
+        # is no longer ours to stop.
+        if player.get_current_file() in (None, audio_file):
+            player.stop()
+        return False
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        if stop_requested is not None and stop_requested.is_set():
+            if player.get_current_file() in (None, audio_file):
+                player.stop()
+            return False
         if player.get_current_file() != audio_file:
             return False
         if player.get_state() == PlaybackState.FINISHED:
