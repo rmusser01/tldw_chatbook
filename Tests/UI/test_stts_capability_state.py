@@ -87,6 +87,7 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
             in rendered_status
         )
         assert "Recovery: Settings > Speech." in rendered_status
+        assert app.screen.lab_header_state().status == "ready"
 
 
 @pytest.mark.asyncio

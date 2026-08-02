@@ -19,6 +19,7 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferenceStore
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 
@@ -75,8 +76,12 @@ def build_default_tts_service(
         ),
         aliases={},
     )
+    studio_preferences = StudioTTSPreferenceStore()
     return TTSService(
         registry,
         max_concurrent_operations=4,
         preferences_snapshot=preferences_snapshot,
+        studio_preferences_loader=lambda: (
+            studio_preferences.load(migrate=False).snapshot
+        ),
     )

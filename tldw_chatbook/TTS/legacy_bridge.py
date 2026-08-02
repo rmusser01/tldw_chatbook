@@ -131,6 +131,14 @@ def _first_mapping_value(
 ) -> Any:
     for section, key in locations:
         values = configuration.get(section)
+        if not isinstance(values, Mapping):
+            current: object = configuration
+            for part in section.split("."):
+                if not isinstance(current, Mapping):
+                    current = None
+                    break
+                current = current.get(part)
+            values = current
         if isinstance(values, Mapping):
             value = values.get(key)
             if value:
@@ -200,6 +208,7 @@ def legacy_provider_config(
             projected["openai_api"] = {"api_key": api_key}
     elif provider_id == "elevenlabs":
         elevenlabs_key_locations = (
+            ("api_settings.elevenlabs", "api_key"),
             ("API", "elevenlabs_api_key"),
             ("elevenlabs_api", "api_key"),
         )

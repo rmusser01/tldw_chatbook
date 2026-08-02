@@ -1,12 +1,10 @@
 """Persisted TTS settings: loading, collecting, saving, and the pickers.
 
-Moved whole from `TTSSettingsWidget` rather than reimplemented. The riskiest
-piece is `_save_settings`, and measuring it first changed how it had to be
-handled: it writes no config. It collects 47 values off the controls and
-posts one `STTSSettingsSaveEvent`; persistence lives in the event handler,
-which this phase does not touch. `Tests/UI/test_speech_settings_save_equivalence.py`
-holds that posted dict fixed against a snapshot taken before any of this
-moved.
+Moved whole from `TTSSettingsWidget` rather than reimplemented. Settings is
+now the sole writer for global TTS configuration. During the transition to
+the separate Studio preference store, `_save_settings` publishes only the
+five request-scoped compatibility values retained in the Lab; persistence
+still lives in the event handler.
 
 Like the Playground's mixins, these methods query their controls by id, so
 any host mounting the settings ids inherits them unchanged. That is why the
@@ -27,17 +25,13 @@ import asyncio
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import urlsplit
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from loguru import logger
-from rich.text import Text
-from textual import on, work
-from textual.containers import Horizontal, Vertical
-from textual.css.query import QueryError
-from textual.widgets import Button, Input, Label, Select, Static, Switch
+from textual import work
+from textual.widgets import Button, Input, Select, Static
 
-from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
@@ -57,19 +51,22 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     FIRST_AVAILABLE_MODEL_ID,
     SERVER_DEFAULT_VOICE_ID,
-    SelectSentinel,
 )
+
+LAB_STUDIO_COMPATIBILITY_SETTING_KEYS = frozenset(
+    {
+        "ELEVENLABS_DEFAULT_MODEL",
+        "CHATTERBOX_EXAGGERATION",
+        "CHATTERBOX_CFG_WEIGHT",
+        "ALLTALK_TTS_VOICE_DEFAULT",
+        "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT",
+    }
+)
+"""Request-scoped legacy keys allowed across the Lab save boundary."""
 
 
 class SpeechSettingsMixin:
     """Settings load/save behaviour, independent of the layout."""
-
-    #: Class constants travel with the methods that read them. This one did
-    #: not at first, and `_normalize_openai_base_url` -- a @classmethod --
-    #: failed with "type object 'SpeechSettingsPane' has no attribute
-    #: 'OPENAI_TTS_DEFAULT_URL'" on the rebuilt host only, since the legacy
-    #: widget still had its own copy.
-    OPENAI_TTS_DEFAULT_URL = "https://api.openai.com/v1/audio/speech"
 
     def init_settings_state(self) -> None:
         """Initialise the state the settings path reads.
@@ -112,7 +109,6 @@ class SpeechSettingsMixin:
         """
         return get_cli_setting(*args, **kwargs)
 
-
     def _load_audio_cpp_config(self) -> AudioCppConfig:
         """Load a safe external audio.cpp form snapshot."""
         candidate = self._cli_setting("app_tts", "audio_cpp", {})
@@ -123,8 +119,16 @@ class SpeechSettingsMixin:
             logger.warning("Stored audio.cpp settings are invalid; using defaults")
             return AudioCppConfig()
 
-    def on_mount(self) -> None:
-        """Set initial values from config after mount"""
+    def legacy_on_mount(self) -> None:
+        """Set initial values for the retired mixed-scope form.
+
+        Textual dispatches matching event methods from every class in the
+        MRO, so leaving this named ``on_mount`` also ran it for the new
+        Studio-only pane even though that pane overrides ``on_mount``.  The
+        retired form is no longer mounted; retaining the helper under an
+        explicit legacy name keeps old diagnostic seams callable without
+        querying global controls that intentionally do not exist in Studio.
+        """
         self.call_after_refresh(self._set_initial_values)
 
     def _set_initial_values(self) -> None:
@@ -675,365 +679,70 @@ class SpeechSettingsMixin:
         format_select = self.query_one("#default-format-select", Select)
         speed_input = self.query_one("#default-speed-input", Input)
         is_audio_cpp = provider == AUDIO_CPP_PROVIDER_ID
-        format_select.disabled = is_audio_cpp
-        speed_input.disabled = is_audio_cpp
+        # Both defaults are globally owned and remain read-only in the Lab for
+        # every provider. audio.cpp additionally forces its fixed contract.
+        format_select.disabled = True
+        speed_input.disabled = True
         if is_audio_cpp:
             format_select.value = "wav"
             speed_input.value = "1.0"
 
     def _save_settings(self) -> None:
-        """Save TTS settings"""
+        """Publish only the request-scoped controls retained in the Lab.
+
+        Global-owned controls remain mounted as effective readouts during the
+        transition, but Settings is their only write owner. TASK-1986 replaces
+        this compatibility publication with the separate Studio store.
+        """
         try:
-            provider = self.query_one("#default-provider-select", Select).value
-            if not isinstance(provider, str):
-                raise ValueError("A default TTS provider must be selected")
-
-            selected_model = self.query_one("#default-model-select", Select).value
-            model_mode: Literal["exact", "first_available"]
-            model_id: str | None
-            if selected_model is FIRST_AVAILABLE_MODEL_ID:
-                model_mode = "first_available"
-                model_id = None
-            elif isinstance(selected_model, str):
-                model_mode = "exact"
-                model_id = selected_model
-            else:
-                raise ValueError("A default TTS model must be selected")
-
-            selected_voice = self.query_one("#default-voice-select", Select).value
-            voice_mode: Literal["exact", "server_default"]
-            voice_id: str | None
-            if selected_voice is SERVER_DEFAULT_VOICE_ID:
-                voice_mode = "server_default"
-                voice_id = None
-            elif isinstance(selected_voice, str):
-                voice_mode = "exact"
-                voice_id = selected_voice
-            else:
-                raise ValueError("A default TTS voice must be selected")
-
-            response_format = self.query_one(
-                "#default-format-select",
+            elevenlabs_model = self.query_one(
+                "#elevenlabs-model-select",
                 Select,
             ).value
-            if not isinstance(response_format, str):
-                raise ValueError("A default TTS format must be selected")
-            speed = self._validate_numeric_input(
-                self.query_one("#default-speed-input", Input).value,
-                0.25,
-                4.0,
-                1.0,
-            )
-            preferences = TTSPreferencesSnapshot(
-                provider_id=provider,
-                model_mode=model_mode,
-                model_id=model_id,
-                voice_mode=voice_mode,
-                voice_id=voice_id,
-                response_format=response_format,
-                speed=speed,
-            )
+            if not isinstance(elevenlabs_model, str):
+                raise ValueError("An ElevenLabs model must be selected")
 
-            # Collect all settings
-            settings = {}
-
-            settings["audio_cpp"] = self._collect_audio_cpp_config().to_mapping()
-
-            # OpenAI settings
-            openai_key = self.query_one("#openai-api-key-input", Input).value
-            if openai_key:
-                settings["openai_api_key"] = openai_key
-
-            settings["OPENAI_BASE_URL"] = self._normalize_openai_base_url(
-                self.query_one("#openai-base-url-input", Input).value
-            )
-            org_id = self.query_one("#openai-org-id-input", Input).value.strip()
-            if "\r" in org_id or "\n" in org_id:
-                raise ValueError("OpenAI organization ID cannot contain line breaks")
-            settings["OPENAI_ORG_ID"] = org_id
-
-            # ElevenLabs settings
-            elevenlabs_key = self.query_one("#elevenlabs-api-key-input", Input).value
-            if elevenlabs_key:
-                settings["elevenlabs_api_key"] = elevenlabs_key
-
-            settings["ELEVENLABS_DEFAULT_MODEL"] = self.query_one(
-                "#elevenlabs-model-select", Select
+            alltalk_format = self.query_one(
+                "#alltalk-format-select",
+                Select,
             ).value
-            settings["ELEVENLABS_OUTPUT_FORMAT"] = self.query_one(
-                "#elevenlabs-format-select", Select
-            ).value
-            settings["ELEVENLABS_VOICE_STABILITY"] = self._validate_numeric_input(
-                self.query_one("#elevenlabs-stability-input", Input).value,
-                0.0,
-                1.0,
-                0.5,
-            )
-            settings["ELEVENLABS_SIMILARITY_BOOST"] = self._validate_numeric_input(
-                self.query_one("#elevenlabs-similarity-input", Input).value,
-                0.0,
-                1.0,
-                0.8,
-            )
-            settings["ELEVENLABS_STYLE"] = self._validate_numeric_input(
-                self.query_one("#elevenlabs-style-input", Input).value, 0.0, 1.0, 0.0
-            )
-            settings["ELEVENLABS_USE_SPEAKER_BOOST"] = self.query_one(
-                "#elevenlabs-speaker-boost-switch", Switch
-            ).value
+            if not isinstance(alltalk_format, str):
+                raise ValueError("An AllTalk output format must be selected")
 
-            # Kokoro settings
-            settings["KOKORO_DEVICE_DEFAULT"] = self.query_one(
-                "#kokoro-device-select", Select
+            settings: dict[str, object] = {
+                "ELEVENLABS_DEFAULT_MODEL": elevenlabs_model,
+                "CHATTERBOX_EXAGGERATION": self._validate_numeric_input(
+                    self.query_one(
+                        "#chatterbox-exaggeration-input",
+                        Input,
+                    ).value,
+                    0.0,
+                    1.0,
+                    0.5,
+                ),
+                "CHATTERBOX_CFG_WEIGHT": self._validate_numeric_input(
+                    self.query_one(
+                        "#chatterbox-cfg-weight-input",
+                        Input,
+                    ).value,
+                    0.0,
+                    1.0,
+                    0.5,
+                ),
+                "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT": alltalk_format,
+            }
+            alltalk_voice = self.query_one(
+                "#alltalk-voice-input",
+                Input,
             ).value
-            settings["KOKORO_USE_ONNX"] = self.query_one(
-                "#kokoro-use-onnx-switch", Switch
-            ).value
+            if alltalk_voice:
+                settings["ALLTALK_TTS_VOICE_DEFAULT"] = alltalk_voice
 
-            if self.kokoro_model_path:
-                settings["KOKORO_ONNX_MODEL_PATH_DEFAULT"] = self.kokoro_model_path
-
-            if self.kokoro_voices_path:
-                settings["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = self.kokoro_voices_path
-
-            settings["KOKORO_MAX_TOKENS"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#kokoro-max-tokens-input", Input).value,
-                    1,
-                    10000,
-                    500,
-                )
-            )
-            settings["KOKORO_ENABLE_VOICE_MIXING"] = self.query_one(
-                "#kokoro-voice-mixing-switch", Switch
-            ).value
-            settings["KOKORO_TRACK_PERFORMANCE"] = self.query_one(
-                "#kokoro-performance-switch", Switch
-            ).value
-
-            # Chatterbox settings
-            settings["CHATTERBOX_DEVICE"] = self.query_one(
-                "#chatterbox-device-select", Select
-            ).value
-
-            if self.chatterbox_voice_dir:
-                settings["CHATTERBOX_VOICE_DIR"] = self.chatterbox_voice_dir
-
-            settings["CHATTERBOX_EXAGGERATION"] = self._validate_numeric_input(
-                self.query_one("#chatterbox-exaggeration-input", Input).value,
-                0.0,
-                1.0,
-                0.5,
-            )
-            settings["CHATTERBOX_CFG_WEIGHT"] = self._validate_numeric_input(
-                self.query_one("#chatterbox-cfg-weight-input", Input).value,
-                0.0,
-                1.0,
-                0.5,
-            )
-            settings["CHATTERBOX_TEMPERATURE"] = self._validate_numeric_input(
-                self.query_one("#chatterbox-temperature-input", Input).value,
-                0.0,
-                2.0,
-                0.5,
-            )
-            settings["CHATTERBOX_CHUNK_SIZE"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#chatterbox-chunk-size-input", Input).value,
-                    256,
-                    8192,
-                    1024,
-                )
-            )
-
-            seed = self.query_one("#chatterbox-seed-input", Input).value
-            if seed:
-                try:
-                    settings["CHATTERBOX_RANDOM_SEED"] = int(seed)
-                except ValueError:
-                    pass
-
-            settings["CHATTERBOX_NUM_CANDIDATES"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#chatterbox-candidates-input", Input).value, 1, 5, 1
-                )
-            )
-            settings["CHATTERBOX_VALIDATE_WHISPER"] = self.query_one(
-                "#chatterbox-whisper-switch", Switch
-            ).value
-            settings["CHATTERBOX_PREPROCESS_TEXT"] = self.query_one(
-                "#chatterbox-preprocess-switch", Switch
-            ).value
-            settings["CHATTERBOX_NORMALIZE_AUDIO"] = self.query_one(
-                "#chatterbox-normalize-switch", Switch
-            ).value
-            settings["CHATTERBOX_TARGET_DB"] = self._validate_numeric_input(
-                self.query_one("#chatterbox-target-db-input", Input).value, -40, 0, -20
-            )
-            settings["CHATTERBOX_MAX_CHUNK_SIZE"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#chatterbox-max-chunk-input", Input).value,
-                    50,
-                    5000,
-                    500,
-                )
-            )
-            settings["CHATTERBOX_STREAMING"] = self.query_one(
-                "#chatterbox-streaming-switch", Switch
-            ).value
-            settings["CHATTERBOX_STREAM_CHUNK_SIZE"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#chatterbox-stream-chunk-input", Input).value,
-                    512,
-                    16384,
-                    4096,
-                )
-            )
-            settings["CHATTERBOX_ENABLE_CROSSFADE"] = self.query_one(
-                "#chatterbox-crossfade-switch", Switch
-            ).value
-            settings["CHATTERBOX_CROSSFADE_MS"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#chatterbox-crossfade-ms-input", Input).value,
-                    10,
-                    500,
-                    50,
-                )
-            )
-
-            # Higgs settings
-            higgs_model_path = self.query_one("#higgs-model-path-input", Input).value
-            if higgs_model_path:
-                settings["HIGGS_MODEL_PATH"] = higgs_model_path
-
-            higgs_voices_dir = self.query_one("#higgs-voices-dir-input", Input).value
-            if higgs_voices_dir:
-                settings["HIGGS_VOICE_SAMPLES_DIR"] = higgs_voices_dir
-
-            settings["HIGGS_DEVICE"] = self.query_one(
-                "#higgs-device-select", Select
-            ).value
-
-            settings["HIGGS_ENABLE_FLASH_ATTN"] = self.query_one(
-                "#higgs-flash-attn-switch", Switch
-            ).value
-
-            settings["HIGGS_DTYPE"] = self.query_one(
-                "#higgs-dtype-select", Select
-            ).value
-
-            settings["HIGGS_MAX_REFERENCE_DURATION"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#higgs-max-ref-duration-input", Input).value,
-                    1,
-                    60,
-                    30,
-                )
-            )
-
-            settings["HIGGS_DEFAULT_LANGUAGE"] = self.query_one(
-                "#higgs-language-select", Select
-            ).value
-            settings["HIGGS_ENABLE_VOICE_CLONING"] = self.query_one(
-                "#higgs-voice-cloning-switch", Switch
-            ).value
-            settings["HIGGS_ENABLE_MULTI_SPEAKER"] = self.query_one(
-                "#higgs-multi-speaker-switch", Switch
-            ).value
-            settings["HIGGS_SPEAKER_DELIMITER"] = self.query_one(
-                "#higgs-delimiter-input", Input
-            ).value
-            settings["HIGGS_TRACK_PERFORMANCE"] = self.query_one(
-                "#higgs-track-performance-switch", Switch
-            ).value
-
-            settings["HIGGS_MAX_NEW_TOKENS"] = int(
-                self._validate_numeric_input(
-                    self.query_one("#higgs-max-tokens-input", Input).value,
-                    512,
-                    8192,
-                    4096,
-                )
-            )
-            settings["HIGGS_TEMPERATURE"] = self._validate_numeric_input(
-                self.query_one("#higgs-temperature-input", Input).value, 0.0, 2.0, 0.7
-            )
-            settings["HIGGS_TOP_P"] = self._validate_numeric_input(
-                self.query_one("#higgs-top-p-input", Input).value, 0.0, 1.0, 0.9
-            )
-            settings["HIGGS_REPETITION_PENALTY"] = self._validate_numeric_input(
-                self.query_one("#higgs-repetition-penalty-input", Input).value,
-                1.0,
-                2.0,
-                1.1,
-            )
-
-            # AllTalk settings
-            url = self.query_one("#alltalk-url-input", Input).value
-            if url:
-                settings["ALLTALK_TTS_URL_DEFAULT"] = url
-
-            voice = self.query_one("#alltalk-voice-input", Input).value
-            if voice:
-                settings["ALLTALK_TTS_VOICE_DEFAULT"] = voice
-
-            settings["ALLTALK_TTS_LANGUAGE_DEFAULT"] = self.query_one(
-                "#alltalk-language-select", Select
-            ).value
-            settings["ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT"] = self.query_one(
-                "#alltalk-format-select", Select
-            ).value
-
-            # Post save event
-            self.app.post_message(
-                STTSSettingsSaveEvent(settings, preferences=preferences)
-            )
-
+            self.app.post_message(STTSSettingsSaveEvent(settings))
         except Exception:
-            # Deliberately terse, and NOT `opt(exception=True)`. These values
-            # include API keys and endpoints, and
-            # `test_settings_widget_does_not_echo_collection_error_details`
-            # exists to keep them out of the log. I widened this while
-            # debugging and that test caught it.
+            # Deliberately omit collection details: values may be sensitive.
             logger.error("Failed to collect TTS settings")
             self.app.notify("Failed to save settings", severity="error")
-
-    def _collect_audio_cpp_config(self) -> AudioCppConfig:
-        """Validate the complete external audio.cpp settings form."""
-        return AudioCppConfig.from_mapping(
-            {
-                "mode": "external",
-                "base_url": self.query_one("#audio-cpp-base-url-input", Input).value,
-                "connect_timeout_seconds": float(
-                    self.query_one("#audio-cpp-connect-timeout-input", Input).value
-                ),
-                "synthesis_timeout_seconds": float(
-                    self.query_one("#audio-cpp-synthesis-timeout-input", Input).value
-                ),
-                "max_input_characters": self._audio_cpp_integer(
-                    "#audio-cpp-max-input-characters-input"
-                ),
-                "max_response_bytes": self._audio_cpp_integer(
-                    "#audio-cpp-max-response-bytes-input"
-                ),
-                "max_metadata_bytes": self._audio_cpp_integer(
-                    "#audio-cpp-max-metadata-bytes-input"
-                ),
-                "max_catalog_models": self._audio_cpp_integer(
-                    "#audio-cpp-max-catalog-models-input"
-                ),
-                "max_voices_per_model": self._audio_cpp_integer(
-                    "#audio-cpp-max-voices-per-model-input"
-                ),
-                "max_identifier_characters": self._audio_cpp_integer(
-                    "#audio-cpp-max-identifier-characters-input"
-                ),
-            }
-        )
-
-    def _audio_cpp_integer(self, selector: str) -> int:
-        """Parse one audio.cpp integer field without coercing fractions."""
-        return int(self.query_one(selector, Input).value)
 
     @work(
         exclusive=True,
@@ -1119,27 +828,6 @@ class SpeechSettingsMixin:
             return max(min_val, min(max_val, num_val))
         except ValueError:
             return default
-
-    @classmethod
-    def _normalize_openai_base_url(cls, value: str) -> str:
-        """Return a safe absolute OpenAI-compatible speech endpoint."""
-        normalized = value.strip() or cls.OPENAI_TTS_DEFAULT_URL
-        parsed = urlsplit(normalized)
-        if (
-            parsed.scheme.lower() not in {"http", "https"}
-            or not parsed.netloc
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.fragment
-            or "\r" in normalized
-            or "\n" in normalized
-        ):
-            raise ValueError(
-                "OpenAI base URL must be an absolute HTTP(S) URL without "
-                "credentials or a fragment"
-            )
-        return normalized
 
     def _load_kokoro_voice_blends(self) -> None:
         """Load and display Kokoro voice blends"""

@@ -43,6 +43,14 @@ from .speech_settings_model import (
     configured_state,
     settings_for_provider,
 )
+from .speech_settings_contracts import (
+    SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID,
+    SpeechTTSOwnershipScope,
+)
+
+GLOBAL_SETTINGS_DESTINATION = "Settings > Speech & TTS"
+GLOBAL_READ_ONLY_COPY = f"Global — edit in {GLOBAL_SETTINGS_DESTINATION}"
+GLOBAL_SCOPE_COPY = "Global → TTS Settings"
 
 #: Actions belonging to one provider rather than the view. They live inside
 #: their group, next to the setting they fill -- and they must be mounted:
@@ -95,71 +103,87 @@ REQUIRED_LABELS: dict[str, str] = {
 #: Select.NULL, and Save then raised "A default TTS provider must be
 #: selected" into its own catch-all -- so pressing Save did nothing and
 #: said nothing.
-SELECT_OPTIONS: dict[str, list[tuple[str, str]]] = {   'alltalk-format-select': [   ('WAV', 'wav'),
-                                 ('MP3', 'mp3'),
-                                 ('Opus', 'opus'),
-                                 ('FLAC', 'flac')],
-    'alltalk-language-select': [   ('English', 'en'),
-                                   ('Spanish', 'es'),
-                                   ('French', 'fr'),
-                                   ('German', 'de'),
-                                   ('Italian', 'it'),
-                                   ('Portuguese', 'pt'),
-                                   ('Russian', 'ru'),
-                                   ('Chinese', 'zh'),
-                                   ('Japanese', 'ja'),
-                                   ('Korean', 'ko')],
-    'chatterbox-device-select': [('CPU', 'cpu'), ('CUDA (GPU)', 'cuda')],
-    'default-format-select': [   ('MP3', 'mp3'),
-                                 ('Opus', 'opus'),
-                                 ('AAC', 'aac'),
-                                 ('FLAC', 'flac'),
-                                 ('WAV', 'wav')],
-    'default-model-select': [('TTS-1', 'tts-1')],
-    'default-provider-select': [   ('OpenAI', 'openai'),
-                                   (   'audio.cpp (External Server)',
-                                       'audio_cpp'),
-                                   ('ElevenLabs', 'elevenlabs'),
-                                   ('Kokoro (Local)', 'kokoro'),
-                                   ('Chatterbox (Local)', 'chatterbox'),
-                                   ('Higgs Audio (Local)', 'higgs'),
-                                   ('AllTalk (Local Server)', 'alltalk')],
-    'default-voice-select': [('Alloy', 'alloy')],
-    'elevenlabs-format-select': [   ('MP3 192kbps', 'mp3_44100_192'),
-                                    ('MP3 128kbps', 'mp3_44100_128'),
-                                    ('MP3 96kbps', 'mp3_44100_96'),
-                                    ('MP3 64kbps', 'mp3_44100_64'),
-                                    ('MP3 32kbps', 'mp3_44100_32'),
-                                    ('PCM 44.1kHz', 'pcm_44100'),
-                                    ('PCM 24kHz', 'pcm_24000'),
-                                    ('PCM 16kHz', 'pcm_16000'),
-                                    ('μ-law 8kHz', 'ulaw_8000')],
-    'elevenlabs-model-select': [   (   'Multilingual v2',
-                                       'eleven_multilingual_v2'),
-                                   ('Turbo v2', 'eleven_turbo_v2'),
-                                   (   'Multilingual v1',
-                                       'eleven_multilingual_v1'),
-                                   (   'Monolingual v1',
-                                       'eleven_monolingual_v1')],
-    'higgs-device-select': [   ('Auto-detect', 'auto'),
-                               ('CPU', 'cpu'),
-                               ('CUDA (GPU)', 'cuda'),
-                               ('CUDA Device 0', 'cuda:0'),
-                               ('CUDA Device 1', 'cuda:1')],
-    'higgs-dtype-select': [   ('Float32 (Full precision)', 'float32'),
-                              ('Float16 (Half precision)', 'float16'),
-                              ('BFloat16 (Better range)', 'bfloat16')],
-    'higgs-language-select': [   ('English', 'en'),
-                                 ('Spanish', 'es'),
-                                 ('French', 'fr'),
-                                 ('German', 'de'),
-                                 ('Italian', 'it'),
-                                 ('Portuguese', 'pt'),
-                                 ('Russian', 'ru'),
-                                 ('Chinese', 'zh'),
-                                 ('Japanese', 'ja'),
-                                 ('Korean', 'ko')],
-    'kokoro-device-select': [('CPU', 'cpu'), ('CUDA (GPU)', 'cuda')]}
+SELECT_OPTIONS: dict[str, list[tuple[str, str]]] = {
+    "alltalk-format-select": [
+        ("WAV", "wav"),
+        ("MP3", "mp3"),
+        ("Opus", "opus"),
+        ("FLAC", "flac"),
+    ],
+    "alltalk-language-select": [
+        ("English", "en"),
+        ("Spanish", "es"),
+        ("French", "fr"),
+        ("German", "de"),
+        ("Italian", "it"),
+        ("Portuguese", "pt"),
+        ("Russian", "ru"),
+        ("Chinese", "zh"),
+        ("Japanese", "ja"),
+        ("Korean", "ko"),
+    ],
+    "chatterbox-device-select": [("CPU", "cpu"), ("CUDA (GPU)", "cuda")],
+    "default-format-select": [
+        ("MP3", "mp3"),
+        ("Opus", "opus"),
+        ("AAC", "aac"),
+        ("FLAC", "flac"),
+        ("WAV", "wav"),
+    ],
+    "default-model-select": [("TTS-1", "tts-1")],
+    "default-provider-select": [
+        ("OpenAI", "openai"),
+        ("audio.cpp (External Server)", "audio_cpp"),
+        ("ElevenLabs", "elevenlabs"),
+        ("Kokoro (Local)", "kokoro"),
+        ("Chatterbox (Local)", "chatterbox"),
+        ("Higgs Audio (Local)", "higgs"),
+        ("AllTalk (Local Server)", "alltalk"),
+    ],
+    "default-voice-select": [("Alloy", "alloy")],
+    "elevenlabs-format-select": [
+        ("MP3 192kbps", "mp3_44100_192"),
+        ("MP3 128kbps", "mp3_44100_128"),
+        ("MP3 96kbps", "mp3_44100_96"),
+        ("MP3 64kbps", "mp3_44100_64"),
+        ("MP3 32kbps", "mp3_44100_32"),
+        ("PCM 44.1kHz", "pcm_44100"),
+        ("PCM 24kHz", "pcm_24000"),
+        ("PCM 16kHz", "pcm_16000"),
+        ("μ-law 8kHz", "ulaw_8000"),
+    ],
+    "elevenlabs-model-select": [
+        ("Multilingual v2", "eleven_multilingual_v2"),
+        ("Turbo v2", "eleven_turbo_v2"),
+        ("Multilingual v1", "eleven_multilingual_v1"),
+        ("Monolingual v1", "eleven_monolingual_v1"),
+    ],
+    "higgs-device-select": [
+        ("Auto-detect", "auto"),
+        ("CPU", "cpu"),
+        ("CUDA (GPU)", "cuda"),
+        ("CUDA Device 0", "cuda:0"),
+        ("CUDA Device 1", "cuda:1"),
+    ],
+    "higgs-dtype-select": [
+        ("Float32 (Full precision)", "float32"),
+        ("Float16 (Half precision)", "float16"),
+        ("BFloat16 (Better range)", "bfloat16"),
+    ],
+    "higgs-language-select": [
+        ("English", "en"),
+        ("Spanish", "es"),
+        ("French", "fr"),
+        ("German", "de"),
+        ("Italian", "it"),
+        ("Portuguese", "pt"),
+        ("Russian", "ru"),
+        ("Chinese", "zh"),
+        ("Japanese", "ja"),
+        ("Korean", "ko"),
+    ],
+    "kokoro-device-select": [("CPU", "cpu"), ("CUDA (GPU)", "cuda")],
+}
 
 #: Each control's starting value, placeholder and type, taken from the
 #: legacy screen verbatim.
@@ -167,144 +191,153 @@ SELECT_OPTIONS: dict[str, list[tuple[str, str]]] = {   'alltalk-format-select': 
 #: Not cosmetic. Switches defaulting to False instead of True and text
 #: inputs starting empty changed what Save posted: 13 values flipped and
 #: 4 keys vanished entirely, which the save-equivalence baseline caught.
-SETTING_DEFAULTS: dict[str, dict[str, object]] = {   'alltalk-url-input': {'placeholder': 'AllTalk server URL'},
-    'alltalk-voice-input': {'placeholder': 'Voice file name'},
-    'audio-cpp-base-url-input': {'placeholder': 'http://127.0.0.1:8080'},
-    'audio-cpp-connect-timeout-input': {'type': 'number'},
-    'audio-cpp-max-catalog-models-input': {'type': 'integer'},
-    'audio-cpp-max-identifier-characters-input': {'type': 'integer'},
-    'audio-cpp-max-input-characters-input': {'type': 'integer'},
-    'audio-cpp-max-metadata-bytes-input': {'type': 'integer'},
-    'audio-cpp-max-response-bytes-input': {'type': 'integer'},
-    'audio-cpp-max-voices-per-model-input': {'type': 'integer'},
-    'audio-cpp-synthesis-timeout-input': {'type': 'number'},
-    'chatterbox-candidates-input': {'placeholder': '1-5', 'type': 'number'},
-    'chatterbox-cfg-weight-input': {   'placeholder': '0.0-1.0',
-                                       'type': 'number'},
-    'chatterbox-chunk-size-input': {   'placeholder': 'Audio chunk size',
-                                       'type': 'number'},
-    'chatterbox-crossfade-ms-input': {   'placeholder': 'Duration in ms',
-                                         'type': 'number'},
-    'chatterbox-exaggeration-input': {   'placeholder': '0.0-1.0',
-                                         'type': 'number'},
-    'chatterbox-max-chunk-input': {   'placeholder': 'Max characters per '
-                                                     'chunk',
-                                      'type': 'number'},
-    'chatterbox-seed-input': {'placeholder': 'Random seed (optional)'},
-    'chatterbox-stream-chunk-input': {   'placeholder': 'Stream chunk size',
-                                         'type': 'number'},
-    'chatterbox-target-db-input': {   'placeholder': '-40 to 0',
-                                      'type': 'number'},
-    'chatterbox-temperature-input': {   'placeholder': '0.0-2.0',
-                                        'type': 'number'},
-    'default-speed-input': {'placeholder': '0.25-4.0', 'type': 'number'},
-    'elevenlabs-api-key-input': {'placeholder': 'Your ElevenLabs API key'},
-    'elevenlabs-similarity-input': {   'placeholder': '0.0-1.0',
-                                       'type': 'number'},
-    'elevenlabs-stability-input': {   'placeholder': '0.0-1.0',
-                                      'type': 'number'},
-    'elevenlabs-style-input': {'placeholder': '0.0-1.0', 'type': 'number'},
-    'higgs-delimiter-input': {'placeholder': 'Default: |||'},
-    'higgs-max-ref-duration-input': {   'placeholder': 'Seconds (e.g., 30)',
-                                        'type': 'number'},
-    'higgs-max-tokens-input': {   'placeholder': 'Max tokens to generate',
-                                  'type': 'number'},
-    'higgs-model-path-input': {   'placeholder': 'Model path or '
-                                                 'HuggingFace ID'},
-    'higgs-repetition-penalty-input': {   'placeholder': '1.0 = no penalty',
-                                          'type': 'number'},
-    'higgs-temperature-input': {'placeholder': '0.0-2.0', 'type': 'number'},
-    'higgs-top-p-input': {'placeholder': '0.0-1.0', 'type': 'number'},
-    'higgs-voices-dir-input': {'placeholder': 'Path to voice samples'},
-    'kokoro-max-tokens-input': {   'placeholder': 'Max tokens per chunk',
-                                   'type': 'number'},
-    'openai-api-key-input': {'placeholder': 'sk-...'},
-    'openai-base-url-input': {   'placeholder': 'Custom API endpoint '
-                                                '(optional)'},
-    'openai-org-id-input': {'placeholder': 'org-... (optional)'}}
+SETTING_DEFAULTS: dict[str, dict[str, object]] = {
+    "alltalk-url-input": {"placeholder": "AllTalk server URL"},
+    "alltalk-voice-input": {"placeholder": "Voice file name"},
+    "audio-cpp-base-url-input": {"placeholder": "http://127.0.0.1:8080"},
+    "audio-cpp-connect-timeout-input": {"type": "number"},
+    "audio-cpp-max-catalog-models-input": {"type": "integer"},
+    "audio-cpp-max-identifier-characters-input": {"type": "integer"},
+    "audio-cpp-max-input-characters-input": {"type": "integer"},
+    "audio-cpp-max-metadata-bytes-input": {"type": "integer"},
+    "audio-cpp-max-response-bytes-input": {"type": "integer"},
+    "audio-cpp-max-voices-per-model-input": {"type": "integer"},
+    "audio-cpp-synthesis-timeout-input": {"type": "number"},
+    "chatterbox-candidates-input": {"placeholder": "1-5", "type": "number"},
+    "chatterbox-cfg-weight-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "chatterbox-chunk-size-input": {
+        "placeholder": "Audio chunk size",
+        "type": "number",
+    },
+    "chatterbox-crossfade-ms-input": {
+        "placeholder": "Duration in ms",
+        "type": "number",
+    },
+    "chatterbox-exaggeration-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "chatterbox-max-chunk-input": {
+        "placeholder": "Max characters per chunk",
+        "type": "number",
+    },
+    "chatterbox-seed-input": {"placeholder": "Random seed (optional)"},
+    "chatterbox-stream-chunk-input": {
+        "placeholder": "Stream chunk size",
+        "type": "number",
+    },
+    "chatterbox-target-db-input": {"placeholder": "-40 to 0", "type": "number"},
+    "chatterbox-temperature-input": {"placeholder": "0.0-2.0", "type": "number"},
+    "default-speed-input": {"placeholder": "0.25-4.0", "type": "number"},
+    "elevenlabs-api-key-input": {"placeholder": "Your ElevenLabs API key"},
+    "elevenlabs-similarity-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "elevenlabs-stability-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "elevenlabs-style-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "higgs-delimiter-input": {"placeholder": "Default: |||"},
+    "higgs-max-ref-duration-input": {
+        "placeholder": "Seconds (e.g., 30)",
+        "type": "number",
+    },
+    "higgs-max-tokens-input": {
+        "placeholder": "Max tokens to generate",
+        "type": "number",
+    },
+    "higgs-model-path-input": {"placeholder": "Model path or HuggingFace ID"},
+    "higgs-repetition-penalty-input": {
+        "placeholder": "1.0 = no penalty",
+        "type": "number",
+    },
+    "higgs-temperature-input": {"placeholder": "0.0-2.0", "type": "number"},
+    "higgs-top-p-input": {"placeholder": "0.0-1.0", "type": "number"},
+    "higgs-voices-dir-input": {"placeholder": "Path to voice samples"},
+    "kokoro-max-tokens-input": {
+        "placeholder": "Max tokens per chunk",
+        "type": "number",
+    },
+    "openai-api-key-input": {"placeholder": "sk-..."},
+    "openai-base-url-input": {"placeholder": "Custom API endpoint (optional)"},
+    "openai-org-id-input": {"placeholder": "org-... (optional)"},
+}
 
 #: Setting id -> its label, taken from the legacy screen so the copy is not
 #: quietly reinvented while the layout changes.
 #: Readouts that ship with fixed copy, taken from the legacy screen.
 STATUS_TEXT: dict[str, str] = {
-    'audio-cpp-mode-value': 'External',
-    'audio-cpp-privacy-notice': (
-        'External synthesis sends submitted text to the configured server. '
-        'Save changes before testing.'
+    "audio-cpp-mode-value": "External",
+    "audio-cpp-privacy-notice": (
+        "External synthesis sends submitted text to the configured server. "
+        "Save changes before testing."
     ),
 }
 
 SETTING_LABELS: dict[str, str] = {
-    'audio-cpp-discovery-status': 'Discovery',
-    'audio-cpp-mode-value': 'Mode',
-    'audio-cpp-privacy-notice': 'Privacy',
-    'kokoro-voice-blends-list': 'Voice blends',
-    'alltalk-format-select': 'Output Format',
-    'alltalk-language-select': 'Language',
-    'alltalk-url-input': 'Server URL',
-    'alltalk-voice-input': 'Voice',
-    'audio-cpp-base-url-input': 'Base URL',
-    'audio-cpp-connect-timeout-input': 'Connect timeout',
-    'audio-cpp-max-catalog-models-input': 'Max catalog models',
-    'audio-cpp-max-identifier-characters-input': 'Max identifier chars',
-    'audio-cpp-max-input-characters-input': 'Max input characters',
-    'audio-cpp-max-metadata-bytes-input': 'Max metadata bytes',
-    'audio-cpp-max-response-bytes-input': 'Max response bytes',
-    'audio-cpp-max-voices-per-model-input': 'Max voices per model',
-    'audio-cpp-settings': 'Settings',
-    'audio-cpp-synthesis-timeout-input': 'Synthesis timeout',
-    'chatterbox-candidates-input': 'Number of Candidates',
-    'chatterbox-cfg-weight-input': 'CFG Weight',
-    'chatterbox-chunk-size-input': 'Chunk Size',
-    'chatterbox-crossfade-ms-input': 'Crossfade Duration',
-    'chatterbox-crossfade-switch': 'Enable Crossfade',
-    'chatterbox-device-select': 'Device',
-    'chatterbox-exaggeration-input': 'Emotion Exaggeration',
-    'chatterbox-max-chunk-input': 'Max Text Chunk',
-    'chatterbox-normalize-switch': 'Audio Normalization',
-    'chatterbox-preprocess-switch': 'Text Preprocessing',
-    'chatterbox-seed-input': 'Random Seed',
-    'chatterbox-stream-chunk-input': 'Stream Chunk Size',
-    'chatterbox-streaming-switch': 'Enable Streaming',
-    'chatterbox-target-db-input': 'Target dB',
-    'chatterbox-temperature-input': 'Temperature',
-    'chatterbox-whisper-switch': 'Whisper Validation',
-    'default-format-select': 'Default Format',
-    'default-model-select': 'Default Model',
-    'default-provider-select': 'Default Provider',
-    'default-speed-input': 'Default Speed',
-    'default-voice-select': 'Default Voice',
-    'elevenlabs-api-key-input': 'API Key',
-    'elevenlabs-format-select': 'Output Format',
-    'elevenlabs-model-select': 'Model',
-    'elevenlabs-similarity-input': 'Similarity Boost',
-    'elevenlabs-speaker-boost-switch': 'Speaker Boost',
-    'elevenlabs-stability-input': 'Voice Stability',
-    'elevenlabs-style-input': 'Style',
-    'higgs-delimiter-input': 'Speaker Delimiter',
-    'higgs-device-select': 'Device',
-    'higgs-dtype-select': 'Data Type',
-    'higgs-flash-attn-switch': 'Enable Flash Attention',
-    'higgs-language-select': 'Default Language',
-    'higgs-max-ref-duration-input': 'Max Reference Duration',
-    'higgs-max-tokens-input': 'Max New Tokens',
-    'higgs-model-path-input': 'Model Path',
-    'higgs-multi-speaker-switch': 'Enable Multi-speaker',
-    'higgs-repetition-penalty-input': 'Repetition Penalty',
-    'higgs-temperature-input': 'Temperature',
-    'higgs-top-p-input': 'Top P',
-    'higgs-track-performance-switch': 'Performance Tracking',
-    'higgs-voice-cloning-switch': 'Enable Voice Cloning',
-    'higgs-voices-dir-input': 'Voice Samples Dir',
-    'kokoro-device-select': 'Device',
-    'kokoro-max-tokens-input': 'Max Tokens',
-    'kokoro-performance-switch': 'Performance Tracking',
-    'kokoro-use-onnx-switch': 'Use ONNX',
-    'kokoro-voice-blends-list': 'Voice Blends',
-    'kokoro-voice-mixing-switch': 'Enable Voice Mixing',
-    'openai-api-key-input': 'API Key',
-    'openai-base-url-input': 'Base URL',
-    'openai-org-id-input': 'Organization ID'}
+    "audio-cpp-discovery-status": "Discovery",
+    "audio-cpp-mode-value": "Mode",
+    "audio-cpp-privacy-notice": "Privacy",
+    "alltalk-format-select": "Output Format",
+    "alltalk-language-select": "Language",
+    "alltalk-url-input": "Server URL",
+    "alltalk-voice-input": "Voice",
+    "audio-cpp-base-url-input": "Base URL",
+    "audio-cpp-connect-timeout-input": "Connect timeout",
+    "audio-cpp-max-catalog-models-input": "Max catalog models",
+    "audio-cpp-max-identifier-characters-input": "Max identifier chars",
+    "audio-cpp-max-input-characters-input": "Max input characters",
+    "audio-cpp-max-metadata-bytes-input": "Max metadata bytes",
+    "audio-cpp-max-response-bytes-input": "Max response bytes",
+    "audio-cpp-max-voices-per-model-input": "Max voices per model",
+    "audio-cpp-settings": "Settings",
+    "audio-cpp-synthesis-timeout-input": "Synthesis timeout",
+    "chatterbox-candidates-input": "Number of Candidates",
+    "chatterbox-cfg-weight-input": "CFG Weight",
+    "chatterbox-chunk-size-input": "Chunk Size",
+    "chatterbox-crossfade-ms-input": "Crossfade Duration",
+    "chatterbox-crossfade-switch": "Enable Crossfade",
+    "chatterbox-device-select": "Device",
+    "chatterbox-exaggeration-input": "Emotion Exaggeration",
+    "chatterbox-max-chunk-input": "Max Text Chunk",
+    "chatterbox-normalize-switch": "Audio Normalization",
+    "chatterbox-preprocess-switch": "Text Preprocessing",
+    "chatterbox-seed-input": "Random Seed",
+    "chatterbox-stream-chunk-input": "Stream Chunk Size",
+    "chatterbox-streaming-switch": "Enable Streaming",
+    "chatterbox-target-db-input": "Target dB",
+    "chatterbox-temperature-input": "Temperature",
+    "chatterbox-whisper-switch": "Whisper Validation",
+    "default-format-select": "Default Format",
+    "default-model-select": "Default Model",
+    "default-provider-select": "Default Provider",
+    "default-speed-input": "Default Speed",
+    "default-voice-select": "Default Voice",
+    "elevenlabs-api-key-input": "API Key",
+    "elevenlabs-format-select": "Output Format",
+    "elevenlabs-model-select": "Model",
+    "elevenlabs-similarity-input": "Similarity Boost",
+    "elevenlabs-speaker-boost-switch": "Speaker Boost",
+    "elevenlabs-stability-input": "Voice Stability",
+    "elevenlabs-style-input": "Style",
+    "higgs-delimiter-input": "Speaker Delimiter",
+    "higgs-device-select": "Device",
+    "higgs-dtype-select": "Data Type",
+    "higgs-flash-attn-switch": "Enable Flash Attention",
+    "higgs-language-select": "Default Language",
+    "higgs-max-ref-duration-input": "Max Reference Duration",
+    "higgs-max-tokens-input": "Max New Tokens",
+    "higgs-model-path-input": "Model Path",
+    "higgs-multi-speaker-switch": "Enable Multi-speaker",
+    "higgs-repetition-penalty-input": "Repetition Penalty",
+    "higgs-temperature-input": "Temperature",
+    "higgs-top-p-input": "Top P",
+    "higgs-track-performance-switch": "Performance Tracking",
+    "higgs-voice-cloning-switch": "Enable Voice Cloning",
+    "higgs-voices-dir-input": "Voice Samples Dir",
+    "kokoro-device-select": "Device",
+    "kokoro-max-tokens-input": "Max Tokens",
+    "kokoro-performance-switch": "Performance Tracking",
+    "kokoro-use-onnx-switch": "Use ONNX",
+    "kokoro-voice-blends-list": "Voice Blends",
+    "kokoro-voice-mixing-switch": "Enable Voice Mixing",
+    "openai-api-key-input": "API Key",
+    "openai-base-url-input": "Base URL",
+    "openai-org-id-input": "Organization ID",
+}
 
 
 def _state_summary(provider: str, values: Mapping[str, Any]) -> str:
@@ -381,6 +414,10 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
     for setting in _rendered_settings(provider):
         current = values.get(setting)
         spec = SETTING_DEFAULTS.get(setting, {})
+        ownership = SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID[setting]
+        global_read_only = (
+            ownership.scope is SpeechTTSOwnershipScope.GLOBAL_CONFIGURATION
+        )
         control: Any
         if setting in PROVIDER_ACTION_LABELS:
             # No empty label column. With one, the button's position
@@ -389,14 +426,27 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
             # collapsed and pushed the button to x=198, out of the visible
             # region, so `pilot.click` could not reach it. An action needs no
             # label anyway: its text is the label.
+            button = Button(
+                PROVIDER_ACTION_LABELS[setting],
+                id=setting,
+                classes="workbench-action speech-setting-action",
+                compact=True,
+                disabled=global_read_only,
+            )
+            if global_read_only:
+                button.tooltip = GLOBAL_READ_ONLY_COPY
+            action_children: list[Any] = [button]
+            if global_read_only:
+                action_children.append(
+                    Static(
+                        GLOBAL_SCOPE_COPY,
+                        classes="speech-setting-scope",
+                        markup=False,
+                    )
+                )
             rows.append(
                 Horizontal(
-                    Button(
-                        PROVIDER_ACTION_LABELS[setting],
-                        id=setting,
-                        classes="workbench-action speech-setting-action",
-                        compact=True,
-                    ),
+                    *action_children,
                     classes="speech-setting-row speech-setting-action-row",
                 )
             )
@@ -416,6 +466,7 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
                 value=bool(current),
                 id=setting,
                 classes="speech-setting-control",
+                disabled=global_read_only,
             )
         elif _is_select(setting):
             choices = SELECT_OPTIONS.get(setting, [])
@@ -425,29 +476,40 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
                 classes="speech-setting-control",
                 allow_blank=True,
                 prompt="Not set",
+                disabled=global_read_only,
             )
             if current is not None and current in {v for _label, v in choices}:
                 control.value = current
         else:
             control = Input(
-                value=(
-                    str(spec.get("value", ""))
-                    if current is None
-                    else str(current)
-                ),
+                value=(str(spec.get("value", "")) if current is None else str(current)),
                 placeholder=str(spec.get("placeholder", "")),
                 type=spec.get("type", "text"),
                 id=setting,
                 classes="speech-setting-control",
+                disabled=global_read_only,
+            )
+        if global_read_only:
+            control.tooltip = GLOBAL_READ_ONLY_COPY
+        row_children: list[Any] = [
+            Static(
+                SETTING_LABELS.get(setting, setting),
+                classes="speech-setting-label",
+                markup=False,
+            ),
+            control,
+        ]
+        if global_read_only:
+            row_children.append(
+                Static(
+                    GLOBAL_SCOPE_COPY,
+                    classes="speech-setting-scope",
+                    markup=False,
+                )
             )
         rows.append(
             Horizontal(
-                Static(
-                    SETTING_LABELS.get(setting, setting),
-                    classes="speech-setting-label",
-                    markup=False,
-                ),
-                control,
+                *row_children,
                 classes="speech-setting-row",
             )
         )

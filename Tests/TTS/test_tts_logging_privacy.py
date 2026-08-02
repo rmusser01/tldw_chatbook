@@ -34,9 +34,12 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    ProviderHealth,
     TTSAudioResponse,
     TTSConfigurationRevisionError,
+    TTSModelInfo,
     TTSOperationError,
+    TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
@@ -540,6 +543,26 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
         async def ensure_ready(self) -> None:
             return
 
+        async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
+            del refresh
+            return TTSProviderCatalog(
+                provider_id="audio_cpp",
+                revision=1,
+                health=ProviderHealth(state="available", fresh=True),
+                models=(
+                    TTSModelInfo(
+                        model_id="model",
+                        display_name="Model",
+                        family="test",
+                        upstream_mode="offline",
+                        formats=("wav",),
+                        voices=(),
+                        supports_speed=False,
+                        omit_voice_uses_server_default=True,
+                    ),
+                ),
+            )
+
         async def synthesize(
             self,
             request: TTSRequest,
@@ -949,7 +972,12 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(saved_batches) == 1
-    assert saved_batches[0]["API"] == secrets
+    assert saved_batches[0]["api_settings.openai"] == {
+        "api_key": secrets["openai_api_key"]
+    }
+    assert saved_batches[0]["api_settings.elevenlabs"] == {
+        "api_key": secrets["elevenlabs_api_key"]
+    }
     assert saved_deletes == [{}]
     assert service.preferences_generation() == 1
     assert registry.configuration_revision("openai") == 2
@@ -969,8 +997,8 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
     )
     assert len(posted_messages) == 2
     rendered = "\n".join(messages)
-    assert "Saved openai_api_key to [API].openai_api_key" in rendered
-    assert "Saved elevenlabs_api_key to [API].elevenlabs_api_key" in rendered
+    assert "Saved openai_api_key to [api_settings.openai].api_key" in rendered
+    assert "Saved elevenlabs_api_key to [api_settings.elevenlabs].api_key" in rendered
     assert "information: Settings saved successfully!" in rendered
     for secret in secrets.values():
         assert secret not in rendered
@@ -1040,7 +1068,9 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
                 for section, values in section_values.items()
             }
         )
-        raise RuntimeError(f"could not save {section_values['API']['openai_api_key']}")
+        raise RuntimeError(
+            f"could not save {section_values['api_settings.openai']['api_key']}"
+        )
 
     monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
@@ -1069,7 +1099,7 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(attempted_batches) == 1
-    assert attempted_batches[0]["API"] == {"openai_api_key": secret}
+    assert attempted_batches[0]["api_settings.openai"] == {"api_key": secret}
     assert completion is not None
     assert completion.published is False
     assert completion.persistence.file_replaced is False
@@ -1199,7 +1229,7 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(saved_batches) == 1
-    assert saved_batches[0]["API"] == {"openai_api_key": secret}
+    assert saved_batches[0]["api_settings.openai"] == {"api_key": secret}
     assert attempted_configs[0][0] == "openai"
     assert attempted_configs[0][1]["app_config"]["openai_api"]["api_key"] == secret
     assert completion is not None
@@ -1220,7 +1250,7 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
             repr(completion),
         ]
     )
-    assert "Saved openai_api_key to [API].openai_api_key" in rendered
+    assert "Saved openai_api_key to [api_settings.openai].api_key" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
@@ -1364,6 +1394,10 @@ async def test_audio_cpp_service_boundary_never_exposes_private_http_or_request_
                 response = await service.synthesize(speech_request())
                 assert [chunk async for chunk in response.byte_stream] == [wav]
                 catalog = await service.get_catalog("audio_cpp")
+                cached_observation = service.latest_native_capability_observation(
+                    "audio_cpp"
+                )
+                assert cached_observation is not None
                 retained_metadata = dict(response.metadata)
         finally:
             primary_error = sys.exception()
@@ -1399,6 +1433,7 @@ async def test_audio_cpp_service_boundary_never_exposes_private_http_or_request_
             repr(exception_notes),
             "\n".join(rendered_tracebacks),
             repr(catalog),
+            repr(cached_observation),
             repr(retained_metadata),
         )
     )

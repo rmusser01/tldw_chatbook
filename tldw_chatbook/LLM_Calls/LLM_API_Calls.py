@@ -24,6 +24,7 @@
 # Import necessary libraries
 import json
 import time
+from collections.abc import Mapping
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -542,7 +543,27 @@ def chat_with_openai(
         custom_prompt_arg: Legacy, largely ignored.
     """
     loaded_config_data = load_settings()
-    openai_config = loaded_config_data.get("openai_api", {})
+    legacy_openai_config = loaded_config_data.get("openai_api", {})
+    api_settings = loaded_config_data.get("api_settings", {})
+    canonical_openai_config = (
+        api_settings.get("openai", {}) if isinstance(api_settings, Mapping) else {}
+    )
+    openai_config = (
+        dict(legacy_openai_config) if isinstance(legacy_openai_config, Mapping) else {}
+    )
+    if isinstance(canonical_openai_config, Mapping):
+        # Speech Settings owns the canonical credential, while the canonical
+        # provider table may also contain defaults for unrelated chat axes.
+        # Overlay only connection-owned values so moving the credential does
+        # not silently change established model or sampling behavior.
+        for key in ("api_key", "api_base_url"):
+            if key in canonical_openai_config:
+                openai_config[key] = canonical_openai_config[key]
+    if not openai_config.get("api_key") and isinstance(legacy_openai_config, Mapping):
+        # The legacy projection resolves environment-backed credentials.
+        # Keep that resolved value when the canonical table intentionally
+        # stores only api_key_env_var or an empty local fallback.
+        openai_config["api_key"] = legacy_openai_config.get("api_key")
 
     final_api_key = api_key or openai_config.get("api_key")
     if not final_api_key:
@@ -1502,7 +1523,9 @@ def chat_with_anthropic(
                         "created": created_ts,
                         "model": current_model,
                         "choices": [],
-                        "usage": dict(usage if usage is not None else usage_accumulator),
+                        "usage": dict(
+                            usage if usage is not None else usage_accumulator
+                        ),
                     }
                     return f"data: {json.dumps(sse_chunk)}\n\n"
 

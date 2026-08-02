@@ -7,11 +7,15 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
+from Tests.UI.test_stts_playground_audio_cpp import FakeTTSService, _resolved
 from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+)
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 
 
@@ -62,6 +66,42 @@ async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
     raise AssertionError("condition did not become true")
 
 
+def _playground_ready(screen: STTSScreen) -> bool:
+    """Return whether the dynamically mounted Playground is interactive."""
+
+    return (
+        len(screen.query(SpeechPlaygroundPane)) == 1
+        and len(screen.query("#audio-play-btn")) == 1
+        and len(screen.query("#tts-provider-select SelectOverlay")) == 1
+    )
+
+
+def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
+    """Fresh-screen restore cannot retain text, unknown keys, or unsafe axes."""
+
+    app = _SpeechHost()
+    screen = app.screen_under_test
+    screen.restore_state(
+        {
+            "speech_playground_axes": {
+                "tts-provider-select": "audio_cpp",
+                "tts-model-select": "safe-model",
+                "tts-voice-select": "unsafe\nvoice",
+                "tts-speed-input": "1.25",
+                "tts-text-input": "private synthesis text",
+                "unknown-control": "private provider body",
+                "tts-language-select": "x" * 4097,
+            }
+        }
+    )
+
+    assert screen.save_state()["speech_playground_axes"] == {
+        "tts-provider-select": "audio_cpp",
+        "tts-model-select": "safe-model",
+        "tts-speed-input": "1.25",
+    }
+
+
 @pytest.mark.asyncio
 async def test_profile_library_navigation_waits_for_deferred_speech_body() -> None:
     app = _SpeechHost({"view": "profiles"})
@@ -88,8 +128,10 @@ async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> 
         await _wait_until(
             pilot,
             lambda: (
-                len(screen.query(SpeechPlaygroundPane)) == 1
+                _playground_ready(screen)
                 and screen.query_one(SpeechPlaygroundPane)._profile_preset is preset
+                and screen.query_one("#tts-provider-select", Select).value
+                == "audio_cpp"
             ),
         )
 
@@ -103,7 +145,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         original = screen.query_one(SpeechPlaygroundPane)
 
@@ -121,7 +163,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
+async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> None:
     app = _SpeechHost()
     screen = app.screen_under_test
     artifact = _artifact(tmp_path, "old-complete-operation")
@@ -130,24 +172,28 @@ async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._store_delivered_artifact(artifact, announce=False)
-        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+        app._stts_handler = SimpleNamespace(retire_playground_generation=retire)
 
         screen.apply_navigation_context(
             {"view": "playground", "profile_preset": _preset()}
         )
-        await _wait_until(pilot, lambda: retire.call_count == 1)
+        await _wait_until(
+            pilot,
+            lambda: playground._profile_preset is not None,
+        )
 
-        assert playground.current_audio_artifact is None
-        assert playground.current_audio_file is None
-        assert playground.query_one("#audio-play-btn", Button).disabled is True
-        assert playground.query_one("#audio-export-btn", Button).disabled is True
+        assert retire.call_count == 0
+        assert playground.current_audio_artifact is artifact
+        assert playground.current_audio_file == artifact.path
+        assert playground.query_one("#audio-play-btn", Button).disabled is False
+        assert playground.query_one("#audio-export-btn", Button).disabled is False
         assert (
             str(playground.query_one("#audio-player-status", Static).renderable)
-            == "Nothing loaded"
+            == "Ready · WAV"
         )
 
 
@@ -161,11 +207,11 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
     async with app.run_test(size=(150, 55)) as pilot:
         await _wait_until(
             pilot,
-            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+            lambda: _playground_ready(screen),
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._generation_operation_id = artifact.operation_id
-        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+        app._stts_handler = SimpleNamespace(retire_playground_generation=retire)
 
         screen.apply_navigation_context(
             {"view": "playground", "profile_preset": _preset()}
@@ -179,6 +225,129 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         assert playground.query_one("#audio-export-btn", Button).disabled is True
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("intent", "focused_id"),
+    (
+        (SpeechTTSNavigationIntent.CONFIGURE, "tts-provider-select"),
+        (SpeechTTSNavigationIntent.TEST, "tts-test-connection-btn"),
+        (SpeechTTSNavigationIntent.REFRESH_MODELS, "tts-refresh-catalog-btn"),
+        (SpeechTTSNavigationIntent.REFRESH_VOICES, "tts-voice-select"),
+    ),
+)
+async def test_bounded_lab_navigation_restores_provider_and_focus_without_action(
+    monkeypatch,
+    intent: SpeechTTSNavigationIntent,
+    focused_id: str,
+) -> None:
+    service = FakeTTSService()
+    catalog_calls: list[bool] = []
+    original_load = SpeechPlaygroundPane._load_provider_catalog
+    generate = Mock()
+
+    def record_catalog_load(self, *args, **kwargs) -> None:
+        catalog_calls.append(bool(kwargs.get("refresh", False)))
+        original_load(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        record_catalog_load,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_check_higgs_installation",
+        lambda self: None,
+    )
+    monkeypatch.setattr(SpeechPlaygroundPane, "_generate_tts", generate)
+    app = _SpeechHost(
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": intent.value,
+        }
+    )
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                _playground_ready(screen)
+                and screen.query_one("#tts-provider-select", Select).value
+                == "audio_cpp"
+                and getattr(app.focused, "id", None) == focused_id
+            ),
+        )
+
+    generate.assert_not_called()
+    assert True not in catalog_calls
+
+
+@pytest.mark.asyncio
+async def test_test_connection_and_refresh_are_distinct_explicit_actions(
+    monkeypatch,
+) -> None:
+    service = FakeTTSService()
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_check_higgs_installation",
+        lambda self: None,
+    )
+    app = _SpeechHost(
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "test",
+        }
+    )
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                _playground_ready(screen)
+                and service.catalog_calls
+                and all(not refresh for _provider, refresh in service.catalog_calls)
+            ),
+        )
+        initial_refreshes = sum(refresh for _provider, refresh in service.catalog_calls)
+
+        screen.query_one("#tts-test-connection-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                sum(refresh for _provider, refresh in service.catalog_calls)
+                == initial_refreshes + 1
+            ),
+        )
+
+        screen.query_one("#tts-refresh-catalog-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                sum(refresh for _provider, refresh in service.catalog_calls)
+                == initial_refreshes + 2
+            ),
+        )
+
+    assert service.catalog_calls[-2:] == [
+        ("audio_cpp", True),
+        ("audio_cpp", True),
+    ]
+
+
 @pytest.mark.parametrize(
     "context",
     [
@@ -187,6 +356,17 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         {"view": "unknown"},
         {"view": "playground", "profile_preset": object()},
         {"view": "profiles", "profile_preset": _preset()},
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "test",
+            "text": "private",
+        },
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "generate",
+        },
     ],
 )
 def test_malformed_speech_navigation_context_is_rejected(

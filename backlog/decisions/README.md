@@ -33,6 +33,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-036](036-application-service-composition-lifecycle.md) | Accepted | Compose application service graphs once at dependency-ready boundaries and bind them to the existing provider and Sync owners without adding a service container. |
 | [ADR-037](037-roleplay-assistant-identity-and-persona-user-profile-separation.md) | Accepted | Separate assistant Personas from human User Profiles and persist authority-scoped character identity for trustworthy TTS authorship. |
 | [ADR-038](038-file-notes-guarded-session-commit.md) | Accepted | Let File Notes create one reviewed local commit only when the complete staged delta exactly matches current Chatbook session ownership. |
+| [ADR-039](039-global-and-studio-tts-settings-ownership.md) | Accepted | Keep application-wide TTS configuration in Settings, separately persist sparse Studio preferences, preserve character profile authority, and keep runtime operations in Lab. |
 
 ## Historical Decision Material
 

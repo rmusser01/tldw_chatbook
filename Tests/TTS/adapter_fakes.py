@@ -57,6 +57,7 @@ class FakeAdapter:
                     formats=("wav",),
                     voices=("default",),
                     supports_speed=True,
+                    omit_voice_uses_server_default=(self.provider_id == "audio_cpp"),
                 ),
             ),
         )

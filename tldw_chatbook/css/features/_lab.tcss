@@ -426,6 +426,19 @@
     color: $ds-status-warning;
 }
 
+.speech-readiness-line {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-info;
+}
+
+.speech-detail-line {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
 /* Textual's Button carries a default min-width, so the shared
  * `.workbench-action { width: auto }` alone still spread six actions across
  * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
@@ -536,6 +549,15 @@
     min-height: 1;
 }
 
+/* The Playground inventory is a fixed six actions. Textual's horizontal
+ * container resolves `height: auto` one row short after it switches to a
+ * vertical layout, so reserve the six actual rows rather than clipping the
+ * final cross-surface navigation action. */
+.speech-split-stacked #speech-playground-actions {
+    height: 6;
+    min-height: 6;
+}
+
 .speech-split-stacked #speech-playground-actions Button.workbench-action,
 .speech-split-stacked #speech-result-actions Button.workbench-action {
     width: 100%;
@@ -607,29 +629,6 @@
     height: 1;
     min-height: 1;
     border: none;
-}
-
-/* Take rows: summary left, per-row actions right, one row each. Per-row
- * controls are what make comparison possible -- a single player bound to the
- * latest take would force a re-generate to hear an earlier option again. */
-.speech-take-row {
-    height: 1;
-    min-height: 1;
-}
-
-.speech-take-summary {
-    width: 1fr;
-    height: 1;
-}
-
-.speech-take-action {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    border: none;
-    padding: 0 1;
-    margin-left: 1;
 }
 
 /* The axes reflow onto a second line rather than truncating. Six chips need
@@ -712,18 +711,28 @@ Input.speech-axis-control {
 
 /* --- Speech: player, generation status, clip source ------------------- */
 
-/* The player sits under the take list and must not steal its rows: the
-   history is what the user compares, the transport is how they audition
-   one. */
+/* The result is one current artifact. It owns enough intrinsic height for its
+ * summary, lifecycle copy, and always-visible actions. */
 .speech-player {
     height: auto;
     padding: 0 1;
-    border-top: solid #2c313a;
+    border-top: solid $ds-grid-line;
+}
+
+#audio-player-container > .speech-section-head {
+    margin-top: 0;
 }
 
 .speech-player-status {
     height: 1;
-    color: $text-muted;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.speech-result-lifecycle {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
 }
 
 .speech-player-transport {
@@ -740,6 +749,35 @@ Input.speech-axis-control {
     min-width: 12;
     content-align: right middle;
     color: $text-muted;
+}
+
+/* Generic Collapsible styling elsewhere is a three-row form header. Speech's
+ * diagnostics and tuning disclosures are compact workbench rows. */
+#speech-param-group,
+#speech-connection-details,
+#speech-log-group {
+    height: auto;
+    min-height: 1;
+    padding: 0;
+    margin-bottom: 0;
+    border: none;
+    background: transparent;
+}
+
+#speech-param-group > CollapsibleTitle,
+#speech-connection-details > CollapsibleTitle,
+#speech-log-group > CollapsibleTitle {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#speech-param-group > Contents,
+#speech-connection-details > Contents,
+#speech-log-group > Contents {
+    height: auto;
 }
 
 /* One row: what is happening, and how far along. */
@@ -807,6 +845,16 @@ Input.speech-axis-control {
     background: $ds-surface-panel;
 }
 
+/* Read-only global ownership stays visible without competing for the row's
+   flexible width. Static defaults to 1fr; that used to leave the actual
+   value control only two cells wide at every tested terminal width. */
+.speech-setting-scope {
+    width: auto;
+    min-width: 0;
+    margin-left: 1;
+    color: $text-muted;
+}
+
 /* `border: none` on a Select does not reach its inner SelectCurrent, which
  * keeps its own three-row box and, clipped to `height: 1`, paints only its
  * top border. */
@@ -845,6 +893,114 @@ Input.speech-setting-control {
 #speech-settings-groups {
     height: 1fr;
     overflow-y: auto;
+}
+
+.studio-tts-scope {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#speech-settings-actions {
+    height: auto;
+    min-height: 1;
+}
+
+#speech-settings-actions Button.workbench-action,
+#studio-tts-voice-profile-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+.studio-tts-settings-stacked #speech-settings-actions {
+    layout: vertical;
+    height: 4;
+}
+
+.studio-tts-settings-stacked #speech-settings-actions Button.workbench-action {
+    width: 100%;
+    margin-right: 0;
+}
+
+.studio-tts-setting-row {
+    height: auto;
+    min-height: 1;
+}
+
+.studio-tts-source {
+    width: 34;
+    min-width: 18;
+    padding-left: 1;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+}
+
+.studio-tts-field-error {
+    width: auto;
+    min-width: 16;
+    padding-left: 1;
+    color: $ds-status-error;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row {
+    layout: vertical;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-label,
+.studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-control,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
+    width: 100%;
+    min-width: 0;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
+    height: auto;
+    min-height: 1;
+}
+
+#studio-tts-chatterbox-options {
+    height: auto;
+}
+
+#studio-tts-voice-profile-actions {
+    height: auto;
+    min-height: 1;
+    margin: 0 1 1 1;
+}
+
+.studio-tts-settings-stacked #studio-tts-voice-profile-actions {
+    layout: vertical;
+    height: 3;
+}
+
+.studio-tts-settings-stacked #studio-tts-voice-profile-actions Button.workbench-action {
+    width: 100%;
+    margin-right: 0;
+}
+
+.studio-tts-helper {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#tts-adopt-studio-preferences-btn {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
 }
 
 
