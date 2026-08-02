@@ -385,29 +385,6 @@ async def test_curated_view_performs_no_io_at_compose_time(tmp_path: Path) -> No
     registry_factory.assert_not_called()
 
 
-def test_curated_preflight_result_opens_the_shared_modal(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Selection shows the exact shared consent plan before acquisition."""
-    from Tests.UI.test_model_artifact_widgets import _report
-    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
-    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
-
-    fake_app = MagicMock()
-    monkeypatch.setattr(CuratedView, "app", property(lambda self: fake_app))
-    view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
-    report = _report(tmp_path / "managed")
-    view._operation_reference = report.root
-
-    view._apply_preflight_result(report, None)
-
-    assert view._pending_report is report
-    modal, callback = fake_app.push_screen.call_args[0]
-    assert isinstance(modal, ModelInstallModal)
-    assert callback == view._confirm_install
-
-
 def test_curated_progress_tolerates_recompose_gap() -> None:
     """A progress event is retained while its widget is temporarily absent.
 
@@ -435,73 +412,6 @@ def test_curated_progress_tolerates_recompose_gap() -> None:
 
     assert view._progress is progress
     view.refresh.assert_called_once_with(recompose=True)
-
-
-def test_curated_provision_completion_tolerates_recompose_gap() -> None:
-    """Missing progress markup cannot skip install cleanup and refresh."""
-    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
-
-    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
-    view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
-    view._operation_reference = reference
-    view._pending_report = object()
-    view._progress = object()
-    view.query_one = MagicMock(side_effect=NoMatches)
-    view.notify = MagicMock()
-    view.post_message = MagicMock()
-    view.ensure_loaded = MagicMock()
-
-    view._apply_provision_result(None)
-
-    assert view._operation_reference is None
-    assert view._pending_report is None
-    assert view._progress is None
-    view.post_message.assert_called_once()
-    view.ensure_loaded.assert_called_once_with(force=True)
-
-
-@pytest.mark.parametrize("operation", ("preflight", "installation"))
-def test_curated_install_failures_log_exact_artifact_context(
-    operation: str,
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Worker diagnostics identify the safe immutable artifact reference."""
-    from Tests.UI.test_model_artifact_widgets import _report
-    from tldw_chatbook.UI.Screens import model_curated_view as module
-
-    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
-    fake_app = MagicMock()
-    fake_logger = MagicMock()
-    fake_logger.opt.return_value = fake_logger
-    monkeypatch.setattr(module.CuratedView, "app", property(lambda self: fake_app))
-    monkeypatch.setattr(module, "logger", fake_logger)
-    view = module.CuratedView(
-        service_factory=MagicMock(),
-        registry_factory=MagicMock(),
-    )
-
-    if operation == "preflight":
-        async def fail_preflight(_reference):
-            raise RuntimeError("PRIVATE-WORKER-DETAIL")
-
-        view._preflight = fail_preflight
-        module.CuratedView._preflight_model.__wrapped__(view, reference)
-    else:
-        report = _report(tmp_path / "managed")
-        view._pending_report = report
-
-        async def fail_provision(_report):
-            raise RuntimeError("PRIVATE-WORKER-DETAIL")
-
-        view._provision = fail_provision
-        module.CuratedView._provision_model.__wrapped__(view)
-        reference = report.root
-
-    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
-    assert reference.artifact_id in logged
-    assert reference.revision in logged
-    assert reference.variant in logged
 
 
 def test_models_rail_lists_curated_and_installed_and_drops_local_models() -> None:

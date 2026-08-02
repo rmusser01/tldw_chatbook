@@ -1,32 +1,32 @@
-"""Dedicated coverage for the Curated view (TASK-596 delta port).
+"""Dedicated coverage for the Curated view (TASK-596 delta port; TASK-1803).
 
-``CuratedView`` already has a handful of tests scattered in
-``Tests/UI/test_model_installed_view.py`` (no-I/O-at-compose, the
-preflight-result-opens-the-modal path, and two recompose-gap tolerance
-tests). This file adds the coverage that was still missing: that
-``ensure_loaded`` actually performs the load and renders rows once
-triggered (not just that it stays idle before that), that an installed
-reference is marked as such rather than offered a redundant Install, that
-no user-visible string contains "artifact", that a real Install click
-reaches the shared consent modal, and two error/decline paths
-(``_apply_preflight_result``'s failure branch and ``_confirm_install``'s
-decline branch) that were not exercised anywhere else.
+``CuratedView`` also has a handful of tests scattered in
+``Tests/UI/test_model_installed_view.py`` (no-I/O-at-compose and one
+recompose-gap tolerance test for ``apply_progress``). This file adds the
+coverage that was still missing: that ``ensure_loaded`` actually performs
+the load and renders rows once triggered (not just that it stays idle
+before that), that an installed reference is marked as such rather than
+offered a redundant Install, that no user-visible string contains
+"artifact", and that a real Install click posts the exact intent message
+the host screen needs.
 
-Adapted from the reference implementation's ``feat/model-artifact-browser``
-branch, NOT copied: that branch's ``CuratedView`` takes ``service_root=``/
-``registry=`` directly, posts an ``InstallRequested`` message, and never
-calls ``preflight()``/``provision()`` itself -- ``LLMScreen`` owns those
-workers there. dev's ``CuratedView`` (this branch) takes
-``service_factory=``/``registry_factory=`` lazy factories and owns its own
-preflight/provision workers directly, so every test here drives dev's
-actual methods (``ensure_loaded``, ``_install_pressed``, ``_preflight_model``,
-``_confirm_install``, ``_apply_preflight_result``) instead of the reference's
-``activate()``/``InstallRequested``/screen-owned-worker shape. Tests that
-only make sense against that other shape (the "no preflight/provision call
-anywhere in this module" AST check, the "only one @work method" AST check,
-and every ``LLMScreen``-owned-worker test) are dropped -- dev's module
-genuinely does call preflight/provision itself, and asserting otherwise
-would just be testing a design dev does not have.
+TASK-1803 moved this view's preflight/provision workers to ``LLMScreen``,
+mirroring how the reference implementation's ``feat/model-artifact-
+browser`` branch always shaped ``CuratedView`` (``service_root=``/
+``registry=``, posting ``InstallRequested``, never calling ``preflight()``/
+``provision()`` itself) -- except this branch keeps its established
+``service_factory=``/``registry_factory=`` lazy-factory constructor
+instead of adopting that branch's ``service_root=``/``registry=`` shape,
+since ``Tests/UI/test_model_installed_view.py`` and
+``test_llm_screen_lab_adoption.py`` already depend on it. Tests that used
+to drive this view's own ``_preflight_model``/``_confirm_install``/
+``_apply_preflight_result`` directly (the plan-resolution and consent-
+modal-push coverage, and the decline/failure paths that used to run
+against them) moved to ``test_llm_screen_lab_adoption.py``, against
+``LLMScreen``, which now owns that logic; what belongs here instead is
+``CuratedView``'s own render-only contract: it posts
+``InstallRequested`` and, once told the outcome, calls
+``cancel_pending_install()``/``finish_install()``/``apply_progress()``.
 """
 
 from __future__ import annotations
@@ -36,10 +36,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
-import tldw_chatbook.Model_Artifacts.acquisition as acquisition_module
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
     ArtifactFile,
@@ -49,13 +50,8 @@ from tldw_chatbook.Model_Artifacts import (
     ModelArtifactService,
     ProvenanceClass,
 )
-from tldw_chatbook.Model_Artifacts.acquisition import (
-    ArtifactPreflightEntry,
-    PreflightReport,
-)
 from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
 from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
-from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
 
 
 class _ViewApp(App):
@@ -114,36 +110,6 @@ def _registry_with(*descriptors: ArtifactDescriptor) -> CuratedRegistry:
             sources={file.path: f"https://example.test/{file.path}" for file in descriptor.files},
         )
     return registry
-
-
-def _report(reference: ArtifactRef, *, destination: Path) -> PreflightReport:
-    entry = ArtifactPreflightEntry(
-        ref=reference,
-        source_url=f"https://example.test/{reference.artifact_id}/model.bin",
-        repository=f"example/{reference.artifact_id}",
-        revision=reference.revision,
-        license_id="mit",
-        license_url="https://example.test/license",
-        precision=reference.variant,
-        total_bytes=100_000,
-        file_count=1,
-        already_installed=False,
-        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-    )
-    return PreflightReport(
-        root=reference,
-        closure_fingerprint="f" * 64,
-        entries=(entry,),
-        download_bytes=100_000,
-        already_staged_bytes=0,
-        staging_overhead_bytes=0,
-        retained_bytes=0,
-        destination=destination,
-        free_bytes=10**12,
-        required_bytes=200_000,
-        sufficient_space=True,
-        gating_errors=(),
-    )
 
 
 def _all_text(app: App) -> str:
@@ -273,53 +239,48 @@ async def test_no_user_visible_string_contains_artifact(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Install-request flow through to the consent modal.
+# Install-request flow: this view posts the intent and stops.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_install_click_reaches_the_shared_consent_modal(
-    tmp_path: Path, monkeypatch
+async def test_install_click_posts_install_requested_with_the_resolved_service_and_registry(
+    tmp_path: Path,
 ) -> None:
     """A real Install click -- not a direct call to an internal method --
-    resolves a plan (through a stubbed acquisition service, so this stays
-    network-free) and pushes the exact shared ``ModelInstallModal``.
+    posts ``CuratedView.InstallRequested`` carrying the exact reference,
+    service, registry, and source map the host screen needs to resolve a
+    plan itself (TASK-1803: this view no longer performs that resolution;
+    ``LLMScreen`` does). See ``test_llm_screen_lab_adoption.py``'s
+    ``test_curated_install_click_reaches_the_shared_consent_modal`` for
+    the end-to-end coverage of what happens once ``LLMScreen`` receives
+    this message.
 
     Args:
-        tmp_path: pytest fixture; the managed store root and the report's
-            destination path.
-        monkeypatch: pytest fixture; stubs ``ArtifactAcquisitionService``
-            so preflight resolves without real network I/O.
+        tmp_path: pytest fixture; the managed store root.
     """
     reference = ArtifactRef("model-a", "a" * 40, "int8")
     descriptor = _descriptor(reference)
     registry = _registry_with(descriptor)
     service = ModelArtifactService(tmp_path / "store")
-    report = _report(reference, destination=tmp_path / "dest")
-
-    class _FakeAcquisitionService:
-        def __init__(self, _service) -> None:
-            pass
-
-        async def preflight(self, ref, _registry, *, sources):
-            assert ref == reference
-            return report
-
-    monkeypatch.setattr(
-        acquisition_module, "ArtifactAcquisitionService", _FakeAcquisitionService
-    )
 
     view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
 
-    app = _ViewApp(view)
-    async with app.run_test() as pilot:
-        # Patched on the real, running app instance (not the CuratedView
-        # class): this test needs the view's own `self.app` to resolve
-        # normally so the real @work threaded worker and pilot.click()
-        # both function -- only push_screen itself is stubbed, to capture
-        # its arguments without actually pushing a screen.
-        monkeypatch.setattr(app, "push_screen", MagicMock())
+    class _CapturingApp(App):
+        def __init__(self, view: CuratedView) -> None:
+            self.view = view
+            self.requests: list[CuratedView.InstallRequested] = []
+            super().__init__()
 
+        def compose(self) -> ComposeResult:
+            yield self.view
+
+        @on(CuratedView.InstallRequested)
+        def _capture(self, event: CuratedView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp(view)
+    async with app.run_test() as pilot:
         view.ensure_loaded()
         loaded = await _wait_until(lambda: view._loaded, pilot=pilot)
         assert loaded
@@ -328,61 +289,63 @@ async def test_install_click_reaches_the_shared_consent_modal(
         await pilot.click(button)
         await pilot.pause()
 
-        pushed = await _wait_until(lambda: app.push_screen.called, pilot=pilot)
-        assert pushed, "clicking Install never reached push_screen"
+        assert len(app.requests) == 1
+        event = app.requests[0]
+        assert event.reference == reference
+        assert event.service is service
+        assert event.registry is registry
+        assert event.sources == {reference: registry.sources(reference)}
 
-        modal, callback = app.push_screen.call_args[0]
-        assert isinstance(modal, ModelInstallModal)
-        assert modal.report is report
-        assert modal.model_label == descriptor.model_id
-        assert callback == view._confirm_install
-        assert view._pending_report is report
+        # The clicked row's own button re-disables immediately (the
+        # long-standing "cannot double-click Install" contract, unrelated
+        # to whether LLMScreen has even received the message yet) -- via
+        # a full recompose, so re-query rather than reuse the pre-click
+        # Button instance, which the recompose already detached.
+        refreshed_button = _install_buttons(app)[0]
+        assert refreshed_button.disabled is True
 
 
 # ---------------------------------------------------------------------------
-# Error / decline paths not otherwise exercised.
+# Render-only outcomes: cancel_pending_install() / finish_install().
+#
+# TASK-1803: the host screen (LLMScreen) is the only caller of either --
+# after a preflight failure or an explicit consent-modal decline
+# (cancel_pending_install(), no reload), or once provisioning completes,
+# successfully or not (finish_install(), always reloads). Both replace
+# this view's former _apply_preflight_result failure branch and
+# _confirm_install decline branch, now that LLMScreen owns preflight/
+# provision and only tells this view the outcome.
 # ---------------------------------------------------------------------------
 
 
-def test_preflight_failure_notifies_and_does_not_push_a_modal(monkeypatch) -> None:
-    """The sibling success path is test_curated_preflight_result_opens_the_
-    shared_modal in test_model_installed_view.py; this is its failure branch.
-
-    Args:
-        monkeypatch: pytest fixture; replaces the read-only ``app`` property
-            on the ``CuratedView`` class with a ``MagicMock`` for this bare,
-            unmounted view.
-    """
-    fake_app = MagicMock()
-    # Class-level property patch (Screen/Widget.app is read-only) -- safe
-    # here because this view is never mounted inside a real App/run_test(),
-    # unlike test_install_click_reaches_the_shared_consent_modal above.
-    monkeypatch.setattr(CuratedView, "app", property(lambda self: fake_app))
+def test_cancel_pending_install_clears_the_indicator_without_reloading() -> None:
+    """A preflight failure or a decline never started an install, so this
+    must not reload the catalog -- unlike ``finish_install()`` below."""
     view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
-    reference = ArtifactRef("model-a", "a" * 40, "int8")
-    view._operation_reference = reference
-    view.notify = MagicMock()
+    view._operation_reference = ArtifactRef("model-a", "a" * 40, "int8")
     view.refresh = MagicMock()
+    view.ensure_loaded = MagicMock()
 
-    view._apply_preflight_result(None, "boom")
+    view.cancel_pending_install()
 
     assert view._operation_reference is None
-    view.notify.assert_called_once_with("boom", severity="error")
-    fake_app.push_screen.assert_not_called()
     view.refresh.assert_called_once_with(recompose=True)
+    view.ensure_loaded.assert_not_called()
 
 
-def test_declining_the_consent_modal_does_not_start_the_install_worker() -> None:
+def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progress_widget() -> None:
+    """``finish_install()`` always reloads (a just-installed row must stop
+    offering a redundant Install), and tolerates the progress widget being
+    momentarily unfindable mid-recompose -- the same tolerance
+    ``apply_progress`` documents for the same underlying reason."""
     view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
-    reference = ArtifactRef("model-a", "a" * 40, "int8")
-    view._operation_reference = reference
-    view._pending_report = object()
-    view._provision_model = MagicMock()
-    view.refresh = MagicMock()
+    view._operation_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    view._progress = object()
+    view.query_one = MagicMock(side_effect=NoMatches)
+    view.ensure_loaded = MagicMock()
 
-    view._confirm_install(False)
+    view.finish_install()
 
-    assert view._pending_report is None
     assert view._operation_reference is None
-    view._provision_model.assert_not_called()
-    view.refresh.assert_called_once_with(recompose=True)
+    assert view._progress is None
+    view.ensure_loaded.assert_called_once_with(force=True)
