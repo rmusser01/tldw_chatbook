@@ -1,7 +1,7 @@
 ---
 id: TASK-1631
 title: "Watchlists test harness: _build_test_app misses local_watchlists_service's lazy db factory"
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-31 19:03'
 labels:
