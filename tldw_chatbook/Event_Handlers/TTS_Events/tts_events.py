@@ -484,6 +484,69 @@ class TTSEventHandler:
             resolution=resolution,
         )
 
+    async def speak_utterance(
+        self,
+        text: str,
+        *,
+        on_finished: Callable[[bool], None],
+    ) -> None:
+        """Speak one cooldown-free hands-free-loop utterance.
+
+        The hands-free reply-speech path (`Chat/reply_sentence_sequencer.py`
+        's `SentenceSequencer`) dispatches one sentence-sized utterance at a
+        time, often within milliseconds of the previous one finishing --
+        the OPPOSITE of "rapid repeated requests for the same message" the
+        message-cooldown gate (`_admit_tts_generation`, keyed on
+        `COOLDOWN_SECONDS`) exists to throttle. This entry therefore skips
+        that gate -- and the `_enforce_cooldown_limit()` maintenance call
+        the ad-hoc `TTSRequestEvent` branch of `handle_tts_request` runs
+        early (:420-436) -- entirely, following the shape of the
+        `TTSMessageSpeechRequestEvent` branch instead, which never touches
+        it either. Each call is assigned its own fresh message id, so even
+        the bookkeeping this bypasses (`_request_cooldown`) could never
+        collide across utterances even if something else touched it later.
+
+        Reuses the exact same generation + playback machinery every other
+        TTS caller shares (`_generate_tts`, streaming-sink branch
+        included), so one-voice displacement (a new utterance silences
+        whatever the sink or legacy player was doing) keeps working
+        identically -- see `_generate_tts`'s own `on_finished` parameter,
+        which this threads straight through as the completion signal.
+
+        `on_finished` fires EXACTLY ONCE per call, on every path: a
+        completed drain, an interrupted/stopped sink (barge-in), a
+        synthesis failure, or a legacy-player failure. The `finally` below
+        is a last-resort single-fire guard, not the primary signal source
+        -- real terminal points fire `fire` directly (see
+        `_stream_response_via_sink` and `_play_utterance_legacy_artifact`);
+        this only catches paths that reach here without ever calling it
+        (e.g. text validation rejecting the utterance before generation
+        ever starts).
+        """
+        fired = False
+
+        def fire(ok: bool) -> None:
+            nonlocal fired
+            if fired:
+                return
+            fired = True
+            on_finished(ok)
+
+        message_id = f"handsfree-{uuid4().hex}"
+        try:
+            prepared_text = await self._prepare_tts_text(text, message_id)
+            if prepared_text is None:
+                return
+            await self._generate_tts(
+                prepared_text,
+                message_id,
+                voice=None,
+                resolution=None,
+                on_finished=fire,
+            )
+        finally:
+            fire(False)
+
     async def handle_tts_global_override_decision(
         self,
         event: TTSGlobalOverrideDecisionEvent,
@@ -756,8 +819,26 @@ class TTSEventHandler:
         message_id: Optional[str],
         voice: Optional[str],
         resolution: CharacterTTSRequestResolution | None = None,
+        *,
+        on_finished: Callable[[bool], None] | None = None,
     ) -> None:
-        """Generate one complete resolved TTS response and publish its artifact."""
+        """Generate one complete resolved TTS response and publish its artifact.
+
+        Args:
+            on_finished: Task-4 cooldown-free-utterance completion signal.
+                ``None`` for every existing caller (spoken feedback,
+                character speech, ad-hoc requests) -- behavior for them is
+                completely unchanged. When supplied (only `speak_utterance`
+                does this), fires exactly once, from whichever terminal
+                branch this generation actually takes: the streaming sink's
+                own drained/stopped/failed outcome (reported from inside
+                `_stream_response_via_sink`), or -- for a response that
+                falls through to the legacy write path -- the outcome of
+                ALSO playing the just-written artifact directly here (see
+                `_play_utterance_legacy_artifact`), since a hands-free
+                utterance has no per-message widget for the app's own
+                `TTSCompleteEvent` handler to auto-play through.
+        """
         from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
         normalized_message_id = message_id or "adhoc"
@@ -942,6 +1023,7 @@ class TTSEventHandler:
                         eligible_pcm_plan,
                         response.byte_stream,
                         message_id=normalized_message_id,
+                        on_finished=on_finished,
                     )
                     if streamed_outcome_code is not None:
                         outcome_code = streamed_outcome_code
@@ -1074,6 +1156,7 @@ class TTSEventHandler:
                             _replay_drained_bytes(wav_body),
                             message_id=normalized_message_id,
                             fallback_on_failure=True,
+                            on_finished=on_finished,
                         )
                         if streamed_outcome_code is not None:
                             outcome_code = streamed_outcome_code
@@ -1128,6 +1211,18 @@ class TTSEventHandler:
                     audio_file=artifact_path,
                 )
             )
+            if on_finished is not None:
+                # Task-4: a hands-free utterance has no per-message widget
+                # for the app's own `TTSCompleteEvent` handler to route an
+                # auto-play through (see `_play_utterance_legacy_artifact`'s
+                # own docstring) -- play it directly here instead, gated so
+                # every OTHER caller (on_finished is always None for them)
+                # is completely unaffected.
+                await self._play_utterance_legacy_artifact(
+                    normalized_message_id,
+                    artifact_path,
+                    on_finished,
+                )
             outcome_code = "success"
         except asyncio.CancelledError as cancellation:
             outcome_code = "cancelled"
@@ -1184,6 +1279,7 @@ class TTSEventHandler:
         *,
         message_id: str,
         fallback_on_failure: bool = False,
+        on_finished: Callable[[bool], None] | None = None,
     ) -> str | None:
         """Play one response live through the streaming PCM sink.
 
@@ -1211,6 +1307,16 @@ class TTSEventHandler:
                 returning `None` so the caller falls back to the file it
                 already has, rather than surfacing a user-facing error for
                 an opportunistic upgrade that simply didn't pan out.
+            on_finished: Task-4 completion signal, threaded straight through
+                from `_generate_tts`'s own `on_finished` parameter (see its
+                docstring). Fired at most once, and ONLY for a definite
+                terminal outcome (a non-`None` return): `True` for a drain,
+                `False` for a stopped/interrupted sink or a streaming
+                failure. Never fired for a `None` return (sink open failure,
+                or -- only when `fallback_on_failure` is `True` -- a
+                mid-stream failure) -- those fall through to the caller's
+                own alternate path, which is what ultimately decides (and
+                signals) the real terminal outcome.
 
         Returns:
             The metrics `outcome_code`: `"success"` for a natural drain,
@@ -1337,6 +1443,8 @@ class TTSEventHandler:
                 TTSCompleteEvent(message_id=message_id, audio_file=None)
             )
             if result.outcome == "drained":
+                if on_finished is not None:
+                    on_finished(True)
                 return "success"
             # "stopped": the sink was interrupted -- one-voice displacement
             # by a later utterance, an explicit stop, or a barge-in -- not
@@ -1346,6 +1454,8 @@ class TTSEventHandler:
             # labeled distinctly in the metric rather than folded into
             # "success", which would misrepresent playback that was cut
             # short as if it had played out in full.
+            if on_finished is not None:
+                on_finished(False)
             return "interrupted"
 
         logger.warning(
@@ -1363,6 +1473,8 @@ class TTSEventHandler:
                 error="TTS playback failed; retry",
             )
         )
+        if on_finished is not None:
+            on_finished(False)
         return "streaming_failed"
 
     async def _stop_prior_legacy_clip(self) -> None:
@@ -1383,6 +1495,54 @@ class TTSEventHandler:
             self._last_played = None
         if last_played is not None:
             stop_audio_playback_if_current(last_played[1])
+
+    async def _play_utterance_legacy_artifact(
+        self,
+        message_id: str,
+        audio_file: Path,
+        on_finished: Callable[[bool], None],
+    ) -> None:
+        """Play one just-written legacy artifact for a cooldown-free utterance.
+
+        `speak_utterance` (task-4) has no per-message widget for the app's
+        `TTSCompleteEvent` handler to route an auto-play through -- that
+        routing (`app.py`'s `handle_tts_complete_event`) only posts a
+        `TTSPlaybackEvent(action="play")` when NO `ChatMessage`/
+        `ChatMessageEnhanced` widget claims the message id, and even then
+        only reaches `handle_tts_playback` after a full Textual message
+        round-trip. This plays the artifact directly instead, mirroring
+        `handle_tts_playback`'s own "play" action (silence any live sink
+        first, so the two independent audio-output paths never overlap
+        into a double voice; track `_last_played` so a later stop can
+        interrupt it, and schedule the same delayed cleanup) -- but
+        additionally reports the outcome through `on_finished`, offloaded
+        via `_run_blocking_tts_io` like every other blocking call in this
+        class.
+
+        `TTS.audio_player.play_audio_file` launches a background player
+        process and returns as soon as it has started (or failed to
+        start) -- NOT when playback actually finishes -- so
+        `on_finished(True)` here means "handed off to the audio
+        subsystem", the same completion granularity the legacy path has
+        always offered: `_generate_tts`'s own `TTSCompleteEvent`, posted
+        just before this runs, already signals "ready to play", not "done
+        playing".
+        """
+        from tldw_chatbook.TTS.audio_player import play_audio_file as play_audio
+
+        stop_live_sink()
+        started = False
+        try:
+            started = await self._run_blocking_tts_io(lambda: play_audio(audio_file))
+        except Exception:
+            logger.warning("Legacy TTS playback failed to start for one utterance")
+            started = False
+
+        async with self._audio_files_lock:
+            self._last_played = (message_id, audio_file)
+        asyncio.create_task(self._cleanup_audio_file(message_id, delay=5.0))
+
+        on_finished(bool(started))
 
     def _post_sink_event(self, event: object) -> None:
         """Record one streaming-sink lifecycle event.
