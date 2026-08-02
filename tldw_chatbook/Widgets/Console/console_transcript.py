@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
@@ -19,7 +20,7 @@ from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Markdown, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -367,6 +368,121 @@ class _TranscriptRow:
     card_state: ConsoleSetupCardState | None = None
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
+
+
+#: SPIKE (frogmouth-comparison follow-up): opt-in full-markdown rendering for
+#: ASSISTANT transcript rows via Textual's Markdown widget, streamed with
+#: Markdown.append() on prefix-diffed deltas. Env-gated so the shipped
+#: span-subset renderer (TASK-372) is untouched by default. Read once at
+#: import; the gate exists only for A/B live capture, not runtime toggling.
+_MD_SPIKE_ENABLED = bool(os.environ.get("TLDW_CONSOLE_MD_SPIKE"))
+
+
+def _markdown_spike_body(message: ConsoleChatMessage) -> str:
+    """Return the raw markdown body for the spike row (no status suffix).
+
+    The plain-text renderer appends ``" [streaming]"`` to the body; a suffix
+    would defeat prefix-diffed appends, so the spike keeps status in the
+    header line and feeds the Markdown widget content only.
+    """
+    if message.variants is not None:
+        return message.variants.current.content
+    return message.content
+
+
+def _markdown_spike_header(message: ConsoleChatMessage) -> Content:
+    """Return the dim one-line role/status header for the spike row."""
+    role_label = _message_role_label(message)
+    if message.sibling_count > 1:
+        role_label = (
+            f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
+        )
+    suffix = ""
+    if message.status == "streaming":
+        body = _markdown_spike_body(message)
+        suffix = (
+            f"  {CONSOLE_GENERATING_PLACEHOLDER}" if not body.strip() else "  [streaming]"
+        )
+    elif message.status in {"stopped", "failed"}:
+        suffix = f"  [{message.status}]"
+    return Content.assemble((f"{role_label}{suffix}", "dim"))
+
+
+class ConsoleMarkdownMessage(Vertical):
+    """SPIKE: assistant transcript row rendered with Textual's Markdown widget.
+
+    Streaming deltas are applied with ``Markdown.append()`` (prefix-diffed
+    against the last applied body) so per-tick cost is O(delta), not
+    O(message) — the incremental machinery ``MarkdownStream`` uses under
+    higher-frequency writes. Attachment chips and citation notices are out of
+    spike scope.
+    """
+
+    can_focus = False
+
+    DEFAULT_CSS = """
+    ConsoleMarkdownMessage {
+        height: auto;
+    }
+    ConsoleMarkdownMessage > Static {
+        height: auto;
+    }
+    ConsoleMarkdownMessage > Markdown {
+        height: auto;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+    }
+    """
+
+    def __init__(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+        self.message_id = message.id
+        classes = "console-transcript-message console-transcript-message-markdown"
+        if selected:
+            classes = f"{classes} console-transcript-message-selected"
+        super().__init__(id=f"console-message-{message.id}", classes=classes)
+        self._message = message
+        self._body_text = _markdown_spike_body(message)
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            _markdown_spike_header(self._message),
+            classes="console-md-spike-header",
+        )
+        yield Markdown(self._body_text)
+
+    def sync_message(
+        self, message: ConsoleChatMessage, *, selected: bool = False
+    ) -> None:
+        """Update header/body in place; append-only body growth avoids re-parse."""
+        self.message_id = message.id
+        self._message = message
+        if selected:
+            self.add_class("console-transcript-message-selected")
+        else:
+            self.remove_class("console-transcript-message-selected")
+        try:
+            header = self.query_one(".console-md-spike-header", Static)
+            markdown = self.query_one(Markdown)
+        except NoMatches:
+            return
+        header.update(_markdown_spike_header(message))
+        new_body = _markdown_spike_body(message)
+        if new_body == self._body_text:
+            return
+        if new_body.startswith(self._body_text):
+            markdown.append(new_body[len(self._body_text) :])
+        else:
+            markdown.update(new_body)
+        self._body_text = new_body
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        transcript = self.parent
+        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
+            transcript = transcript.parent
+        if isinstance(transcript, ConsoleTranscript):
+            transcript.toggle_message_selection(self.message_id)
 
 
 class ConsoleTranscriptMessage(Static):
@@ -1443,6 +1559,11 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-original-attempt",
             )
         if row.kind == "message" and row.message is not None:
+            if (
+                _MD_SPIKE_ENABLED
+                and row.message.role is ConsoleMessageRole.ASSISTANT
+            ):
+                return ConsoleMarkdownMessage(row.message, selected=row.selected)
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
         if row.kind == "citations" and row.message is not None:
             button = Button(
@@ -1509,6 +1630,13 @@ class ConsoleTranscript(VerticalScroll):
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleMarkdownMessage)
+        ):
+            widget.sync_message(row.message, selected=row.selected)
+            return widget
         if (
             row.kind == "message"
             and row.message is not None
