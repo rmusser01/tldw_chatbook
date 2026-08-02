@@ -265,6 +265,7 @@ class LLMManagementWindow(Container):
             "mlx-lm": "llm-view-mlx-lm",
             "curated": "llm-view-curated",
             "installed": "llm-view-installed",
+            "remote": "llm-view-remote",
             "download-models": "llm-view-download-models",
         }
 
@@ -925,6 +926,12 @@ class LLMManagementWindow(Container):
                     legacy_dir=legacy_dir,
                     id="installed-models-view",
                 )
+
+            # Remote is explicitly idle until Search is submitted.
+            with Container(id="llm-view-remote", classes="llm-view"):
+                from .Screens.model_remote_view import RemoteView
+
+                yield RemoteView(id="remote-models-view")
 
             # Download Models View (preserved unchanged)
             with Container(id="llm-view-download-models", classes="llm-view"):
