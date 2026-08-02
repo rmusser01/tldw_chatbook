@@ -289,17 +289,17 @@ class MCPTools:
             List of search results with content and metadata
         """
         try:
-            # Perform search
+            # Perform search (both service methods are coroutines — they must
+            # be awaited directly, not dispatched via asyncio.to_thread, which
+            # would return the unawaited coroutine object)
             if use_semantic and hasattr(self.rag_service, "semantic_search"):
-                results = await asyncio.to_thread(
-                    self.rag_service.semantic_search,
+                results = await self.rag_service.semantic_search(
                     query=query,
                     limit=limit,
                     media_types=media_types,
                 )
             else:
-                results = await asyncio.to_thread(
-                    self.rag_service.keyword_search,
+                results = await self.rag_service.keyword_search(
                     query=query,
                     limit=limit,
                     media_types=media_types,
