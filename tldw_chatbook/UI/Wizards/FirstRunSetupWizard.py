@@ -15,8 +15,31 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.compose import compose as _drain_compose_result
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
+
+from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    active_managed_parakeet_v2_dir,
+    parakeet_v2_managed_service,
+    parakeet_v2_reference,
+    run_parakeet_v2_preflight,
+    run_parakeet_v2_provision,
+)
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
+from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
+from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+from tldw_chatbook.Widgets.ModelArtifacts import (
+    ActivationRequested,
+    DeletionRequested,
+    InstallProgressed,
+    ModelActivationControls,
+    ModelInstallModal,
+    ModelInstallProgress,
+    make_progress_callback,
+)
+from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
 class SetupRadioButton(RadioButton):
@@ -1073,6 +1096,691 @@ class RagStep(SetupStep):
         return {"embedding_model": self.selected_embedding_model}
 
 
+class SpeechSetupStep(SetupStep):
+    """Optional Speech transcription setup: install/activate Parakeet v2.
+
+    TASK-1301: reuses the TASK-596 shared model-artifact controls
+    (ModelInstallModal, ModelInstallProgress, ModelActivationControls) and
+    the TASK-595 ModelArtifactService via the SAME
+    Local_Ingestion.parakeet_v2_artifact convenience wrappers LibraryScreen's
+    own Parakeet v2 install surface already uses -- no duplicate artifact or
+    network logic (AC#4). Language/precision options are enumerated from the
+    canonical STT policy/catalog (first_run_speech_step_state, backed by
+    tldw_chatbook.STT.routing) and gated to what a curated descriptor can
+    actually download today (AC#2).
+
+    Runtime gate (review Important 4): the `onnx-asr` extra is optional --
+    missing it means a downloaded Parakeet v2 could never actually run.
+    Gated exactly like RagStep gates on ``embeddings_rag_deps_installed()``:
+    when the extra is absent, no install is ever offered.
+
+    Persistence gate (AC#5 / review Important 3): commit() re-verifies --
+    off the event loop -- that the managed Parakeet v2 artifact is active,
+    AND requires that the user actually engaged this step THIS run
+    (installed or activated it here) before writing anything to
+    [transcription]. An artifact that merely happens to be active from an
+    earlier session (e.g. installed via the Library screen) is not enough
+    on its own -- a re-run that just presses Next through this step leaves
+    whatever is already persisted completely untouched, however different
+    (``remote-whisper``, ``default_language="auto"``, ...). The step also
+    shows what is currently persisted before the user acts (the AC#5
+    "prefill" clause) via ``first_run_speech_step_state.speech_prefill_status``.
+
+    Skip and failures never trap the user (AC#6): Next/commit never blocks
+    on install state, and a failed download still refreshes the step's own
+    installed-state read so it never gets stuck showing a stale
+    "installing…" affordance. A broken/not-ready installed item still shows
+    ModelActivationControls(ready=False) so Delete (recovery) stays
+    reachable (review Important 5).
+    """
+
+    def __init__(
+        self,
+        wizard: Optional["SetupWizardContainer"] = None,
+        config: Optional[WizardStepConfig] = None,
+        *,
+        service_factory: Optional[Callable[[], Any]] = None,
+        runtime_installed: Optional[Callable[[], bool]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._service_factory = service_factory or parakeet_v2_managed_service
+        if runtime_installed is None:
+            from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
+
+            runtime_installed = parakeet_onnx_deps_installed
+        self._runtime_installed = runtime_installed
+        self._reference = parakeet_v2_reference()
+        self._service: Any = None
+        self._loading = False
+        self._loaded = False
+        self._reload_after_load = False
+        self._load_error: Optional[str] = None
+        self._installed_item: Any = None
+        self._operation: Optional[str] = None
+        self._pending_report: Any = None
+        self._progress: Any = None
+        # Review Important 3: set only by a SUCCESSFUL install/activation
+        # made THROUGH THIS STEP during this run -- see commit()'s use via
+        # first_run_speech_step_state.should_persist_speech_config.
+        self._acted_this_run = False
+
+    def compose_step(self) -> ComposeResult:
+        """Render the title/prefill/status/action block, then the language
+        and precision catalogs.
+
+        Entirely pure/I/O-free: it builds from ``self`` bookkeeping already
+        in memory and the two catalog helpers in ``first_run_speech_step_state``
+        (backed by ``curated_registry()``, which itself only builds
+        descriptors in memory -- no network or filesystem access happens
+        here). Any I/O (checking installed state) is deferred to ``on_show``.
+
+        Returns:
+            The composed widgets: title, optional prefill line, status line
+            plus its action control, an optional "use as default" affordance,
+            then the language and precision ``RadioSet`` catalogs (see the
+            Review Important 2 note below for the ordering rationale).
+        """
+        # Review Important 2: the primary action must be visible at the
+        # wizard's own tested 120x40 budget -- title/subtitle/prefill/
+        # status/action come FIRST (typically <=6 rows); the informational
+        # language/precision catalog (up to 27 disabled rows, already
+        # capped by ".setup-choice-list") comes after, reachable by
+        # scrolling like any other step's overflow content.
+        with Vertical(classes="setup-speech"):
+            yield Static("Speech transcription (optional)", classes="setup-title")
+            yield Static(
+                "Recommended: Parakeet v2 (English, INT8) — on-device speech-to-text. "
+                "Skip and set this up later from Lab ▸ Models.",
+                classes="setup-subtitle",
+            )
+            prefill_text = self._prefill_status_text()
+            if prefill_text:
+                # NEW-1 (review): persisted values (and, below, the runtime-
+                # missing message's bracketed extras names) may contain
+                # literal "[...]" -- markup=False, same fix already applied
+                # to "#setup-summary-rows" for the identical trap.
+                yield Static(
+                    prefill_text,
+                    id="setup-speech-prefill",
+                    classes="setup-subtitle",
+                    markup=False,
+                )
+            status_text, action_widget = self._status_and_action()
+            yield Static(
+                status_text,
+                id="setup-speech-status",
+                classes="setup-subtitle",
+                markup=False,
+            )
+            progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
+            progress.display = self._operation == "install" and self._progress is not None
+            yield progress
+            if action_widget is not None:
+                yield action_widget
+            if self._use_as_default_offer():
+                # Review NEW-2: installed + active + configured elsewhere is
+                # the one state where neither "install" nor "activate" is a
+                # real action -- offer the affordance the prefill sentence
+                # actually promises instead of leaving it undeliverable.
+                yield Button(
+                    "Use Parakeet v2 as my default",
+                    id="setup-speech-use-as-default",
+                    variant="primary",
+                )
+            yield Static("", classes="setup-step-error")
+            yield Label("Language", classes="setup-field-label")
+            with RadioSet(id="setup-speech-language-choice", classes="setup-choice-list"):
+                for option in speech_state.speech_language_options(
+                    curated_model_ids=self._curated_model_ids()
+                ):
+                    label = option.display_name + (
+                        " (recommended)"
+                        if option.selectable
+                        else " — not yet available for managed install"
+                    )
+                    yield SetupRadioButton(
+                        label,
+                        id=f"setup-speech-language-{option.code}",
+                        value=option.selectable and option.code == "en",
+                        disabled=not option.selectable,
+                    )
+            yield Label("Precision", classes="setup-field-label")
+            with RadioSet(id="setup-speech-precision-choice", classes="setup-choice-list"):
+                for option in speech_state.speech_precision_options(
+                    curated_precisions=self._curated_precisions()
+                ):
+                    label = option.display_name + (
+                        " (recommended)"
+                        if option.selectable
+                        else " — not yet available for managed install"
+                    )
+                    # Minor 8: pre-press ONLY the one recommended option --
+                    # "selectable" alone would pre-press every selectable
+                    # precision the moment a second one is ever curated.
+                    yield SetupRadioButton(
+                        label,
+                        id=f"setup-speech-precision-{option.value}",
+                        value=option.selectable and option.value == "int8",
+                        disabled=not option.selectable,
+                    )
+
+    # -- pure, I/O-free helpers (curated_registry() only builds descriptors
+    # in memory -- see its own module docstring) -------------------------
+    @staticmethod
+    def _curated_model_ids() -> frozenset[str]:
+        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
+
+        return frozenset(descriptor.model_id for descriptor in curated_registry().list())
+
+    @staticmethod
+    def _curated_precisions() -> frozenset[str]:
+        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
+
+        policy = speech_state.routing_policy()
+        return frozenset(
+            descriptor.precision
+            for descriptor in curated_registry().list()
+            if descriptor.model_id == policy.parakeet_v2_model_id
+        )
+
+    # -- review finding 2: read the PRESSED radio, never a hardcoded default --
+    _LANGUAGE_RADIO_ID_PREFIX = "setup-speech-language-"
+    _PRECISION_RADIO_ID_PREFIX = "setup-speech-precision-"
+
+    def _effective_language(self) -> str:
+        """The code of the currently pressed language radio, or "" for none.
+
+        Mirrors ``ModelSetupStep._live_pressed_radio``'s guard: reading
+        ``RadioSet.pressed_button`` unguarded can resurrect a stale press
+        left over from before a ``recompose``, so membership in the set's
+        CURRENT children is required too. "" (never pressed / step
+        unmounted, e.g. ``commit()`` called before ``on_show()``) is a
+        valid, skip-safe result -- ``resolve_speech_selection`` falls back
+        to the recommended default for it.
+        """
+        return self._pressed_radio_code(
+            "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
+        )
+
+    def _effective_precision(self) -> str:
+        """The value of the currently pressed precision radio, or "" for none."""
+        return self._pressed_radio_code(
+            "#setup-speech-precision-choice", self._PRECISION_RADIO_ID_PREFIX
+        )
+
+    def _pressed_radio_code(self, selector: str, id_prefix: str) -> str:
+        try:
+            radio_set = self.query_one(selector, RadioSet)
+        except Exception:
+            return ""
+        pressed = radio_set.pressed_button
+        if pressed is None or pressed not in radio_set.query(RadioButton):
+            return ""
+        button_id = pressed.id or ""
+        if not button_id.startswith(id_prefix):
+            return ""
+        return button_id[len(id_prefix):]
+
+    def _prefill(self) -> Any:
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        return speech_state.read_speech_prefill(app_config)
+
+    def _installed_active(self) -> bool:
+        item = self._installed_item
+        return bool(item is not None and item.active)
+
+    def _prefill_status_text(self) -> str:
+        """AC#5's "re-run prefills" clause: show what is already persisted.
+
+        Reads ``self.wizard.app_instance.app_config`` directly -- the same
+        in-memory, already-loaded dict other steps read synchronously in
+        compose_step() (e.g. RagStep._embedding_model_ids()) -- so this
+        needs no worker. ``installed_active``/``acted_this_run`` make the
+        copy state-aware (review NEW-2): the "installing or activating"
+        promise is only shown when one of those is still a real action.
+        """
+        return speech_state.speech_prefill_status(
+            self._prefill(),
+            installed_active=self._installed_active(),
+            acted_this_run=self._acted_this_run,
+            runtime_installed=self._runtime_installed(),
+        )
+
+    def _use_as_default_offer(self) -> bool:
+        """Review NEW-2: offer the real affordance the prefill sentence
+        promises -- installed AND active (so neither Install nor Activate
+        is available), a DIFFERENT provider is currently persisted, the
+        runtime can actually run Parakeet, and the user has not already
+        opted in this run (once acted, commit() already persists on Next).
+        """
+        if self._acted_this_run:
+            return False
+        if not self._runtime_installed():
+            return False
+        if not self._installed_active():
+            return False
+        prefill = self._prefill()
+        return prefill.provider_id != speech_state.routing_policy().parakeet_provider_id
+
+    @property
+    def _lifecycle_pending(self) -> bool:
+        """Review NEW-3: a forced reload in flight must ALSO disable the
+        install/activation controls, not just an explicit operation --
+        otherwise a just-deleted (or just-installed) artifact's stale
+        ``_installed_item`` briefly re-renders with enabled controls before
+        the reload's own callback replaces it (InstalledView's own pending
+        computation includes its loading flag for the identical reason).
+        """
+        return self._operation is not None or self._loading
+
+    def _status_and_action(self) -> tuple[str, Optional[Widget]]:
+        # Review Important 4: gate BEFORE the installed-state load so a
+        # minimal install sees the real reason immediately, and no install
+        # is ever offered without the runtime that would actually run it.
+        if not self._runtime_installed():
+            return (
+                'The "onnx-asr" runtime is not installed, so a downloaded '
+                "model could not run. Install the extras package "
+                '"tldw_chatbook[transcription_parakeet_onnx]" (or run '
+                "pip install 'onnx-asr[cpu]==0.12.0'), then revisit this "
+                "step. Skipping is safe — set this up later from Lab ▸ "
+                "Models.",
+                None,
+            )
+        if not self._loaded:
+            if self._load_error:
+                return self._load_error, Button("Retry", id="setup-speech-retry")
+            return "Checking installed models…", None
+        item = self._installed_item
+        if item is None:
+            return "Not installed.", Button(
+                "Review and install…",
+                id="setup-speech-install",
+                variant="primary",
+                disabled=self._lifecycle_pending,
+            )
+        if item.error is not None or not item.ready:
+            # Review Important 5: reuse the SAME 596 control instead of a
+            # dead end -- ready=False already keeps Delete enabled (the
+            # only real recovery path) while disabling Activate.
+            return (
+                "This model needs attention — delete it below and install "
+                "again, or manage it from Lab ▸ Models ▸ Installed.",
+                ModelActivationControls(
+                    self._reference,
+                    active=item.active,
+                    ready=item.ready,
+                    pending=self._lifecycle_pending,
+                ),
+            )
+        status = "Installed and active." if item.active else "Installed, not yet active."
+        return status, ModelActivationControls(
+            self._reference,
+            active=item.active,
+            ready=item.ready,
+            pending=self._lifecycle_pending,
+        )
+
+    # -- lazy installed-state load ----------------------------------------
+    def on_show(self) -> None:
+        """Trigger the step's one lazy I/O read: is Parakeet v2 installed?
+
+        ``compose_step`` renders synchronously from in-memory state only;
+        this is where the step first asks the artifact service (via
+        ``_ensure_loaded`` -> ``_load_installed_state``, an exclusive
+        background worker) whether a managed Parakeet v2 artifact already
+        exists, so the status line can move past "Checking installed
+        models…". Idempotent: a step already re-shown (rerun navigation)
+        does not re-trigger a redundant load (see ``_ensure_loaded``).
+
+        Returns:
+            None.
+        """
+        super().on_show()
+        self._ensure_loaded()
+
+    def _ensure_loaded(self, *, force: bool = False) -> None:
+        # Minor 11: a forced reload requested while a load is already in
+        # flight must not be silently dropped -- remember it and honor it
+        # when the in-flight load's own callback runs (InstalledView's own
+        # _reload_after_load pattern).
+        if self._loading:
+            if force:
+                self._reload_after_load = True
+            return
+        if self._loaded and not force:
+            return
+        self._loading = True
+        self._load_error = None
+        self.refresh(recompose=True)
+        self._load_installed_state()
+
+    def _service_for_worker(self) -> Any:
+        if self._service is None:
+            self._service = self._service_factory()
+        return self._service
+
+    @work(thread=True, group="setup-speech-load", exclusive=True, exit_on_error=False)
+    def _load_installed_state(self) -> None:
+        try:
+            service = self._service_for_worker()
+            item = next(
+                (
+                    candidate
+                    for candidate in service.list_installed()
+                    if candidate.descriptor is not None
+                    and candidate.descriptor.reference == self._reference
+                ),
+                None,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "Speech setup step could not read installed models"
+            )
+            self.app.call_from_thread(
+                self._apply_installed_state,
+                None,
+                "Could not check installed speech models.",
+            )
+            return
+        self.app.call_from_thread(self._apply_installed_state, item, None)
+
+    def _apply_installed_state(self, item: Any, error: Optional[str]) -> None:
+        self._installed_item = item
+        self._loading = False
+        self._loaded = error is None
+        self._load_error = error
+        reload_after_load = self._reload_after_load
+        self._reload_after_load = False
+        if reload_after_load:
+            self._ensure_loaded(force=True)
+        else:
+            self.refresh(recompose=True)
+
+    # -- install: preflight -> consent modal -> provision ------------------
+    @on(Button.Pressed, "#setup-speech-install")
+    def _install_pressed(self) -> None:
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
+            return
+        self._operation = "install"
+        self.refresh(recompose=True)
+        self._preflight_install()
+
+    @on(Button.Pressed, "#setup-speech-retry")
+    def _retry_pressed(self) -> None:
+        self._ensure_loaded(force=True)
+
+    @on(Button.Pressed, "#setup-speech-use-as-default")
+    def _use_as_default_pressed(self) -> None:
+        """Review NEW-2: make the affordance real. Sets the SAME
+        ``_acted_this_run`` flag install/activate success sets -- nothing
+        is written to disk here (matches every other step: only commit()
+        on Next writes), but the pending choice is now genuine, and the
+        prefill sentence updates to say so."""
+        if self._lifecycle_pending or not self._use_as_default_offer():
+            return
+        self._acted_this_run = True
+        self.notify(
+            "Parakeet v2 will become your default when you continue.",
+            severity="information",
+        )
+        self.refresh(recompose=True)
+
+    @work(thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False)
+    def _preflight_install(self) -> None:
+        import asyncio
+
+        try:
+            report = asyncio.run(run_parakeet_v2_preflight())  # policy-exception: worker-thread loop
+        except Exception as exc:
+            logger.opt(exception=True).error("Speech transcription preflight failed")
+            self.app.call_from_thread(
+                self._apply_preflight_result,
+                None,
+                install_failure_message(exc, model_label="Parakeet v2"),
+            )
+            return
+        self.app.call_from_thread(self._apply_preflight_result, report, None)
+
+    def _apply_preflight_result(self, report: Any, error: Optional[str]) -> None:
+        if error is not None or report is None:
+            self._operation = None
+            self.notify(error or "Speech model preflight failed.", severity="error")
+            self.refresh(recompose=True)
+            return
+        self._pending_report = report
+        self.app.push_screen(
+            ModelInstallModal(
+                report,
+                model_label="Parakeet v2 (English, INT8)",
+                container_id="setup-speech-install-modal",
+                confirm_id="setup-speech-install-confirm",
+                cancel_id="setup-speech-install-cancel",
+            ),
+            self._confirm_install,
+        )
+
+    def _confirm_install(self, confirmed: bool) -> None:
+        if not confirmed:
+            self._pending_report = None
+            self._operation = None
+            self.refresh(recompose=True)
+            return
+        self._provision_install()
+
+    @work(thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False)
+    def _provision_install(self) -> None:
+        import asyncio
+
+        report = self._pending_report
+        if report is None:
+            self.app.call_from_thread(
+                self._apply_provision_result,
+                "No install plan is available; review the model again.",
+            )
+            return
+        try:
+            asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_v2_provision(
+                    report, progress=make_progress_callback(self.post_message)
+                )
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error("Speech model installation failed")
+            self.app.call_from_thread(
+                self._apply_provision_result,
+                install_failure_message(exc, model_label="Parakeet v2"),
+            )
+            return
+        self.app.call_from_thread(self._apply_provision_result, None)
+
+    @on(InstallProgressed)
+    def _install_progressed(self, event: InstallProgressed) -> None:
+        event.stop()  # Minor 9: LibraryScreen's equivalent handler stops it too
+        self._progress = event.progress
+        try:
+            progress = self.query_one(
+                "#setup-speech-install-progress", ModelInstallProgress
+            )
+        except NoMatches:
+            self.refresh(recompose=True)
+            return
+        progress.display = True
+        progress.update_progress(event.progress)
+
+    def _apply_provision_result(self, error: Optional[str]) -> None:
+        self._pending_report = None
+        self._operation = None
+        self._progress = None
+        if error is not None:
+            self.notify(error, severity="error")
+        else:
+            # Review Important 3: a SUCCESSFUL install made through this
+            # step this run is the engagement commit()'s no-clobber gate
+            # requires -- see should_persist_speech_config.
+            self._acted_this_run = True
+            self.notify("Speech model installed and activated.", severity="information")
+        # AC#6: failures never trap -- always refresh installed state so the
+        # step reflects reality (and drops the disabled "installing…" affordance)
+        # whether provisioning succeeded or failed.
+        self._ensure_loaded(force=True)
+
+    # -- activation / deletion: the 596 controls, reused verbatim ----------
+    @on(ActivationRequested)
+    def _activation_requested(self, event: ActivationRequested) -> None:
+        event.stop()
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
+            return
+        self._operation = "activate"
+        self.refresh(recompose=True)
+        self._activate_model()
+
+    @work(thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False)
+    def _activate_model(self) -> None:
+        try:
+            self._service_for_worker().activate(self._reference)
+        except Exception as exc:
+            logger.opt(exception=True).error("Speech model activation failed")
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                lifecycle_failure_message(exc, operation="activation"),
+            )
+            return
+        self.app.call_from_thread(self._apply_lifecycle_result, None)
+
+    @on(DeletionRequested)
+    def _deletion_requested(self, event: DeletionRequested) -> None:
+        event.stop()
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
+            return
+        self.app.push_screen(
+            DeleteConfirmationDialog(
+                item_type="Model",
+                item_name="Parakeet v2 (English, INT8)",
+                additional_warning=(
+                    "The managed model files will be removed from this device."
+                ),
+                permanent=True,
+            ),
+            self._confirm_deletion,
+        )
+
+    def _confirm_deletion(self, confirmed: bool) -> None:
+        if not confirmed or self._lifecycle_pending:
+            return
+        self._operation = "delete"
+        self.refresh(recompose=True)
+        self._delete_model()
+
+    @work(thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False)
+    def _delete_model(self) -> None:
+        try:
+            self._service_for_worker().delete(self._reference)
+        except Exception as exc:
+            logger.opt(exception=True).error("Speech model deletion failed")
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                lifecycle_failure_message(exc, operation="deletion"),
+            )
+            return
+        self.app.call_from_thread(self._apply_lifecycle_result, None)
+
+    def _apply_lifecycle_result(self, error: Optional[str]) -> None:
+        # Capture BEFORE clearing: only a successful ACTIVATE counts as
+        # engagement (review Important 3) -- deleting is not "opting in",
+        # and the artifact will not be active afterwards anyway, so
+        # commit()'s active-check already keeps that case skip-safe.
+        operation = self._operation
+        self._operation = None
+        if error is not None:
+            self.notify(error, severity="error")
+        else:
+            if operation == "activate":
+                self._acted_this_run = True
+            self.notify("Speech model updated.", severity="information")
+        self._ensure_loaded(force=True)
+
+    # -- persistence gate (AC#5 / review Important 3 & 4) -------------------
+    async def commit(self) -> tuple[bool, str]:
+        """Persist ``[transcription]`` defaults, but only when it is safe to.
+
+        Called by the wizard on Next/Finish. Writes nothing -- returns the
+        ok-but-skip result ``(True, "")`` -- unless ALL of the following
+        hold, each freshly re-verified rather than trusted from stale
+        widget state:
+
+        * the ``onnx-asr`` runtime extra is importable (Important 4) --
+          persisting a provider the runtime cannot execute is worse than no
+          config change at all;
+        * a managed Parakeet v2 artifact is verified ACTIVE right now
+          (``_check_active``, run off the event loop in an executor, never
+          the possibly-stale ``self._installed_item``);
+        * the user engaged this step THIS wizard run -- installed,
+          activated, or used "use as default" (``self._acted_this_run``) --
+          see ``first_run_speech_step_state.should_persist_speech_config``.
+
+        That last condition is Important 3's core no-clobber guarantee: an
+        artifact that merely happens to be active from an earlier session
+        (for example, installed via the Library screen) is not, on its
+        own, reason to overwrite whatever is already configured in
+        ``[transcription]`` (``remote-whisper``, ``default_language="auto"``,
+        ...) just because the user pressed Next through a re-run without
+        touching this step.
+
+        When it does write, the persisted provider/model/language come
+        from ``first_run_speech_step_state.resolve_speech_selection`` --
+        the PRESSED language/precision radios (read via
+        ``_effective_language``/``_effective_precision``), never a
+        hardcoded recommendation (review finding 2; see that function's
+        docstring for the fallback rules).
+
+        Returns:
+            ``(True, "")`` when nothing needed writing, or the write
+            succeeded; ``(False, <message>)`` only when a write was
+            attempted and ``wizard.commit_config`` reported failure.
+        """
+        import asyncio
+
+        # Important 4: never persist a provider the runtime cannot execute,
+        # even if somehow both active and acted (belt-and-suspenders; the
+        # UI-side gate in _status_and_action is the primary defense --
+        # mirrors RagStep's own commit() re-check of deps_installed()).
+        if not self._runtime_installed():
+            return True, ""
+        active_dir = await asyncio.get_running_loop().run_in_executor(
+            None, self._check_active
+        )
+        if not speech_state.should_persist_speech_config(
+            active=active_dir is not None, acted_this_run=self._acted_this_run
+        ):
+            # Skip-safe: nothing verified active, OR the user never engaged
+            # this step this run -- either way, leave [transcription] byte-
+            # identical to whatever is already persisted (review Important 3).
+            return True, ""
+        # Review finding 2: persist what the user actually pressed, not a
+        # hardcoded constant -- see resolve_speech_selection's docstring.
+        provider_id, model_id, language = speech_state.resolve_speech_selection(
+            selected_language=self._effective_language(),
+            selected_precision=self._effective_precision(),
+            curated_model_ids=self._curated_model_ids(),
+            curated_precisions=self._curated_precisions(),
+        )
+        ok = await self.wizard.commit_config(
+            speech_state.build_speech_transcription_commit(
+                provider_id=provider_id, model_id=model_id, language=language,
+            )
+        )
+        return (True, "") if ok else (False, "Saving the speech transcription choice failed.")
+
+    def _check_active(self) -> Any:
+        try:
+            return active_managed_parakeet_v2_dir(self._service_for_worker())
+        except Exception:
+            logger.opt(exception=True).error("Speech setup active-check failed")
+            return None
+
+
 class ToolsStep(SetupStep):
     """Enable built-in tools (all default OFF; risk-tagged ones still ask per call)."""
 
@@ -1585,10 +2293,19 @@ class SummaryStep(SetupStep):
     """
 
     def __init__(self, wizard=None, config=None, *, load_config=None,
-                 rag_deps_installed=None, **kwargs):
+                 rag_deps_installed=None, speech_installed=None,
+                 speech_runtime_installed=None, **kwargs):
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._load_config = load_config
         self._rag_deps_installed = rag_deps_installed
+        # TASK-1301 AC#6: same injectable-callable shape as rag_deps_installed
+        # -- defaults to a real, off-loop-safe check of the managed Parakeet
+        # v2 artifact's installed/active state.
+        self._speech_installed = speech_installed
+        # Review Important 4 residual: same shape again -- defaults to the
+        # real onnx-asr runtime probe so Summary agrees with the Speech
+        # step's own runtime gate instead of only checking files-on-disk.
+        self._speech_runtime_installed = speech_runtime_installed
         self.exit_route: Optional[str] = None
 
     def compose_step(self) -> ComposeResult:
@@ -1644,10 +2361,45 @@ class SummaryStep(SetupStep):
             from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 
             deps = embeddings_rag_deps_installed
+        speech_installed_check = self._speech_installed
+        if speech_installed_check is None:
+
+            def speech_installed_check() -> bool:
+                # Minor 12: a Quick-track user (who never saw the Speech
+                # step) reaching Summary must not cause the managed
+                # artifact store's directories to be created on disk --
+                # constructing a real ModelArtifactService (what
+                # active_managed_parakeet_v2_dir() does internally) mkdirs
+                # unconditionally. A read-only existence check first means
+                # "nothing was ever installed by anyone" costs zero
+                # filesystem writes; only go on to the real check once
+                # something has legitimately created the root already.
+                if not managed_model_artifact_root().exists():
+                    return False
+                return active_managed_parakeet_v2_dir() is not None
+
+        speech_runtime_check = self._speech_runtime_installed
+        if speech_runtime_check is None:
+            from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
+
+            speech_runtime_check = parakeet_onnx_deps_installed
+
         config = await asyncio.get_running_loop().run_in_executor(None, load)
+        speech_installed = await asyncio.get_running_loop().run_in_executor(
+            None, speech_installed_check
+        )
+        speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
+            None, speech_runtime_check
+        )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
-        rows = build_summary_rows(config, dict(os.environ), rag_deps_installed=deps())
+        rows = build_summary_rows(
+            config,
+            dict(os.environ),
+            rag_deps_installed=deps(),
+            speech_installed=speech_installed,
+            speech_runtime_installed=speech_runtime_installed,
+        )
         # Static.update() parses "[...]" as Rich markup by default, so any
         # bracketed literal in a label/detail (e.g. a package extra name)
         # must be escaped or it silently vanishes from the rendered text.
@@ -1799,15 +2551,18 @@ class SetupWizardContainer(WizardContainer):
             ),
             ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
             RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
-            ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
-            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes", 6)),
+            SpeechSetupStep(
+                wizard=self, config=cfg(wizard_state.STEP_SPEECH, "Speech", 5)
+            ),
+            ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 6)),
+            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes", 7)),
             AppearanceStep(
-                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Style", 7)
+                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Style", 8)
             ),
             ProtectKeysStep(
-                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect", 8)
+                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect", 9)
             ),
-            SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 9)),
+            SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 10)),
         ]
 
     # -- active-step navigation --------------------------------------------

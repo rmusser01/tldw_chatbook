@@ -723,6 +723,29 @@ def embeddings_rag_deps_installed() -> bool:
     return True
 
 
+def parakeet_onnx_deps_installed() -> bool:
+    """Cheap probe: is the `onnx-asr` runtime extra installed?
+
+    Same shape as `embeddings_rag_deps_installed()` — `find_spec` only, no
+    import, no side effects, safe from configuration/render paths. Mirrors
+    `Local_Ingestion.transcription_service`'s own `ONNX_ASR_AVAILABLE`
+    probe (`importlib.util.find_spec("onnx_asr")`), which is the actual
+    runtime gate `parakeet-onnx` transcription checks before loading a
+    model; this is the same check available without importing that heavier
+    module.
+
+    Returns:
+        True when `onnx_asr` (the `onnx-asr[cpu]` extra,
+        `transcription_parakeet_onnx` feature) resolves to an installed
+        distribution.
+    """
+    try:
+        return importlib.util.find_spec("onnx_asr") is not None
+    except Exception as e:
+        logger.debug(f"find_spec probe failed for onnx_asr: {e}")
+        return False
+
+
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
     # Always recheck dependencies - don't return cached False value

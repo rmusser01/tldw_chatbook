@@ -1441,6 +1441,198 @@ async def test_summary_step_renders_rows_from_read_back():
 
 
 @pytest.mark.asyncio
+async def test_summary_default_speech_check_skips_service_construction_when_store_root_absent(
+    monkeypatch, tmp_path
+):
+    """TASK-1301 review Minor 12: a Quick-track user (who never saw the
+    Speech step) reaching Summary must not cause the managed artifact
+    store's directories to be created on disk just to render a row that
+    will read "not set up (optional)" either way. The default
+    speech_installed check must do a read-only existence check on the
+    store root FIRST and skip constructing a real ModelArtifactService
+    (which mkdirs) when nothing has ever been installed by anyone."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    absent_root = tmp_path / "never-created"
+    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: absent_root)
+    probe = MagicMock()
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_v2_dir", probe)
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+        # speech_installed deliberately NOT overridden -- exercising the
+        # real default this test is pinning.
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+
+    probe.assert_not_called()
+    assert not absent_root.exists(), "the managed store root must not be created"
+
+
+@pytest.mark.asyncio
+async def test_summary_default_speech_check_still_checks_when_store_root_exists(
+    monkeypatch, tmp_path
+):
+    """The other half: once the store root legitimately exists (Library
+    install, a Full-track visit to the Speech step, ...), the default
+    check must still do the real check -- the mkdir-avoidance guard must
+    not turn into a silent "always False"."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    existing_root = tmp_path / "already-there"
+    existing_root.mkdir()
+    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: existing_root)
+    probe = MagicMock(return_value=None)
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_v2_dir", probe)
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+
+    # on_show can legitimately fire more than once in this harness (natural
+    # Show event plus the explicit call above); the point being pinned is
+    # "the real check still runs at all", not an exact call count.
+    assert probe.call_count >= 1
+    probe.assert_called_with()
+
+
+@pytest.mark.asyncio
+async def test_summary_speech_runtime_check_defaults_to_the_real_onnx_asr_probe(
+    monkeypatch,
+):
+    """Important 4 residual (re-review): SummaryStep must resolve a real
+    onnx-asr runtime probe by default (same shape as rag_deps_installed/
+    speech_installed) and hand it to build_summary_rows, so a config
+    persisted while the extra was present but later removed reads as
+    ATTENTION, not a stale CONFIGURED."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.UI.Wizards.first_run_setup_state as setup_state_module
+    import tldw_chatbook.Utils.optional_deps as optional_deps_module
+
+    # Both patched at their SOURCE modules: SummaryStep._render_rows() does
+    # function-local imports of both parakeet_onnx_deps_installed (matching
+    # embeddings_rag_deps_installed's own pattern) and build_summary_rows,
+    # so patching FirstRunSetupWizard's own namespace would not be observed
+    # -- each local import re-resolves the current attribute on its source
+    # module at call time.
+    monkeypatch.setattr(
+        optional_deps_module, "parakeet_onnx_deps_installed", lambda: False
+    )
+    captured: dict[str, object] = {}
+    original = setup_state_module.build_summary_rows
+
+    def _capture(*args, **kwargs):
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(setup_state_module, "build_summary_rows", _capture)
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                "default_language": "en",
+            }
+        },
+        rag_deps_installed=lambda: False,
+        speech_installed=lambda: True,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        rendered = str(step.query_one("#setup-summary-rows", Static).render())
+
+    assert captured.get("speech_runtime_installed") is False
+    assert "onnx-asr" in rendered.lower() or "runtime" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_summary_speech_runtime_check_is_injectable(monkeypatch):
+    """The other half: an explicitly-injected check overrides the default,
+    same pattern as rag_deps_installed/speech_installed."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.UI.Wizards.first_run_setup_state as setup_state_module
+
+    captured: dict[str, object] = {}
+    original = setup_state_module.build_summary_rows
+
+    def _capture(*args, **kwargs):
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(setup_state_module, "build_summary_rows", _capture)
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+        speech_runtime_installed=lambda: True,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+
+    assert captured.get("speech_runtime_installed") is True
+
+
+@pytest.mark.asyncio
 async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_path):
     """F-D regression (UAT): the footer's "Config file:" line must show the
     REAL effective path -- resolved fresh via get_cli_config_path(), which

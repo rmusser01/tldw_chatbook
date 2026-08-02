@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from tldw_chatbook.STT.routing import VALIDATED_V3_LANGUAGES
+
 
 PARAKEET_V2_MODEL = "nemo-parakeet-tdt-0.6b-v2"
 PARAKEET_V3_MODEL = "nemo-parakeet-tdt-0.6b-v3"
@@ -10,35 +12,16 @@ _DEFAULT_PROVIDER = "default"
 _FASTER_WHISPER_PROVIDER = "faster-whisper"
 _PARAKEET_PROVIDER = "parakeet-onnx"
 _AUTO_LANGUAGE = "auto"
-_PARAKEET_V3_LANGUAGES = frozenset(
-    {
-        "bg",
-        "hr",
-        "cs",
-        "da",
-        "nl",
-        "en",
-        "et",
-        "fi",
-        "fr",
-        "de",
-        "el",
-        "hu",
-        "it",
-        "lv",
-        "lt",
-        "mt",
-        "pl",
-        "pt",
-        "ro",
-        "sk",
-        "sl",
-        "es",
-        "sv",
-        "ru",
-        "uk",
-    }
-)
+# Qodo review (task-1301 PR #1184): this set used to be a hand-duplicated
+# copy of tldw_chatbook.STT.routing's validated-v3 allowlist. Now sourced
+# from the one canonical declaration -- but batch routing's own gate is not
+# "the v3 set", it's "every language Parakeet (v2 or v3) can serve": v2
+# owns English, so it is unioned in explicitly here rather than folded into
+# the canonical set (which must stay English-free -- RoutingPolicy enforces
+# that). _parakeet_route below picks v2 vs v3 by language ("en" -> v2,
+# everything else in this set -> v3); this set only gates "is this language
+# servable by Parakeet at all".
+_PARAKEET_V3_LANGUAGES = VALIDATED_V3_LANGUAGES | {"en"}
 
 
 class BatchSTTRoutingError(ValueError):

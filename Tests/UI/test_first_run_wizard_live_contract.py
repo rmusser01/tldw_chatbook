@@ -274,10 +274,13 @@ async def test_full_track_skip_everything_leaves_app_usable(
             else:
                 raise AssertionError("never reached the summary step")
 
+            # TASK-1301: Speech transcription joins the FULL track right
+            # after RAG; every step here is skip-safe with nothing selected.
             assert seen_step_ids == [
                 "provider",
                 "model",
                 "rag",
+                "speech",
                 "tools",
                 "notes",
                 "appearance",
@@ -655,6 +658,85 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
                 )
             assert "Start chatting" in rendered_text
             assert "Explore on my own" in rendered_text
+
+
+@pytest.mark.asyncio
+async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-1301 review Important 2: the Speech step's primary action
+    ("Review and install…") must be painted at the wizard's own tested
+    120x40 budget, not merely reachable by scrolling -- same standard as
+    test_provider_key_input_visible_at_120x40_without_scrolling. Before the
+    fix, a live probe found the rendered frame ending after an empty
+    Precision box with the button at y=35, painted=False; the fix moves the
+    status/action row ahead of the informational language/precision
+    RadioSets so it renders within the step's first few rows regardless of
+    how tall that catalog grows below it.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            _select_radio(app.screen, "#setup-track-full")
+            await pilot.pause(0.1)
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
+            await pilot.pause(0.2)
+
+            for _ in range(4):
+                step = app.screen.query_one(SetupWizardContainer).steps[
+                    app.screen.query_one(SetupWizardContainer).current_step
+                ]
+                if step.config and step.config.id == "speech":
+                    break
+                _press(app.screen, "#wizard-next")
+                await pilot.pause(0.2)
+            else:
+                raise AssertionError("never reached the speech step")
+
+            # The install-state load is a real background worker (real
+            # ModelArtifactService over the isolated test data dir) -- wait
+            # for it to settle so the button has actually rendered rather
+            # than the transient "Checking installed models…" placeholder.
+            # Existence in the DOM alone is not enough: a widget can be
+            # mounted (query finds it) a beat before Textual's own layout
+            # pass gives it a non-empty region, so wait for the region too
+            # -- otherwise this flakes with Region(0, 0, 0, 0).
+            def _install_button_laid_out() -> bool:
+                buttons = app.screen.query("#setup-speech-install")
+                return bool(buttons) and buttons[0].region.height > 0
+
+            await _wait_until(pilot, _install_button_laid_out, timeout_seconds=10.0)
+
+            install_button = app.screen.query_one("#setup-speech-install", Button)
+            region = install_button.region
+            assert region.width > 0 and region.height > 0, (
+                f"install button has an empty region at 120x40: {region}"
+            )
+            assert region.y >= 0, f"install button clipped above row 0: {region}"
+            assert region.bottom <= 40, f"install button clipped past row 40: {region}"
+            assert region.right <= 120, f"install button clipped past column 120: {region}"
+
+            # Cross-check against the actual compositor output -- region
+            # alone does not prove the compositor painted it (see this
+            # suite's own docstring / lessons-live-verification.md).
+            assert install_button in app.screen._compositor.visible_widgets, (
+                "install button's region looked on-screen, but the "
+                "compositor never actually painted it -- it is scrolled "
+                "out of view"
+            )
+            strips = app.screen._compositor.render_strips()
+            rendered_text = "\n".join(
+                "".join(segment.text for segment in strip) for strip in strips
+            )
+            assert "Review and install" in rendered_text, (
+                "install button's label never reached the rendered frame"
+            )
 
 
 # ---------------------------------------------------------------------------

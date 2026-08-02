@@ -48,6 +48,24 @@ _FASTER_WHISPER_BASE_EXPLICIT_LANGUAGES = frozenset(
     """.split()
 )
 
+#: The single canonical validated-v3 language set (English excluded --
+#: ``RoutingPolicy.__post_init__`` rejects "en"/"auto" here on purpose:
+#: English is v2's language, not part of the "additional" v3 set). This is
+#: the ONE place this allowlist is declared; every caller that needs a
+#: sealed default ``RoutingPolicy`` should use ``default_routing_policy()``
+#: below rather than re-declaring the set (a review found this exact
+#: allowlist hand-duplicated in both
+#: ``UI.Wizards.first_run_speech_step_state`` and
+#: ``Local_Ingestion.stt_batch_routing`` -- the latter's own gate set
+#: additionally includes "en" for its own, different reason; see that
+#: module for the explicit, commented union).
+VALIDATED_V3_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
+        "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RoutingPolicy:
@@ -87,6 +105,19 @@ class RoutingPolicy:
                     "validated_v3_languages must contain canonical lower-case "
                     "non-English explicit language tags"
                 )
+
+
+def default_routing_policy() -> RoutingPolicy:
+    """Return the sealed default ``RoutingPolicy`` built from the canonical set.
+
+    Returns:
+        A ``RoutingPolicy`` whose ``validated_v3_languages`` is
+        ``VALIDATED_V3_LANGUAGES`` -- the one declaration of the validated
+        Parakeet v3 language allowlist. Callers that need a
+        ``RoutingPolicy`` and have no reason to use a different language
+        set should call this instead of constructing one by hand.
+    """
+    return RoutingPolicy(validated_v3_languages=VALIDATED_V3_LANGUAGES)
 
 
 class RoutingResolutionError(Exception):
@@ -422,10 +453,12 @@ class TranscriptionRouter:
 
 
 __all__ = [
+    "VALIDATED_V3_LANGUAGES",
     "ResolvedTranscriptionRequest",
     "RoutingPolicy",
     "RoutingResolutionError",
     "TranscriptionRouter",
     "build_builtin_declarations",
     "build_builtin_registry",
+    "default_routing_policy",
 ]

@@ -33,7 +33,9 @@ from tldw_chatbook.STT.routing import (
     TranscriptionRouter,
     build_builtin_declarations,
     build_builtin_registry,
+    default_routing_policy,
 )
+from tldw_chatbook.STT.routing import VALIDATED_V3_LANGUAGES as CANONICAL_VALIDATED_V3_LANGUAGES
 
 
 VALIDATED_V3_LANGUAGES = frozenset({"es", "fr"})
@@ -802,3 +804,28 @@ def test_registry_builder_merges_exact_extra_declarations_and_rejects_collisions
 def test_noncanonical_language_is_rejected_by_request_before_routing() -> None:
     with pytest.raises(ValueError, match="canonical lower-case language tag"):
         _request(language="EN")
+
+
+class TestDefaultRoutingPolicy:
+    """Qodo review (task-1301 PR #1184): VALIDATED_V3_LANGUAGES is the ONE
+    canonical declaration of the validated-v3 allowlist; default_routing_policy()
+    is the one sealed default built from it. Both
+    UI.Wizards.first_run_speech_step_state and Local_Ingestion.stt_batch_routing
+    now consume this instead of hand-rolling their own copies."""
+
+    def test_returns_a_routing_policy_sealed_from_the_canonical_set(self) -> None:
+        policy = default_routing_policy()
+        assert isinstance(policy, RoutingPolicy)
+        assert policy.validated_v3_languages == CANONICAL_VALIDATED_V3_LANGUAGES
+
+    def test_canonical_set_excludes_english_and_auto(self) -> None:
+        """RoutingPolicy.__post_init__ enforces this already; pin it directly
+        on the canonical constant so a future edit that reintroduces "en" or
+        "auto" fails here, not only via the dataclass's own validation."""
+        assert "en" not in CANONICAL_VALIDATED_V3_LANGUAGES
+        assert "auto" not in CANONICAL_VALIDATED_V3_LANGUAGES
+
+    def test_repeated_calls_return_policies_that_compare_equal(self) -> None:
+        """Not necessarily the same object (RoutingPolicy is only frozen, not
+        cached) -- but every caller must observe the identical language set."""
+        assert default_routing_policy() == default_routing_policy()
