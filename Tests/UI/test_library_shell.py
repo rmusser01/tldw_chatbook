@@ -11838,3 +11838,66 @@ async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
             late_result, screen._library_ingest_preflight_generation
         )
         assert screen._library_ingest_form.preflight is late_result
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_job_tick_recompose_preserves_typing_focus():
+    """(task-2010) A registry notification recomposes the canvas; the path
+    Input the user is typing into must keep focus, text, and cursor. Without
+    the restore, focus silently falls to the screen and the next digit
+    keystroke navigates the whole app."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        # Programmatic value assignment posts Input.Changed exactly like
+        # typing does, so the screen's path handler tracks it into the form.
+        path_input.value = "/tmp"
+        path_input.cursor_position = 4
+        await pilot.pause()
+        assert screen._library_ingest_form.path == "/tmp"
+
+        # A background job transition fires the registry listener.
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await pilot.pause()
+
+        remounted = screen.query_one("#library-ingest-path", Input)
+        focused = screen.app.focused
+        assert focused is remounted, (
+            f"focus fell to {focused!r} after the job-tick recompose"
+        )
+        assert remounted.value == "/tmp"
+        assert remounted.cursor_position == 4
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_restore_context_survives_vanished_widget():
+    """(task-2010) Restoring focus to a widget id that no longer exists after
+    the recompose (a finished job's row-action button) must not raise."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        screen._restore_library_ingest_canvas_context(
+            "library-ingest-retry-ingest-job-999", 3, 12.0
+        )
+        await pilot.pause()  # no exception is the assertion

@@ -2,7 +2,7 @@
 id: TASK-2010
 title: >-
   Library ingest job-tick recompose steals focus and scroll
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:

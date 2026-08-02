@@ -5598,7 +5598,7 @@ class LibraryScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
-            self.refresh(recompose=True)
+            self._refresh_library_ingest_canvas_preserving_context()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         done_count = counts_fn().get("done", 0) if callable(counts_fn) else 0
@@ -5607,6 +5607,67 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_last_done_count = done_count
             if grew:
                 self._refresh_local_source_snapshot()
+
+    def _refresh_library_ingest_canvas_preserving_context(self) -> None:
+        """Recompose for a job-tick WITHOUT losing what the user was doing.
+
+        ``refresh(recompose=True)`` remounts every widget: focus silently
+        falls to the screen (so the user's next keystrokes hit the global
+        digit bindings and navigate the app) and the canvas scroll snaps to
+        the top on every queue transition. Capture focus id + cursor +
+        scroll before scheduling the recompose, restore after -- the same
+        remount-focus-loss family as ``_focus_library_search_input`` and
+        the rail's ``scroll_to`` restore (task-2010).
+        """
+        focused = self.app.focused
+        focused_id = getattr(focused, "id", None) if focused is not None else None
+        cursor = (
+            focused.cursor_position
+            if focused_id is not None and isinstance(focused, Input)
+            else None
+        )
+        scroll_y: float | None = None
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+            scroll_y = canvas.scroll_offset.y
+        except (NoMatches, QueryError):
+            pass
+        self.refresh(recompose=True)
+        if focused_id is not None or scroll_y:
+            self.call_after_refresh(
+                self._restore_library_ingest_canvas_context,
+                focused_id,
+                cursor,
+                scroll_y,
+            )
+
+    def _restore_library_ingest_canvas_context(
+        self,
+        focused_id: str | None,
+        cursor: int | None,
+        scroll_y: float | None,
+    ) -> None:
+        """Re-apply focus/cursor/scroll captured before a job-tick recompose.
+
+        Scroll first, then focus with ``scroll_visible=False`` so restoring
+        focus does not itself yank the scroll position. A vanished widget id
+        (a finished job's row-action button) degrades silently (task-2010).
+        """
+        if scroll_y:
+            try:
+                canvas = self.query_one(LibraryIngestCanvas)
+                canvas.scroll_to(y=scroll_y, animate=False, force=True)
+            except (NoMatches, QueryError):
+                pass
+        if not focused_id:
+            return
+        try:
+            widget = self.query_one(f"#{focused_id}")
+        except (NoMatches, QueryError):
+            return
+        widget.focus(scroll_visible=False)
+        if cursor is not None and isinstance(widget, Input):
+            widget.cursor_position = min(cursor, len(widget.value))
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
         """Build the ingest canvas's full display state from the live registry + form.
