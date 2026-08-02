@@ -110,7 +110,7 @@ Reason: ADR-040 is accepted and defines the storage ownership, migration, compat
 - Consumes: TASK-1331's decision that transcription history is not a product feature.
 - Produces: no importable `Dictation_Window`, `transcription_history`, `transcription_history_viewer`, `get_user_database_path`, `USER_DB_DIR`, or `USER_DB_PATH`; retained `ImprovedDictationWindow` provider normalization.
 
-- [ ] **Step 1: Add a failing retirement contract**
+- [x] **Step 1: Add a failing retirement contract**
 
 Create the architecture test with exact source and symbol assertions:
 
@@ -153,7 +153,7 @@ def test_legacy_user_database_symbols_have_no_production_binding() -> None:
     assert offenders == []
 ```
 
-- [ ] **Step 2: Run the retirement contract and verify RED**
+- [x] **Step 2: Run the retirement contract and verify RED**
 
 Run:
 
@@ -163,11 +163,11 @@ Run:
 
 Expected: FAIL because the three rejected modules and legacy DB symbols still exist.
 
-- [ ] **Step 3: Delete the rejected production implementations and legacy DB helper**
+- [x] **Step 3: Delete the rejected production implementations and legacy DB helper**
 
 Delete the three files exactly. In `Utils/paths.py`, remove the imported/fallback `USER_DB_DIR` and `USER_DB_PATH` names, the `__main__` diagnostic references, and `get_user_database_path()`. In `Utils/Utils.py`, remove `USER_DB_DIR`, `USER_DB_FILENAME`, and `USER_DB_PATH`. Do not add compatibility shims that reconstruct the retired path.
 
-- [ ] **Step 4: Preserve only Improved Dictation provider coverage**
+- [x] **Step 4: Preserve only Improved Dictation provider coverage**
 
 In `Tests/Local_Ingestion/test_dictation_window_provider_ids.py`:
 
@@ -195,11 +195,11 @@ assert settings["provider"] == "lightning-whisper-mlx"
 assert save_calls == []
 ```
 
-- [ ] **Step 5: Remove exact test and source-census collateral**
+- [x] **Step 5: Remove exact test and source-census collateral**
 
 Remove the history imports and `test_transcription_history_disabled_actions_explain_selection_requirement` from `Tests/UI/test_disabled_action_recovery_tooltips.py`. Remove only `tldw_chatbook/Widgets/transcription_history_viewer.py` from the parametrized list in `Tests/UI/test_file_picker_filters_callable.py`. Update the `LEGACY_PROVIDER_IDS` comment in `Utils/local_stt_providers.py` to describe persisted values from the retired and retained dictation implementations without presenting the deleted module as live.
 
-- [ ] **Step 6: Reconcile the curated SQLite owner inventory**
+- [x] **Step 6: Reconcile the curated SQLite owner inventory**
 
 Remove this tuple from `EXPECTED_PARENT_CREATORS` in `Tests/DB/test_private_sqlite_inventory.py`:
 
@@ -213,7 +213,7 @@ Remove this tuple from `EXPECTED_PARENT_CREATORS` in `Tests/DB/test_private_sqli
 
 Keep row P05 in `backlog/docs/sqlite-private-owner-inventory.md`, but change its state to `migrated`, disposition to `remove_obsolete_creation`, and rationale to state that TASK-865 removed the unreachable creator without touching any database.
 
-- [ ] **Step 7: Regenerate and inspect the diagnostic inventory**
+- [x] **Step 7: Regenerate and inspect the diagnostic inventory**
 
 Run:
 
@@ -224,11 +224,11 @@ git diff -- Docs/security/production-diagnostic-inventory.json
 
 Accept only owner/call records attributable to the three deleted modules and the touched production sources. If another file changes, stop and reconcile that source before staging the generated inventory.
 
-- [ ] **Step 8: Correct current documentation and release notes**
+- [x] **Step 8: Correct current documentation and release notes**
 
 Mark the history/store/viewer and legacy `Dictation_Window.py` descriptions as retired or superseded in the three TTS documents. Preserve historical Backlog tasks unchanged. Add an Unreleased/Removed changelog entry naming the three unreachable modules and an Unreleased/Changed entry noting that unsupported direct imports of `get_user_database_path`, `USER_DB_DIR`, and `USER_DB_PATH` were removed.
 
-- [ ] **Step 9: Run focused verification**
+- [x] **Step 9: Run focused verification**
 
 Run:
 
@@ -246,7 +246,7 @@ git diff --check
 
 Expected: all selected tests pass; the diagnostic checker reports the new reviewed counts.
 
-- [ ] **Step 10: Commit the privacy retirement**
+- [x] **Step 10: Commit the privacy retirement**
 
 ```bash
 git add tldw_chatbook Tests backlog/docs Docs/security Docs/Development/TTS CHANGELOG.md
@@ -267,7 +267,7 @@ git commit -m "refactor(privacy): retire rejected dictation history"
 - Consumes: Python source text and ADR-040's five retained exception kinds.
 - Produces: `Occurrence`, `ExceptionRule`, `scan_source()`, `scan_tree()`, `reconcile_inventory()`, and a CLI returning nonzero for new/count-changed/stale occurrences.
 
-- [ ] **Step 1: Write scanner fixtures before the scanner**
+- [x] **Step 1: Write scanner fixtures before the scanner**
 
 Define tests against these exact interfaces:
 
@@ -338,7 +338,7 @@ def test_reconcile_rejects_duplicates_new_counts_and_stale_rules() -> None:
     assert reconcile_inventory((occurrence,), ())
 ```
 
-- [ ] **Step 2: Run scanner fixtures and verify RED**
+- [x] **Step 2: Run scanner fixtures and verify RED**
 
 Run:
 
@@ -348,7 +348,7 @@ Run:
 
 Expected: collection fails because `scripts.check_profile_owned_path_inventory` does not exist.
 
-- [ ] **Step 3: Implement typed scanner records and dispositions**
+- [x] **Step 3: Implement typed scanner records and dispositions**
 
 Create these public records in the script:
 
@@ -381,7 +381,7 @@ class ExceptionRule:
 
 Use `tokenize.generate_tokens()` for executable string tokens and `ast.parse()` for docstring spans, qualified ownership contexts, and path-join expressions. A context is the smallest enclosing function/class or the module assignment target, for example `module:BASE_DATA_DIR_CLI` versus `function:_default_base_data_dir`; this is required because those two `config.py` joins have different ADR-040 dispositions. Literal shapes are the root plus its path-like suffix, for example `literal:~/.local/share/tldw_cli/media.db`. Join shapes are exactly `join:.config/tldw_cli` or `join:.local/share/tldw_cli`.
 
-- [ ] **Step 4: Implement physical-line and path-join detection**
+- [x] **Step 4: Implement physical-line and path-join detection**
 
 The implementation must:
 
@@ -405,11 +405,11 @@ def _literal_expression(value: str, root: str, offset: int) -> str:
 
 Flatten `/`, `os.path.join(...)`, and `.joinpath(...)` expressions into string components, detect either suffix regardless of the base expression, and deduplicate nested `BinOp` nodes by `(relative_path, line, column, context, expression)`.
 
-- [ ] **Step 5: Implement exact reconciliation and CLI output**
+- [x] **Step 5: Implement exact reconciliation and CLI output**
 
 `reconcile_inventory()` groups occurrences by `(relative_path, context, expression)`, rejects a missing rule, rejects a count mismatch, rejects duplicate rules, rejects an empty reason, and rejects a stale rule. `main()` scans `tldw_chatbook/**/*.py`, prints every error as `path:line: context: expression: reason`, and exits 1 on any error. Add `--print-occurrences` to print the complete sorted census without changing files.
 
-- [ ] **Step 6: Run scanner unit verification**
+- [x] **Step 6: Run scanner unit verification**
 
 Run:
 
@@ -420,7 +420,7 @@ Run:
 
 Expected: scanner fixtures pass; the report lists current production occurrences for classification by later tasks.
 
-- [ ] **Step 7: Commit the scanner foundation**
+- [x] **Step 7: Commit the scanner foundation**
 
 ```bash
 git add scripts/check_profile_owned_path_inventory.py Tests/Architecture/test_profile_owned_path_inventory.py
@@ -446,7 +446,7 @@ git commit -m "test(architecture): inventory profile-owned path literals"
 - Consumes: `get_cli_config_path() -> Path`.
 - Produces: `_default_dictionary_import_directory() -> Path`, `_default_prompt_import_directory() -> Path`, `_github_config_guidance_path() -> Path`, `_theme_save_target() -> Path`, and `_internal_prompts_save_target() -> Path`.
 
-- [ ] **Step 1: Write two-profile function tests**
+- [x] **Step 1: Write two-profile function tests**
 
 Use parameterized scratch profile paths and call the actual helpers directly:
 
@@ -471,7 +471,7 @@ Add a no-override case that monkeypatches `tldw_chatbook.config.DEFAULT_CONFIG_P
 
 Extend the existing dictionary test to inspect `mock_validate_path.call_args.args[1]` and assert it equals the selected config parent. For prompt import, monkeypatch `is_initialized()` to true and `validate_path()` to capture the actual default base while driving `import_prompts_from_files()`.
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run:
 
@@ -484,7 +484,7 @@ Run:
 
 Expected: FAIL because the helpers do not exist and the current functions still use global literals.
 
-- [ ] **Step 3: Add lazy config-child helpers at their owning modules**
+- [x] **Step 3: Add lazy config-child helpers at their owning modules**
 
 Implement the helpers without module-level path constants:
 
@@ -511,7 +511,7 @@ def _internal_prompts_save_target() -> Path:
 
 Use the dictionary/prompt helpers only when `base_directory is None`; explicit caller paths remain unchanged.
 
-- [ ] **Step 4: Replace all dynamic Settings path copy**
+- [x] **Step 4: Replace all dynamic Settings path copy**
 
 Replace the two module-level raw Theme strings in `_INSPECTOR_GUIDANCE` with path-neutral wording. In the call-time `_inspector_guidance_rows()` Theme branch, `_category_ownership_records()`, and `_render_detail_pane()`, format `_theme_save_target()` or `_internal_prompts_save_target()` so the active profile is displayed. Do not create either directory merely to display it.
 
@@ -522,11 +522,11 @@ f"{_theme_save_target()}{os.sep}"
 f"{_internal_prompts_save_target()}  [internal_prompts]"
 ```
 
-- [ ] **Step 5: Verify Code Repository guidance through the actual method**
+- [x] **Step 5: Verify Code Repository guidance through the actual method**
 
 Add an async function test without mounting an `App`: use a `MagicMock(spec=CodeRepoCopyPasteWindow)` receiver with a `Mock` `notify`, monkeypatch `tldw_chatbook.config.get_cli_setting` to return no token, await the actual unbound `CodeRepoCopyPasteWindow.configure_token(window, object())`, and assert the notification contains the selected scratch `config.toml` path.
 
-- [ ] **Step 6: Run focused path-isolation tests**
+- [x] **Step 6: Run focused path-isolation tests**
 
 Run:
 
@@ -542,7 +542,7 @@ git diff --check
 
 Expected: tests pass and the dictionary, prompt, Code Repository, and Settings literal occurrences disappear from the scanner report.
 
-- [ ] **Step 7: Commit config-state reader/display ownership**
+- [x] **Step 7: Commit config-state reader/display ownership**
 
 ```bash
 git add tldw_chatbook/Character_Chat tldw_chatbook/Prompt_Management tldw_chatbook/UI Tests/Chat Tests/Prompt_Management Tests/UI
@@ -566,7 +566,7 @@ git commit -m "fix(config): resolve profile-owned path copy lazily"
 - Consumes: `get_cli_config_path()`, `application_owned_config_directory()`, and `atomic_private_write_text()`.
 - Produces: `kokoro_ui_blend_file() -> Path`, `write_private_json(path, payload, application_owned_directory=None) -> PrivatePathResult`, and `write_kokoro_ui_blends(payload) -> PrivatePathResult`.
 
-- [ ] **Step 1: Write path, mode, and failure-preservation tests**
+- [x] **Step 1: Write path, mode, and failure-preservation tests**
 
 ```python
 def test_ui_blend_path_retargets_after_module_import(
@@ -615,7 +615,7 @@ def test_serialization_failure_preserves_existing_ui_blends(
 
 Add a no-fallback test that sets `HOME` to `tmp_path / "home"`, seeds only `<scratch-home>/.config/tldw_cli/kokoro_voice_blends.json`, selects a different scratch `TLDW_CONFIG_PATH`, and asserts `kokoro_ui_blend_file()` and the actual blend-choice readers do not read, copy, modify, or delete the decoy.
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run:
 
@@ -625,7 +625,7 @@ Run:
 
 Expected: import fails because `voice_blend_paths.py` does not exist.
 
-- [ ] **Step 3: Implement the shared UI path and private JSON writer**
+- [x] **Step 3: Implement the shared UI path and private JSON writer**
 
 ```python
 def kokoro_ui_blend_file() -> Path:
@@ -655,15 +655,15 @@ def write_kokoro_ui_blends(payload: Mapping[str, Any]) -> PrivatePathResult:
     )
 ```
 
-- [ ] **Step 4: Route every UI reader and writer through the helper**
+- [x] **Step 4: Route every UI reader and writer through the helper**
 
 Replace both STTS readers, the Speech catalog reader, and all five Speech settings read/export/import/create sites with `kokoro_ui_blend_file()`. Replace the two plain `open(..., "w")`/`json.dump` writes in `_handle_import_file()` and `_show_add_voice_blend_dialog()` with `write_kokoro_ui_blends()`. Keep user-selected export-file writes unchanged because those are explicit exports, not private application state.
 
-- [ ] **Step 5: Prove actual production readers follow two profiles**
+- [x] **Step 5: Prove actual production readers follow two profiles**
 
 Create blend JSON under two scratch profile parents, retarget `TLDW_CONFIG_PATH`, and call the actual static `_kokoro_blend_choices()` methods from `STTSWindow` and `SpeechCatalogMixin`. Assert each call returns only the blend in the selected profile. Do not mount a Textual application.
 
-- [ ] **Step 6: Run UI speech and private-path verification**
+- [x] **Step 6: Run UI speech and private-path verification**
 
 Run:
 
@@ -680,7 +680,7 @@ git diff --check
 
 Expected: tests pass; only shared Chatterbox/Higgs asset paths remain in these UI modules' scanner output.
 
-- [ ] **Step 7: Commit UI Kokoro ownership**
+- [x] **Step 7: Commit UI Kokoro ownership**
 
 ```bash
 git add tldw_chatbook/TTS/voice_blend_paths.py tldw_chatbook/UI/STTS_Window.py tldw_chatbook/UI/Speech Tests/TTS Tests/UI
@@ -702,7 +702,7 @@ git commit -m "fix(tts): isolate Kokoro UI blends by profile"
 - Consumes: `write_private_json()` from Task 4 and the existing `TTSBackendManager`/`KokoroTTSBackend` production classes.
 - Produces: `default_kokoro_backend_blend_directory() -> Path`, `_save_blends() -> bool`, rollback-safe `save_voice_blend()` and `delete_voice_blend()`.
 
-- [ ] **Step 1: Write backend default/explicit/session tests**
+- [x] **Step 1: Write backend default/explicit/session tests**
 
 Add tests that:
 
@@ -722,7 +722,7 @@ assert first_backend.voice_blends_dir == first_config.parent / "kokoro_voice_ble
 assert second_backend.voice_blends_dir == second_config.parent / "kokoro_voice_blends"
 ```
 
-- [ ] **Step 2: Write atomic failure and in-memory rollback tests**
+- [x] **Step 2: Write atomic failure and in-memory rollback tests**
 
 Seed an existing `voice_blends.json`, set `backend.saved_blends`, monkeypatch `write_private_json` to raise `PrivatePathError`, and assert:
 
@@ -734,7 +734,7 @@ assert blend_file.read_text(encoding="utf-8") == original_text
 
 Add the symmetric deletion test: failed persistence restores the deleted mapping and returns `False`.
 
-- [ ] **Step 3: Run backend tests and verify RED**
+- [x] **Step 3: Run backend tests and verify RED**
 
 Run:
 
@@ -744,7 +744,7 @@ Run:
 
 Expected: default path assertions fail against the global literal and failure tests expose `_save_blends()` reporting success indirectly.
 
-- [ ] **Step 4: Implement default-directory selection without changing explicit paths**
+- [x] **Step 4: Implement default-directory selection without changing explicit paths**
 
 ```python
 def default_kokoro_backend_blend_directory() -> Path:
@@ -763,11 +763,11 @@ secure_private_directory(
 
 For an explicit configured path, preserve the existing `mkdir(parents=True, exist_ok=True)` behavior and do not reclassify the directory as application-owned.
 
-- [ ] **Step 5: Make disk and memory changes transactional**
+- [x] **Step 5: Make disk and memory changes transactional**
 
 Change `_save_blends()` to serialize through `write_private_json()` and return `True` only after replacement succeeds. In `save_voice_blend()`, save the prior mapping value, update memory, call `_save_blends()`, and restore memory on false/exception. In `delete_voice_blend()`, retain the removed value and restore it on false/exception. Keep the public boolean API.
 
-- [ ] **Step 6: Run backend and manager verification**
+- [x] **Step 6: Run backend and manager verification**
 
 Run:
 
@@ -784,7 +784,7 @@ git diff --check
 
 Expected: tests pass; backend blend state is profile-owned while Kokoro model/packaged voice paths remain shared occurrences.
 
-- [ ] **Step 7: Commit backend ownership and atomicity**
+- [x] **Step 7: Commit backend ownership and atomicity**
 
 ```bash
 git add tldw_chatbook/TTS Tests/TTS
@@ -806,7 +806,7 @@ git commit -m "fix(tts): persist backend blends privately per profile"
 - Consumes: `get_user_data_dir() -> Path` and existing `get_model_cache_dir()`.
 - Produces: `dictation_export_directory() -> Path`; unchanged user-requested text/Markdown export semantics.
 
-- [ ] **Step 1: Write two-user export helper and actual-method tests**
+- [x] **Step 1: Write two-user export helper and actual-method tests**
 
 ```python
 def test_dictation_export_directory_retargets_each_call(
@@ -825,11 +825,11 @@ def test_dictation_export_directory_retargets_each_call(
 
 For each export method, construct `ImprovedDictationWindow` with `__new__`, set `transcript_text`, `duration`, `word_count`, and an app object with a mocked `notify`, call the actual `_export_as_text()` or `_export_as_markdown()`, and assert exactly one expected-suffix file appears beneath the selected scratch user directory.
 
-- [ ] **Step 2: Write the embedding runtime-owner regression**
+- [x] **Step 2: Write the embedding runtime-owner regression**
 
 Patch `config.get_user_data_dir` to two scratch user directories and make `get_cli_setting("embedding_config", "model_cache_dir", default)` return the shipped default value. Call actual `get_model_cache_dir()` twice and assert the results are `<user>/models/embeddings`; assert the shipped literal is not used as a runtime filesystem target.
 
-- [ ] **Step 3: Run the new tests and verify RED**
+- [x] **Step 3: Run the new tests and verify RED**
 
 Run:
 
@@ -841,7 +841,7 @@ Run:
 
 Expected: Dictation tests fail because both exports still use the global data literal. The embedding test should already pass and therefore pins its correct classification as an inert shipped default.
 
-- [ ] **Step 4: Implement one Dictation export-directory owner**
+- [x] **Step 4: Implement one Dictation export-directory owner**
 
 ```python
 def dictation_export_directory() -> Path:
@@ -850,7 +850,7 @@ def dictation_export_directory() -> Path:
 
 Call this helper inside both export actions immediately before directory creation. Keep normal user-export file creation; do not route exports through `atomic_private_write_text()` and do not probe or move historical exports.
 
-- [ ] **Step 5: Run Dictation, embedding, and existing path suites**
+- [x] **Step 5: Run Dictation, embedding, and existing path suites**
 
 Run:
 
@@ -867,7 +867,7 @@ git diff --check
 
 Expected: all tests pass and no Improved Dictation hardcoded data root remains.
 
-- [ ] **Step 6: Commit active-user path ownership**
+- [x] **Step 6: Commit active-user path ownership**
 
 ```bash
 git add tldw_chatbook/UI/Dictation_Window_Improved.py Tests/UI/test_dictation_export_path.py Tests/Utils/test_embedding_cache_path.py
@@ -889,7 +889,7 @@ git commit -m "fix(dictation): export beneath active user data"
 - Consumes: final scanner output and the existing `BuiltDistributions`/`INSTALLED_PROBE` production-app test.
 - Produces: exact `APPROVED_EXCEPTIONS`, enforced source census, sdist/wheel absence contract, and installed full-`TldwCli` proof.
 
-- [ ] **Step 1: Print and classify the final occurrence set**
+- [x] **Step 1: Print and classify the final occurrence set**
 
 Run:
 
@@ -907,11 +907,11 @@ Every row must map to exactly one ADR-040 retained class:
 
 No UI Kokoro blend, dictionary, prompt, Settings copy, Code Repository copy, Improved Dictation export, rejected history, or legacy user-DB row may be allowlisted.
 
-- [ ] **Step 2: Encode exact count-sensitive exception rules**
+- [x] **Step 2: Encode exact count-sensitive exception rules**
 
 For each printed `(relative_path, context, expression)` triple, add one `ExceptionRule` with its observed final count, class, and asset/default/probe-specific reason. Sort rules by path, context, then expression. Run the checker once after encoding; it must exit zero. Then temporarily duplicate one retained literal in a scratch `scan_source()` fixture and assert reconciliation fails, proving a file-level allowlist cannot mask extra uses.
 
-- [ ] **Step 3: Activate the production-census pytest gate**
+- [x] **Step 3: Activate the production-census pytest gate**
 
 Add:
 
@@ -927,7 +927,7 @@ Add an AST source-census test proving `BASE_DATA_DIR_CLI` has no production reso
 
 Also invoke the CLI through `subprocess.run([sys.executable, ...])` and assert return code zero so developer and CI entry points share the same contract.
 
-- [ ] **Step 4: Add retired modules to sdist and wheel absence assertions**
+- [x] **Step 4: Add retired modules to sdist and wheel absence assertions**
 
 In `test_built_artifacts_match_distribution_contract`, define:
 
@@ -941,7 +941,7 @@ assert retired_modules.isdisjoint(sdist_members)
 assert retired_modules.isdisjoint(wheel_members)
 ```
 
-- [ ] **Step 5: Extend the existing installed full-application probe**
+- [x] **Step 5: Extend the existing installed full-application probe**
 
 Add `import importlib.util` to `INSTALLED_PROBE` and assert:
 
@@ -960,7 +960,7 @@ assert get_user_data_dir().is_relative_to(Path(os.environ["HOME"]))
 
 Keep the existing `get_app()`, `isinstance(app, TldwCli)`, `app.run_test()`, Home-to-Chat navigation, source-root exclusion, loaded-module path checks, and target immutability hashes. Do not introduce another `App` class.
 
-- [ ] **Step 6: Run architecture and installed-wheel tests**
+- [x] **Step 6: Run architecture and installed-wheel tests**
 
 Run:
 
@@ -976,7 +976,7 @@ git diff --check
 
 Expected: exact census passes; both artifacts omit retired modules; the installed wheel mounts and navigates the production `TldwCli` without checkout imports.
 
-- [ ] **Step 7: Commit the enforcement boundary**
+- [x] **Step 7: Commit the enforcement boundary**
 
 ```bash
 git add scripts/check_profile_owned_path_inventory.py Tests/Architecture/test_profile_owned_path_inventory.py Tests/Packaging/test_installed_distribution.py
@@ -998,7 +998,7 @@ git commit -m "test(packaging): enforce profile path ownership census"
 - Consumes: Tasks 1–7 and ADR-040.
 - Produces: fresh verification evidence, completed acceptance criteria, final implementation notes, reviewer verdict, and Backlog status `Done` only if every DoD gate passes.
 
-- [ ] **Step 1: Run the complete targeted matrix**
+- [x] **Step 1: Run the complete targeted matrix**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -1020,7 +1020,7 @@ git commit -m "test(packaging): enforce profile path ownership census"
   Tests/Packaging/test_installed_distribution.py -q
 ```
 
-- [ ] **Step 2: Run repository-wide tests and static checks**
+- [x] **Step 2: Run repository-wide tests and static checks**
 
 ```bash
 .venv/bin/python -m pytest
@@ -1034,7 +1034,7 @@ git diff --check
 
 Record the exact pass/fail/skip counts. If an upstream baseline failure appears, reproduce it against `origin/dev` before deciding whether TASK-865 is blocked; do not mark the task Done while a TASK-865 regression remains.
 
-- [ ] **Step 3: Perform a no-migration and no-Sync diff audit**
+- [x] **Step 3: Perform a no-migration and no-Sync diff audit**
 
 ```bash
 git diff --name-status origin/dev...HEAD
@@ -1044,11 +1044,11 @@ git diff origin/dev...HEAD | rg 'copy2|copyfile|rename\(|replace\(|unlink\(|rmtr
 
 Expected: the Notes/Sync diff is empty; any filesystem mutation match is either the approved atomic private replacement primitive call or existing user-export behavior, never migration/deletion of user data.
 
-- [ ] **Step 4: Request final code review**
+- [x] **Step 4: Request final code review**
 
 Use `superpowers:requesting-code-review` with base `origin/dev`, current `HEAD`, ADR-040, the approved design, and this plan. Resolve all Critical and Important findings and rerun every affected command before continuing.
 
-- [ ] **Step 5: Reconcile TASK-865 source of truth**
+- [x] **Step 5: Reconcile TASK-865 source of truth**
 
 Check all ten acceptance criteria only after the evidence exists. Replace the partial Implementation Notes with a concise final summary covering:
 
@@ -1061,7 +1061,7 @@ Check all ten acceptance criteria only after the evidence exists. Replace the pa
 
 Set the design status to `Implemented and verified`. Check every completed step in this plan.
 
-- [ ] **Step 6: Mark the Backlog task Done through the CLI**
+- [x] **Step 6: Mark the Backlog task Done through the CLI**
 
 Only when every acceptance criterion, test, static check, documentation update, and review gate is satisfied:
 
@@ -1072,7 +1072,7 @@ backlog task 865 --plain
 
 Verify the plain output shows `TASK-865`, `Done`, all checked acceptance criteria, ADR-040, the design, and final Implementation Notes.
 
-- [ ] **Step 7: Commit closeout documentation**
+- [x] **Step 7: Commit closeout documentation**
 
 ```bash
 git add "backlog/tasks/task-865 - Sweep-hardcoded-~-.config-tldw_cli-and-~-.local-share-tldw_cli-call-sites-onto-the-real-accessors.md" Docs/superpowers/specs/2026-08-01-profile-owned-path-completion-design.md Docs/superpowers/plans/2026-08-01-profile-owned-path-completion.md
@@ -1088,3 +1088,12 @@ git diff --check origin/dev...HEAD
 ```
 
 Expected: clean worktree, reviewable task-scoped commit series, and no uncommitted verification or inventory changes.
+
+## Completion Evidence and Deviations
+
+- Tasks 1–7 followed the planned ownership boundaries and were completed with reviewed RED/GREEN or focused verification recorded in the SDD ledger. Final review and re-review found no Critical issue; the remaining review items were addressed in `61476fa81`.
+- The exact final Task 8 matrix passed **210 tests with 7 known warnings in 140.21s**, including the installed wheel's full `TldwCli` probe. Both inventory checkers, focused Ruff on the final-fix Python files, `compileall`, and `git diff --check` passed. The final census is **432 owners / 1073 TASK-492 calls / 6677 TASK-494 calls / 4 sink files**.
+- The repository-wide pytest and Ruff/format commands were run as required. Pytest reported **26045 passed, 217 skipped, 65 failed, 2 errors, and 120 warnings** before the final base rebase; representative failures reproduced against clean development as sandbox loopback denial and repository UI/static baselines. Branch-wide Ruff/format likewise remain upstream baselines. No TASK-865 regression remains, so closeout follows the plan's explicit baseline-attribution allowance rather than claiming those repository-wide gates are green.
+- The no-migration/no-Sync audit against locked review base `23fa33c13945806ca90cf79dbcba3ade1c808739` found no Notes/Sync diff and no user-data copy, move, import, or delete behavior. Source deletion is limited to ADR-040's rejected unreachable implementations.
+- Tests use production functions/methods or the full application. The focused help test directly exercises a real `ImprovedDictationWindow` Widget with only its notification collaborator supplied; it does not create, subclass, or imitate a Textual `App`.
+- Step 8 uses the locked review base rather than moving `origin/dev`, as directed for a stable final review range. Current `origin/dev` relation is reported separately.
