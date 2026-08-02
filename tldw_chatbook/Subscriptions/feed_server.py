@@ -590,7 +590,10 @@ class FeedDirectoryServer:
             logger.warning(
                 "Feed directory server binding to {} (not loopback-only) -- "
                 "the served directory is reachable from beyond this "
-                "machine while it is running.",
+                "machine while it is running. A wildcard IPv6 bind such as "
+                "'::' is typically dual-stack (accepts plain IPv4 clients "
+                "too), so the reachable surface can be wider than the "
+                "address alone suggests.",
                 bind,
             )
 

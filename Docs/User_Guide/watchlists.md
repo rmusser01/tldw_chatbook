@@ -94,7 +94,9 @@ starts on its own, and no setting can make it start on its own.
   address, a warning is logged and the Serve Feed toast says so plainly.
   Only widen this if you understand that doing so removes the one thing
   standing between "only this machine" and "anyone who can reach it" —
-  there is still no authentication either way.
+  there is still no authentication either way. Note that a wildcard IPv6
+  bind (`::`) is usually dual-stack: it accepts plain IPv4 connections as
+  well, so the reachable surface can be wider than the address suggests.
 - **Confined to the exported directory.** The server refuses (with a plain
   404) any request that would read a file outside the directory you
   exported to, including through a symlink planted inside it that points
