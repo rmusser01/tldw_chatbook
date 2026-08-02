@@ -104,6 +104,12 @@ def effective_provider_endpoint(
     """
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
         return selected_endpoint
+    if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
+        for key in ("router_base_url", "huggingface_router_base_url"):
+            router_endpoint = provider_settings.get(key)
+            if isinstance(router_endpoint, str) and router_endpoint.strip():
+                return router_endpoint.strip()
+        return builtin_provider_endpoint(provider_key, provider_settings)
     configured_endpoint = first_configured_endpoint(provider_settings)
     if configured_endpoint:
         return configured_endpoint
@@ -122,18 +128,21 @@ def builtin_provider_endpoint(
         and str(settings.get("api_region", "")).lower() == "china"
     ):
         return "https://api.moonshot.cn/v1"
-    if (
-        provider_key == "huggingface"
-        and str(
-            settings.get(
+    if provider_key == "huggingface" and _huggingface_router_mode(settings):
+        return "https://router.huggingface.co/hf-inference"
+    return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
+
+
+def _huggingface_router_mode(provider_settings: Mapping[str, object]) -> bool:
+    return (
+        str(
+            provider_settings.get(
                 "use_router_url_format",
-                settings.get("huggingface_use_router_url_format", "False"),
+                provider_settings.get("huggingface_use_router_url_format", "False"),
             )
         ).lower()
         == "true"
-    ):
-        return "https://router.huggingface.co/hf-inference"
-    return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
+    )
 
 
 def provider_uses_endpoint(

@@ -683,6 +683,7 @@ async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
 @pytest.mark.asyncio
 async def test_resolve_for_send_materializes_configured_huggingface_router() -> None:
     router_base_url = "https://router.example.test/hf-inference"
+    api_base_url = "https://api-base.example.test/v1"
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
             "api_settings": {
@@ -691,6 +692,7 @@ async def test_resolve_for_send_materializes_configured_huggingface_router() -> 
                     "model": "org/model",
                     "use_router_url_format": True,
                     "router_base_url": router_base_url,
+                    "api_base_url": api_base_url,
                 }
             }
         },
@@ -703,6 +705,57 @@ async def test_resolve_for_send_materializes_configured_huggingface_router() -> 
 
     assert resolved.ready is True
     assert resolved.base_url == router_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_nonrouter_huggingface_preserves_api_base_precedence() -> (
+    None
+):
+    api_base_url = "https://api-base.example.test/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": False,
+                    "router_base_url": "https://router.example.test/hf-inference",
+                    "api_base_url": api_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == api_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_router_huggingface_preserves_builtin_default() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "https://router.huggingface.co/hf-inference"
 
 
 @pytest.mark.asyncio

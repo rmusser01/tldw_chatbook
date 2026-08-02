@@ -794,3 +794,70 @@ async def test_auxiliary_pins_default_anthropic_endpoint_before_config_changes(
     assert result.text == "ok"
     assert session.posts[0]["url"] == f"{default_endpoint}/messages"
     assert changed_endpoint not in str(session.posts)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_huggingface_router_url_matches_ordinary_adapter_after_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    router_base_url = "https://router.example.test/hf-inference"
+    api_base_url = "https://api-base.example.test/v1"
+    expected_url = f"{router_base_url}/models/org/model/v1/chat/completions"
+    gateway_config = {
+        "api_settings": {
+            "huggingface": {
+                "api_key": "key",
+                "model": "org/model",
+                "use_router_url_format": True,
+                "router_base_url": router_base_url,
+                "api_base_url": api_base_url,
+            }
+        }
+    }
+    adapter_config = {
+        "huggingface_api": {
+            "use_router_url_format": True,
+            "router_base_url": router_base_url,
+            "api_base_url": api_base_url,
+            "api_retries": 3,
+        }
+    }
+    session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
+    monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    ordinary = cloud_adapters.chat_with_huggingface(
+        input_data=[{"role": "user", "content": "ordinary"}],
+        model="org/model",
+        api_key="key",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+    assert resolution.base_url == router_base_url
+    request = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=({"role": "user", "content": "USER-CANARY"},),
+        response_format=None,
+        max_output_tokens=8,
+    )
+    gateway_config["api_settings"]["huggingface"]["router_base_url"] = (
+        "https://changed-router.example.test/hf-inference"
+    )
+    gateway_config["api_settings"]["huggingface"]["api_base_url"] = (
+        "https://changed-api.example.test/v1"
+    )
+    adapter_config["huggingface_api"]["router_base_url"] = (
+        "https://changed-router.example.test/hf-inference"
+    )
+    adapter_config["huggingface_api"]["api_base_url"] = (
+        "https://changed-api.example.test/v1"
+    )
+
+    auxiliary = await gateway.complete_auxiliary(request)
+
+    assert ordinary["choices"][0]["message"]["content"] == "ok"
+    assert auxiliary.text == "ok"
+    assert [post["url"] for post in session.posts] == [expected_url, expected_url]
