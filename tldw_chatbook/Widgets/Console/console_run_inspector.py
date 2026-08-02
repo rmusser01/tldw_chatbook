@@ -11,7 +11,6 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
-    CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -128,7 +127,11 @@ _ROW_GROUPS = (
 
 _ACTION_GROUPS = {
     "Artifacts": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
-    "Tools": (CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,),
+    # TASK-1843: the "Tools" group is intentionally empty of actions now.
+    # "Review tool call" gated on a counter production never populates, so it
+    # was permanently disabled while permanently claiming a reason, and its
+    # handler was a notify() stub. The Tools ROW stays -- it reports a real
+    # count -- but it no longer carries a control the user cannot use.
     "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
 }
 

@@ -388,7 +388,7 @@ def test_console_mode_bar_treats_assistant_label_as_literal_text():
         assistant_label="Persona: [bold]Guide[/bold]",
         rag_label="RAG: off",
         sources_label="Sources: 0 staged",
-        tools_label="Tools: 0 ready",
+        tools_label="Tools: not loaded",
         approvals_label="Approvals: 0 pending",
     )
     summary = ChatScreen._console_mode_summary(control_state)
@@ -2836,7 +2836,9 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
         for selector in (
             "#console-inspector-review-approval",
-            "#console-inspector-review-tool-call",
+            # TASK-1843: review-tool-call removed -- it gated on a counter
+            # production never populates, so it was permanently disabled
+            # while permanently claiming a reason.
             "#console-inspector-save-chatbook",
         ):
             button = console.query_one(selector, Button)
@@ -3515,14 +3517,13 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
             console.query_one("#console-inspector-sources", Static).renderable
         )
         assert not list(console.query("#console-inspector-rag-source"))
-        assert (
-            console.query_one("#console-inspector-review-tool-call", Button).disabled
-            is True
-        )
-        assert "No tool calls are ready for review." in str(
-            console.query_one(
-                "#console-inspector-review-tool-call-reason", Static
-            ).renderable
+        # TASK-1843: the permanently-disabled review-tool-call action is gone,
+        # and so is the disabled-reason Static that explained it. Both must
+        # disappear together -- a stranded reason line would still advertise a
+        # control the user cannot reach.
+        assert not list(console.query("#console-inspector-review-tool-call"))
+        assert not list(
+            console.query("#console-inspector-review-tool-call-reason")
         )
 
 
@@ -3561,10 +3562,8 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
             console.query_one("#console-inspector-review-approval", Button).disabled
             is False
         )
-        assert (
-            console.query_one("#console-inspector-review-tool-call", Button).disabled
-            is False
-        )
+        # TASK-1843: removed; see the note above.
+        assert not list(console.query("#console-inspector-review-tool-call"))
         assert (
             console.query_one("#console-inspector-save-chatbook", Button).disabled
             is False
@@ -3576,7 +3575,6 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert (
             console.query_one("#console-inspector-tools-heading").region.y
             < console.query_one("#console-inspector-tools").region.y
-            < console.query_one("#console-inspector-review-tool-call").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
         )
         assert (

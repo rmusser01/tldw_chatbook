@@ -325,6 +325,13 @@ def _truncate_step_text(text: str, *, limit: int) -> str:
     return f"{cut}… (+{hidden} chars)"
 
 
+#: TASK-1844: transcript marker kind for an approval that expired. Not an
+#: `AgentStep` kind -- the timeout happens in the approval round, before any
+#: step exists -- but it renders through the same formatter so live and
+#: resumed transcripts stay byte-identical.
+STEP_APPROVAL_TIMEOUT = "approval_timeout"
+
+
 def format_agent_step_marker(
     kind: str,
     *,
@@ -364,6 +371,13 @@ def format_agent_step_marker(
             limit=_console_tool_result_display_cap(),
         )
         return f"⚙ {tool_name} → {preview}"
+    if kind == STEP_APPROVAL_TIMEOUT:
+        # TASK-1844: an expired approval used to make the card vanish with no
+        # marker at all -- indistinguishable from "I denied it" or "it never
+        # ran". Name the actor: the SYSTEM auto-denied, the user did not.
+        seconds = str(summary or "").strip()
+        window = f" after {seconds}s" if seconds else ""
+        return f"⚠ {tool_name}: approval timed out{window} — auto-denied, not run"
     if kind == STEP_ERROR:
         return f"⚠ {summary}"
     return None

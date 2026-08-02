@@ -493,3 +493,75 @@ def test_agent_service_review_tool_calls_defaults_to_none(db):
         should_cancel=lambda: False,
     )
     assert outcome.status == RUN_DONE and outcome.final_text == "4."
+
+
+def test_same_name_calls_can_receive_different_verdicts_by_call_id():
+    """Per-call verdicts: approve one read, deny another, in one batch.
+
+    Verdict lookup was by NAME only, and the runtime documented it inline:
+    "same-name calls in one batch share a verdict (known limitation)". So a
+    turn that read two different files was a single yes/no -- you could not
+    allow `spec.md` and refuse `secrets.md`.
+
+    Tools are how an agent reaches the outside world, so per-target
+    granularity is the whole point of the gate. Lookup is now by
+    `call_id` first, falling back to name so every existing name-keyed
+    caller (and the MCP provider's `apply_batch_decisions`) keeps working.
+    """
+    calls = [
+        ToolCall(name="calculator", args={"path": "spec.md"}, call_id="idA"),
+        ToolCall(name="calculator", args={"path": "secrets.md"}, call_id="idB"),
+    ]
+    invoked = []
+    turns = iter([_native_turn(calls), ModelTurn(text="done")])
+
+    def call_model(messages, active_schemas):
+        return next(turns)
+
+    def invoke(call):
+        invoked.append(call.args.get("path"))
+        return ToolResult(ok=True, content="ok")
+
+    # Deny only the second call, by its id.
+    def review(batch):
+        return {"idB": "Blocked: not this one"}
+
+    deps = make_deps([], invoke=invoke, review=review)
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    assert out.status == RUN_DONE
+    assert invoked == ["spec.md"], (
+        f"per-call verdicts did not take effect -- invoked {invoked}; a "
+        "name-keyed lookup would run both or neither"
+    )
+
+
+def test_name_keyed_verdicts_still_apply_to_every_matching_call():
+    """The fallback must stay intact: existing callers key by name.
+
+    `MCPToolProvider.apply_batch_decisions` and every current test emit
+    name-keyed verdicts, and the fence path builds ToolCalls with NO call_id
+    at all (`agent_runtime._fence_call`). A name-keyed verdict must therefore
+    still stop every matching call, or this change breaks the MCP gate.
+    """
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="idA"),
+        ToolCall(name="calculator", args={"v": 2}, call_id="idB"),
+    ]
+    invoked = []
+    turns = iter([_native_turn(calls), ModelTurn(text="done")])
+
+    def call_model(messages, active_schemas):
+        return next(turns)
+
+    def invoke(call):
+        invoked.append(call.args.get("v"))
+        return ToolResult(ok=True, content="ok")
+
+    deps = make_deps([], invoke=invoke, review=lambda b: {"calculator": "Blocked"})
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    assert out.status == RUN_DONE
+    assert invoked == [], f"name-keyed deny leaked {invoked} through"

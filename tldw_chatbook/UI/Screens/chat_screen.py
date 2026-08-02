@@ -202,7 +202,6 @@ from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
-    CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
     ConsoleDisplayRow,
@@ -17425,23 +17424,9 @@ class ChatScreen(BaseAppScreen):
         # the only body it ever renders, so a displayed card's action is
         # always its "Submit" button.
         try:
-            card.query_one("#approval-submit", Button).focus()
+            card.focus_first_decision()
         except Exception:
             pass
-
-    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID}")
-    def handle_console_inspector_review_tool_call(self, event: Button.Pressed) -> None:
-        """Keep tool-call review reachable from the Console inspector seam."""
-        event.stop()
-        if self._console_tool_count() <= 0:
-            self.app_instance.notify(
-                CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON, severity="warning"
-            )
-            return
-        self.app_instance.notify(
-            "Tool-call review is available from the active Console task context.",
-            severity="information",
-        )
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}")
     def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:

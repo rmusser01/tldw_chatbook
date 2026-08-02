@@ -2479,3 +2479,124 @@ def test_persist_session_if_needed_no_warning_when_nothing_held_and_no_db_seam()
         loguru_logger.remove(sink_id)
 
     assert not any("scope" in message.lower() for message in messages), messages
+
+
+@pytest.mark.unit
+def test_tool_markers_survive_the_next_message():
+    """TASK-1842: a follow-up message must not erase the agent's tool trace.
+
+    TOOL markers are deliberately NOT tree nodes -- a marker becoming a
+    parent would corrupt the chain for the next real message (see the
+    invariant comment in `append_message`). But they were only ever appended
+    to `_messages_by_session`, and `_recompute_active_path` is the SINGLE
+    writer of that view and rebuilds it from tree nodes alone. So every
+    marker was erased by the next ordinary message.
+
+    A user reported tool output appearing then vanishing, replaced by
+    `[failed]`. The two are independent: the trace is lost whether or not the
+    run fails. Tools are how an agent reaches the outside world, so the
+    transcript is the user's only in-context record of what left the machine.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ search → 3 hits"
+    )
+
+    def markers():
+        return [
+            m.content
+            for m in store.messages_for_session(session.id)
+            if m.role is ConsoleMessageRole.TOOL
+        ]
+
+    assert len(markers()) == 2, "precondition: both markers present during the run"
+
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="follow-up"
+    )
+    assert markers() == ["⚙ read_file → data", "⚙ search → 3 hits"], (
+        "the follow-up message erased the tool trace"
+    )
+
+    # They must sit AFTER the assistant turn they belong to, not float to the
+    # end -- otherwise the transcript reads as though the tools ran later.
+    contents = [m.content for m in store.messages_for_session(session.id)]
+    assert contents.index("⚙ read_file → data") > contents.index("a")
+    assert contents.index("⚙ read_file → data") < contents.index("follow-up")
+
+    # And the invariant they exist to protect must still hold: a marker must
+    # never become a tree node or the active leaf.
+    assert store._active_leaf_by_session[session.id] is not None
+    leaf = store._nodes_by_session[session.id][
+        store._active_leaf_by_session[session.id]
+    ]
+    assert leaf.role is not ConsoleMessageRole.TOOL
+
+
+@pytest.mark.unit
+def test_closing_a_session_releases_its_tool_markers():
+    """TASK-1842 follow-up: `_tool_markers_by_session` outlived the session.
+
+    `close_session` pops every other per-session structure and sweeps owned
+    ids out of `_message_session_index`, but left the marker registry keyed
+    by a dead session id -- so every TOOL marker object a closed session ever
+    produced was retained for the life of the process.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+    other = store.create_session(title="keep me")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    assert store._tool_markers_by_session.get(session.id), "precondition"
+
+    store.close_session(session.id)
+
+    assert session.id not in store._tool_markers_by_session, (
+        "the closed session's markers are still retained"
+    )
+    assert other.id in store._sessions, "closing one session must not touch others"
+
+
+@pytest.mark.unit
+def test_deleting_an_anchor_node_purges_the_markers_it_anchored():
+    """TASK-1842 follow-up: deleted branches left dangling marker bookkeeping.
+
+    `delete_message` purges the whole subtree from every node structure and
+    from `_message_session_index`, but it could not reach display-only marker
+    ids -- markers are not tree nodes. Their anchor was gone, so they never
+    rendered again (`_with_tool_markers` drops off-path anchors), yet both the
+    marker objects and their `_message_session_index` entries survived,
+    claiming a session still owned messages it could never show.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    answer = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a"
+    )
+    marker = store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    assert store._message_session_index.get(marker.id) == session.id, "precondition"
+
+    store.delete_message(answer.id)
+
+    assert marker.id not in store._message_session_index, (
+        "the marker's index entry outlived the node it was anchored to"
+    )
+    assert not any(
+        anchor == answer.id
+        for anchor, _marker in store._tool_markers_by_session.get(session.id, [])
+    ), "a marker is still anchored to a deleted node"

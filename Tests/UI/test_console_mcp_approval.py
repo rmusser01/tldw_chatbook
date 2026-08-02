@@ -2202,3 +2202,123 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
         resolver.join()
 
     assert decisions == {"mcp__srv__tool": "approve_once"}
+
+
+@pytest.mark.unit
+def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
+    """Per-call verdicts must not starve the NAME-keyed consumers.
+
+    The approval card now keys verdicts by `call_id` so two reads of two
+    files are two decisions. But `builtin_gate.stamp` records a grant against
+    a tool NAME (a session/always grant is per tool, not per call), and
+    `MCPToolProvider.apply_batch_decisions` also takes names. Without an
+    explicit per-call-then-name resolution, a call-id-keyed decision reached
+    NEITHER: MCP got {} and no grant was ever stamped, silently.
+
+    This test exists because the whole approval suite passed with that break
+    in place -- nothing covered the key mismatch.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self):
+            pass
+
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+
+        def stamp(self, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
+
+    # The card answers with a CALL-ID key, exactly as it now does.
+    def request_approvals(pending):
+        assert pending, "precondition: a row was surfaced for review"
+        return {pending[0].call_id: "approve_session"}
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")])
+
+    assert stamped == [("read_file", "approve_session")], (
+        f"the call-id-keyed decision never reached the gate: {stamped}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_row_discloses_every_target_in_the_rendered_row():
+    """TASK-1845 regression: the "xN" row must show every target ON SCREEN.
+
+    The original fix aggregated `all_arguments` in `_collapse_pending_calls`
+    and taught `_summarize_arguments` to render them -- but `set_batch` kept
+    passing `entry["arguments"]` (the FIRST call's payload), so the branch
+    never ran in production and the row still showed one target out of three.
+    The test that "covered" it called the helper with a collapsed entry, a
+    shape production never builds.
+
+    This drives the real widget: three reads of three different files must
+    all be legible in the mounted row, or the user approves what they cannot
+    see.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/spec.md"}},
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/secrets.md"}},
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/todo.md"}},
+            ],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row-args"))
+        assert len(rows) == 1, "same-name calls collapse to one row by contract"
+        rendered = _text(rows[0])
+        for path in ("spec.md", "secrets.md", "todo.md"):
+            assert path in rendered, (
+                f"{path} is hidden behind the x3 -- the mounted row shows: "
+                f"{rendered!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_armed_deadline_is_visible_on_the_mounted_card():
+    """TASK-1844: the countdown must reach the SCREEN, not just a helper.
+
+    `set_batch` updates `#approval-deadline` inside `except NoMatches: pass`,
+    so if that Static ever stopped being composed the clock would silently
+    vanish while `format_approval_deadline`'s unit tests stayed green. The
+    controller arms a 120s auto-deny; a deadline the user cannot see is the
+    machine deciding for them.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=120.0)
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 2:00"
+        assert deadline.display, "the countdown is composed but not displayed"
+
+        # No deadline armed -> say nothing rather than invent a number.
+        card.set_batch(_sample_calls(), timeout_seconds=0)
+        await pilot.pause()
+        assert not app.query_one("#approval-deadline", Static).display

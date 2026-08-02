@@ -113,26 +113,78 @@ _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if app
 
 _ARGS_SUMMARY_LIMIT = 80
 
+#: TASK-1845: needs-decision was a border + 10% tint with no text change, so
+#: the state vanished in monochrome. PRODUCT.md: "colour must never be the
+#: only carrier of meaning."
+NEEDS_DECISION_PREFIX = "needs decision · "
+
+
+def format_approval_deadline(timeout_seconds: float | None) -> str:
+    """Return the countdown copy for an armed approval deadline.
+
+    TASK-1844: `set_batch` accepted `timeout_seconds` and never read it,
+    while its own docstring claimed the value was "surfaced on the card".
+    The controller arms a 120s auto-deny, so a clock the user could not see
+    was making the decision for them.
+
+    Args:
+        timeout_seconds: The round's approval timeout, or None/0 when no
+            deadline is armed.
+
+    Returns:
+        "Auto-denies in M:SS", or "" when nothing is armed -- say nothing
+        rather than invent a number.
+    """
+    try:
+        total = int(timeout_seconds or 0)
+    except (TypeError, ValueError):
+        return ""
+    if total <= 0:
+        return ""
+    return f"Auto-denies in {total // 60}:{total % 60:02d}"
+
 
 def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse ``calls`` to one entry per unique ``llm_name``, first-seen order.
+    """Group ``calls`` into one row per addressable verdict, first-seen order.
 
-    Matches T3's decisions-keyed-by-llm_name contract: same-name calls in
-    one turn share a single verdict, so the batch card only ever needs one
-    row per unique name. Each returned entry carries a ``count`` of how
-    many original calls shared that name (for the row's "×N" suffix).
+    Rows are keyed by ``call_id`` when the call has one, so two reads of two
+    different files are two decisions -- the user can allow ``spec.md`` and
+    refuse ``secrets.md``. Tools are how an agent reaches the outside world,
+    so per-target granularity is the point of the gate.
+
+    Calls with NO ``call_id`` still collapse by ``llm_name``, and that is
+    deliberate rather than a leftover: the fence path builds ToolCalls
+    without ids (``agent_runtime._fence_call``), so the runtime can only
+    apply a NAME-keyed verdict to them. Splitting those into separate rows
+    would offer the user a decision the runtime cannot honour -- the row
+    would say "deny this one" and every same-name call would stop.
+
+    Each entry carries ``count`` (for the "×N" suffix) and ``all_arguments``
+    (every grouped call's arguments, so a count never conceals a target).
     """
     grouped: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for call in calls:
-        name = str(call.get("llm_name", ""))
+        # Key by the per-call id when the runtime can address it; otherwise
+        # by name, which is the only verdict key that reaches such a call.
+        call_id = str(call.get("call_id", "") or "")
+        name = call_id or str(call.get("llm_name", ""))
         if name not in grouped:
             entry = dict(call)
             entry["count"] = 1
+            # TASK-1845: keep EVERY call's arguments, not just the first.
+            # Grouping by name is the verdict contract and stays; hiding the
+            # other calls' targets behind the count was the hazard -- three
+            # reads of three different files rendered as one, so the user
+            # approved three things having seen one.
+            entry["all_arguments"] = [call.get("arguments")]
             grouped[name] = entry
             order.append(name)
         else:
             grouped[name]["count"] += 1
+            grouped[name].setdefault("all_arguments", []).append(
+                call.get("arguments")
+            )
     return [grouped[name] for name in order]
 
 
@@ -147,8 +199,11 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     eye rather than being buried before another badge.
     """
     server_label = str(entry.get("server_label", "") or "")
-    tool_name = str(entry.get("tool_name", "") or "")
-    header = f"{server_label} · {tool_name}"
+    tool_name = str(entry.get("tool_name", "") or entry.get("llm_name", "") or "")
+    header = f"{server_label} · {tool_name}" if server_label else tool_name
+    # TASK-1845: carry the needs-decision state in TEXT, not colour alone.
+    if entry.get("needs_decision"):
+        header = f"{NEEDS_DECISION_PREFIX}{header}"
     count = int(entry.get("count", 1) or 1)
     if count > 1:
         header += f" ×{count}"
@@ -159,7 +214,7 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 
 
 def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
-    """Return a compact, ``markup=False``-safe argument summary, capped at 80 chars.
+    """Return ONE payload as a compact, ``markup=False``-safe summary.
 
     Secret-looking values (``api_key``, ``token``, ``password``, ...) are
     redacted before rendering -- redaction parity with every other MCP
@@ -173,15 +228,99 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
             default=str,
             separators=(",", ":"),
         )
-    except Exception:  # noqa: BLE001 -- a non-serializable arg must never crash rendering
+    except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
         text = str(arguments or {})
     if len(text) > _ARGS_SUMMARY_LIMIT:
         return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
     return text
 
 
+def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
+    """Return the summary for one COLLAPSED row -- every call's arguments.
+
+    TASK-1845: a row that says "x3" must show all three targets or the count
+    is concealing the decision, so each grouped call's payload is rendered on
+    its own line and capped independently (one long payload cannot push the
+    others off screen). Redaction applies to every line, not just the first.
+
+    Takes the collapsed ENTRY, not an arguments mapping. The two shapes were
+    once distinguished by sniffing for an ``all_arguments`` key inside the
+    arguments themselves, which both mis-fires on a tool that genuinely has
+    an argument by that name and -- as shipped -- silently did nothing,
+    because the render site passed the first call's arguments and the branch
+    never ran.
+    """
+    sets = entry.get("all_arguments")
+    if not sets:
+        # Not a collapsed entry (or a row with no arguments at all): fall
+        # back to the single payload so a caller can never render nothing.
+        return _summarize_arguments(entry.get("arguments"))
+    rendered = [_summarize_arguments(payload) for payload in sets]
+    # De-duplicate identical payloads while preserving order: N identical
+    # calls are one decision with one target, and repeating it N times
+    # would bury a genuinely different target further down.
+    seen: set[str] = set()
+    unique = [r for r in rendered if not (r in seen or seen.add(r))]
+    return "\n".join(unique)
+
+
 class ChatApprovalCard(Container):
     """Inline approval card for privileged agent actions."""
+
+    #: TASK-1846: `.ds-approval-card` is the design system's approval
+    #: treatment (thick border in the approval-required colour, 12% tint) and
+    #: it was applied by NOTHING -- `#chat-approval-card` had no rules at all,
+    #: so the card asking permission for an agent to reach the outside world
+    #: rendered as ordinary body text. This is the surface's whole visual
+    #: identity; it belongs on the class, not on each mount site.
+    DEFAULT_CLASSES = "ds-approval-card"
+
+    def first_focus_widget_id(self) -> str:
+        """Return the id the keyboard should land on when this card is reached.
+
+        TASK-1845. Every row is pre-armed to ``_DEFAULT_DECISION``
+        ("approve_once") because a blank Select breaks ``allow_blank=False``
+        and the bulk-assign path. That default is fine; landing the keyboard
+        on the COMMIT control was not. Both review entry points focused
+        ``#approval-submit``, so the documented route -- jump to the card,
+        press Enter -- granted a tool access to a call the user had not read.
+
+        Tools are how an agent reaches the outside world, so this card is the
+        egress boundary; arriving on it should present a choice, not a
+        pre-signed one.
+
+        Returns:
+            The row's decision Select when there is one to decide, else the
+            card's own container id -- never the Submit button.
+        """
+        try:
+            selects = self.query(".approval-row-decision")
+        except Exception:
+            return "chat-approval-card"
+        for select in selects:
+            if select.id:
+                return select.id
+        return "chat-approval-card"
+
+    def focus_first_decision(self) -> None:
+        """Move focus to this card's first undecided control.
+
+        The single seam both review entry points use, so a third caller
+        cannot reintroduce a focus target that commits on Enter.
+        """
+        try:
+            selects = list(self.query(".approval-row-decision"))
+        except Exception:
+            selects = []
+        if selects:
+            selects[0].focus()
+            return
+        # No rows to decide (card shown for a batch that has since resolved):
+        # focus the card itself rather than an action button.
+        try:
+            self.focus()
+        except Exception:
+            pass
 
     class ApprovalDecided(Message):
         """Posted when the user submits per-row decisions for a pending batch.
@@ -228,6 +367,11 @@ class ChatApprovalCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
+        # TASK-1844: the countdown lives beside the title, not buried in a
+        # row -- it applies to the whole batch and it decides for the user.
+        deadline = Static("", id="approval-deadline", markup=False)
+        deadline.display = False
+        yield deadline
         with Container(id="approval-batch-body"):
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
@@ -298,6 +442,14 @@ class ChatApprovalCard(Container):
                 is delivered.
         """
         self._batch_round_id = round_id
+        # TASK-1844: actually surface the deadline the docstring promised.
+        try:
+            deadline = self.query_one("#approval-deadline", Static)
+            text = format_approval_deadline(timeout_seconds)
+            deadline.update(text)
+            deadline.display = bool(text)
+        except NoMatches:
+            pass
         if not calls:
             self.display = False
             self.query_one("#approval-batch-body").display = False
@@ -340,7 +492,13 @@ class ChatApprovalCard(Container):
         rows: list[Horizontal] = []
         fast_buttons: list[Button] = []
         for index, entry in enumerate(grouped):
-            names.append(str(entry.get("llm_name", "")))
+            # The verdict key must match what the RUNTIME looks up, and it
+            # looks up `call_id` first, then name. Emitting the name here
+            # while grouping rows per call would give the user a per-call
+            # decision the runtime then applies to every same-name call.
+            names.append(
+                str(entry.get("call_id", "") or entry.get("llm_name", ""))
+            )
             row_options = _options_for_row(entry)
             row_values = [value for _label, value in row_options]
             default_value = (
@@ -367,7 +525,7 @@ class ChatApprovalCard(Container):
             row_children: list[Any] = [
                 header_static,
                 Static(
-                    _summarize_arguments(entry.get("arguments")),
+                    _summarize_row_arguments(entry),
                     markup=False,
                     classes="approval-row-args",
                 ),

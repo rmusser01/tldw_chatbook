@@ -662,9 +662,24 @@ def run_agent_loop(
             # load_tools/invoke_tool branches below run, and the verdict
             # string itself becomes the call's tool result, same as any
             # other result content from here down.
-            # NOTE: verdict lookup by name only; same-name calls in one batch
-            # share a verdict (T5/T6 closure authors: this is a known limitation).
-            verdict = verdicts.get(call.name, "proceed")
+            # Verdict lookup is PER CALL first, then by name.
+            #
+            # It used to be name-only, which meant same-name calls in one
+            # batch shared one verdict: a turn reading two files was a single
+            # yes/no, so you could not allow `spec.md` and refuse
+            # `secrets.md`. Tools are how an agent reaches the outside world,
+            # so per-target granularity is the point of the gate.
+            #
+            # The name fallback is load-bearing, not legacy politeness:
+            # `MCPToolProvider.apply_batch_decisions` emits name-keyed
+            # verdicts, and the fence path builds ToolCalls with NO call_id
+            # at all (`_fence_call`), so a name-keyed verdict must still stop
+            # every matching call or the MCP gate silently opens.
+            verdict = "proceed"
+            if call.call_id and call.call_id in verdicts:
+                verdict = verdicts[call.call_id]
+            else:
+                verdict = verdicts.get(call.name, "proceed")
             if verdict != "proceed":
                 content = verdict
             else:

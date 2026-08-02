@@ -489,6 +489,10 @@ def build_tool_review_hook(
                     tool_name=call.name,
                     server_label="Built-in",
                     arguments=dict(call.args or {}),
+                    # Per-call verdict key: lets the user allow one target and
+                    # refuse another in the same batch. Empty on the fence
+                    # path, where the runtime falls back to the name.
+                    call_id=str(getattr(call, "call_id", "") or ""),
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
@@ -512,13 +516,40 @@ def build_tool_review_hook(
         if not all_pending:
             return {}
         decisions = request_approvals(all_pending)
+
+        def _decision_for(row: "MCPPendingCall") -> str | None:
+            """Resolve one row's verdict, per-call id first then name.
+
+            The card now keys verdicts by `call_id` where the runtime can
+            address them (so two reads of two files are two decisions), but
+            BOTH consumers below are name-keyed by contract:
+            `MCPToolProvider.apply_batch_decisions` takes llm_names, and
+            `builtin_gate.stamp` records a grant against a tool NAME because
+            a session/always grant is per tool, not per call. Resolving here
+            keeps the finer-grained card from silently starving them --
+            without this, MCP received {} and no gate grant was ever stamped.
+            """
+            key = str(getattr(row, "call_id", "") or "")
+            if key and key in decisions:
+                return decisions[key]
+            return decisions.get(row.llm_name)
+
         if mcp_provider is not None:
-            mcp_decisions = {
-                name: decisions[name] for name in mcp_claimed_names if name in decisions
-            }
+            mcp_decisions: dict[str, str] = {}
+            for row in mcp_pending:
+                if row.llm_name not in mcp_claimed_names:
+                    continue
+                decision = _decision_for(row)
+                if decision is not None:
+                    # Last write wins when several calls of one MCP tool got
+                    # different verdicts: the provider's grant is per NAME, so
+                    # it cannot express "allow this one, refuse that one" --
+                    # the per-call refusals are still enforced by the runtime,
+                    # which reads the call-id keys directly.
+                    mcp_decisions[row.llm_name] = decision
             mcp_provider.apply_batch_decisions(mcp_decisions)
         for row in builtin_pending:
-            decision = decisions.get(row.llm_name)
+            decision = _decision_for(row)
             if decision is not None:
                 builtin_gate.stamp(row.llm_name, decision)
         return {row.llm_name: "proceed" for row in all_pending}

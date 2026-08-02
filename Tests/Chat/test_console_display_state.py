@@ -1,5 +1,7 @@
 import inspect
 
+import pytest
+
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
@@ -244,7 +246,10 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     text = state.to_plain_text()
     actions_by_id = {action.widget_id: action for action in state.actions}
 
-    assert "Tools: 0 ready" in text
+    # TASK-1843: the Inspector row now shares the chip's derivation AND its
+    # honest zero placeholder. "0 ready" read as "no tools available" even
+    # though built-ins like calculator/get_current_datetime always exist.
+    assert "Tools: not loaded" in text
     assert "Sources: missing source" in text
     assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
@@ -252,11 +257,10 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
         actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].disabled_reason
         == CONSOLE_INSPECTOR_NO_APPROVAL_REASON
     )
-    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is False
-    assert (
-        actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].disabled_reason
-        == CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON
-    )
+    # TASK-1843: "Review tool call" was removed. It gated on a counter
+    # production never populates, so it was permanently disabled while
+    # permanently claiming a reason -- and its handler was a notify() stub.
+    assert CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID not in actions_by_id
     assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is False
     assert (
         actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].disabled_reason
@@ -280,7 +284,8 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
     assert state.has_pending_approval is True
     assert state.can_save_chatbook is True
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is True
-    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is True
+    # TASK-1843: removed -- see the note in the disabled-reasons test above.
+    assert CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID not in actions_by_id
     assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Approvals"].status == "blocked"
@@ -379,3 +384,62 @@ def test_console_control_state_has_one_assistant_presentation_field() -> None:
     assert "user_profile_label" not in ConsoleControlState.__dataclass_fields__
     assert "character_label" not in ConsoleControlState.__dataclass_fields__
     assert "assistant_label" in ConsoleControlState.__dataclass_fields__
+
+
+@pytest.mark.unit
+def test_chip_and_inspector_report_the_same_tool_count():
+    """TASK-1843: two surfaces in one panel must not contradict each other.
+
+    `console_tool_count` is read in five places and assigned in NONE, so the
+    built-in count is always 0. The chip was fixed to add the MCP count
+    (`effective_tool_count`); the Inspector row was not, so it read
+    "Tools: 0 ready" beside a chip reporting a real number.
+
+    This is the same bug shape already fixed once on the chip and missed on
+    the row -- so the fix belongs at the shared derivation, and this test
+    asserts the two agree rather than asserting either one's literal text.
+    """
+    control = ConsoleControlState.from_values(
+        provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=12
+    )
+    inspector = ConsoleInspectorState.from_values(
+        tool_count=0, mcp_tool_count=12
+    )
+
+    tools_rows = [r for r in inspector.rows if r.label == "Tools"]
+    assert tools_rows, "inspector has no Tools row"
+    assert "12" in tools_rows[0].value, (
+        f"inspector says {tools_rows[0].value!r} while the chip says "
+        f"{control.tools_label!r} -- same panel, two numbers"
+    )
+    assert "12" in control.tools_label
+
+    # And the zero case must use the same honest placeholder, not "0 ready"
+    # which reads as "no tools available" when built-ins are always present.
+    zero_control = ConsoleControlState.from_values(
+        provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=None
+    )
+    zero_inspector = ConsoleInspectorState.from_values(tool_count=0)
+    zero_row = [r for r in zero_inspector.rows if r.label == "Tools"][0]
+    assert "not loaded" in zero_control.tools_label
+    assert "not loaded" in zero_row.value, (
+        f"inspector zero-state says {zero_row.value!r}, chip says "
+        f"{zero_control.tools_label!r}"
+    )
+
+
+@pytest.mark.unit
+def test_permanently_dead_review_tool_call_action_is_gone():
+    """TASK-1843: a control that can never enable must not advertise a reason.
+
+    `Review tool call` gated on `console_tool_count`, which production never
+    populates -- so it was permanently disabled while permanently claiming
+    "No tool calls are ready for review", and its handler was a notify()
+    stub. PRODUCT.md requires unavailable states to be honest; a permanently
+    false one is the opposite.
+    """
+    inspector = ConsoleInspectorState.from_values(tool_count=0, mcp_tool_count=12)
+    labels = [a.label for a in inspector.actions]
+    assert not any("Review tool call" in lbl for lbl in labels), (
+        f"the dead action is still advertised: {labels}"
+    )

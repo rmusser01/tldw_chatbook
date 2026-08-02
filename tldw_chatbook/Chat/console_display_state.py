@@ -85,6 +85,24 @@ def _is_blocked_rag_status(value: Any) -> bool:
     return text.startswith("missing") or text in {"blocked", "unavailable"}
 
 
+def _tools_ready_text(effective_tool_count: int) -> str:
+    """Return the shared Tools copy for both the chip and the Inspector row.
+
+    TASK-1843: these two surfaces sit in the same panel and previously derived
+    their number independently, so one said "0 ready" while the other said
+    "12 ready". One function, one wording, both callers -- fixing it per-site
+    is exactly how it recurred after the first fix.
+
+    Args:
+        effective_tool_count: Built-in count plus MCP catalog size.
+
+    Returns:
+        "not loaded" at zero -- "0 ready" reads as "no tools available" when
+        built-ins are always registered -- otherwise "<n> ready".
+    """
+    return "not loaded" if effective_tool_count == 0 else f"{effective_tool_count} ready"
+
+
 def _mcp_inspector_row(
     tool_count: Any, not_connected_count: Any
 ) -> "ConsoleDisplayRow | None":
@@ -395,11 +413,7 @@ class ConsoleControlState:
         # honest placeholder for this chip alone at the zero count --
         # `tools_active` (dim/emphasis) is UNCHANGED, still `effective_tool_
         # count > 0`.
-        tools_label = (
-            "Tools: not loaded"
-            if effective_tool_count == 0
-            else f"Tools: {effective_tool_count} ready"
-        )
+        tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
@@ -638,6 +652,7 @@ class ConsoleInspectorState:
         # already gates -- consult the same registry entry.
         chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
         normalized_tool_count = coerce_non_negative_int(tool_count)
+        effective_tool_count = normalized_tool_count + (mcp_tool_count or 0)
         normalized_approval_count = coerce_non_negative_int(approval_count)
         rag_value = _clean(rag_status, "not staged")
         provider_value = _clean(provider_label, "provider")
@@ -674,7 +689,14 @@ class ConsoleInspectorState:
                 source_summary,
                 status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
-            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
+            # TASK-1843: same derivation as the chip. `tool_count` alone comes
+            # from a getattr hook production never populates, so this row read
+            # "0 ready" beside a chip reporting a real number -- the same bug
+            # already fixed once on the chip and missed here. Both now share
+            # `_tools_ready_text`, including the honest zero placeholder
+            # ("0 ready" reads as "no tools available" when built-ins like
+            # calculator/get_current_datetime are always registered).
+            ConsoleDisplayRow("Tools", _tools_ready_text(effective_tool_count)),
             ConsoleDisplayRow(
                 "Approvals",
                 f"{normalized_approval_count} pending",
@@ -710,12 +732,6 @@ class ConsoleInspectorState:
                 label=CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL,
                 enabled=normalized_approval_count > 0,
                 disabled_reason=CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
-            ),
-            ConsoleInspectorAction(
-                widget_id=CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
-                label=CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_LABEL,
-                enabled=normalized_tool_count > 0,
-                disabled_reason=CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
             ),
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
