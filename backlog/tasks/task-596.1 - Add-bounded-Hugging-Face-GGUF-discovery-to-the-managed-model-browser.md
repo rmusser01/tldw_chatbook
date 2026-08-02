@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 21:51'
-updated_date: '2026-08-02 01:47'
+updated_date: '2026-08-02 02:50'
 labels:
   - stt
   - artifacts
@@ -68,10 +68,16 @@ Implemented bounded Hugging Face GGUF discovery through the shared managed-artif
 - Final whole-branch review and scoped fix re-review are clean. After rebasing onto current dev, 576 affected tests passed with one existing Requests dependency warning; 12 credential-boundary and 8 deterministic macOS evidence tests passed. Branch-edited scope passes Ruff, mypy, py_compile, and diff checks. The known fetch.py F401 and acquisition.py:1823 mypy mismatch were verified on dev and remain out of scope. Windows/Linux gates remain required when runners are available.
 
 ADR required: no. ADR-025 remains authoritative for managed acquisition, provenance, activation, and runtime boundaries. No new dependency, provider framework, cache, compatibility detector, or alternate downloader was introduced.
+
+Post-closeout rebase: rebased the 20-commit branch cleanly onto `origin/dev` at `6792b3390`, after TASK-1822/PR #1189 restored the shared diagnostic baseline. Regenerated and reviewed exactly three branch-specific inventory deltas: digest-only line movement in `LLM_Management_Window.py` and `model_installed_view.py`, plus the new `model_remote_view.py` owner with two fixed artifact-identity error diagnostics. The persistent sink topology remains four files; the inventory now records 436 owners, 1,073 TASK-492 calls, and 6,702 TASK-494 calls.
+
+Fresh post-rebase verification: the complete affected matrix passed 576/576 with the required loopback permission; the diagnostic inventory, sentinel matrix, and persistent-boundary gate passed 18/18; JSON validation, py_compile, and both diff checks passed. The first sandboxed affected run passed 522 tests and produced 54 identical loopback-bind denials, all of which disappeared on the exact permitted rerun. Ruff passed every branch-edited Python file except the pre-existing `fetch.py:17` unused Loguru import, verified unchanged on `origin/dev`; excluding that baseline file, all checks passed. No new ADR is required; ADR-025 and ADR-029 remain authoritative.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Users can explicitly discover and securely download pinned Hugging Face GGUF artifacts through the managed model browser without automatic activation or unsupported runtime-compatibility claims.
+
+Rebased cleanly onto dev after the reviewed shared inventory repair. The branch-specific inventory is current, all 576 affected tests and 18 diagnostic/privacy tests pass, and no new Critical or Important review issue remains.
 <!-- SECTION:FINAL_SUMMARY:END -->
