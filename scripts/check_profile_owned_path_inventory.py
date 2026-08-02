@@ -137,12 +137,10 @@ def _assignment_target(node: ast.AST) -> str | None:
 
 def _contains_span(outer: _Span, inner: _Span) -> bool:
     """Return whether ``outer`` wholly contains ``inner``."""
-    return (
-        (outer.start_line, outer.start_column)
-        <= (inner.start_line, inner.start_column)
-        and (inner.end_line, inner.end_column)
-        <= (outer.end_line, outer.end_column)
-    )
+    return (outer.start_line, outer.start_column) <= (
+        inner.start_line,
+        inner.start_column,
+    ) and (inner.end_line, inner.end_column) <= (outer.end_line, outer.end_column)
 
 
 def _source_contexts(tree: ast.Module) -> tuple[list[_Span], list[_Span], list[_Span]]:
@@ -198,9 +196,7 @@ def _context_at(
     return "module"
 
 
-def _is_docstring(
-    line: int, column: int, docstrings: Iterable[_Span]
-) -> bool:
+def _is_docstring(line: int, column: int, docstrings: Iterable[_Span]) -> bool:
     """Return whether a string token begins at an actual AST docstring span."""
     return any(span.contains(line, column) for span in docstrings)
 
@@ -246,7 +242,10 @@ def _join_expression(node: ast.AST) -> str | None:
     components = _string_components(node)
     for suffix in JOIN_SUFFIXES:
         width = len(suffix)
-        if any(tuple(components[index : index + width]) == suffix for index in range(len(components) - width + 1)):
+        if any(
+            tuple(components[index : index + width]) == suffix
+            for index in range(len(components) - width + 1)
+        ):
             return f"join:{'/'.join(suffix)}"
     return None
 
@@ -259,7 +258,9 @@ def scan_source(source: str, relative_path: str) -> tuple[Occurrence, ...]:
     docstrings, scopes, assignments = _source_contexts(tree)
     found: list[Occurrence] = []
 
-    for token in tokenize.generate_tokens(iter(source.splitlines(keepends=True)).__next__):
+    for token in tokenize.generate_tokens(
+        iter(source.splitlines(keepends=True)).__next__
+    ):
         if token.type != tokenize.STRING or _is_docstring(
             token.start[0], token.start[1], docstrings
         ):
@@ -337,11 +338,15 @@ def reconcile_inventory(
         line = observed[key][0].line if key in observed else 0
         if len(matching_rules) != 1:
             problems.append(
-                _Problem(relative_path, line, context, expression, "duplicate exception rule")
+                _Problem(
+                    relative_path, line, context, expression, "duplicate exception rule"
+                )
             )
         if any(not rule.reason.strip() for rule in matching_rules):
             problems.append(
-                _Problem(relative_path, line, context, expression, "empty exception reason")
+                _Problem(
+                    relative_path, line, context, expression, "empty exception reason"
+                )
             )
 
     for key, matching_occurrences in sorted(observed.items()):
@@ -359,7 +364,10 @@ def reconcile_inventory(
                 for occurrence in matching_occurrences
             )
             continue
-        if len(matching_rules) == 1 and len(matching_occurrences) != matching_rules[0].expected_count:
+        if (
+            len(matching_rules) == 1
+            and len(matching_occurrences) != matching_rules[0].expected_count
+        ):
             problems.append(
                 _Problem(
                     relative_path,
@@ -378,7 +386,18 @@ def reconcile_inventory(
             _Problem(relative_path, 0, context, expression, "stale exception rule")
         )
 
-    return tuple(sorted(problems, key=lambda item: (item.relative_path, item.line, item.context, item.expression, item.reason)))
+    return tuple(
+        sorted(
+            problems,
+            key=lambda item: (
+                item.relative_path,
+                item.line,
+                item.context,
+                item.expression,
+                item.reason,
+            ),
+        )
+    )
 
 
 APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (

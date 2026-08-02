@@ -72,18 +72,21 @@ def test_settings_theme_copy_uses_effective_profile_paths(
     )
 
     expected_theme_target = f"{config_path.parent / 'themes'}{os.sep}"
-    assert ("Affected config", f"custom theme files under {expected_theme_target}") in guidance
+    assert (
+        "Affected config",
+        f"custom theme files under {expected_theme_target}",
+    ) in guidance
     assert str(config_path.parent / "themes") in theme_ownership.recovery_copy
 
     window._active_summary.return_value = SimpleNamespace(
         category=SettingsCategoryId.THEME
     )
     window._ownership_record.return_value = theme_ownership
-    window._detail_row.side_effect = lambda label, value, **kwargs: SettingsScreen._detail_row(
-        window, label, value, **kwargs
+    window._detail_row.side_effect = lambda label, value, **kwargs: (
+        SettingsScreen._detail_row(window, label, value, **kwargs)
     )
-    window._inspector_guidance.side_effect = lambda category: SettingsScreen._inspector_guidance(
-        window, category
+    window._inspector_guidance.side_effect = lambda category: (
+        SettingsScreen._inspector_guidance(window, category)
     )
 
     rows = list(SettingsScreen._render_impact_pane_body(window))
@@ -108,11 +111,11 @@ def test_settings_internal_prompt_copy_uses_effective_profile_path(
     )
     window._ownership_record.return_value = MagicMock()
     window._get_internal_prompts_customized_count.return_value = 0
-    window._detail_row.side_effect = lambda label, value, **kwargs: SettingsScreen._detail_row(
-        window, label, value, **kwargs
+    window._detail_row.side_effect = lambda label, value, **kwargs: (
+        SettingsScreen._detail_row(window, label, value, **kwargs)
     )
-    window._inspector_guidance.side_effect = lambda category: SettingsScreen._inspector_guidance(
-        window, category
+    window._inspector_guidance.side_effect = lambda category: (
+        SettingsScreen._inspector_guidance(window, category)
     )
 
     rows = list(SettingsScreen._render_impact_pane_body(window))

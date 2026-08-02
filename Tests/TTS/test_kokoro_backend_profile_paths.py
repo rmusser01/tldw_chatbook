@@ -22,14 +22,14 @@ def _seed_backend_blend_file(directory: Path) -> tuple[Path, str]:
     directory.mkdir(mode=0o755, exist_ok=True)
     blend_file = directory / "voice_blends.json"
     original_text = (
-        '{\n'
+        "{\n"
         '  "saved": {\n'
         '    "voices": [["af_bella", 1.0]],\n'
         '    "description": "Saved blend",\n'
         '    "created_at": "2026-01-01T00:00:00",\n'
         '    "metadata": {}\n'
-        '  }\n'
-        '}\n'
+        "  }\n"
+        "}\n"
     )
     blend_file.write_text(original_text, encoding="utf-8")
     return blend_file, original_text
@@ -75,7 +75,9 @@ async def test_manager_backends_keep_default_blends_in_their_profile(
     assert isinstance(second_backend, KokoroTTSBackend)
     assert first_backend is not second_backend
     assert first_backend.voice_blends_dir == first_config.parent / "kokoro_voice_blends"
-    assert second_backend.voice_blends_dir == second_config.parent / "kokoro_voice_blends"
+    assert (
+        second_backend.voice_blends_dir == second_config.parent / "kokoro_voice_blends"
+    )
 
 
 def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
@@ -101,9 +103,7 @@ def test_backend_config_blend_directory_overrides_cli_directory(
         _cli_setting_for_blend_directory(cli_directory),
     )
 
-    backend = KokoroTTSBackend(
-        {"KOKORO_VOICE_BLENDS_DIR": configured_directory}
-    )
+    backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": configured_directory})
 
     assert backend.voice_blends_dir == configured_directory
     assert not cli_directory.exists()
@@ -179,14 +179,14 @@ def test_save_voice_blend_restores_memory_when_private_write_fails(
     blend_directory.mkdir()
     blend_file = blend_directory / "voice_blends.json"
     original_text = (
-        '{\n'
+        "{\n"
         '  "existing": {\n'
         '    "voices": [["af_sarah", 1.0]],\n'
         '    "description": "Existing blend",\n'
         '    "created_at": "2026-01-01T00:00:00",\n'
         '    "metadata": {}\n'
-        '  }\n'
-        '}\n'
+        "  }\n"
+        "}\n"
     )
     blend_file.write_text(original_text, encoding="utf-8")
     backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": blend_directory})
@@ -220,14 +220,14 @@ def test_delete_voice_blend_restores_memory_when_private_write_fails(
     blend_directory.mkdir()
     blend_file = blend_directory / "voice_blends.json"
     original_text = (
-        '{\n'
+        "{\n"
         '  "saved": {\n'
         '    "voices": [["af_bella", 1.0]],\n'
         '    "description": "Saved blend",\n'
         '    "created_at": "2026-01-01T00:00:00",\n'
         '    "metadata": {}\n'
-        '  }\n'
-        '}\n'
+        "  }\n"
+        "}\n"
     )
     blend_file.write_text(original_text, encoding="utf-8")
     backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": blend_directory})

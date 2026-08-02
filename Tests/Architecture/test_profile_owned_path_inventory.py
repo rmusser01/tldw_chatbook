@@ -43,11 +43,11 @@ media = "~/.local/share/tldw_cli/media.db"""
 
 def test_scanner_detects_direct_indirect_and_join_function_roots() -> None:
     """Path joins are detected even when their base is not ``Path.home()``."""
-    source = '''
+    source = """
 direct = Path.home() / ".config" / "tldw_cli" / "models"
 indirect = base / ".config" / "tldw_cli" / "themes"
 data = os.path.join(home, ".local", "share", "tldw_cli", "cache")
-'''
+"""
 
     found = scan_source(source, "tldw_chatbook/example.py")
 
@@ -60,10 +60,10 @@ data = os.path.join(home, ".local", "share", "tldw_cli", "cache")
 
 def test_scanner_detects_join_components_that_contain_a_complete_root() -> None:
     """Joined path components may contain more than one root segment."""
-    source = '''
+    source = """
 config = base / ".config/tldw_cli" / "models"
 data = base.joinpath(".local/share/tldw_cli", "cache")
-'''
+"""
 
     found = scan_source(source, "tldw_chatbook/example.py")
 
@@ -75,10 +75,10 @@ data = base.joinpath(".local/share/tldw_cli", "cache")
 
 def test_scanner_distinguishes_matching_join_shapes_by_owner_context() -> None:
     """A module compatibility seed cannot mask a resolver's identical join."""
-    source = '''BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"
+    source = """BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"
 def _default_base_data_dir():
     return Path.home() / ".local" / "share" / "tldw_cli"
-'''
+"""
 
     found = scan_source(source, "tldw_chatbook/config.py")
 
@@ -145,10 +145,10 @@ def test_reconcile_describes_duplicate_and_empty_exception_rules() -> None:
 def test_reconcile_rejects_a_scanner_detected_duplicate_literal() -> None:
     """A second literal in one owner context breaks the exact census."""
     occurrences = scan_source(
-        '''def profile_path():
+        """def profile_path():
     return "~/.config/tldw_cli/chatterbox_voices"
     return "~/.config/tldw_cli/chatterbox_voices"
-''',
+""",
         "tldw_chatbook/example.py",
     )
     rule = ExceptionRule(
@@ -203,24 +203,19 @@ def test_shared_asset_exceptions_are_explicit() -> None:
         "tldw_chatbook/Utils/custom_tokenizers.py",
     )
     shared_rules = tuple(
-        rule
-        for rule in APPROVED_EXCEPTIONS
-        if rule.relative_path in shared_paths
+        rule for rule in APPROVED_EXCEPTIONS if rule.relative_path in shared_paths
     )
     embedding_rule = next(
         rule
         for rule in APPROVED_EXCEPTIONS
         if (
             rule.relative_path == "tldw_chatbook/config.py"
-            and rule.expression
-            == "literal:~/.local/share/tldw_cli/models/embeddings"
+            and rule.expression == "literal:~/.local/share/tldw_cli/models/embeddings"
         )
     )
 
     assert shared_rules
-    assert all(
-        rule.disposition is Disposition.SHARED_ARTIFACT for rule in shared_rules
-    )
+    assert all(rule.disposition is Disposition.SHARED_ARTIFACT for rule in shared_rules)
     assert embedding_rule.disposition is Disposition.PERSISTED_DEFAULT
 
 
@@ -284,18 +279,20 @@ def _base_data_dir_cli_consumer_lines(tree: ast.AST) -> tuple[int, ...]:
 def test_base_data_dir_census_detects_qualified_and_aliased_consumers() -> None:
     """Compatibility-constant consumers include qualified import access."""
     tree = ast.parse(
-        '''import tldw_chatbook.config as config
+        """import tldw_chatbook.config as config
 from tldw_chatbook.config import BASE_DATA_DIR_CLI as data_dir
 
 config.BASE_DATA_DIR_CLI / "export"
 data_dir / "export"
-'''
+"""
     )
 
     assert _base_data_dir_cli_consumer_lines(tree) == (4, 5)
 
 
-def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> None:
+def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> (
+    None
+):
     """Legacy constants remain isolated from normal profile resolution."""
     base_data_consumers: list[tuple[str, int]] = []
     runtime_constant_definitions: list[str] = []
@@ -303,12 +300,13 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
         relative_path = source_path.relative_to(REPO_ROOT).as_posix()
         tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
         base_data_consumers.extend(
-            (relative_path, line)
-            for line in _base_data_dir_cli_consumer_lines(tree)
+            (relative_path, line) for line in _base_data_dir_cli_consumer_lines(tree)
         )
         for node in ast.walk(tree):
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else (node.target,)
+                )
                 if any(
                     isinstance(target, ast.Name)
                     and target.id == "DEFAULT_RUNTIME_POLICY_PATH"
@@ -316,12 +314,8 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
                 ):
                     runtime_constant_definitions.append(relative_path)
 
-    assert base_data_consumers == [
-        ("Helper_Scripts/Prompts/Prompts_Dump.py", 96)
-    ]
-    assert runtime_constant_definitions == [
-        "tldw_chatbook/runtime_policy/bootstrap.py"
-    ]
+    assert base_data_consumers == [("Helper_Scripts/Prompts/Prompts_Dump.py", 96)]
+    assert runtime_constant_definitions == ["tldw_chatbook/runtime_policy/bootstrap.py"]
 
     from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 

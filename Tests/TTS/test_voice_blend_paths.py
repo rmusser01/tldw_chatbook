@@ -111,9 +111,7 @@ def test_production_blend_choice_readers_ignore_legacy_home_decoy(
     home = tmp_path / "home"
     decoy = home / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
     decoy.parent.mkdir(parents=True, mode=0o700)
-    decoy.write_text(
-        '{"legacy": {"voices": [["af_bella", 1.0]]}}\n', encoding="utf-8"
-    )
+    decoy.write_text('{"legacy": {"voices": [["af_bella", 1.0]]}}\n', encoding="utf-8")
     before = decoy.read_bytes()
     profile_config = tmp_path / "profile" / "config.toml"
     profile_config.parent.mkdir(mode=0o700)

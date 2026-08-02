@@ -70,7 +70,10 @@ def test_export_as_text_creates_one_txt_file_under_active_user_data(
     export_dir = active_user / "exports" / "dictation"
     files = list(export_dir.glob("*.txt"))
     assert len(files) == 1
-    assert files[0].read_text(encoding="utf-8") == "A short active-user dictation transcript."
+    assert (
+        files[0].read_text(encoding="utf-8")
+        == "A short active-user dictation transcript."
+    )
     assert list(export_dir.glob("*")) == files
     notify.assert_called_once()
 
