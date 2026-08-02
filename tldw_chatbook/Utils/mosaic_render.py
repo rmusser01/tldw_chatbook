@@ -44,22 +44,43 @@ _FLAT_CELL_SPREAD = 8.0
 #
 # Block Elements only (U+2591-2588), the same universal range the quadrant
 # glyphs come from, so this adds no new font risk.
-_SHADE_RAMP = " ░▒▓█"
+#
+# No blank bucket, deliberately (Qodo review, PR #1183). An earlier ramp led
+# with a space, so a sufficiently dark portrait mapped every cell to the
+# darkest bucket and rendered as an all-space box -- invisible, reproducing
+# the exact bug this path exists to fix. Character-card art on a dark theme
+# is that case, so it was the common path rather than an edge one. The
+# darkest ink still has to be ink.
+_SHADE_RAMP = "░▒▓█"
 
 
-def _shade_glyph(lum: float) -> str:
-    """Return the shade glyph for a 0-255 luminance.
+def _shade_glyph(lum: float, lo: float = 0.0, hi: float = 255.0) -> str:
+    """Return the shade glyph for a luminance, normalised to ``lo``..``hi``.
+
+    The range is normalised PER IMAGE rather than mapped from absolute
+    0-255. A character-card portrait on a dark theme can occupy a narrow
+    dark band -- every cell then lands in one ramp bucket and renders as a
+    uniform block: visible, but shapeless, which is not a portrait. Stretching
+    the image's own range across the ramp keeps the subject distinguishable
+    from its background.
 
     Args:
         lum: Mean luminance of the cell.
+        lo: Darkest cell luminance in this image.
+        hi: Brightest cell luminance in this image.
 
     Returns:
-        One character from ``_SHADE_RAMP``; darker luminance maps to a
-        sparser glyph so the rendering reads like the original image rather
-        than its negative.
+        One character from ``_SHADE_RAMP``; darker maps to a sparser glyph so
+        the result reads like the image rather than its negative.
     """
-    index = int(lum / 256 * len(_SHADE_RAMP))
-    return _SHADE_RAMP[min(index, len(_SHADE_RAMP) - 1)]
+    span = hi - lo
+    # A genuinely flat image has nothing to stretch; render it mid-ramp
+    # rather than dividing by ~0 and slamming everything to one end.
+    if span < 1e-6:
+        return _SHADE_RAMP[len(_SHADE_RAMP) // 2]
+    scaled = (lum - lo) / span
+    index = int(scaled * len(_SHADE_RAMP))
+    return _SHADE_RAMP[min(max(index, 0), len(_SHADE_RAMP) - 1)]
 
 
 def _luminance(rgb: tuple[int, int, int]) -> float:
@@ -142,6 +163,21 @@ def mosaic_from_image(
         # reading out of bounds.
         return pixels[min(x, width - 1), min(y, height - 1)]
 
+    mono_lo, mono_hi = 0.0, 255.0
+    if monochrome:
+        # One pass over the cell means to learn this image's actual range.
+        cell_means = [
+            sum(
+                _luminance(sample(c * 2 + dx, r * 2 + dy))
+                for dx in (0, 1)
+                for dy in (0, 1)
+            )
+            / 4
+            for r in range(cell_rows)
+            for c in range(cell_cols)
+        ]
+        mono_lo, mono_hi = min(cell_means), max(cell_means)
+
     text = Text(no_wrap=True, end="")
     for row in range(cell_rows):
         if row:
@@ -159,7 +195,9 @@ def mosaic_from_image(
                 # One glyph per cell from the mean luminance: no colour is
                 # consulted at all, so the result survives a monochrome
                 # filter that would blank the coloured path entirely.
-                text.append(_shade_glyph(sum(lums) / len(lums)))
+                # Normalised to this image's own range (see `_shade_glyph`)
+                # so a dark portrait keeps its shape instead of flattening.
+                text.append(_shade_glyph(sum(lums) / len(lums), mono_lo, mono_hi))
                 continue
             if spread < _FLAT_CELL_SPREAD:
                 r, g, b = _mean(cell)
