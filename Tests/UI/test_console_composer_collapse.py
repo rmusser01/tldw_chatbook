@@ -795,3 +795,49 @@ async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
         assert not composer.query("#console-save-chatbook")
         assert not composer.query("#console-attach-context")
         assert composer.query_one("#console-composer-menu", Button)
+
+
+@pytest.mark.asyncio
+async def test_composer_row_menu_left_of_draft_mic_beside_draft_send_gapped():
+    """Pin the requested composer row order and the Mic/Send buffer.
+
+    ☰ sits left of the draft (right of Composer ▾) so overflow actions live
+    on the left button cluster; Mic hugs the draft's right edge; Send follows
+    Mic with a >=2-cell empty gap so a Mic press cannot land on Send. Stop's
+    budgeted-but-hidden slot sits AFTER Send, so a run starting or stopping
+    never shifts Mic or Send.
+    """
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        collapse = app.query_one("#console-composer-collapse", Button)
+        menu = app.query_one("#console-composer-menu", Button)
+        draft = app.query_one("#console-command-visible-text", Static)
+        mic = app.query_one("#console-dictation", Button)
+        send = app.query_one("#console-send-message", Button)
+
+        assert collapse.region.right <= menu.region.x
+        assert menu.region.right <= draft.region.x
+        # Mic is adjacent to the draft (the draft keeps its 1-cell margin);
+        # a right-aligned actions row would park Stop's hidden 8-cell budget
+        # here instead.
+        assert draft.region.right <= mic.region.x
+        assert mic.region.x - draft.region.right <= 2
+        # The anti-misclick buffer between Mic and Send.
+        assert send.region.x - mic.region.right >= 2
+
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        mic_x, send_x = mic.region.x, send.region.x
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+        )
+        await pilot.pause()
+        stop = app.query_one("#console-stop-generation", Button)
+        assert stop.display
+        # Stop appears in its budgeted slot right of Send without moving
+        # Mic or Send.
+        assert send.region.right <= stop.region.x
+        assert (mic.region.x, send.region.x) == (mic_x, send_x)
