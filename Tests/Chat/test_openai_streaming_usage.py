@@ -102,3 +102,41 @@ def test_responses_completed_event_carries_usage_through():
     assert len(completed) == 1
     assert completed[0]["usage"]["input_tokens"] == 1200
     assert completed[0]["usage"]["input_tokens_details"]["cached_tokens"] == 1024
+
+
+@patch("requests.Session.post")
+def test_400_not_naming_stream_options_is_passed_through_unretried(mock_post):
+    """The degrade rule is narrow ON PURPOSE: only a 400 that actually names
+    `stream_options` triggers the retry. Any other 400 (bad model, bad
+    parameter, content policy) must surface exactly as it did before usage
+    reporting existed -- one request, original error, no silent second send.
+    """
+    bad = Mock()
+    bad.status_code = 400
+    bad.text = '{"error": {"message": "Invalid value for temperature"}}'
+    bad.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        "400 Client Error", response=bad
+    )
+    mock_post.return_value = bad
+
+    generator = chat_api_call(
+        "openai",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key="sk-test",
+        model="gpt-4o",
+        streaming=True,
+    )
+    chunks = list(generator)
+
+    assert mock_post.call_count == 1, "a non-stream_options 400 must not retry"
+    # The handler surfaces provider failures as an SSE error payload (its
+    # pre-existing contract) rather than raising out of the generator; the
+    # 400 must still reach the caller, unchanged by the usage opt-in.
+    joined = "".join(chunks)
+    assert "openai_stream_error" in joined
+    assert "400 Client Error" in joined
+    assert "stream_options" not in joined
+    # The first (and only) request still carried the opt-in.
+    assert mock_post.call_args_list[0][1]["json"]["stream_options"] == {
+        "include_usage": True
+    }
