@@ -1,6 +1,6 @@
 # Active Credential Redaction and Display Validation (TASK-856)
 
-**Status:** Third-review issue corrected; awaiting user approval
+**Status:** Approved
 
 **Task:** TASK-856
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-27 04:35'
-updated_date: '2026-08-02 23:14'
+updated_date: '2026-08-02 23:50'
 labels:
   - security
   - config
@@ -52,3 +52,21 @@ to log them.
 - [ ] #5 Subscription snapshot-pruning diagnostics contain useful non-private metadata but omit the monitored URL and all URL credentials, paths, queries, and fragments
 - [ ] #6 Recursive, non-mutating dictionary/list behavior, non-string mapping keys, `deep=False`, formatting fallback, and the installed-wheel import path are covered without introducing a reduced or test-only application
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Rebase onto current origin/dev, rerun the focused baseline, and capture the non-monitoring diagnostic-inventory fingerprint.
+2. Move sanitizer tests to a dedicated module and use TDD to compose structured redaction from the canonical sensitive-config-key predicate plus exact log/protocol fields.
+3. Use TDD to replace regex-first assignment handling with the monotonic classify-first scanner and bounded standalone rules; extend the existing installed-wheel probe.
+4. Use direct production functions and the full production app to separate Ollama/Transformers display validation and omit the subscription URL at its diagnostic producer.
+5. Prove only monitoring_engine.py’s reviewed diagnostic digest changes relative to base; do not absorb the known unrelated global inventory drift.
+6. Run focused, production-app, subscription, installed-wheel, lint, format, syntax, hygiene, and independent-review gates; complete task notes and status only after verified closeout.
+
+ADR required: yes
+ADR path: backlog/decisions/029-local-private-data-boundary.md
+Reason: Implements ADR-029’s credential/privacy diagnostic boundary without introducing a new architectural decision.
+
+Approved design: Docs/superpowers/specs/2026-08-02-log-sanitizer-active-redaction-design.md
+Detailed plan: Docs/superpowers/plans/2026-08-02-log-sanitizer-active-redaction.md
+<!-- SECTION:PLAN:END -->
