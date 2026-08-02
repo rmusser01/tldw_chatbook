@@ -35,6 +35,17 @@ def test_raw_pcm_without_rate_is_not():
     assert sink_plan("pcm", None, None) is None
 
 
+def test_raw_pcm_with_a_wrong_typed_rate_is_not():
+    # Fix-round F8 (task-4 review): a wrong-typed sample_rate must fail
+    # closed HERE, not raise deep inside StreamingPcmSink.open()'s
+    # `sample_rate * blocksize_ms // 1000` arithmetic (str) or silently
+    # produce a nonsensical plan (bool is an int subclass in Python, so
+    # True/False would otherwise pass an `isinstance` check).
+    assert sink_plan("pcm", "24000", None) is None
+    assert sink_plan("pcm", 24000.0, None) is None
+    assert sink_plan("pcm", True, None) is None
+
+
 def test_valid_pcm16_wav_is_eligible_with_header_skip():
     data = b"\x00\x00" * 64
     plan = sink_plan("wav", None, _wav_header(data=data))
