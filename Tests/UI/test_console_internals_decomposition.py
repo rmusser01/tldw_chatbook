@@ -413,7 +413,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert "Send" in text
         assert "Stop" in text
         assert "Attach" in text
-        assert "Save" in text
+        # "Save" left the always-visible chrome entirely (user request
+        # 2026-08-01): Save Chatbook's surviving surfaces are the composer's
+        # ☰ menu and the Inspector's Artifacts row, both asserted below.
         send_controls = [
             button
             for button in console.query(Button)
@@ -425,6 +427,8 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         # Attach and Save Chatbook now live in the composer's ☰ menu,
         # not this width-bounded row -- see test_console_composer_menu.py.
         assert console.query_one("#console-composer-menu", Button)
+        assert console.query_one("#console-inspector-save-chatbook", Button)
+        assert not list(console.query("#console-control-save-chatbook"))
 
 
 @pytest.mark.asyncio

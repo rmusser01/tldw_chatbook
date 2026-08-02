@@ -143,6 +143,35 @@ class ConsoleScopeChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
 
+class ConsoleRagChip(ConsoleChip):
+    """RAG readiness chip that opens the Library RAG settings modal.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. "RAG: off" is not a latent toggle the chip could
+    flip in place -- RAG reads "on" once retrieved Library evidence is
+    staged for the next send -- so activation opens the modal where the
+    user sets the retrieval query and runs it.
+    """
+
+    BINDINGS = [
+        Binding(
+            "enter", "open_rag_settings", "Open Library RAG settings", show=False
+        ),
+        Binding(
+            "space", "open_rag_settings", "Open Library RAG settings", show=False
+        ),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the RAG chip is activated from keyboard or mouse."""
+
+    def action_open_rag_settings(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
 class ConsoleTemporaryChip(ConsoleChip):
     """Temporary-chat chip that doubles as the "Save this chat" action.
 
@@ -255,7 +284,11 @@ class ConsoleStatusChips(Horizontal):
             id="console-assistant-chip",
             chip_class=ConsoleAssistantChip,
         )
-        yield self._chip(self.state.rag_label, id="console-rag-chip")
+        yield self._chip(
+            self.state.rag_label,
+            id="console-rag-chip",
+            chip_class=ConsoleRagChip,
+        )
         yield self._chip(
             self.state.sources_label,
             id="console-sources-chip",
