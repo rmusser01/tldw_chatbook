@@ -23,6 +23,16 @@ The spec's six migration rules, verbatim — all non-negotiable:
 
 House rules:
 
+- **Do not start Task 1 while feature work is active in the Console.** This is an
+  owner ruling (2026-08-02), not a style preference: refactoring `chat_screen.py`
+  concurrently with feature branches in the same file guarantees conflict pain for
+  both sides. The pre-flight gate before dispatching Task 1 is:
+  `git log origin/dev --oneline --since="24 hours ago" -- tldw_chatbook/UI/Screens/chat_screen.py`
+  plus a scan of open `origin/*console*` branches — at the time of the ruling that
+  showed 8 commits in 36 hours and four live console feature branches
+  (`console-cost-usage-foundation`, `console-voice-control-v2`,
+  `console-message-selection-toggle`, `controlbar-save-chatbook-removal`). Start only
+  when the churn has visibly settled AND the owner has confirmed the window is open.
 - Run tests foreground: `/private/tmp/tldw-venv/bin/python -m pytest <paths> -p no:randomly` from the clone root. Never `-q`. **Pass `timeout: 600000` on the Bash call** — this harness auto-backgrounds anything past its 120s default and a backgrounded pytest has stalled implementers repeatedly.
 - COMMIT BEFORE ANY MUTATION CHECK; never `git stash` (shared across 100+ worktrees); never `git checkout --` on uncommitted work.
 - **Rebase onto `origin/dev` before starting each task.** This file moves under you; a stale base guarantees conflicts at merge. CSS-bundle conflicts resolve by `git checkout --theirs` the bundle then regenerating via `build_css.py`.
