@@ -366,6 +366,7 @@ async def test_bounded_speech_settings_deep_link_restores_provider_without_actio
             "#settings-speech-audio_cpp-base-url",
             timeout=8.0,
         )
+        await _settle(pilot)
 
         panel = screen.query_one(
             "#settings-speech-tts-panel",
