@@ -11,7 +11,6 @@ import warnings
 import pytest
 
 from tldw_chatbook.config import CONFIG_TOML_CONTENT
-from tldw_chatbook.Subscriptions.security import SecurityValidator
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
@@ -25,6 +24,7 @@ CANONICAL_METADATA_ENDPOINTS = frozenset(
     }
 )
 EGRESS_POLICY_PATH = Path("Utils/egress.py")
+SUBSCRIPTION_SECURITY_PATH = Path("Subscriptions/security.py")
 DISALLOWED_SCHEMES = frozenset({"file", "ftp", "gopher", "javascript", "data"})
 
 
@@ -34,6 +34,8 @@ class _PolicyInventory:
 
     metadata_owners: tuple[tuple[str, frozenset[Path]], ...]
     scheme_violations: tuple[tuple[Path, int, frozenset[str]], ...]
+    validator_allowed_schemes: frozenset[str] | None
+    validator_duplicate_attributes: frozenset[str]
 
 
 def _production_python_files() -> list[Path]:
@@ -89,6 +91,46 @@ def _egress_metadata_endpoints(source_tree: ast.Module) -> frozenset[str]:
     return frozenset(endpoints)
 
 
+def _subscription_validator_policy(
+    source_tree: ast.Module,
+) -> tuple[frozenset[str] | None, frozenset[str]]:
+    """Read the subscription validator's class-owned policy assignments."""
+    allowed_schemes: frozenset[str] | None = None
+    duplicate_attributes: set[str] = set()
+
+    for class_node in source_tree.body:
+        if not isinstance(class_node, ast.ClassDef):
+            continue
+        if class_node.name != "SecurityValidator":
+            continue
+        for statement in class_node.body:
+            if isinstance(statement, ast.Assign):
+                names = {
+                    target.id
+                    for target in statement.targets
+                    if isinstance(target, ast.Name)
+                }
+                value = statement.value
+            elif isinstance(statement, ast.AnnAssign) and isinstance(
+                statement.target, ast.Name
+            ):
+                names = {statement.target.id}
+                value = statement.value
+            else:
+                continue
+
+            duplicate_attributes.update(
+                names & {"BLOCKED_SCHEMES", "METADATA_ENDPOINTS"}
+            )
+            if "ALLOWED_SCHEMES" in names and value is not None:
+                literal_values = _literal_collection_values(value)
+                allowed_schemes = (
+                    frozenset(literal_values) if literal_values is not None else None
+                )
+
+    return allowed_schemes, frozenset(duplicate_attributes)
+
+
 @pytest.fixture(scope="module")
 def _policy_inventory() -> _PolicyInventory:
     """Scan production Python sources once for all shared-policy duplicates."""
@@ -100,6 +142,8 @@ def _policy_inventory() -> _PolicyInventory:
     )
     endpoint_paths = {endpoint: set() for endpoint in metadata_endpoints}
     violations: dict[tuple[Path, int], set[str]] = {}
+    validator_allowed_schemes: frozenset[str] | None = None
+    validator_duplicate_attributes: frozenset[str] = frozenset()
 
     for source_path in source_paths:
         relative_path = source_path.relative_to(PACKAGE_ROOT)
@@ -108,6 +152,11 @@ def _policy_inventory() -> _PolicyInventory:
             if source_path == egress_source_path
             else _source_tree(source_path)
         )
+        if relative_path == SUBSCRIPTION_SECURITY_PATH:
+            (
+                validator_allowed_schemes,
+                validator_duplicate_attributes,
+            ) = _subscription_validator_policy(source_tree)
         for node in ast.walk(source_tree):
             if isinstance(node, ast.Constant) and node.value in endpoint_paths:
                 endpoint_paths[node.value].add(relative_path)
@@ -132,6 +181,8 @@ def _policy_inventory() -> _PolicyInventory:
                 violations.items(), key=lambda item: (item[0][0].as_posix(), item[0][1])
             )
         ),
+        validator_allowed_schemes=validator_allowed_schemes,
+        validator_duplicate_attributes=validator_duplicate_attributes,
     )
 
 
@@ -180,6 +231,23 @@ METADATA_HOSTNAMES = frozenset(
     }
 
 
+def test_subscription_validator_policy_reads_class_assignments_from_source() -> None:
+    """The validator boundary can be checked without importing its package."""
+    source_tree = ast.parse(
+        """
+class SecurityValidator:
+    ALLOWED_SCHEMES = {"http", "https"}
+    BLOCKED_SCHEMES = {"ftp"}
+    METADATA_ENDPOINTS = build_endpoints()
+"""
+    )
+
+    assert _subscription_validator_policy(source_tree) == (
+        frozenset({"http", "https"}),
+        frozenset({"BLOCKED_SCHEMES", "METADATA_ENDPOINTS"}),
+    )
+
+
 def test_shipped_subscription_config_has_no_security_child_table() -> None:
     """Subscription security policy is not duplicated in generated config."""
     config_defaults = tomllib.loads(CONFIG_TOML_CONTENT)
@@ -214,8 +282,9 @@ def test_disallowed_url_scheme_collections_are_not_duplicated(
     )
 
 
-def test_subscription_validator_retains_only_its_http_scheme_boundary() -> None:
+def test_subscription_validator_retains_only_its_http_scheme_boundary(
+    _policy_inventory: _PolicyInventory,
+) -> None:
     """Subscription validation keeps its boundary but delegates shared policy."""
-    assert "BLOCKED_SCHEMES" not in SecurityValidator.__dict__
-    assert "METADATA_ENDPOINTS" not in SecurityValidator.__dict__
-    assert SecurityValidator.ALLOWED_SCHEMES == {"http", "https"}
+    assert not _policy_inventory.validator_duplicate_attributes
+    assert _policy_inventory.validator_allowed_schemes == {"http", "https"}
