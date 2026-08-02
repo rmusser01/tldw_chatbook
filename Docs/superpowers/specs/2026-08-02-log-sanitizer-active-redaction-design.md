@@ -76,7 +76,9 @@ The public container behavior remains:
   value, with the marker;
 - `deep=True` recursively handles nested dictionaries and lists;
 - `deep=False` leaves nested containers untouched but still sanitizes direct
-  string values/items, matching the current contract;
+  string values/items, matching the current contract; the returned outer
+  dictionary/list is new while each untouched nested container retains its
+  original identity;
 - non-string dictionary keys do not raise;
 - non-string input to `sanitize_string()` retains the current `str()` fallback;
 - formatting failure in `create_safe_log_message()` retains the current safe
@@ -91,21 +93,32 @@ behavior harder to reason about.
 
 `sanitize_dict()` must not maintain another copy of the app's config-key
 inventory. A private log-field classifier will delegate config-shaped names to
-`Utils.sensitive_config_keys.is_sensitive_config_key()` and add a deliberately
-small set of log/protocol fields that are outside that predicate's config
-contract:
+`Utils.sensitive_config_keys.is_sensitive_config_key()` and add one exact set
+of log/protocol names that are outside that predicate's config contract.
+Log-only names are normalized with
+`str(key).strip().lower().replace("-", "_")` and compared to:
 
-- authorization and proxy-authorization headers;
-- cookie and set-cookie headers;
-- credential containers;
-- database URLs, connection strings, and DSNs.
+```text
+authorization
+proxy_authorization
+cookie
+set_cookie
+credential
+credentials
+database_url
+connection_string
+dsn
+```
 
-The log-only comparison is case-insensitive and treats hyphen/underscore header
-spellings equivalently. This composition is intentional: the canonical
-predicate owns shipped configuration names, while the sanitizer owns protocol
-fields that may appear in response or header dictionaries. Extending the
-config predicate with HTTP-only concepts would incorrectly change encryption
-and Settings privacy-posture behavior.
+There are no substring or suffix rules for these log-only names. A future name
+requires an explicit contract and regression rather than silently broadening
+the set. Config-shaped names are passed to the canonical predicate in their
+original spelling, so that predicate continues to own its `_env_var` exclusion
+and other rules. This composition is intentional: shipped configuration names
+belong to the canonical predicate, while the sanitizer owns protocol fields
+that may appear in response or header dictionaries. Extending the config
+predicate with HTTP-only concepts would incorrectly change encryption and
+Settings privacy-posture behavior.
 
 When a structured key is sensitive, its complete value is replaced before any
 recursive traversal. Otherwise nested dictionaries/lists follow the existing
@@ -113,28 +126,71 @@ recursive traversal. Otherwise nested dictionaries/lists follow the existing
 
 ### String redaction
 
-String redaction uses an ordered set of precompiled, linear-time patterns. Each
-pattern replaces a complete value; partial credential fragments must not be
-left behind.
+String redaction uses an ordered set of precompiled patterns without nested
+ambiguous quantifiers. Each pattern replaces a complete value; partial
+credential fragments must not be left behind.
 
-The supported categories are:
+The normative matching contract is:
 
-1. Candidate key/value assignments in environment, mapping-repr, JSON-like,
-   header-like, and URL-query text. A replacement callback normalizes the
-   candidate key and applies the same private log-field classifier used by
-   `sanitize_dict()`. Non-sensitive labels such as `max_tokens` and
-   `api_key_env_var` remain unchanged. Value matching stops at the appropriate
-   quote, whitespace, mapping, query, or fragment delimiter so adjacent text is
-   not swallowed.
-2. Authorization schemes and authentication/cookie header values, including
-   opaque Basic or Bearer values.
-3. HTTP(S) URL userinfo. The full userinfo portion before `@` is removed; the
-   scheme and host remain available only when the caller is otherwise allowed
-   to render the URL.
-4. Standalone credential families with a high-confidence, distinctive syntax,
-   including the reproduced hyphenated OpenAI/Anthropic forms and existing
-   Google-style form. Matching is bounded so a rule consumes the full token and
-   does not reclassify `claude-*` model IDs.
+1. A candidate scalar assignment has an unquoted label matching
+   `[A-Za-z0-9_.-]+` or that same label surrounded by one matching pair of
+   single or double quotes. Optional ASCII horizontal whitespace may surround
+   a `:` or `=` separator. The label starts at the beginning of the string or
+   after a character outside `[A-Za-z0-9_.-]`, so matching cannot begin halfway
+   through a larger label. The label is unquoted and passed to the same private
+   log-field classifier used by `sanitize_dict()`. Non-sensitive labels leave
+   the complete match unchanged.
+2. A quoted scalar value starts with `'` or `"` and consumes through the same
+   unescaped quote. Backslash plus the following character is part of the value
+   and cannot close it. The quotes are preserved and only their contents are
+   replaced. If a sensitive label starts a quoted value without a closing
+   quote, sanitization fails closed through the first CR, LF, mapping delimiter
+   (`,`/`}`/`]`), query delimiter (`&`/`#`), or end of string.
+3. An ordinary unquoted scalar value consumes at least one character and stops
+   before ASCII whitespace, a quote, `,`, `;`, `}`, `]`, `&`, `#`, CR, LF, or
+   end of string. These terminators are preserved. This covers environment
+   assignments and URL query parameters without consuming the next field.
+4. For the exact normalized protocol labels `authorization`,
+   `proxy_authorization`, `cookie`, and `set_cookie`, an unquoted value may
+   contain horizontal whitespace and semicolons. It stops before `,`, `}`, `]`,
+   CR, LF, or end of string. This consumes a complete `Bearer value`,
+   `Basic value`, or cookie header rather than redacting only its first word.
+   Quoted mapping values still follow rule 2 and therefore do not consume an
+   adjacent mapping entry.
+5. Assignment matching is for scalar text only. Serialized nested containers
+   are not parsed with regex; callers holding structured data use
+   `sanitize_dict()`/`sanitize_list()` so a sensitive container value is
+   replaced as a unit.
+6. Independent Basic and Bearer scheme matches consume the scheme plus its
+   following non-whitespace credential when those values appear without a
+   label. The scheme may be retained, but the complete credential is replaced.
+7. HTTP(S) URL userinfo matches from immediately after `://` through the last
+   `@` before the next `/`, `?`, `#`, ASCII whitespace, CR, or LF. The userinfo
+   is replaced as a unit; scheme and authority remain only when the caller is
+   otherwise allowed to render the URL.
+8. Standalone recognizable tokens use these exact families, evaluated from
+   most specific to least specific:
+
+   ```text
+   sk-proj-     + at least 20 characters from [A-Za-z0-9_-]
+   sk-ant-api03- + at least 20 characters from [A-Za-z0-9_-]
+   sk-          + at least 20 characters from [A-Za-z0-9]
+   AIza         + exactly 35 characters from [A-Za-z0-9_-]
+   ```
+
+   A standalone match requires both the preceding and following character, if
+   present, not to be in `[A-Za-z0-9_-]`. The specific `sk-proj-` and
+   `sk-ant-api03-` rules consume the maximal allowed run before the legacy
+   `sk-` rule is considered. This prevents partial `sk-proj`/`sk-ant` matches.
+   No rule recognizes `claude-*`.
+
+For assignment rules, surrounding label syntax, separators, quotes, and the
+terminating delimiter are preserved; only the scalar value becomes
+`***REDACTED***`. Tests instantiate every sensitive provider label derived from
+`CONFIG_TOML_CONTENT` and `DEFAULT_APP_TTS_CONFIG` in both a structured mapping
+and representative quoted/unquoted assignment text. Therefore the structured
+classifier and independent string parser cannot drift while still satisfying
+AC #3.
 
 Ambiguous provider keys are guaranteed to be redacted when accompanied by a
 sensitive field name, environment-variable assignment, header, or structured
