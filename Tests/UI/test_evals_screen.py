@@ -3209,8 +3209,33 @@ async def test_a_character_bench_with_no_targets_cannot_be_run(
 
 
 @pytest.mark.asyncio
-async def test_a_fully_configured_character_bench_enables_the_primary_action(
+async def test_a_character_bench_reopened_without_a_character_database_cannot_be_run(
     evals_app, character_bench_id
+):
+    """Qodo review (task-1691 phase 2 fix wave), Finding 1: ``character_
+    bench_id`` persists real ``character_ids`` against ITS OWN
+    ``chachanotes_db`` fixture -- a separate in-memory database this
+    module's bare ``evals_app`` (no ``chachanotes_db=`` kwarg) never wires
+    up, so ``EvalsScreen._chacha_db`` resolves to ``None`` per
+    ``_resolve_chacha_db``'s own docstring. Before this fix,
+    ``_primary_action_state`` never consulted ``self._chacha_db`` at all,
+    so a bench in exactly this shape (non-empty ``character_ids`` AND
+    ``target_ids``) read as fully runnable and only failed once the worker
+    actually ran, leaking a bare ``AttributeError`` to the user. This is
+    the reachable state the finding names: a bench saved earlier WITH
+    characters, reopened in a session where the character database is
+    unavailable."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        action = pilot.app.screen.query_one("#evals-primary-action", Button)
+        assert action.disabled
+        assert "character card database" in str(action.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_a_fully_configured_character_bench_enables_the_primary_action(
+    character_bench_app, character_bench_id
 ):
     """task-1691 phase 2 Task 6: running a character bench (cost preview,
     the real grid run) is this task's own deliverable -- `character_bench_
@@ -3224,8 +3249,17 @@ async def test_a_fully_configured_character_bench_enables_the_primary_action(
     block Run in (no characters picked, no targets resolvable) are
     unchanged and covered separately by `test_a_character_bench_with_no_
     characters_cannot_be_run`/`test_a_character_bench_with_no_targets_
-    cannot_be_run` just above."""
-    async with evals_app.run_test(size=(160, 45)) as pilot:
+    cannot_be_run` just above.
+
+    ``character_bench_app`` (Qodo review, task-1691 phase 2 fix wave),
+    not the bare ``evals_app`` this test used before: `_primary_action_
+    state`'s new chacha_db-availability guard (Finding 1) means a truly
+    ENABLED button now also needs a real, wired ``chachanotes_db`` --
+    exactly what a genuinely runnable bench requires in production. See
+    ``test_a_character_bench_reopened_without_a_character_database_
+    cannot_be_run`` just above for the deliberately-bare-``evals_app``
+    counterpart this fix added."""
+    async with character_bench_app.run_test(size=(160, 45)) as pilot:
         pilot.app.screen.select(kind="character_bench", id=character_bench_id)
         await pilot.pause()
         action = pilot.app.screen.query_one("#evals-primary-action", Button)

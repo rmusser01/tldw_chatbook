@@ -1372,6 +1372,27 @@ class EvalsScreen(LabScreen):
                 raise RuntimeError("The evaluation service is unavailable.")
             config = load_character_bench(db, task_id)
             probe_set = load_probe_set(db, config.probe_set_id)
+            if self._chacha_db is None:
+                # Qodo review (task-1691 phase 2 fix wave): `__init__`
+                # documents `self._chacha_db` as `Optional` (see
+                # `_resolve_chacha_db`'s own docstring -- it degrades to
+                # `None` when `app_instance.chachanotes_db` is absent), but
+                # `snapshot_cards` unconditionally calls `chacha_db.get_
+                # character_card_by_id(...)` with no `None` guard of its
+                # own. Reachable for real: a bench SAVED earlier with
+                # `character_ids` (so `_primary_action_state`'s "no
+                # characters" gate does not fire and Run is enabled) then
+                # RUN in a session where the character database never
+                # wired up. Without this guard the first `snapshot_cards`
+                # call raises a bare `AttributeError` ("'NoneType' object
+                # has no attribute 'get_character_card_by_id'"), which the
+                # broad `except Exception` below still catches and
+                # reports -- but as that raw, unnamed attribute error
+                # rather than a message that tells the user what is
+                # actually missing. Same wording `_primary_action_state`'s
+                # own new guard uses below, so both surfaces name the
+                # identical cause.
+                raise RuntimeError("The character card database is unavailable.")
             cards = snapshot_cards(self._chacha_db, list(config.character_ids))
             raw_targets = [
                 self._resolved_target_row(db, target_id)
@@ -2393,6 +2414,29 @@ class EvalsScreen(LabScreen):
                     "This bench has no targets yet; configure a local "
                     "llama.cpp provider in Settings, then create a new "
                     "character bench.",
+                )
+            if self._chacha_db is None:
+                # Qodo review (task-1691 phase 2 fix wave): characters and
+                # targets are both present -- the only remaining reason
+                # this bench cannot actually run is a card database that
+                # never wired up (`_resolve_chacha_db` degrades to `None`
+                # rather than raising -- see its own docstring). Checked
+                # LAST, only once every other precondition already passed,
+                # so this branch never shadows the "no characters"/"no
+                # targets" messages just above with a less specific one --
+                # this is the exact reachable state the finding names: a
+                # bench saved earlier WITH characters, reopened in a
+                # session where the character database is unavailable.
+                # Without this guard the button would read as fully
+                # runnable and only fail once `_run_character_bench_
+                # worker`'s own matching guard caught it mid-run; named
+                # with the identical wording that guard uses, so a user
+                # sees the same cause whichever surface they hit first.
+                return (
+                    f"Run {name}",
+                    True,
+                    "The character card database is unavailable; this "
+                    "bench cannot be run until it is.",
                 )
             # task-1691 phase 2 Task 6: characters and targets are both
             # present, so this bench can actually run -- `_on_primary_

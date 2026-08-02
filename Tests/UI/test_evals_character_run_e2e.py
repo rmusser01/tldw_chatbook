@@ -288,6 +288,62 @@ async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_sil
         assert pilot.app.screen._selection.kind == "character_bench"
 
 
+@pytest.mark.asyncio
+async def test_the_worker_names_the_missing_character_database_if_reached_by_any_path(
+    evals_db, chachanotes_db, runnable_character_bench, succeeding_chat
+):
+    """Qodo review (task-1691 phase 2 fix wave), Finding 1's second half:
+    ``_primary_action_state`` (pinned in ``test_evals_screen.py``'s
+    ``test_a_character_bench_reopened_without_a_character_database_cannot_
+    be_run``) now keeps Run disabled whenever ``self._chacha_db is None``,
+    so the real button can no longer dispatch this worker in that state --
+    but the worker itself must still fail loudly, not with a bare
+    ``AttributeError``, for any OTHER path that could still reach it
+    (``run_worker`` dispatch racing a late ``chachanotes_db`` teardown, a
+    future caller that skips the button). Deliberately does NOT use this
+    module's own ``evals_app`` fixture -- that fixture wires a real
+    ``chachanotes_db`` (see its own docstring) precisely so a normal Run
+    can snapshot real cards; this test instead builds a bare app with no
+    ``chachanotes_db=`` kwarg, mirroring ``test_evals_screen.py``'s own
+    bare ``evals_app``, so ``EvalsScreen._chacha_db`` resolves to ``None``
+    (``_resolve_chacha_db``'s own docstring) while ``runnable_character_
+    bench`` still carries real, non-empty ``character_ids`` against the
+    SEPARATE ``chachanotes_db`` fixture instance that built it.
+    """
+    from .test_evals_screen import EvalsHarness, _FakeAppInstance
+
+    bare_app = EvalsHarness(_FakeAppInstance(evals_db))
+    async with bare_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        assert screen._chacha_db is None
+        screen._character_probe_chat_factory = lambda cfg: succeeding_chat
+        screen.select(kind="character_bench", id=runnable_character_bench)
+        await pilot.pause()
+
+        # The button itself is disabled by Finding 1's other half -- reach
+        # the worker directly, as any OTHER dispatch path would, rather
+        # than through a click the real UI would never deliver here.
+        action = screen.query_one("#evals-primary-action", Button)
+        assert action.disabled
+        screen._character_bench_run_task_id = runnable_character_bench
+        await screen._run_character_bench_worker()
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "error"
+        assert "character card database" in message
+        assert "AttributeError" not in message
+        assert "NoneType" not in message
+
+        # Fails loudly, no run group to navigate to -- the new guard fires
+        # BEFORE `create_probe_run_group` ever runs (it sits right after
+        # `load_probe_set`, ahead of `snapshot_cards`), so unlike an
+        # ordinary mid-run failure this path never even creates the
+        # `eval_runs` rows in the first place.
+        assert screen._selection.kind == "character_bench"
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 0
+
+
 # ---------------------------------------------------------------------------
 # Review round 1 (Important findings): the dirty-editor guard and the run
 # status transition, both newly reachable because this task is the first
