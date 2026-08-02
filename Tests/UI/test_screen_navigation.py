@@ -2191,6 +2191,46 @@ async def test_search_route_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_search_all_palette_command_lands_on_library_with_honest_toast():
+    """RAG UX v2 PR-1, Task 2: the "Search All Content" quick-action palette
+    command dispatches through the "search" alias (Task 1), so it must
+    resolve to the same Library Search/RAG canvas as
+    ``test_search_route_lands_on_library_rag_canvas`` -- and its toast must
+    say so honestly instead of promising the retired standalone "Search/RAG"
+    screen.
+    """
+    from tldw_chatbook.app import QuickActionsProvider
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+    notices: list[tuple[str, str]] = []
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        provider = QuickActionsProvider(screen=app.screen)
+        provider.execute_quick_action("search_all")
+
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        assert ("Opened Library Search/RAG", "information") in notices
+
+
+@pytest.mark.asyncio
 async def test_media_screen_round_trip_restores_type_filter_and_search_term():
     """Regression lock for the bug this task fixes: nothing seeds
     ``MediaWindow.active_media_type`` on a screen-navigated visit except a
