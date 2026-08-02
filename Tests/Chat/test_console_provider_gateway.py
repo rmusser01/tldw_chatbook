@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
     LlamaCppProviderConfig,
     ProviderToolCalls,
     build_llamacpp_chat_payload,
@@ -1100,22 +1101,26 @@ def test_normalize_generic_provider_response_shapes() -> None:
     ) == [unsupported]
 
 
-def test_stream_signal_privacy_has_one_content_free_private_event_and_read_only_state() -> (
+def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload() -> (
     None
 ):
     signals = gateway_module.ConsoleProviderStreamSignals()
 
     signal_fields = dataclasses.fields(signals)
-    assert [item.name for item in signal_fields] == ["_synthetic_fallback"]
+    assert [item.name for item in signal_fields] == [
+        "_synthetic_fallback",
+        "usage_payload",
+    ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
-    assert signals.__class__.__slots__ == ("_synthetic_fallback",)
+    assert signals.__class__.__slots__ == ("_synthetic_fallback", "usage_payload")
     assert not hasattr(signals, "__dict__")
     assert signals.synthetic_fallback_emitted is False
     with pytest.raises(AttributeError):
         signals.synthetic_fallback_emitted = True
+    assert signals.usage_payload is None
 
     rendered = repr(signals)
-    assert rendered == "ConsoleProviderStreamSignals()"
+    assert rendered == "ConsoleProviderStreamSignals(usage_payload=None)"
     for governed_text in (
         NO_PROVIDER_CONTENT_COPY,
         UNSUPPORTED_PROVIDER_RESPONSE_COPY,
@@ -2672,3 +2677,114 @@ def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
 
     assert "system_message" not in kwargs
     assert kwargs["messages_payload"] == messages
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_records_usage_payload_from_sse_chunk() -> None:
+    usage_line = (
+        'data: {"object": "chat.completion.chunk", "choices": [], '
+        '"usage": {"prompt_tokens": 100, "completion_tokens": 20}}'
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield usage_line
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+
+    assert chunks == ["hi"]  # usage chunk yields no text
+    assert signals.usage_payload == {"prompt_tokens": 100, "completion_tokens": 20}
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_merges_split_usage_payloads() -> None:
+    # Anthropic emits input-side usage at message_start and output at end.
+    def fake_chat_api_call(**_kwargs):
+        yield (
+            'data: {"choices": [], "usage": {"input_tokens": 3571, '
+            '"cache_read_input_tokens": 6656}}'
+        )
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield 'data: {"choices": [], "usage": {"output_tokens": 727}}'
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet-4-6")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payload == {
+        "input_tokens": 3571,
+        "cache_read_input_tokens": 6656,
+        "output_tokens": 727,
+    }
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_mapping_response_records_usage() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+        }
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert chunks == ["hello"]
+    assert signals.usage_payload == {"prompt_tokens": 10, "completion_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_stream_without_usage_leaves_signals_none() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield "plain text"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payload is None

@@ -74,6 +74,7 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    usage_payload: dict[str, Any] | None = None
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -83,6 +84,12 @@ class ConsoleProviderStreamSignals:
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""
         self._synthetic_fallback.set()
+
+    def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        """Merge a provider usage payload (Anthropic splits input/output)."""
+        merged = dict(self.usage_payload or {})
+        merged.update(payload)
+        self.usage_payload = merged
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -1260,7 +1267,7 @@ class ConsoleProviderGateway:
             Assistant-visible text chunks (and, unless suppressed,
             normalized fallback copy).
         """
-        content = _content_from_provider_item(response)
+        content = _content_from_provider_item(response, signals=signals)
         if isinstance(content, str):
             if content:
                 yield content
@@ -1273,7 +1280,7 @@ class ConsoleProviderGateway:
             if _is_iterable_response(response):
                 emitted = False
                 for item in response:
-                    item_content = _content_from_provider_item(item)
+                    item_content = _content_from_provider_item(item, signals=signals)
                     if isinstance(item_content, str):
                         if item_content:
                             emitted = True
@@ -1519,22 +1526,42 @@ def _is_iterable_response(response: Any) -> bool:
     )
 
 
-def _content_from_provider_item(item: Any) -> str | object:
+def _maybe_record_usage(
+    payload: Mapping[str, Any],
+    signals: "ConsoleProviderStreamSignals | None",
+) -> None:
+    if signals is None:
+        return
+    usage = payload.get("usage")
+    if isinstance(usage, Mapping) and usage:
+        signals.record_usage_payload(usage)
+
+
+def _content_from_provider_item(
+    item: Any,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     if isinstance(item, str):
         if item.startswith("data:"):
-            return _content_from_sse_data(item)
+            return _content_from_sse_data(item, signals=signals)
         return item
     if isinstance(item, bytes):
         decoded = item.decode("utf-8", errors="replace")
         if decoded.startswith("data:"):
-            return _content_from_sse_data(decoded)
+            return _content_from_sse_data(decoded, signals=signals)
         return decoded
     if isinstance(item, Mapping):
+        _maybe_record_usage(item, signals)
         return _content_from_provider_mapping(item)
     return _UNSUPPORTED_RESPONSE
 
 
-def _content_from_sse_data(line: str) -> str | object:
+def _content_from_sse_data(
+    line: str,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     ConsoleProviderGateway._raise_for_sse_error(line)
     data = line.removeprefix("data:").strip()
     if not data or data == "[DONE]":
@@ -1545,6 +1572,7 @@ def _content_from_sse_data(line: str) -> str | object:
         return _EMPTY_RESPONSE
     if not isinstance(payload, Mapping):
         return _EMPTY_RESPONSE
+    _maybe_record_usage(payload, signals)
     content = _content_from_provider_mapping(payload)
     return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
 
