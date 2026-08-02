@@ -3888,9 +3888,11 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
 
 @pytest.mark.unit
 def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
-    """The kill switch's label promises "block tool calls in chat" -- all of
-    them. MCP composition is skipped and `BuiltinToolGate.check` refuses when
-    the switch is on, but a name NEITHER provider claims (a skill,
+    """The kill switch must refuse every call, including unclaimed names.
+
+    Its label promises "block tool calls in chat" -- all of them. MCP
+    composition is skipped and `BuiltinToolGate.check` refuses when the
+    switch is on, but a name NEITHER provider claims (a skill,
     `spawn_subagent`, `find_tools`, `load_tools`) passed through the review
     hook unreviewed and dispatched normally: flipping the switch to stop all
     tool calls left four tool families running. A false sense of security in
