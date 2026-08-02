@@ -86,6 +86,12 @@ class MCPPendingCall:
     arguments: dict
     reason: str  # ask|config_changed|risk_floored
     options: tuple[str, ...] = ()
+    #: Per-call verdict key. The provider's tool-call id when the model gave
+    #: one (native tool-calling), else "" -- the fence path builds ToolCalls
+    #: with no id. The runtime looks up `call_id` FIRST and falls back to
+    #: `llm_name`, so an empty value here simply keeps the old shared-verdict
+    #: behavior for that call rather than breaking it.
+    call_id: str = ""
     #: TASK-1231/F3 AC2: True when this is a builtin file tool
     #: (read_file/list_directory/write_file) whose path argument will be
     #: rejected by `allowed_file_roots`/`validate_path_multi` regardless of

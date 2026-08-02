@@ -145,17 +145,30 @@ def format_approval_deadline(timeout_seconds: float | None) -> str:
 
 
 def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse ``calls`` to one entry per unique ``llm_name``, first-seen order.
+    """Group ``calls`` into one row per addressable verdict, first-seen order.
 
-    Matches T3's decisions-keyed-by-llm_name contract: same-name calls in
-    one turn share a single verdict, so the batch card only ever needs one
-    row per unique name. Each returned entry carries a ``count`` of how
-    many original calls shared that name (for the row's "×N" suffix).
+    Rows are keyed by ``call_id`` when the call has one, so two reads of two
+    different files are two decisions -- the user can allow ``spec.md`` and
+    refuse ``secrets.md``. Tools are how an agent reaches the outside world,
+    so per-target granularity is the point of the gate.
+
+    Calls with NO ``call_id`` still collapse by ``llm_name``, and that is
+    deliberate rather than a leftover: the fence path builds ToolCalls
+    without ids (``agent_runtime._fence_call``), so the runtime can only
+    apply a NAME-keyed verdict to them. Splitting those into separate rows
+    would offer the user a decision the runtime cannot honour -- the row
+    would say "deny this one" and every same-name call would stop.
+
+    Each entry carries ``count`` (for the "×N" suffix) and ``all_arguments``
+    (every grouped call's arguments, so a count never conceals a target).
     """
     grouped: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for call in calls:
-        name = str(call.get("llm_name", ""))
+        # Key by the per-call id when the runtime can address it; otherwise
+        # by name, which is the only verdict key that reaches such a call.
+        call_id = str(call.get("call_id", "") or "")
+        name = call_id or str(call.get("llm_name", ""))
         if name not in grouped:
             entry = dict(call)
             entry["count"] = 1
@@ -468,7 +481,13 @@ class ChatApprovalCard(Container):
         rows: list[Horizontal] = []
         fast_buttons: list[Button] = []
         for index, entry in enumerate(grouped):
-            names.append(str(entry.get("llm_name", "")))
+            # The verdict key must match what the RUNTIME looks up, and it
+            # looks up `call_id` first, then name. Emitting the name here
+            # while grouping rows per call would give the user a per-call
+            # decision the runtime then applies to every same-name call.
+            names.append(
+                str(entry.get("call_id", "") or entry.get("llm_name", ""))
+            )
             row_options = _options_for_row(entry)
             row_values = [value for _label, value in row_options]
             default_value = (

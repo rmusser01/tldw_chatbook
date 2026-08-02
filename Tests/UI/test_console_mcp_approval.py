@@ -2202,3 +2202,59 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
         resolver.join()
 
     assert decisions == {"mcp__srv__tool": "approve_once"}
+
+
+@pytest.mark.unit
+def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
+    """Per-call verdicts must not starve the NAME-keyed consumers.
+
+    The approval card now keys verdicts by `call_id` so two reads of two
+    files are two decisions. But `builtin_gate.stamp` records a grant against
+    a tool NAME (a session/always grant is per tool, not per call), and
+    `MCPToolProvider.apply_batch_decisions` also takes names. Without an
+    explicit per-call-then-name resolution, a call-id-keyed decision reached
+    NEITHER: MCP got {} and no grant was ever stamped, silently.
+
+    This test exists because the whole approval suite passed with that break
+    in place -- nothing covered the key mismatch.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self):
+            pass
+
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+
+        def stamp(self, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
+
+    # The card answers with a CALL-ID key, exactly as it now does.
+    def request_approvals(pending):
+        assert pending, "precondition: a row was surfaced for review"
+        return {pending[0].call_id: "approve_session"}
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    hook([ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-1")])
+
+    assert stamped == [("read_file", "approve_session")], (
+        f"the call-id-keyed decision never reached the gate: {stamped}"
+    )

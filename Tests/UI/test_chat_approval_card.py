@@ -269,3 +269,43 @@ def test_tool_trace_is_not_the_faintest_text_on_screen():
     assert "dim" not in body, (
         f"the tool trace is still dimmed below every other row: {body.strip()!r}"
     )
+
+
+@pytest.mark.unit
+def test_distinct_calls_get_their_own_row_and_verdict():
+    """Per-call verdicts: the card must offer one decision per real call.
+
+    Grouping was by `llm_name`, so two reads of two different files shared
+    one row AND one verdict -- you could not allow `spec.md` and refuse
+    `secrets.md`. Now that the runtime looks up by `call_id` first, the card
+    can key rows per call.
+
+    Calls that carry NO call_id (the fence path) must still collapse by name,
+    because a name-keyed verdict is all the runtime can apply to them --
+    splitting them into rows the verdict cannot address would be a lie.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _collapse_pending_calls,
+    )
+
+    distinct = [
+        {"llm_name": "read_file", "call_id": "a", "arguments": {"path": "spec.md"}},
+        {"llm_name": "read_file", "call_id": "b", "arguments": {"path": "secrets.md"}},
+    ]
+    rows = _collapse_pending_calls(distinct)
+    assert len(rows) == 2, (
+        f"two distinct calls must be two decisions, got {len(rows)} row(s)"
+    )
+    assert {r["call_id"] for r in rows} == {"a", "b"}
+
+    # No call_id -> the runtime can only apply a name-keyed verdict, so one row.
+    fence = [
+        {"llm_name": "read_file", "arguments": {"path": "one.md"}},
+        {"llm_name": "read_file", "arguments": {"path": "two.md"}},
+    ]
+    fence_rows = _collapse_pending_calls(fence)
+    assert len(fence_rows) == 1, (
+        "calls with no id cannot be addressed individually by the runtime, so "
+        "splitting them would offer a decision that cannot be honoured"
+    )
+    assert fence_rows[0]["count"] == 2
