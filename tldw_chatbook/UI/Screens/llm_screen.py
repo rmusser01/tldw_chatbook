@@ -32,6 +32,7 @@ from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
 from .model_browser_state import install_failure_message
 from .model_curated_view import CuratedView
+from .model_installed_view import InstalledView
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -256,6 +257,22 @@ class LLMScreen(LabScreen):
         except NoMatches:
             return None
 
+    def _installed_view(self) -> "InstalledView | None":
+        """Return the mounted ``InstalledView``, or None if it cannot be found.
+
+        Returns:
+            The view, or None when the window has not mounted yet, or a
+            screen-level recompose has torn down the previous instance and
+            the fresh one is not mounted yet either (see
+            ``LabScreen.recompose()``).
+        """
+        if self.llm_window is None:
+            return None
+        try:
+            return self.llm_window.query_one(InstalledView)
+        except NoMatches:
+            return None
+
     # -- Curated model install: this screen owns preflight/provision -----
     #
     # TASK-1803: CuratedView posts CuratedView.InstallRequested and renders
@@ -283,6 +300,20 @@ class LLMScreen(LabScreen):
         -- ``cancel_pending_install()`` releases only that fresh
         instance's own indicator, leaving the still-running install's
         retained state (below) untouched.
+
+        Also validates the event's payload before storing any of it
+        (TASK-1803 review round 2, Critical): ``CuratedView`` only ever
+        posts a well-formed request today, but nothing enforces that at
+        the type level, and ``_run_curated_preflight`` used to assume
+        ``self._model_install_reference`` was always a valid
+        ``ArtifactRef`` -- a malformed or missing reference reached
+        ``reference.artifact_id`` in that worker's own exception handler,
+        raising a SECOND exception that pre-empted
+        ``_apply_curated_preflight_result`` entirely and stranded the
+        retained install state with no path back to idle. Rejecting an
+        invalid request here, before it is ever stored, is the primary
+        defense; ``_run_curated_preflight``'s own guard and safe
+        formatting are the defense-in-depth backstop.
         """
         event.stop()
         worker = self._model_install_worker
@@ -294,6 +325,22 @@ class LLMScreen(LabScreen):
             view = self._curated_view()
             if view is not None:
                 view.cancel_pending_install()
+            return
+        if (
+            not isinstance(event.reference, ArtifactRef)
+            or event.service is None
+            or event.registry is None
+            or event.sources is None
+        ):
+            logger.error(
+                "Curated install request carried an invalid reference, "
+                "service, registry, or source map; refusing to start."
+            )
+            self.notify(
+                "Could not start the model install: invalid request.",
+                severity="error",
+            )
+            self._clear_curated_install_state()
             return
         self._model_install_reference = event.reference
         self._model_install_service = event.service
@@ -321,23 +368,46 @@ class LLMScreen(LabScreen):
 
     @work(thread=True, group="llm_curated_preflight", exit_on_error=False)
     def _run_curated_preflight(self) -> None:
-        """Resolve the curated install plan off the Textual event loop."""
+        """Resolve the curated install plan off the Textual event loop.
+
+        Defense-in-depth (TASK-1803 review round 2, Critical): ``_curated_
+        install_requested`` already refuses to store an invalid reference,
+        so ``reference`` below should always be a real ``ArtifactRef`` by
+        the time this runs -- but this method no longer trusts that. A
+        missing/malformed reference schedules
+        ``_apply_curated_preflight_result`` directly instead of ever
+        reaching the ``try`` block, and the ``except`` clause formats the
+        reference defensively (``getattr(..., default)``) rather than
+        assuming attribute access succeeds. Every path below -- the guard,
+        the exception handler, and the success path -- ends in exactly
+        one ``call_from_thread(self._apply_curated_preflight_result, ...)``,
+        so the retained install state can never be left stranded by a
+        second, unhandled exception inside the error handler itself.
+        """
         reference = self._model_install_reference
+        if reference is None:
+            self.app.call_from_thread(
+                self._apply_curated_preflight_result,
+                None,
+                "No install request is available; review the model again.",
+            )
+            return
         try:
             report = asyncio.run(  # policy-exception: worker-thread loop
                 self._preflight_curated(reference)
             )
         except Exception as exc:
+            artifact_id = getattr(reference, "artifact_id", "unknown")
             logger.opt(exception=True).error(
                 "Curated model preflight failed for {}@{}/{}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
+                artifact_id,
+                getattr(reference, "revision", "unknown"),
+                getattr(reference, "variant", "unknown"),
             )
             self.app.call_from_thread(
                 self._apply_curated_preflight_result,
                 None,
-                install_failure_message(exc, model_label=reference.artifact_id),
+                install_failure_message(exc, model_label=artifact_id),
             )
             return
         self.app.call_from_thread(self._apply_curated_preflight_result, report, None)
@@ -397,7 +467,15 @@ class LLMScreen(LabScreen):
 
     @work(thread=True, group="llm_curated_install", exit_on_error=False)
     def _run_curated_provision(self) -> None:
-        """Provision the consented plan off the Textual event loop."""
+        """Provision the consented plan off the Textual event loop.
+
+        Same defense-in-depth as ``_run_curated_preflight`` (TASK-1803
+        review round 2): the ``except`` clause formats ``report.root``
+        defensively rather than assuming attribute access succeeds, so a
+        malformed report can never turn one failure into a second,
+        unhandled exception that skips
+        ``_apply_curated_provision_result`` and strands install state.
+        """
         report = self._model_install_pending_report
         if report is None:
             self.app.call_from_thread(
@@ -408,15 +486,17 @@ class LLMScreen(LabScreen):
         try:
             asyncio.run(self._provision_curated(report))  # policy-exception: worker-thread loop
         except Exception as exc:
+            root = getattr(report, "root", None)
+            artifact_id = getattr(root, "artifact_id", "unknown")
             logger.opt(exception=True).error(
                 "Curated model installation failed for {}@{}/{}",
-                report.root.artifact_id,
-                report.root.revision,
-                report.root.variant,
+                artifact_id,
+                getattr(root, "revision", "unknown"),
+                getattr(root, "variant", "unknown"),
             )
             self.app.call_from_thread(
                 self._apply_curated_provision_result,
-                install_failure_message(exc, model_label=report.root.artifact_id),
+                install_failure_message(exc, model_label=artifact_id),
             )
             return
         self.app.call_from_thread(self._apply_curated_provision_result, None)
@@ -602,6 +682,27 @@ class LLMScreen(LabScreen):
         every recompose, not only first mount) -- mirroring
         ``LibraryScreen``'s own ``_hydrate_parakeet_v2_progress`` -- so the
         fresh ``CuratedView`` has actually finished mounting first.
+
+        Also mirrors the same retained state directly into the freshly
+        (re)mounted ``LLMManagementWindow``'s own ``InstalledView`` (TASK-
+        1803 review round 2, Important). ``_deliver_curated``'s fallback
+        (see its own docstring) keeps THIS screen's own state current even
+        when a tick lands in the narrow teardown -> remount gap, by
+        posting directly on ``self`` when the stale, closed
+        ``self.llm_window`` cannot receive it -- but a message posted at
+        the Screen never reaches ``LLMManagementWindow``'s mirroring
+        handlers (``_managed_install_progressed``/``_managed_install_
+        status_changed``): Textual only ever bubbles a message UP, never
+        back down into a sibling/descendant, and the Screen is already
+        above that node. Left uncorrected, a fresh ``InstalledView`` would
+        show a stale "not installing" state for however long it takes the
+        NEXT tick to arrive naturally through the fresh window's own
+        mirror -- this is the same mirroring gap PR #1185 fixed for
+        ``CuratedView``, recurring one level deeper now that ``LLMScreen``
+        owns the worker. Calling ``InstalledView.set_install_state``
+        directly here closes it by construction, deterministically, on
+        every (re)mount, rather than by trying to identify and replay
+        whichever specific message the gap happened to swallow.
         """
         if not self._model_install_active:
             return
@@ -610,6 +711,9 @@ class LLMScreen(LabScreen):
         view = self._curated_view()
         if view is not None:
             view.apply_progress(self._model_install_last_progress)
+        installed = self._installed_view()
+        if installed is not None:
+            installed.set_install_state(self._model_install_last_progress, active=True)
 
     def _sync_rail_active(self, active_view: str) -> None:
         """Move the rail highlight to the row matching the active view.
