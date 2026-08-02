@@ -45,6 +45,7 @@ BlockField = Literal["title", "syntax", "xml_tag", "content"]
 BlockAction = Literal["move_up", "move_down", "duplicate", "delete", "add"]
 
 _NARROW_WIDTH = 90
+_STACKED_FOOTER_WIDTH = 120
 _SAFE_WIDGET_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 RECIPE_MAPPED_CONTEXT_BLOCKED_COPY = (
     "Recipe save unavailable — delete the mapped Additional context block first."
@@ -567,7 +568,10 @@ class PromptBlockEditor(Vertical):
         narrow = width < _NARROW_WIDTH
         self.set_class(narrow, "-narrow")
         try:
-            self.query_one("#prompt-editor-footer").set_class(narrow, "two-row")
+            self.query_one("#prompt-editor-footer").set_class(
+                width < _STACKED_FOOTER_WIDTH,
+                "two-row",
+            )
         except NoMatches:
             return
 

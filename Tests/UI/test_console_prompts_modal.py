@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -54,6 +55,11 @@ from tldw_chatbook.Widgets.Console.console_prompts_state import (
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+)
+
+
+_BUNDLED_STYLESHEET = (
+    Path(__file__).parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 )
 
 
@@ -243,6 +249,12 @@ class _Harness(App):
                 **kwargs,
             )
         )
+
+
+class _StyledHarness(_Harness):
+    """Modal harness with the same bundled stylesheet as the real Console."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
 
 
 class _ImprovementDriver:
@@ -838,6 +850,83 @@ async def test_supported_prompt_recipe_copy_and_legacy_open_without_side_effects
     assert backend.model_calls == 0
     assert backend.usage_mutations == 0
     assert backend.save_calls == []
+
+
+def _rendered_lines(widget: Checkbox) -> tuple[str, ...]:
+    """Return the terminal-cell text actually painted by a mounted widget."""
+    return tuple(widget.render_line(row).text for row in range(widget.region.height))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 40), (100, 30), (80, 24)])
+async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
+    size: tuple[int, int],
+) -> None:
+    backend = _PromptBackend()
+    app = _StyledHarness(backend)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await app.screen.open_artifact("prompt-1")
+        await pilot.pause()
+
+        editor = app.screen.query_one(PromptBlockEditor)
+        footer = editor.query_one("#prompt-editor-footer")
+        lane_options = editor.query_one("#prompt-editor-lane-options")
+        actions = editor.query_one("#prompt-editor-actions")
+        system = editor.query_one("#prompt-editor-apply-system", Checkbox)
+        user = editor.query_one("#prompt-editor-apply-user", Checkbox)
+
+        assert system.value is False
+        assert user.value is True
+
+        for checkbox, label in (
+            (system, "Apply system prompt to this session"),
+            (user, "Apply User"),
+        ):
+            rendered = _rendered_lines(checkbox)
+            painted = "\n".join(rendered)
+            assert "▐X▌" in painted, (
+                f"{checkbox.id} has no rendered checkbox glyph at {size}: "
+                f"region={checkbox.region!r}, lines={rendered!r}"
+            )
+            assert label in painted, (
+                f"{checkbox.id} has no readable label at {size}: "
+                f"region={checkbox.region!r}, lines={rendered!r}"
+            )
+
+        assert footer.has_class("two-row")
+        assert lane_options.region.bottom <= actions.region.y
+
+        action_widgets = [
+            editor.query_one(selector, Button)
+            for selector in (
+                "#prompt-editor-back",
+                "#prompt-editor-save-prompt",
+                "#prompt-editor-save-recipe",
+                "#prompt-editor-update-original",
+                "#prompt-editor-apply",
+            )
+        ]
+        for action in action_widgets:
+            assert action.region.width > 0 and action.region.height > 0
+            assert editor.region.contains_region(action.region)
+        for left, right in zip(action_widgets, action_widgets[1:]):
+            assert left.region.right <= right.region.x
+
+        system.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        assert system.value is True
+        await pilot.press("space")
+        await pilot.press("tab")
+        await pilot.pause()
+        assert system.value is False
+        assert app.focused is user
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is action_widgets[0]
 
 
 @pytest.mark.asyncio

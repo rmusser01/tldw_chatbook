@@ -168,6 +168,45 @@ async def test_lanes_stack_and_nonempty_lanes_start_expanded(
 
 
 @pytest.mark.asyncio
+async def test_genuinely_wide_editor_keeps_readable_single_row_footer() -> None:
+    app = BlockEditorHarness(_state())
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+        footer = editor.query_one("#prompt-editor-footer")
+        lane_options = editor.query_one("#prompt-editor-lane-options")
+        actions = editor.query_one("#prompt-editor-actions")
+
+        assert footer.has_class("two-row") is False
+        assert lane_options.region.y == actions.region.y
+        for checkbox, label in (
+            (
+                editor.query_one("#prompt-editor-apply-system", Checkbox),
+                "Apply system prompt to this session",
+            ),
+            (
+                editor.query_one("#prompt-editor-apply-user", Checkbox),
+                "Apply User",
+            ),
+        ):
+            painted = "\n".join(
+                checkbox.render_line(row).text for row in range(checkbox.size.height)
+            )
+            assert "▐X▌" in painted
+            assert label in painted
+
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert footer.has_class("two-row") is True
+
+        await pilot.resize_terminal(140, 40)
+        await pilot.pause()
+        assert footer.has_class("two-row") is False
+        assert lane_options.region.y == actions.region.y
+
+
+@pytest.mark.asyncio
 async def test_xml_tag_control_is_visible_only_for_xml_blocks() -> None:
     state = update_block(_state(), "goal", syntax="xml", xml_tag="goal")
     app = BlockEditorHarness(state)
