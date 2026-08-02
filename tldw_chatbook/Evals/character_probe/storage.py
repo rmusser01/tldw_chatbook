@@ -26,6 +26,7 @@ from .models import (
     ProbeSet,
 )
 from .prompt import compose_system_prompt
+from .tags import Tag, coerce_tag
 from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
@@ -222,6 +223,41 @@ def is_character_bench(task_row: Mapping[str, Any]) -> bool:
     return config_data.get("bench_type") == BENCH_TYPE
 
 
+def _tags_to_json(tags: Sequence[Any]) -> list[dict[str, str]]:
+    """The stored form of a bench's extra tags.
+
+    Args:
+        tags: Validated ``Tag`` objects.
+
+    Returns:
+        list[dict[str, str]]: One JSON-safe mapping per tag.
+    """
+    return [{"slug": t.slug, "label": t.label, "kind": t.kind} for t in tags]
+
+
+def _tags_from_json(raw: Any, owner_id: str) -> tuple[Tag, ...]:
+    """Extra tags read back from a stored row or run snapshot.
+
+    Accepts the raw mappings written before the vocabulary existed, so rows
+    predating this phase still load.
+
+    Args:
+        raw: The stored ``extra_tags`` value, or None.
+        owner_id: The bench or run-group id, named in any error.
+
+    Returns:
+        tuple[Tag, ...]: Validated tags, empty when none were stored.
+
+    Raises:
+        ValueError: If a stored entry is malformed -- naming ``owner_id``, so
+            a corrupt row identifies itself rather than failing anonymously.
+    """
+    try:
+        return tuple(coerce_tag(entry) for entry in raw or ())
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{owner_id} has a corrupt extra_tags entry: {exc}") from exc
+
+
 def save_character_bench(
     db: EvalsDB, config: CharacterProbeConfig, task_id: Optional[str] = None
 ) -> str:
@@ -276,7 +312,7 @@ def save_character_bench(
         "seed": config.seed,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
-        "extra_tags": list(config.extra_tags),
+        "extra_tags": _tags_to_json(config.extra_tags),
     }
     if task_id is not None:
         updated = db.update_task(
@@ -455,8 +491,9 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
             propagated from ``_stored_int_field`` (see its own docstring)
             for a corrupt ``concurrency``/``samples_per_cell``/
             ``max_tokens``, from ``_stored_seed``/``_stored_temperature``
-            for a corrupt ``seed``/``temperature``, and from
-            ``CharacterProbeConfig.__post_init__`` for a stored
+            for a corrupt ``seed``/``temperature``, from ``_tags_from_json``
+            for a malformed stored ``extra_tags`` entry (naming this bench),
+            and from ``CharacterProbeConfig.__post_init__`` for a stored
             ``concurrency``/``samples_per_cell`` below its ``>= 1`` floor,
             or a non-``int`` element of ``character_ids``.
     """
@@ -477,7 +514,7 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         seed=_stored_seed(data, task_id),
         temperature=_stored_temperature(data, task_id, 0.8),
         max_tokens=_stored_int_field(data, "max_tokens", 512, task_id),
-        extra_tags=tuple(data.get("extra_tags") or ()),
+        extra_tags=_tags_from_json(data.get("extra_tags"), task_id),
         strict=False,
     )
 
@@ -553,7 +590,7 @@ def _probe_run_snapshot(
             "samples_per_cell": config.samples_per_cell,
             "concurrency": config.concurrency,
         },
-        "extra_tags": list(config.extra_tags),
+        "extra_tags": _tags_to_json(config.extra_tags),
         "targets": [
             {
                 "id": target.id,

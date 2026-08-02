@@ -8,6 +8,7 @@ from tldw_chatbook.Evals.character_probe.storage import (
     load_character_bench,
     save_character_bench,
 )
+from tldw_chatbook.Evals.character_probe.tags import Tag
 
 
 @pytest.fixture
@@ -260,3 +261,75 @@ def test_character_ids_must_be_integers():
         CharacterProbeConfig(
             name="n", probe_set_id="p", character_ids=("3", "7"), target_ids=("t",)
         )
+
+
+def test_extra_tags_round_trip_as_tag_objects(db, config):
+    tagged = CharacterProbeConfig(
+        **{
+            **config.__dict__,
+            "extra_tags": (Tag("meta-commentary", "Meta commentary", "failure"),),
+        }
+    )
+    bench_id = save_character_bench(db, tagged)
+    loaded = load_character_bench(db, bench_id)
+    assert loaded.extra_tags == (Tag("meta-commentary", "Meta commentary", "failure"),)
+
+
+def test_extra_tags_supplied_as_mappings_are_validated_and_coerced(db, config):
+    tagged = CharacterProbeConfig(
+        **{
+            **config.__dict__,
+            "extra_tags": ({"slug": "Meta Commentary", "kind": "notable"},),
+        }
+    )
+    bench_id = save_character_bench(db, tagged)
+    loaded = load_character_bench(db, bench_id)
+    assert loaded.extra_tags[0].slug == "meta-commentary"
+    assert loaded.extra_tags[0].kind == "notable"
+
+
+def test_an_extra_tag_without_a_kind_is_rejected_at_construction(config):
+    with pytest.raises(ValueError) as exc:
+        CharacterProbeConfig(
+            **{**config.__dict__, "extra_tags": ({"slug": "meta-commentary"},)}
+        )
+    assert "meta-commentary" in str(exc.value)
+
+
+def test_a_malformed_extra_tag_is_rejected_even_when_not_strict():
+    """strict=False is for DRAFT benches, not for corrupt tags."""
+    with pytest.raises(ValueError):
+        CharacterProbeConfig(
+            name="draft",
+            probe_set_id="ps-1",
+            character_ids=(),
+            target_ids=(),
+            extra_tags=({"slug": "meta", "kind": "not-a-kind"},),
+            strict=False,
+        )
+
+
+def test_a_bench_row_written_before_this_phase_still_loads(db, config):
+    """extra_tags shipped as raw dicts; existing rows must not break."""
+    bench_id = save_character_bench(db, config)
+    _corrupt_config_field(
+        db,
+        bench_id,
+        "extra_tags",
+        '[{"slug": "meta-commentary", "label": "Meta commentary", "kind": "failure"}]',
+    )
+    loaded = load_character_bench(db, bench_id)
+    assert loaded.extra_tags == (Tag("meta-commentary", "Meta commentary", "failure"),)
+
+
+def test_a_bench_row_with_corrupt_tags_raises_naming_the_bench(db, config):
+    bench_id = save_character_bench(db, config)
+    _corrupt_config_field(db, bench_id, "extra_tags", '["not-a-mapping"]')
+    with pytest.raises(ValueError) as exc:
+        load_character_bench(db, bench_id)
+    assert bench_id in str(exc.value)
+
+
+def test_a_bench_with_no_extra_tags_still_loads_as_empty(db, config):
+    bench_id = save_character_bench(db, config)
+    assert load_character_bench(db, bench_id).extra_tags == ()
