@@ -193,14 +193,16 @@ def test_item_is_typed_from_its_kind_not_its_shape():
 
 @pytest.mark.asyncio
 async def test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity():
-    """Fix wave, F3 (Minor).
+    """Fix wave, F3 (Minor); guard still applies unchanged after task-1541's
+    later Qodo redesign (desired-status coalescing).
 
-    `handle_ingest_requested`/`handle_ignore_requested` derive their per-item
-    worker group as `f"{_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX}{item_id}"`
-    from `entity.get("id")`. An entity with no "id" at all would derive the
+    `handle_ingest_requested`/`handle_ignore_requested` dispatch through
+    `_dispatch_item_status`, which derives the per-item drainer's worker
+    group as `f"{_ITEM_STATUS_DRAIN_GROUP_PREFIX}{item_id}"` from
+    `entity.get("id")`. An entity with no "id" at all would derive the
     literal group `"...:None"`, shared by every OTHER id-less dispatch --
-    collapsing exactly the per-item isolation TASK-1541 introduced this group
-    for. Believed unreachable through the real item pipeline:
+    collapsing exactly the per-item isolation this group exists for.
+    Believed unreachable through the real item pipeline:
     `normalize_watchlist_item` (see `REAL_ITEM` above) unconditionally sets
     "id" via `build_watchlist_item_id(source, "watchlist_item", row["id"])`,
     backed by the `subscription_items` table's own `INTEGER PRIMARY KEY`

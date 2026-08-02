@@ -215,3 +215,93 @@ of Textual widget-mount race the verdict separately noted as a "bonus datum" tea
 elsewhere in this review. Not investigated further as out of scope for task-1541.
 `test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture` (F1's target): 20/20
 sequential (`-p no:randomly`), confirming the flake is closed.
+
+---
+
+## Qodo redesign (desired-status coalescing replaces cancellation)
+
+A later Qodo review of the fix wave found the cross-item/per-item `exclusive=True` "supersede"
+worker-group model itself unsound for a durable write, two independent ways, once the write got a
+genuine `asyncio.to_thread` suspension point:
+
+1. The superseded write's OS thread is NOT itself cancellable once started and keeps running, so it
+   can commit AFTER its replacement's write. Rapid opposing actions on one item (e.g. Ingest then
+   Ignore) could leave the DATABASE on the FIRST action while the UI/cache showed the second.
+2. The opposite failure: `asyncio.to_thread` CAN be cancelled before the executor picks the work up
+   at all (reachable under a saturated default executor, no exotic timing required), in which case
+   the write never runs at all. The F2a `except asyncio.CancelledError` handler assumed "cancelled
+   implies the write is durable" and patched the cache to the target status regardless -- false in
+   this case, so the cache could claim a status the database never reached.
+
+Both holes share one root cause: supersede-by-cancellation is the wrong mechanism for a write that
+must be durable. This redesign replaces it with desired-status coalescing and deletes the
+cancellation machinery entirely, rather than patching either hole:
+
+- `_ItemStatusIntent` (frozen dataclass) captures everything a write's completion needs (`status`,
+  `notify_toast`, `refresh`, `patch_item`, `gate`) -- exactly what the four dispatch paths (Ingest,
+  Ignore, the unread toggle, mark-read-on-open) used to pass directly to `_update_item_status`.
+- `_dispatch_item_status` stores at most one such intent per item id in the screen-level
+  `_item_status_desired` dict -- a second dispatch for the same item simply OVERWRITES the entry --
+  and starts a per-item drainer worker (`wl-item-status-drain:{item_id}`, `exclusive=False`) only if
+  one is not already running for that item (`_item_status_draining`). A drainer already running is
+  NEVER cancelled and NEVER told to stop; it just picks the new entry up itself.
+- `_drain_item_status` is the one worker body that ever writes an item's status now: it pops the
+  item's desired entry, re-checks the backend terminal-status gate right before writing when
+  `intent.gate` is set (`_item_status_write_allowed`, folding what used to be duplicated between
+  `_mark_item_unread` and `_confirm_new_then_mark_item_read_on_open`), `await`s the write to GENUINE
+  completion (never a cancellation, since nothing here is ever cancelled), then loops back to check
+  the dict again before exiting. This gives a real, database-level "last dispatched action wins"
+  guarantee per item, and bounds each item to at most one queued write plus at most one in-flight
+  write, matching the old design's queue-depth bound without its unsoundness.
+- `_update_item_status`'s `except asyncio.CancelledError` handler is deleted outright (not patched):
+  nothing that calls it is ever cancelled by this screen's own logic any more, so the premise for
+  that handler no longer exists. `_confirm_new_then_mark_item_read_on_open` and `_mark_item_unread`
+  are both deleted too, folded into `_item_status_write_allowed` + `_drain_item_status`.
+  `_ITEM_STATUS_WORKER_GROUP` and `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX` are removed, replaced by
+  one `_ITEM_STATUS_DRAIN_GROUP_PREFIX`.
+- `_update_item_status_off_loop`'s F4 docstring caveat ("last press wins is not guaranteed at the
+  database") is corrected rather than carried forward: because the drainer now always awaits a write
+  to completion before popping this SAME item's next entry, at most one such OS thread is ever alive
+  per item at a time, so the old zombie-race between two unordered writes to the same row cannot
+  happen any more.
+
+**Tests (`Tests/UI/test_watchlists_read_status.py`).** The F2 pair is reworked to pin behavior under
+the new mechanism (same test names, new scenarios/docstrings):
+- `test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent` now drives rapid opposing
+  Ingest/Ignore actions on ONE item (matching the Inspector's real `IngestRequested`/
+  `IgnoreRequested` gestures) with the underlying write slowed and spy-counted. Asserts the database
+  settles on the LAST dispatched action deterministically, that coalescing bounds the actual writes
+  to `<= 2` (spy-observed), and that the screen's reloaded `_loaded_items` cache ends up coherent
+  with that final state (absent, since `list_items(status=None)` collapses to `"new"` and the item is
+  no longer new).
+- `test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_cache` now dispatches
+  mark-read-on-open FIRST (queuing the desired entry and scheduling, but not yet running, the
+  drainer) and only THEN ingests the item directly against the database, still with no `await` in
+  between -- i.e. the item is ingested WHILE the mark-read desired entry sits queued. This pins the
+  INSIDE-drain gate re-check specifically, not just "gate exists somewhere."
+- New: `test_a_failed_item_status_write_toasts_an_error_and_leaves_the_cache_untouched` -- a failed
+  write (stubbed `WatchlistsBackendController.update_item_status` raising) surfaces an error toast
+  and leaves the item's status untouched.
+
+Mutation-verified (Edit/Edit-revert, clean `git status --short` between each): removing the
+"loop again if a newer desired entry appeared" re-check in `_drain_item_status` reds the rapid-
+opposing-actions test (the queued Ignore is never drained, database incorrectly settles on
+"ingested"); removing the inside-drain gate re-check (`intent.gate` branch) reds ONLY the
+mark-read-on-open-behind-the-cache test, confirmed by running the full file (6/7 pass, only that one
+fails) -- both restored and reverified green.
+
+`test_the_item_status_write_runs_off_the_event_loop_thread` (`Tests/UI/test_watchlists_inspector.py`)
+and `test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture`
+(`Tests/UI/test_watchlists_content_pane.py`, F1's former flake target) both re-verified green --
+the latter 10/10 sequential (`-p no:randomly`).
+
+**Files changed (Qodo redesign):** `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
+(`_ItemStatusIntent`, `_ITEM_STATUS_DRAIN_GROUP_PREFIX`, `_dispatch_item_status`,
+`_drain_item_status`, `_item_status_write_allowed`; rewrote `_mark_item_read_on_open`,
+`handle_unread_toggle_requested`, `handle_ingest_requested`, `handle_ignore_requested`,
+`_update_item_status`, `_update_item_status_off_loop`'s docstring; deleted
+`_confirm_new_then_mark_item_read_on_open`, `_mark_item_unread`,
+`_ITEM_STATUS_WORKER_GROUP`, `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX`);
+`Tests/UI/test_watchlists_read_status.py` (F2 pair reworked, one new test).
+`_toggle_briefing_queue` and every other screen write keep their own pre-existing groups untouched --
+this redesign is scoped strictly to the four item-status paths.

@@ -349,46 +349,53 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
 
 @pytest.mark.asyncio
 async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
-    """Fix wave, F2a (whole-branch review, Important).
+    """TASK-1541, Qodo redesign -- desired-status coalescing, not cancellation.
 
-    `_ITEM_STATUS_WORKER_GROUP` deliberately lets a repeat mark-read-on-open
-    supersede its own in-flight sibling, so a fast `j`/`k` run does not queue
-    one write per keystroke. Once TASK-1541 moved the write onto a genuine
-    `asyncio.to_thread` suspension point, that same supersede became able to
-    actually deliver `CancelledError` to a DIFFERENT item's write in flight
-    -- but the OS thread underneath `asyncio.to_thread` is not itself
-    cancellable, so item A's write still lands in the database regardless.
+    An earlier fix wave gave the read/unread pair a cross-item
+    `exclusive=True` "supersede" worker group so a fast `j`/`k` run would not
+    queue one write per keystroke, and patched a `CancelledError` handler to
+    keep the cache coherent when that supersede cancelled an in-flight
+    write. A later whole-branch re-review found that model unsound two
+    independent ways once the write got a genuine `asyncio.to_thread`
+    suspension point: (1) the superseded write's OS thread is not itself
+    cancellable and keeps running, so it can commit AFTER its replacement --
+    rapid opposing actions on ONE item could leave the DATABASE on the FIRST
+    action while the UI showed the second; (2) `asyncio.to_thread` CAN be
+    cancelled before the executor picks the work up at all, so the old
+    handler's "cancelled implies durable" assumption could patch the cache
+    to a status the database never reached.
 
-    Reproduces that directly: item A's write is slowed (monkeypatched
-    `WatchlistsBackendController.update_item_status`, mirroring how the
-    reviewer's scaffold widened a contended SQLite lock), A is opened
-    (dispatching its mark-read-on-open worker), and -- before that slow
-    write can possibly finish -- B is opened too, in the SAME worker group,
-    simulating the fast `j`/`k` cross-item supersede. A's write is left to
-    land, then the cached dict for A must read "reviewed", not the stale
-    "new" that would leak through if `_update_item_status`'s continuation
-    only patched the cache on the (never-reached, here) non-cancelled path.
+    Desired-status coalescing (`_dispatch_item_status`/`_drain_item_status`)
+    replaces cancellation entirely: nothing here is ever cancelled. A second
+    dispatch for an item that already has one queued just overwrites the
+    desired dict entry, and the per-item drainer always `await`s a write to
+    genuine completion before looking at that entry again -- so the database
+    (and, once a `refresh=True` write reloads it, the screen's own cache)
+    always settles on whichever action was dispatched LAST, deterministically.
 
-    Mutation: removing the `except asyncio.CancelledError` patch block in
-    `_update_item_status` reds this on the final assertion -- the database
-    reaches "reviewed" but the cached dict stays stranded at "new".
+    Reproduces exactly that: Ingest, then -- before the (slowed) write can
+    possibly land -- Ignore, both against the SAME item, mirroring the
+    Inspector's own `IngestRequested`/`IgnoreRequested` gestures. The
+    underlying write is slowed and counted via a spy on
+    `WatchlistsBackendController.update_item_status`, so the coalescing bound
+    (at most one queued write plus at most one in flight, however many
+    actions were dispatched) is directly observable, not just inferred from
+    the end state.
+
+    Mutation: removing the "loop again if a newer desired entry appeared"
+    re-check in `_drain_item_status` (i.e. exiting after the first write
+    instead of re-popping the dict) reds the final DB-status assertion --
+    the queued Ignore would simply never be drained, and the database would
+    incorrectly settle on "ingested".
     """
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+        IngestRequested,
+        IgnoreRequested,
+    )
+
     app = _build_test_app()
     db = app.local_watchlists_service._db()
-    source_id, item_a_id = _seed_one_new_item(db, content_hash="hash-cancel-coherence-a")
-    with db.transaction() as conn:
-        item_b_id = persist_subscription_item(
-            conn,
-            source_id,
-            {
-                "url": "https://summitroute.com/blog/2024/cancel-coherence-b/",
-                "title": "Item B",
-                "content_hash": "hash-cancel-coherence-b",
-                "status": "new",
-            },
-            run_id=None,
-            now="2026-07-28T09:00:01+00:00",
-        )
+    _source_id, item_id = _seed_one_new_item(db, content_hash="hash-opposing-actions")
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -400,77 +407,95 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
         pane = screen.query_one("#watchlists-items-pane", ItemsPane)
         for _ in range(40):
             await pilot.pause()
-            if len(pane.items) >= 2:
+            if pane.items:
                 break
-        assert len(pane.items) == 2, "both seeded items must reach the Items pane"
+        assert pane.items, "the seeded item must reach the Items pane"
+        entity = dict(pane.items[0])
+        assert entity["item_id"] == item_id
 
-        item_a = next(item for item in pane.items if item["item_id"] == item_a_id)
-        item_b = next(item for item in pane.items if item["item_id"] == item_b_id)
-
+        write_calls: list[str] = []
         real_update_item_status = screen._controller.update_item_status
 
-        async def _slow_for_a(*, runtime_backend=None, item_id, status):
-            if item_id == item_a["id"]:
-                await asyncio.sleep(0.4)
+        async def _slow_and_counted(*, runtime_backend=None, item_id, status):
+            write_calls.append(status)
+            await asyncio.sleep(0.2)
             return await real_update_item_status(
                 runtime_backend=runtime_backend, item_id=item_id, status=status
             )
 
-        screen._controller.update_item_status = _slow_for_a
+        screen._controller.update_item_status = _slow_and_counted
 
-        # Dispatch A's mark-read-on-open. Its write is now slowed to 0.4s, so
-        # it is still suspended on the genuine `await asyncio.to_thread(...)`
-        # boundary well past the couple of pauses below.
-        screen._mark_item_read_on_open(item_a)
+        # Rapid opposing actions on the SAME item: Ingest, then -- while that
+        # slowed write is still draining -- Ignore. Exactly the Inspector's
+        # own gestures, fired back to back.
+        screen.post_message(IngestRequested(entity))
         await pilot.pause(0.05)
         await pilot.pause(0.05)
+        screen.post_message(IgnoreRequested(entity))
 
-        # Simulate the fast `j`/`k` cross-item supersede: B's dispatch lands
-        # in the SAME `_ITEM_STATUS_WORKER_GROUP`, `exclusive=True`, so it
-        # cancels A's still-suspended worker.
-        screen._mark_item_read_on_open(item_b)
-
-        # Let A's slowed write actually land -- the OS thread cannot be
-        # cancelled, so this must eventually succeed regardless of the
-        # supersede above.
-        for _ in range(60):
+        for _ in range(80):
             await pilot.pause(0.05)
-            if db.get_item_status(item_a_id) == "reviewed":
+            if db.get_item_status(item_id) == "ignored":
                 break
-        assert db.get_item_status(item_a_id) == "reviewed", (
-            "the OS thread under asyncio.to_thread is not cancellable -- A's "
-            "write must complete in the database even though its coroutine "
-            "was cancelled by B's supersede"
+        assert db.get_item_status(item_id) == "ignored", (
+            "the LAST dispatched action (Ignore) must be what the database "
+            "settles on, deterministically -- not whichever write's OS "
+            "thread happened to finish last"
+        )
+        assert len(write_calls) <= 2, (
+            "coalescing must bound this item to at most one queued write "
+            "plus at most one in-flight write, however many actions were "
+            f"dispatched -- observed writes: {write_calls!r}"
         )
 
+        # And the screen's own cache, reloaded by Ignore's `refresh=True`
+        # tail, must end up coherent with that same final database state.
+        # `_load_items()` always queries `status=None`, which
+        # `LocalWatchlistsService.list_items` collapses to `status="new"` --
+        # so an item that is no longer "new" (whether "ingested" or
+        # "ignored") is simply ABSENT from `_loaded_items`, not present with
+        # some other status string. Coherence here means the reload has
+        # genuinely happened and agrees the item is no longer new -- not
+        # that it is still sitting in the cache believing itself "new" (the
+        # pre-write value) or "ingested" (the superseded write's value).
         for _ in range(40):
             await pilot.pause(0.05)
-            if item_a.get("status") == "reviewed":
+            if not any(row.get("item_id") == item_id for row in screen._loaded_items):
                 break
-        assert item_a.get("status") == "reviewed", (
-            "the cached dict must be patched to match the database even "
-            "though A's coroutine was cancelled mid-flight -- otherwise it "
-            "is left reading a stale 'new' forever, diverged from a "
-            "database the app itself just wrote"
+        assert not any(row.get("item_id") == item_id for row in screen._loaded_items), (
+            "the reloaded Items cache must agree the item is no longer "
+            "'new' -- coherent with the database's final ('ignored') "
+            "status, not stuck on the superseded Ingest's write or the "
+            "original pre-write 'new'"
         )
 
 
 @pytest.mark.asyncio
 async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_cache():
-    """Fix wave, F2b (whole-branch review, Important) -- the other half of F2.
+    """TASK-1541, Qodo redesign -- the inside-drain gate re-check.
 
-    `_mark_item_read_on_open` only ever declines its write when the CACHED
-    dict already disagrees with "new" -- and nothing patches that cache when
-    an item is ingested through the Inspector's `Ingest` button (no
-    `patch_item=` there, by design -- see `handle_ingest_requested`). So a
-    cache that goes stale for ANY reason (this test moves the database
-    directly, "behind the cache's back", rather than reproducing the F2a
-    cancellation race) must not let a subsequent open of that same item
-    overwrite the real, backend-held status.
+    `_mark_item_read_on_open`'s cheap pre-filter only ever declines against
+    the CACHED dict ("new") -- and nothing patches that cache when an item
+    is ingested through the Inspector's `Ingest` button (no `patch_item=`
+    there, by design -- see `handle_ingest_requested`). So the real guard
+    against overwriting an ingest has to be the backend re-check
+    `_item_status_write_allowed` performs immediately before the write,
+    INSIDE `_drain_item_status`'s loop -- not the pre-filter, and not a check
+    done once at dispatch time.
 
-    Mutation: removing the `_blocking_status_for` backend gate in
-    `_confirm_new_then_mark_item_read_on_open` (falling back to trusting the
-    cached "new" alone, as `_mark_item_read_on_open` did before this fix)
+    Reproduces the window directly: `_mark_item_read_on_open` is called
+    first, which queues the desired "reviewed" entry and schedules (but does
+    not run a single line of) the drainer worker -- it is a plain
+    synchronous call, and `run_worker` only SCHEDULES a coroutine. The item
+    is THEN ingested directly against the database, still with no `await` in
+    between -- i.e. the item gets ingested WHILE the mark-read desired entry
+    sits queued, waiting for its drainer to actually start. Only once the
+    test yields to the event loop does the drainer run, re-ask the backend,
+    and see "ingested" -- the gate must refuse the write then, not the
+    cached "new" the pre-filter already let through.
+
+    Mutation: removing the inside-drain gate re-check (the `intent.gate`
+    branch in `_drain_item_status`, or `_item_status_write_allowed` itself)
     reds this on the final assertion -- the ingest gets overwritten with
     "reviewed".
     """
@@ -496,24 +521,83 @@ async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_
         assert item["item_id"] == item_id
         assert item.get("status") == "new", "precondition: the cached dict starts at 'new'"
 
-        # Ingest it directly through the database -- "behind the cache's
-        # back" -- exactly what the real Ingest gesture also does, since
-        # `handle_ingest_requested` passes no `patch_item=`. The cached
-        # dict above is a separate object and is NOT touched by this.
+        # Dispatch mark-read-on-open first: queues the desired "reviewed"
+        # entry and schedules the per-item drainer without running any of it
+        # yet (no `await` has happened in this test).
+        screen._mark_item_read_on_open(item)
+
+        # Ingest it directly through the database -- still with no `await`
+        # in between -- "while the desired entry waits", exactly as the
+        # docstring above describes. The cached dict is a separate object
+        # and is NOT touched by this.
         db.mark_item_status(item_id, "ingested")
         assert item.get("status") == "new", (
             "the cached dict must still read stale 'new' -- otherwise this "
             "test is not exercising a stale cache at all"
         )
 
-        # Re-open the item: the cache still says "new", so without the
-        # backend gate this fires the write unconditionally.
-        screen._mark_item_read_on_open(item)
+        # Only now does control return to the event loop, letting the
+        # drainer actually run its gate re-check.
         for _ in range(40):
             await pilot.pause(0.05)
 
         assert db.get_item_status(item_id) == "ingested", (
-            "opening an item whose cache is stale must not overwrite a real "
-            "backend status the cache does not know about -- the ingest "
-            "must survive"
+            "the item was ingested while the mark-read desired entry sat "
+            "queued -- the inside-drain gate re-check must refuse the "
+            "'reviewed' write when it finally runs, not overwrite the ingest"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_item_status_write_toasts_an_error_and_leaves_the_cache_untouched():
+    """TASK-1541, Qodo redesign.
+
+    `_drain_item_status` calls `_update_item_status` for each popped
+    intent, and that method's `except Exception` branch is the only thing
+    standing between a genuine DB failure and a cache silently claiming a
+    status the write never reached. Pinned directly: a failed write (a
+    deliberate Ingest, so `notify_toast=True`) must surface an error toast
+    and must not move the item's status at all.
+    """
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, item_id = _seed_one_new_item(db, content_hash="hash-failed-write")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(40):
+            await pilot.pause()
+            if pane.items:
+                break
+        assert pane.items, "the seeded item must reach the Items pane"
+        entity = dict(pane.items[0])
+        assert entity["item_id"] == item_id
+
+        async def _raise(*, runtime_backend=None, item_id, status):
+            raise RuntimeError("simulated DB failure")
+
+        screen._controller.update_item_status = _raise
+        app.notify = Mock()
+
+        screen.post_message(IngestRequested(entity))
+        for _ in range(40):
+            await pilot.pause(0.05)
+
+        assert db.get_item_status(item_id) == "new", (
+            "a failed write must leave the item's status exactly as it was"
+        )
+        assert app.notify.called, (
+            "a failed write must surface an error toast, not fail silently"
+        )
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "error"
