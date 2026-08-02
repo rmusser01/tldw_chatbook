@@ -76,6 +76,8 @@ Fresh post-rebase verification: the complete affected matrix passed 576/576 with
 Latest-dev superseding rebase: while PR #1190 was opening, `dev` advanced to `333ab264a` via Briefings phase 4 (PR #1187). The 21-commit branch rebased cleanly again. That upstream merge contributed nine reviewed inventory deltas: one new four-call briefing-handler owner, one additional fixed watchlist warning, seven digest-only source shifts, and two unchanged `app.py` sink calls moving by 16 lines. TASK-596.1 still contributes only its prior three Model Browser deltas. The combined current inventory records 437 owners, 1,073 TASK-492 calls, 6,707 TASK-494 calls, and the same four sink files with identical sink digests. Ordinary Briefings diagnostics remain excluded by the persistent metadata filter.
 
 Fresh verification on `333ab264a`: 576/576 affected tests passed with loopback fixture permission and the 18/18 diagnostic/privacy matrix passed; no code fix was required by the rebase.
+
+PR review follow-up: addressed all three Qodo findings by completing the two public API docstrings and adding privacy-safe preflight/install failure classification (`error_type` and retryable posture only). A test-first regression check proves exception details remain absent from diagnostics and UI handoff. The focused Remote adapter/UI suite passes 92/92, the diagnostic/privacy matrix passes 18/18, and Ruff passes the changed Python files. The regenerated inventory changes only the existing `model_remote_view.py` diagnostic digest; call count and persistent sink topology are unchanged.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -86,4 +88,6 @@ Users can explicitly discover and securely download pinned Hugging Face GGUF art
 Rebased cleanly onto dev after the reviewed shared inventory repair. The branch-specific inventory is current, all 576 affected tests and 18 diagnostic/privacy tests pass, and no new Critical or Important review issue remains.
 
 Final PR head is rebased onto `333ab264a`; its reviewed inventory includes the intervening Briefings drift while preserving the unchanged four-file sink topology. The affected and diagnostic gates remain green.
+
+All Qodo findings are addressed with regression coverage and privacy-safe logging; no raw exception text is recorded.
 <!-- SECTION:FINAL_SUMMARY:END -->

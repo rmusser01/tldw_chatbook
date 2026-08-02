@@ -114,7 +114,17 @@ class ResolvedRemoteCatalog:
     sources: Mapping[ArtifactRef, Mapping[str, str]]
 
     def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
-        """Return the selected artifact when its exact reference is requested."""
+        """Return the selected artifact for its exact reference.
+
+        Args:
+            ref: Artifact reference requested by the acquisition service.
+
+        Returns:
+            The selected remote artifact descriptor.
+
+        Raises:
+            KeyError: The requested reference is not the selected artifact.
+        """
         if ref != self.artifact.reference:
             raise KeyError(ref)
         return self.artifact
@@ -172,7 +182,10 @@ class HuggingFaceRemoteAdapter:
                 async with client.stream(
                     "GET",
                     _API_MODELS_URL,
-                    params={"search": normalized_query, "limit": str(_MAX_SEARCH_RESULTS)},
+                    params={
+                        "search": normalized_query,
+                        "limit": str(_MAX_SEARCH_RESULTS),
+                    },
                     headers=headers,
                     follow_redirects=False,
                 ) as response:
@@ -233,7 +246,14 @@ class HuggingFaceRemoteAdapter:
 
 
 def is_exact_repository(value: str) -> bool:
-    """Return whether ``value`` is one bounded portable owner/repository pair."""
+    """Check for one bounded portable owner/repository pair.
+
+    Args:
+        value: Candidate repository identifier.
+
+    Returns:
+        True when the value is an exact supported repository identifier.
+    """
     if not isinstance(value, str) or len(value) > _MAX_REPOSITORY_CHARACTERS:
         return False
     parts = value.split("/")
@@ -462,7 +482,9 @@ def _gguf_candidates(
         files = tuple(by_index[index] for index in range(1, count + 1))
         grouped.append(
             RemoteGGUFCandidate(
-                label=_candidate_label(repository, _group_display_path(directory, stem)),
+                label=_candidate_label(
+                    repository, _group_display_path(directory, stem)
+                ),
                 files=files,
                 total_bytes=sum(item.size_bytes for item in files),
             )
@@ -479,7 +501,9 @@ def _gguf_candidates(
         ),
         *grouped,
     ]
-    candidates.sort(key=lambda candidate: tuple(item.upstream_path for item in candidate.files))
+    candidates.sort(
+        key=lambda candidate: tuple(item.upstream_path for item in candidate.files)
+    )
     return candidates, tuple(warnings[:_MAX_ERROR_DETAILS])
 
 
@@ -532,8 +556,7 @@ def _is_valid_upstream_path(path: str) -> bool:
         and path == path.strip()
         and "\\" not in path
         and all(
-            component not in {"", ".", ".."}
-            and component.isprintable()
+            component not in {"", ".", ".."} and component.isprintable()
             for component in path.split("/")
         )
     )
@@ -572,11 +595,17 @@ def build_remote_catalog(
     Raises:
         ValueError: The supplied immutable values cannot form a safe artifact.
     """
-    if type(resolved) is not ResolvedRemoteModel or type(candidate) is not RemoteGGUFCandidate:
+    if (
+        type(resolved) is not ResolvedRemoteModel
+        or type(candidate) is not RemoteGGUFCandidate
+    ):
         raise ValueError("resolved and candidate must be remote discovery values")
     if candidate not in resolved.candidates:
         raise ValueError("candidate is not part of the resolved model")
-    if not is_exact_repository(resolved.repository) or _COMMIT_RE.fullmatch(resolved.commit) is None:
+    if (
+        not is_exact_repository(resolved.repository)
+        or _COMMIT_RE.fullmatch(resolved.commit) is None
+    ):
         raise ValueError("resolved repository identity is invalid")
     files = tuple(sorted(candidate.files, key=lambda item: item.upstream_path))
     if (
@@ -585,22 +614,22 @@ def build_remote_catalog(
         or any(type(item) is not RemoteGGUFFile for item in files)
     ):
         raise ValueError("candidate files are invalid")
-    if (
-        candidate.total_bytes != sum(item.size_bytes for item in files)
-        or any(
-            not _is_valid_upstream_path(item.upstream_path)
-            or type(item.size_bytes) is not int
-            or item.size_bytes < 0
-            or item.size_bytes > _MAX_LFS_SIZE_BYTES
-            or _SHA256_RE.fullmatch(item.sha256) is None
-            for item in files
-        )
+    if candidate.total_bytes != sum(item.size_bytes for item in files) or any(
+        not _is_valid_upstream_path(item.upstream_path)
+        or type(item.size_bytes) is not int
+        or item.size_bytes < 0
+        or item.size_bytes > _MAX_LFS_SIZE_BYTES
+        or _SHA256_RE.fullmatch(item.sha256) is None
+        for item in files
     ):
         raise ValueError("candidate metadata is invalid")
 
     artifact_paths = _managed_paths(files)
     canonical_identity = json.dumps(
-        {"repository": resolved.repository, "paths": [item.upstream_path for item in files]},
+        {
+            "repository": resolved.repository,
+            "paths": [item.upstream_path for item in files],
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -669,7 +698,9 @@ def _managed_paths(files: tuple[RemoteGGUFFile, ...]) -> tuple[str, ...]:
 
 
 def _pinned_payload_url(resolved: ResolvedRemoteModel, path: str) -> str:
-    encoded_path = "/".join(quote(component, safe="-._~") for component in path.split("/"))
+    encoded_path = "/".join(
+        quote(component, safe="-._~") for component in path.split("/")
+    )
     return (
         f"https://huggingface.co/{resolved.repository}/resolve/{resolved.commit}/"
         f"{encoded_path}"

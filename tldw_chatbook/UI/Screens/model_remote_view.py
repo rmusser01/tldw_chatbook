@@ -17,6 +17,7 @@ from textual.widgets import Button, Input, Static
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactAcquisitionService,
     EnvConfigCredentialResolver,
+    TransferError,
 )
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
@@ -151,7 +152,9 @@ class RemoteView(Widget):
             return "Select a repository to inspect its eligible GGUF files."
         return "Search runs only when you press Search."
 
-    def _result_widget(self, summary: RemoteModelSummary, *, disabled: bool) -> Vertical:
+    def _result_widget(
+        self, summary: RemoteModelSummary, *, disabled: bool
+    ) -> Vertical:
         button = Button(
             "Inspect GGUF files",
             classes="remote-result",
@@ -406,10 +409,7 @@ class RemoteView(Widget):
         if (
             current_input != relevant_input
             or not repository_is_current
-            or (
-                resolved is not None
-                and resolved.repository != requested_repository
-            )
+            or (resolved is not None and resolved.repository != requested_repository)
         ):
             self._results = ()
             self._resolved = None
@@ -446,7 +446,9 @@ class RemoteView(Widget):
             sources=catalog.sources,
         )
 
-    @work(thread=True, group="remote_model_install", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="remote_model_install", exclusive=True, exit_on_error=False
+    )
     def _preflight_model(
         self,
         catalog: ResolvedRemoteCatalog,
@@ -457,8 +459,11 @@ class RemoteView(Widget):
             report = asyncio.run(self._preflight(catalog))
         except Exception as exc:
             logger.error(
-                "Remote model preflight failed for managed artifact {}",
+                "Remote model preflight failed for managed artifact {}; "
+                "error_type={}, retryable={}",
                 catalog.artifact.reference.artifact_id,
+                type(exc).__name__,
+                isinstance(exc, TransferError) and exc.retryable,
             )
             self.app.call_from_thread(
                 self._apply_preflight_result,
@@ -564,7 +569,9 @@ class RemoteView(Widget):
             activate=False,
         )
 
-    @work(thread=True, group="remote_model_install", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="remote_model_install", exclusive=True, exit_on_error=False
+    )
     def _provision_model(self) -> None:
         """Provision the frozen plan and catalog off the Textual event loop."""
         report = self._pending_report
@@ -579,8 +586,11 @@ class RemoteView(Widget):
             asyncio.run(self._provision(report, catalog))
         except Exception as exc:
             logger.error(
-                "Remote model installation failed for managed artifact {}",
+                "Remote model installation failed for managed artifact {}; "
+                "error_type={}, retryable={}",
                 report.root.artifact_id,
+                type(exc).__name__,
+                isinstance(exc, TransferError) and exc.retryable,
             )
             self.app.call_from_thread(
                 self._apply_provision_result,

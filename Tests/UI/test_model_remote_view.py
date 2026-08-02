@@ -25,6 +25,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     AcquisitionProgress,
     ArtifactPreflightEntry,
     PreflightReport,
+    TransferError,
 )
 from tldw_chatbook.Model_Artifacts.service import ProvenanceClass
 
@@ -34,7 +35,9 @@ _DIGEST = "b" * 64
 
 
 class _Resolver:
-    def __init__(self, calls: list[str], token: str | None = "configured-token") -> None:
+    def __init__(
+        self, calls: list[str], token: str | None = "configured-token"
+    ) -> None:
         self.calls = calls
         self.token = token
 
@@ -257,7 +260,9 @@ async def test_free_text_search_resolves_only_after_result_selection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_search_and_resolve_completions_cannot_replace_newer_results() -> None:
+async def test_stale_search_and_resolve_completions_cannot_replace_newer_results() -> (
+    None
+):
     """Removing either generation check must let an older completion overwrite state."""
     view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
     app = _RemoteApp(view)
@@ -299,7 +304,9 @@ async def test_stale_search_and_resolve_completions_cannot_replace_newer_results
 
 
 @pytest.mark.asyncio
-async def test_same_generation_resolve_rejects_a_different_repository_response() -> None:
+async def test_same_generation_resolve_rejects_a_different_repository_response() -> (
+    None
+):
     """An adapter identity mismatch must never expose an installable candidate."""
     adapter = _Adapter(resolved=_resolved("other/repository"))
     view = _view(
@@ -502,6 +509,7 @@ async def test_no_eligible_error_renders_bounded_incomplete_shard_details() -> N
 @pytest.mark.asyncio
 async def test_oversized_lfs_size_recovers_without_rendering_a_candidate() -> None:
     """Hostile declared sizes must be rejected before the Remote view formats them."""
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -518,9 +526,7 @@ async def test_oversized_lfs_size_recovers_without_rendering_a_candidate() -> No
         )
 
     adapter = HuggingFaceRemoteAdapter(
-        client_factory=lambda: httpx.AsyncClient(
-            transport=httpx.MockTransport(handler)
-        )
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
     view = _view(
         adapter_factory=lambda: adapter,
@@ -595,7 +601,9 @@ async def test_candidate_cap_discloses_deterministic_first_hundred() -> None:
 
 
 @pytest.mark.asyncio
-async def test_candidate_selection_freezes_catalog_and_disables_all_replacement_controls() -> None:
+async def test_candidate_selection_freezes_catalog_and_disables_all_replacement_controls() -> (
+    None
+):
     """A pending plan must remain bound to the selected candidate."""
     resolved = _resolved()
     view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
@@ -830,6 +838,55 @@ async def test_provision_reuses_exact_preflight_values_without_activation(
     assert callable(progress)
     assert activate is False
     resolver_factory.assert_called_once_with()
+
+
+@pytest.mark.parametrize("operation", ("preflight", "installation"))
+def test_install_failures_log_safe_classification_without_exception_details(
+    operation: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Worker diagnostics classify failures without logging exception details."""
+    from tldw_chatbook.UI.Screens import model_remote_view as module
+
+    marker = "PRIVATE-REMOTE-INSTALL-DETAIL"
+    resolved = _resolved()
+    candidate = resolved.candidates[0]
+    catalog = build_remote_catalog(resolved, candidate)
+    report = _report_for(catalog, tmp_path / "managed")
+    fake_app = MagicMock()
+    fake_logger = MagicMock()
+    monkeypatch.setattr(module.RemoteView, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(module, "logger", fake_logger)
+    view = module.RemoteView()
+
+    if operation == "preflight":
+
+        async def fail_preflight(_catalog):
+            raise TransferError(marker, retryable=True)
+
+        view._preflight = fail_preflight
+        module.RemoteView._preflight_model.__wrapped__(
+            view,
+            catalog,
+            candidate,
+        )
+    else:
+        view._pending_report = report
+        view._selected_catalog = catalog
+
+        async def fail_provision(_report, _catalog):
+            raise TransferError(marker, retryable=True)
+
+        view._provision = fail_provision
+        module.RemoteView._provision_model.__wrapped__(view)
+
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
+    assert "TransferError" in logged
+    assert "retryable" in logged.casefold()
+    assert "True" in logged
+    assert marker not in logged
+    assert marker not in str(fake_app.call_from_thread.call_args)
 
 
 @pytest.mark.asyncio
