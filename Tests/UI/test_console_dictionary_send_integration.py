@@ -52,7 +52,7 @@ class _CapturingGateway:
 
         return _R()
 
-    async def stream_chat(self, _resolution, provider_messages):
+    async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
         yield "ok"
 

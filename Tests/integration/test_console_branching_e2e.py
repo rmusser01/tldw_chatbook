@@ -53,7 +53,7 @@ class _SequencedGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         text = self._replies[self._calls]
         self._calls += 1
         yield text

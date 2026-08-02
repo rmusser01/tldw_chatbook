@@ -230,7 +230,7 @@ class SelectionCapturingGateway(_ReadyResolutionGateway):
         self.selections.append(selection)
         return await super().resolve_for_send(selection)
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
         yield "accepted"
 
@@ -240,7 +240,7 @@ class WaitingGateway(_ReadyResolutionGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"
         self.started.set()
         await self.release.wait()
@@ -306,7 +306,7 @@ class BlockedGateway:
             visible_copy="Provider blocked: llama.cpp unavailable.",
         )
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         raise AssertionError("Blocked gateway should not stream")
 
 
@@ -315,7 +315,7 @@ class CapturingGateway(_ReadyResolutionGateway):
         self.chunks = chunks
         self.sent_messages = []
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
         for chunk in self.chunks:
             yield chunk
@@ -630,7 +630,7 @@ class FailThenRecoverGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.calls = 0
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.calls += 1
         if self.calls == 1:
             yield "partial"
@@ -1744,7 +1744,7 @@ class _HoldingStreamGateway(_ReadyResolutionGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.started.set()
         await self.release.wait()
         if False:  # pragma: no cover - async generator that yields no chunks
