@@ -18,11 +18,15 @@ MAX_METADATA_PAYLOAD_BYTES = 64 * 1024 * 1024
 MAX_ARRAY_ELEMENTS = 1_000_000
 MAX_ARRAY_DEPTH = 2
 MAX_TENSOR_DIMENSIONS = 4
+MAX_METADATA_KEY_BYTES = 65_535
+MAX_TENSOR_NAME_BYTES = 64
 MAX_DISPLAY_CHARACTERS = 256
 
 _GGUF_MAGIC = b"GGUF"
 _DEFAULT_ALIGNMENT = 32
 _READ_CHUNK_BYTES = 64 * 1024
+_LOWERCASE_ALPHANUMERIC = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+_METADATA_KEY_CHARACTERS = _LOWERCASE_ALPHANUMERIC | {"_", "."}
 
 _TYPE_UINT8 = 0
 _TYPE_INT8 = 1
@@ -152,21 +156,64 @@ class _GGUFCursor:
             raise GGUFParseError("GGUF value could not be decoded") from exc
 
 
-def _read_string(
+def _read_limited_utf8(
     cursor: _GGUFCursor,
     *,
+    max_bytes: int,
+    label: str,
     metadata_budget: _MetadataBudget | None = None,
 ) -> str:
     (encoded_size,) = cursor.unpack("<Q")
-    if encoded_size > MAX_STRING_BYTES:
-        raise GGUFBoundsError("GGUF string exceeds limit")
+    if encoded_size > max_bytes:
+        raise GGUFBoundsError(f"GGUF {label} exceeds limit")
     if metadata_budget is not None:
         metadata_budget.consume(encoded_size)
     encoded = cursor.read_exact(encoded_size)
     try:
         return encoded.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise GGUFParseError("GGUF string is not valid UTF-8") from exc
+        raise GGUFParseError(f"GGUF {label} is not valid UTF-8") from exc
+
+
+def _read_string(
+    cursor: _GGUFCursor,
+    *,
+    metadata_budget: _MetadataBudget | None = None,
+) -> str:
+    return _read_limited_utf8(
+        cursor,
+        max_bytes=MAX_STRING_BYTES,
+        label="string",
+        metadata_budget=metadata_budget,
+    )
+
+
+def _read_metadata_key(
+    cursor: _GGUFCursor,
+    metadata_budget: _MetadataBudget,
+) -> str:
+    key = _read_limited_utf8(
+        cursor,
+        max_bytes=MAX_METADATA_KEY_BYTES,
+        label="metadata key",
+        metadata_budget=metadata_budget,
+    )
+    if (
+        not key
+        or not key.isascii()
+        or any(character not in _METADATA_KEY_CHARACTERS for character in key)
+        or any(not segment for segment in key.split("."))
+    ):
+        raise GGUFParseError("GGUF metadata key has invalid syntax")
+    return key
+
+
+def _read_tensor_name(cursor: _GGUFCursor) -> str:
+    return _read_limited_utf8(
+        cursor,
+        max_bytes=MAX_TENSOR_NAME_BYTES,
+        label="tensor name",
+    )
 
 
 def _read_scalar(cursor: _GGUFCursor, value_type: int) -> object:
@@ -263,8 +310,23 @@ def _optional_display(retained: dict[str, object], key: str) -> str | None:
     return _sanitize_display(value)
 
 
+def _validate_architecture(value: str) -> None:
+    if (
+        not value
+        or not value.isascii()
+        or any(character not in _LOWERCASE_ALPHANUMERIC for character in value)
+    ):
+        raise GGUFParseError("GGUF general.architecture must match [a-z0-9]+")
+
+
 def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
-    """Inspect GGUF v3 structure and identity without reading tensor payload."""
+    """Inspect GGUF v3 structure and identity without reading tensor payload.
+
+    The seekable handle must be positioned at byte zero. On success it remains
+    positioned at the start of tensor data so the payload is never inspected.
+    """
+    if handle.tell() != 0:
+        raise GGUFParseError("GGUF handle must be positioned at byte zero")
     cursor = _GGUFCursor(handle, file_size=file_size)
     metadata_budget = _MetadataBudget()
     if cursor.read_exact(4) != _GGUF_MAGIC:
@@ -285,7 +347,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     alignment = _DEFAULT_ALIGNMENT
 
     for _ in range(metadata_count):
-        key = _read_string(cursor, metadata_budget=metadata_budget)
+        key = _read_metadata_key(cursor, metadata_budget)
         (value_type,) = cursor.unpack("<I")
         if key in _RETAINED_TYPES:
             if key in seen_retained:
@@ -305,7 +367,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         raise GGUFParseError("GGUF alignment must be a positive multiple of 8")
 
     for _ in range(tensor_count):
-        _read_string(cursor)
+        _read_tensor_name(cursor)
         (dimension_count,) = cursor.unpack("<I")
         if dimension_count > MAX_TENSOR_DIMENSIONS:
             raise GGUFBoundsError("GGUF tensor dimensions exceed limit")
@@ -326,6 +388,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     architecture = retained.get("general.architecture")
     if not isinstance(architecture, str):
         raise GGUFParseError("GGUF is missing general.architecture")
+    _validate_architecture(architecture)
 
     file_type = retained.get("general.file_type")
     if file_type is not None and (
@@ -334,7 +397,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         raise GGUFParseError("GGUF general.file_type has the wrong type")
 
     return GGUFMetadata(
-        architecture=_sanitize_display(architecture),
+        architecture=architecture,
         variant=_optional_display(retained, "stt.variant"),
         model_name=_optional_display(retained, "general.name"),
         file_type=file_type,

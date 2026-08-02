@@ -161,11 +161,12 @@ def make_raw_gguf(
     if layout_alignment is None:
         alignment_value = next(
             (
-                int(item.value)
+                item.value
                 for item in metadata
                 if item.key == "general.alignment"
                 and item.value_type == UINT32
                 and not isinstance(item.value, RawValueFixture)
+                and isinstance(item.value, int)
             ),
             32,
         )
