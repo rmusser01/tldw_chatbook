@@ -257,3 +257,48 @@ def test_console_action_row_disabled_rules_still_clear_dim():
         assert not re.search(r"text-style:[^;]*\bdim\b", body), (
             f"{selector.strip()} compounds dim onto the theme alpha"
         )
+
+
+@pytest.mark.unit
+def test_workbench_disabled_actions_do_not_stack_three_dimmers():
+    """TASK-1801: the Workbench action bar compounded THREE dimmers.
+
+    Measured 1.45:1 in the running app. The layers, none of them visible
+    from any single rule:
+
+    1. ``.workbench-action.is-disabled`` sets ``color: $ds-text-disabled``
+       -- an alpha token, ~38% over the panel;
+    2. ``.is-disabled`` adds ``opacity: 0.55`` on top of that;
+    3. Textual's ``Button:disabled`` adds ``text-style: bold dim`` and
+       ``color: auto 50%``.
+
+    This bar uses the class ``is-disabled``, NOT ``console-action-disabled``
+    -- which is why an earlier edit to the latter measured no change at all
+    and was reverted rather than shipped. Pinning the class here so the next
+    person does not repeat that.
+
+    Even with the stack broken, this bar's lighter background caps the
+    achievable ratio below 4.5:1, so DESIGN.md states 3:1 as the floor.
+    """
+    from pathlib import Path
+
+    workbench = Path("tldw_chatbook/css/components/_workbench.tcss").read_text()
+
+    match = re.search(
+        r"\.workbench-action\.is-disabled\s*\{([^}]*)\}", workbench, re.S
+    )
+    assert match, ".workbench-action.is-disabled rule is missing"
+    body = match.group(1)
+
+    colour = re.search(r"color:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)", body)
+    assert colour, (
+        "the disabled colour must be stated explicitly: `$ds-text-disabled` "
+        "is an alpha token that Textual's dim then halves again"
+    )
+    assert min(int(c) for c in colour.groups()) >= 240, (
+        f"colour {colour.groups()} is too dark to survive dim halving"
+    )
+    assert re.search(r"opacity:\s*1", body), (
+        "must neutralise the `.is-disabled { opacity: 0.55 }` layer, or a "
+        "third multiplier stacks on and no colour can reach the floor"
+    )

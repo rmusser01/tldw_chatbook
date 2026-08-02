@@ -83,8 +83,25 @@
     text-style: bold;
 }
 
+/* TASK-1801: this bar stacked THREE dimmers and measured 1.45:1 live --
+   `$ds-text-disabled` is an alpha token (~38%), `.is-disabled` adds
+   `opacity: 0.55`, and Textual's Button:disabled adds `text-style: bold dim`
+   plus `color: auto 50%`. None of that is visible from any single rule.
+
+   Note the class: this bar uses `is-disabled`, NOT `console-action-disabled`.
+   An earlier edit to the latter measured no change at all and was reverted
+   rather than shipped unverified.
+
+   Neutralising the opacity layer and stating the colour bright enough to
+   survive Textual's halving (which `text-style: none` does NOT clear --
+   verified by measuring the running app) gets this to ~3.6:1. This bar's
+   background is lighter than the composer menu's near-black, so 4.5:1 is
+   not reachable while `dim` still halves the result; DESIGN.md states 3:1
+   as the floor for disabled controls for exactly this reason. */
 .workbench-action.is-disabled {
-    color: $ds-text-disabled;
+    color: rgb(245,245,245);
+    opacity: 1;
+    text-style: none;
 }
 
 .workbench-mode {

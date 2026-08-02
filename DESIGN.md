@@ -163,7 +163,16 @@ Two consequences for anyone touching disabled styling:
 - **`text-style: none` does not clear Textual's `dim`.** Verified by measuring the running app; a rule that relies on it will still render at roughly half the colour it declares. State the colour bright enough to survive the halving.
 - **Widget `DEFAULT_CSS` cannot override it.** Both a screen's `DEFAULT_CSS` and `Button`'s sit in the same tier, where `Button` wins for a `Button`. Disabled overrides belong in the app stylesheet.
 
-Disabled must still read as clearly dimmer than enabled — enabled rows measure ~12.6:1, so the ~4.8:1 target leaves the states obviously distinct.
+A third layer exists on some surfaces: the shared Workbench action bar also carries `.is-disabled { opacity: 0.55 }`, stacking **three** dimmers and measuring 1.45:1. Note the class — that bar uses `is-disabled`, not `console-action-disabled`; editing the wrong one measures no change at all.
+
+Measured results after applying this rule:
+
+| surface | before | after |
+| --- | --- | --- |
+| composer menu rows | 1.25:1 | 4.80:1 |
+| Workbench action bar | 1.45:1 | 6.74:1 |
+
+Disabled must still read as clearly dimmer than enabled — enabled controls measure 10.6:1 to 12.6:1, so these targets leave the states obviously distinct.
 
 ## 3. Typography
 
