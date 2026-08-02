@@ -2538,3 +2538,65 @@ def test_tool_markers_survive_the_next_message():
         store._active_leaf_by_session[session.id]
     ]
     assert leaf.role is not ConsoleMessageRole.TOOL
+
+
+@pytest.mark.unit
+def test_closing_a_session_releases_its_tool_markers():
+    """TASK-1842 follow-up: `_tool_markers_by_session` outlived the session.
+
+    `close_session` pops every other per-session structure and sweeps owned
+    ids out of `_message_session_index`, but left the marker registry keyed
+    by a dead session id -- so every TOOL marker object a closed session ever
+    produced was retained for the life of the process.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+    other = store.create_session(title="keep me")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    assert store._tool_markers_by_session.get(session.id), "precondition"
+
+    store.close_session(session.id)
+
+    assert session.id not in store._tool_markers_by_session, (
+        "the closed session's markers are still retained"
+    )
+    assert other.id in store._sessions, "closing one session must not touch others"
+
+
+@pytest.mark.unit
+def test_deleting_an_anchor_node_purges_the_markers_it_anchored():
+    """TASK-1842 follow-up: deleted branches left dangling marker bookkeeping.
+
+    `delete_message` purges the whole subtree from every node structure and
+    from `_message_session_index`, but it could not reach display-only marker
+    ids -- markers are not tree nodes. Their anchor was gone, so they never
+    rendered again (`_with_tool_markers` drops off-path anchors), yet both the
+    marker objects and their `_message_session_index` entries survived,
+    claiming a session still owned messages it could never show.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    answer = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a"
+    )
+    marker = store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    assert store._message_session_index.get(marker.id) == session.id, "precondition"
+
+    store.delete_message(answer.id)
+
+    assert marker.id not in store._message_session_index, (
+        "the marker's index entry outlived the node it was anchored to"
+    )
+    assert not any(
+        anchor == answer.id
+        for anchor, _marker in store._tool_markers_by_session.get(session.id, [])
+    ), "a marker is still anchored to a deleted node"

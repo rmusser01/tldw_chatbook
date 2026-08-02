@@ -742,6 +742,7 @@ class ConsoleChatStore:
             self._native_parent_by_message.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
+        self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
@@ -1751,6 +1752,7 @@ class ConsoleChatStore:
             self._message_speech_revisions.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
+        self._purge_tool_markers(session_id, set(subtree_ids))
         if on_active_path:
             self._active_leaf_by_session[session_id] = parent_native_id
         self._recompute_active_path(session_id)
@@ -3547,6 +3549,35 @@ class ConsoleChatStore:
             merged.append(node)
             merged.extend(by_anchor.get(node.id, ()))
         return merged
+
+    def _purge_tool_markers(self, session_id: str, anchors: set[str]) -> None:
+        """Drop this session's markers anchored to any node id in ``anchors``.
+
+        TASK-1842 follow-up. Markers are display-only, so the node sweeps in
+        `delete_message` cannot reach them: deleting the branch a marker
+        followed left the marker object registered and its id still in
+        `_message_session_index`, claiming the session owned a message it
+        could never render again (`_with_tool_markers` drops off-path anchors).
+
+        Args:
+            session_id: Session whose marker registry is being pruned.
+            anchors: Native node ids being removed; markers anchored to any of
+                them go with the node they belonged to.
+        """
+        markers = self._tool_markers_by_session.get(session_id)
+        if not markers:
+            return
+        kept: list[tuple[str | None, ConsoleChatMessage]] = []
+        for anchor, marker in markers:
+            if anchor is not None and anchor in anchors:
+                self.clear_terminal_citation_state(marker.id)
+                self._message_session_index.pop(marker.id, None)
+                continue
+            kept.append((anchor, marker))
+        if kept:
+            self._tool_markers_by_session[session_id] = kept
+        else:
+            self._tool_markers_by_session.pop(session_id, None)
 
     def _subtree_ids(self, session_id: str, root_id: str) -> list[str]:
         """Return ``root_id`` plus all its descendant native ids (pre-order)."""

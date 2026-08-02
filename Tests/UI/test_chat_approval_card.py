@@ -141,7 +141,7 @@ def test_collapsed_rows_disclose_every_argument_set():
     """
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         _collapse_pending_calls,
-        _summarize_arguments,
+        _summarize_row_arguments,
     )
 
     calls = [
@@ -153,7 +153,7 @@ def test_collapsed_rows_disclose_every_argument_set():
     assert len(collapsed) == 1, "grouping by name is the intended contract"
     assert collapsed[0]["count"] == 3
 
-    rendered = _summarize_arguments(collapsed[0])
+    rendered = _summarize_row_arguments(collapsed[0])
     for path in ("spec.md", "secrets.md", "todo.md"):
         assert path in rendered, (
             f"{path} is hidden behind the x3 -- the user would approve three "

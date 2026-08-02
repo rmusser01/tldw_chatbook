@@ -214,13 +214,7 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 
 
 def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
-    """Return a compact, ``markup=False``-safe argument summary.
-
-    TASK-1845: when handed a COLLAPSED entry (one carrying ``all_arguments``),
-    every call's arguments are rendered, one per line -- a row that says "x3"
-    must show all three targets or the count is concealing the decision. Each
-    line is capped independently so one long payload cannot push the others
-    off screen. Redaction is applied to every line, not just the first.
+    """Return ONE payload as a compact, ``markup=False``-safe summary.
 
     Secret-looking values (``api_key``, ``token``, ``password``, ...) are
     redacted before rendering -- redaction parity with every other MCP
@@ -228,29 +222,46 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     docstring); the approval card is the one place a raw secret argument
     was still reaching the screen unredacted.
     """
-    def _one(payload: Any) -> str:
-        try:
-            text = json.dumps(
-                redact_mapping(dict(payload or {})),
-                default=str,
-                separators=(",", ":"),
-            )
-        except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
-            text = str(payload or {})
-        if len(text) > _ARGS_SUMMARY_LIMIT:
-            return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
-        return text
+    try:
+        text = json.dumps(
+            redact_mapping(dict(arguments or {})),
+            default=str,
+            separators=(",", ":"),
+        )
+    except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
+        text = str(arguments or {})
+    if len(text) > _ARGS_SUMMARY_LIMIT:
+        return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
+    return text
 
-    if isinstance(arguments, Mapping) and "all_arguments" in arguments:
-        sets = arguments.get("all_arguments") or []
-        rendered = [_one(payload) for payload in sets]
-        # De-duplicate identical payloads while preserving order: N identical
-        # calls are one decision with one target, and repeating it N times
-        # would bury a genuinely different target further down.
-        seen: set[str] = set()
-        unique = [r for r in rendered if not (r in seen or seen.add(r))]
-        return "\n".join(unique)
-    return _one(arguments)
+
+def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
+    """Return the summary for one COLLAPSED row -- every call's arguments.
+
+    TASK-1845: a row that says "x3" must show all three targets or the count
+    is concealing the decision, so each grouped call's payload is rendered on
+    its own line and capped independently (one long payload cannot push the
+    others off screen). Redaction applies to every line, not just the first.
+
+    Takes the collapsed ENTRY, not an arguments mapping. The two shapes were
+    once distinguished by sniffing for an ``all_arguments`` key inside the
+    arguments themselves, which both mis-fires on a tool that genuinely has
+    an argument by that name and -- as shipped -- silently did nothing,
+    because the render site passed the first call's arguments and the branch
+    never ran.
+    """
+    sets = entry.get("all_arguments")
+    if not sets:
+        # Not a collapsed entry (or a row with no arguments at all): fall
+        # back to the single payload so a caller can never render nothing.
+        return _summarize_arguments(entry.get("arguments"))
+    rendered = [_summarize_arguments(payload) for payload in sets]
+    # De-duplicate identical payloads while preserving order: N identical
+    # calls are one decision with one target, and repeating it N times
+    # would bury a genuinely different target further down.
+    seen: set[str] = set()
+    unique = [r for r in rendered if not (r in seen or seen.add(r))]
+    return "\n".join(unique)
 
 
 class ChatApprovalCard(Container):
@@ -514,7 +525,7 @@ class ChatApprovalCard(Container):
             row_children: list[Any] = [
                 header_static,
                 Static(
-                    _summarize_arguments(entry.get("arguments")),
+                    _summarize_row_arguments(entry),
                     markup=False,
                     classes="approval-row-args",
                 ),

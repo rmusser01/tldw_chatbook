@@ -1,5 +1,6 @@
-import pytest
 import inspect
+
+import pytest
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,

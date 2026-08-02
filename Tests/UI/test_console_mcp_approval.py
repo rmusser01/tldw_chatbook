@@ -2258,3 +2258,41 @@ def test_call_id_keyed_decision_still_stamps_the_builtin_gate():
     assert stamped == [("read_file", "approve_session")], (
         f"the call-id-keyed decision never reached the gate: {stamped}"
     )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_row_discloses_every_target_in_the_rendered_row():
+    """TASK-1845 regression: the "xN" row must show every target ON SCREEN.
+
+    The original fix aggregated `all_arguments` in `_collapse_pending_calls`
+    and taught `_summarize_arguments` to render them -- but `set_batch` kept
+    passing `entry["arguments"]` (the FIRST call's payload), so the branch
+    never ran in production and the row still showed one target out of three.
+    The test that "covered" it called the helper with a collapsed entry, a
+    shape production never builds.
+
+    This drives the real widget: three reads of three different files must
+    all be legible in the mounted row, or the user approves what they cannot
+    see.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/spec.md"}},
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/secrets.md"}},
+                {"llm_name": "read_file", "arguments": {"path": "~/notes/todo.md"}},
+            ],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row-args"))
+        assert len(rows) == 1, "same-name calls collapse to one row by contract"
+        rendered = _text(rows[0])
+        for path in ("spec.md", "secrets.md", "todo.md"):
+            assert path in rendered, (
+                f"{path} is hidden behind the x3 -- the mounted row shows: "
+                f"{rendered!r}"
+            )
