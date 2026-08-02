@@ -1,7 +1,7 @@
 ---
 id: TASK-1348
 title: Untrusted watchlist text reaches two sinks that do parse markup
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
