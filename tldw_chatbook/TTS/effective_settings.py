@@ -1191,7 +1191,25 @@ class TTSEffectiveSettingsResolver:
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
     ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve explicit, authoritative-character, global, and fallback layers."""
+        """Resolve explicit, authoritative-character, global, and fallback layers.
+
+        Args:
+            global_preferences: Persisted global selection, when configured.
+            global_preferences_revision: Revision of the global selection snapshot.
+            provider_revision_reader: Reader for current provider configuration revisions.
+            catalog_reader: Asynchronous reader for provider model and voice catalogs.
+            native_capability_reader: Optional reader for observed native capabilities.
+            explicit: Optional request-scoped selection overrides.
+            character_profile: Optional authoritative character-owned selection.
+
+        Returns:
+            The immutable effective selection and its provenance.
+
+        Raises:
+            TypeError: If a supplied selection object has an invalid type.
+            ValueError: If an authoritative character selection is incomplete.
+            TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
+        """
 
         if explicit is not None and type(explicit) is not TTSSelectionOverrides:
             raise TypeError("Explicit TTS selection is invalid")

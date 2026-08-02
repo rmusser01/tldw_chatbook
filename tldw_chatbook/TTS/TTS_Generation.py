@@ -615,7 +615,18 @@ class TTSService:
         self,
         provider_id: str,
     ) -> TTSNativeCapabilityObservation | None:
-        """Return accepted in-memory capability state without provider work."""
+        """Return accepted in-memory capability state without provider work.
+
+        Args:
+            provider_id: Exact canonical identifier for a native provider.
+
+        Returns:
+            The latest accepted observation, or ``None`` when none is available.
+
+        Raises:
+            TypeError: If ``provider_id`` is not a string.
+            ValueError: If ``provider_id`` does not identify a native provider.
+        """
         self._require_native_provider(provider_id)
         return self._native_capability_observations.get(provider_id)
 
