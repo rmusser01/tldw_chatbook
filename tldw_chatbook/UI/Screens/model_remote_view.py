@@ -404,7 +404,13 @@ class RemoteView(Widget):
                 and resolved.repository != requested_repository
             )
         ):
+            self._results = ()
+            self._resolved = None
+            self._selected_catalog = None
             self._set_metadata_controls_disabled(False)
+            self._refresh_with_status(
+                "Repository selection changed. Press Search to inspect the current ID."
+            )
             return
         self._set_metadata_controls_disabled(False)
         if error is not None or resolved is None:

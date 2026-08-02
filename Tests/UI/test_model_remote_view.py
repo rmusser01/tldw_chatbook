@@ -368,6 +368,59 @@ async def test_same_generation_resolve_rejects_when_repository_input_changes() -
 
 
 @pytest.mark.asyncio
+async def test_resolution_mismatch_removes_stale_rendered_candidate_controls() -> None:
+    """Cleared retained state must also remove previously mounted candidates."""
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    old_resolved = _resolved("old/repository")
+    new_resolved = _resolved("new/repository")
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "old/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "old/repository",
+            "old/repository",
+            old_resolved,
+            None,
+        )
+        await pilot.pause()
+        assert list(view.query(".remote-candidate").results(Button))
+
+        view._resolve_remote = MagicMock()
+        query.value = "new/repository"
+        view._search_submitted()
+        assert "Inspecting repository" in _text(view)
+
+        query.value = "changed/repository"
+        view._apply_resolve_result(
+            2,
+            "new/repository",
+            "new/repository",
+            new_resolved,
+            None,
+        )
+        await pilot.pause()
+
+        stale_controls = list(
+            view.query(".remote-result, .remote-candidate").results(Button)
+        )
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+        query_disabled = query.disabled
+
+    assert stale_controls == []
+    assert view._selected_catalog is None
+    assert view._operation_reference is None
+    assert "Inspecting repository" not in status
+    assert "Press Search" in status
+    assert search_disabled is False
+    assert query_disabled is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "expected"),
     (
