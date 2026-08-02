@@ -1679,6 +1679,49 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
         assert "on request" not in pane.scope_label
 
 
+@pytest.mark.asyncio
+async def test_an_out_of_catalog_cadence_gets_a_synthetic_select_option_and_an_honest_scope_label():
+    """Review round 1, Important #1: the out-of-catalog fallbacks are
+    DB-reachable TODAY, not theoretical -- `set_watchlist_briefing_settings`
+    (Task 2) validates only `> 0`, never catalog membership, and Task 2's
+    own test suite uses `briefing_cadence_seconds=3600` as its standard
+    fixture. `3600` is not one of `_CADENCE_OPTIONS` (`Off`/43200/86400/
+    604800), so both of this pane's own defensive fallbacks are exercised
+    by a value the writer accepts right now, through no path more exotic
+    than Task 2's writer itself.
+
+    Mirrors the stale-preset-id fallback test (`test_casting_refuses_
+    before_dispatch_when_the_default_preset_is_dangling`, `_preset_select_
+    options`'s own precedent) for the Select half, and the mode/preset-
+    picker honesty test above for the scope-label half -- both fallbacks,
+    seeded once, asserted together.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3_600)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+
+        # Fallback 1: the Select still renders, holding the real stored
+        # value via a synthetic trailing option -- never `InvalidSelect
+        # ValueError` for a value this picker never offered.
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        option_labels = {value: str(label) for label, value in cadence_select._options}
+        assert option_labels[3_600] == "Every 3600s"
+        assert cadence_select.value == 3_600
+
+        # Fallback 2: the scope label stays honest -- generic wording, but
+        # still names the real cadence and still carries the "while the
+        # app is open" promise verbatim, not a silent "on request" lie.
+        assert "scheduled every 3600s while the app is open" in pane.scope_label
+        assert "on request" not in pane.scope_label
+
+
 # --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------
 #
 # Tasks 1-4 built the `briefing_scripts` table, the cast service
