@@ -285,6 +285,33 @@ class PreviewValidationStep(WizardStep):
         if type_counts.get(ContentType.PROMPT):
             root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
 
+        if type_counts.get(ContentType.KEPT_BRIEFING):
+            root.add(
+                f"📰 Kept Briefings ({type_counts[ContentType.KEPT_BRIEFING]})"
+            )
+
+    @staticmethod
+    def _expected_content_total(manifest: ChatbookManifest) -> int:
+        """Sum of the manifest's per-type statistics.
+
+        Compared against `len(manifest.content_items)` in `_run_validation`
+        to flag a stats/content-items mismatch. Every content type the
+        manifest tracks a total for must be included here -- a chatbook
+        containing only kept briefings (task-1870's own happy path) used
+        to sum to 0 while `content_items` held 1, producing a false
+        "Statistics mismatch" warning (task-1870 fix-wave F2). Pulled out
+        as its own method so this arithmetic can be tested without
+        mounting the wizard step.
+        """
+        return (
+            manifest.total_conversations
+            + manifest.total_notes
+            + manifest.total_characters
+            + manifest.total_media_items
+            + manifest.total_prompts
+            + manifest.total_kept_briefings
+        )
+
     def _run_validation(self) -> None:
         """Run validation checks."""
         validation_list = self.query_one("#validation-list", Container)
@@ -318,12 +345,7 @@ class PreviewValidationStep(WizardStep):
             warnings.append("⚠️ No content items found in chatbook")
 
         # Check statistics match
-        expected_total = (
-            self.manifest.total_conversations
-            + self.manifest.total_notes
-            + self.manifest.total_characters
-            + self.manifest.total_media_items
-        )
+        expected_total = self._expected_content_total(self.manifest)
         actual_total = len(self.manifest.content_items)
 
         if expected_total == actual_total:

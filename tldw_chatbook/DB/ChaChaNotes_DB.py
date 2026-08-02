@@ -12973,6 +12973,7 @@ UPDATE db_schema_version
         overflow_count: int = 0,
         origin: str,
         original_created_at: Optional[str] = None,
+        kept_at: Optional[str] = None,
     ) -> int:
         """Insert a new kept briefing row.
 
@@ -13005,6 +13006,12 @@ UPDATE db_schema_version
             original_created_at: The original briefing's `created_at`
                 timestamp, denormalized so it can be displayed without the
                 Subscriptions_DB.
+            kept_at: Explicit keep timestamp. Only the chatbook importer
+                (task-1870) passes this, to preserve the *originating*
+                device's keep time on a cross-device import; every other
+                caller omits it and gets the column's own
+                `DEFAULT CURRENT_TIMESTAMP` (this device's local keep
+                time), which is what an ordinary in-app Keep action wants.
 
         Returns:
             The integer id of the newly inserted `kept_briefings` row.
@@ -13018,15 +13025,7 @@ UPDATE db_schema_version
             raise InputError(
                 f"origin must be one of {self._ALLOWED_KEPT_BRIEFING_ORIGINS}, got {origin!r}."
             )
-        query = """
-            INSERT INTO kept_briefings(
-                source_briefing_id, watchlist_name, body_markdown,
-                covers_through_item_id, covers_from_ts, selection_mode,
-                model_used, item_count, featured_count, overflow_count,
-                origin, original_created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        params = (
+        params: List[Any] = [
             source_briefing_id,
             watchlist_name,
             body_markdown,
@@ -13039,6 +13038,15 @@ UPDATE db_schema_version
             overflow_count,
             origin,
             original_created_at,
+            kept_at,
+        ]
+        query = (
+            "INSERT INTO kept_briefings("
+            "source_briefing_id, watchlist_name, body_markdown, "
+            "covers_through_item_id, covers_from_ts, selection_mode, "
+            "model_used, item_count, featured_count, overflow_count, "
+            "origin, original_created_at, kept_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))"
         )
         try:
             with self.transaction() as cursor:
@@ -13145,6 +13153,7 @@ UPDATE db_schema_version
         turns_json: str,
         model_used: Optional[str] = None,
         original_created_at: Optional[str] = None,
+        kept_at: Optional[str] = None,
     ) -> int:
         """Insert a new kept script row under a kept briefing.
 
@@ -13169,6 +13178,11 @@ UPDATE db_schema_version
             original_created_at: The original script's `created_at`
                 timestamp, denormalized so it can be displayed without the
                 Subscriptions_DB.
+            kept_at: Explicit keep timestamp. Mirrors `create_kept_
+                briefing`'s `kept_at` param -- only the chatbook importer
+                (task-1870) passes it, to preserve the originating
+                device's keep time; every other caller omits it and gets
+                the column's own `DEFAULT CURRENT_TIMESTAMP`.
 
         Returns:
             The integer id of the newly inserted `kept_scripts` row.
@@ -13180,14 +13194,7 @@ UPDATE db_schema_version
                 an existing kept briefing (foreign key violation), or for
                 other database errors.
         """
-        query = """
-            INSERT INTO kept_scripts(
-                kept_briefing_id, source_script_id, preset_name,
-                roster_snapshot_json, turns_json, model_used,
-                original_created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """
-        params = (
+        params: List[Any] = [
             kept_briefing_id,
             source_script_id,
             preset_name,
@@ -13195,6 +13202,14 @@ UPDATE db_schema_version
             turns_json,
             model_used,
             original_created_at,
+            kept_at,
+        ]
+        query = (
+            "INSERT INTO kept_scripts("
+            "kept_briefing_id, source_script_id, preset_name, "
+            "roster_snapshot_json, turns_json, model_used, "
+            "original_created_at, kept_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))"
         )
         try:
             with self.transaction() as cursor:
@@ -13210,6 +13225,32 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Failed to create kept script: {exc}"
             ) from exc
+
+    def get_kept_script_by_source(
+        self, source_script_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return the kept script for a source script id, if any.
+
+        Mirrors `get_kept_briefing_by_source`. `source_script_id` is a
+        table-wide `UNIQUE` column (not scoped per `kept_briefing_id`), so a
+        non-NULL source script id identifies at most one kept row anywhere
+        in this database -- used by the chatbook importer (task-1870) to
+        classify a `ConflictError` on `create_kept_script` as either an
+        already-present-identical script or a genuine content conflict.
+
+        Args:
+            source_script_id: The originating Subscriptions_DB
+                `briefing_scripts.id`.
+
+        Returns:
+            The kept script row as a dict, or None if it was never kept.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_scripts WHERE source_script_id = ?",
+            (source_script_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row is not None else None
 
     def list_kept_scripts(
         self, kept_briefing_id: int, *, limit: int = 200, offset: int = 0
@@ -13233,6 +13274,39 @@ UPDATE db_schema_version
             (kept_briefing_id, limit, offset),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    def kept_script_counts(
+        self, kept_briefing_ids: List[int]
+    ) -> Dict[int, int]:
+        """Return the kept-script count for each of the given briefing ids.
+
+        A single grouped `COUNT(*)`, not a per-briefing
+        `len(list_kept_scripts(...))` -- the latter materializes every kept
+        script's full `turns_json`/`roster_snapshot_json` (a complete cast
+        transcript) purely to discard it and keep the length. Callers that
+        only need a "(N scripts)" subtitle for up to 200 kept briefings
+        should use this instead (task-1870 fix-wave F3).
+
+        Args:
+            kept_briefing_ids: The `kept_briefings.id` values to count.
+
+        Returns:
+            A dict mapping every requested id to its kept-script count.
+            Ids with no kept scripts (or that do not exist) map to 0.
+        """
+        counts: Dict[int, int] = {kept_id: 0 for kept_id in kept_briefing_ids}
+        if not kept_briefing_ids:
+            return counts
+        placeholders = ",".join(["?"] * len(kept_briefing_ids))
+        cursor = self.execute_query(
+            f"SELECT kept_briefing_id, COUNT(*) AS cnt FROM kept_scripts "
+            f"WHERE kept_briefing_id IN ({placeholders}) "
+            f"GROUP BY kept_briefing_id",
+            tuple(kept_briefing_ids),
+        )
+        for row in cursor.fetchall():
+            counts[int(row["kept_briefing_id"])] = int(row["cnt"] or 0)
+        return counts
 
     def kept_script_source_ids(self, kept_briefing_id: int) -> set[int]:
         """Return the non-NULL source script ids kept under a briefing.
