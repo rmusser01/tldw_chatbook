@@ -180,6 +180,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     #console-prompts-location { color: $text-muted; }
     #console-prompts-body { width: 100%; height: 1fr; min-height: 0; }
     #console-prompts-recipe-scroll { width: 100%; height: 1fr; }
+    #console-prompts-persistence-retry { display: none; }
     #console-prompts-footer { width: 100%; height: 3; align: right middle; }
     #console-prompts-dirty-guard {
         display: none; width: 100%; height: auto; padding: 1;
@@ -352,6 +353,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._remember_current_focus()
         self.state = self.state.enter_mode(mode)
         await self._mount_mode(mode)
+        self._reset_persistence_retry()
         self.call_after_refresh(
             self._focus_widget,
             focus_id or self.state.focus_for(mode),
@@ -359,6 +361,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
 
     async def _back_internal(self, *, discard: bool = False) -> None:
         self._cancel_improvement_activation()
+        self._reset_persistence_retry()
         if self._active_request_id is not None:
             self._cancel_improvement()
             return
@@ -876,6 +879,29 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         except NoMatches:
             return
 
+    def _set_persistence_retry_visible(
+        self,
+        visible: bool,
+        *,
+        focus: bool = False,
+    ) -> None:
+        try:
+            retry = self.query_one("#console-prompts-persistence-retry", Button)
+        except NoMatches:
+            return
+        retry.display = visible
+        retry.disabled = not visible
+        retry.can_focus = visible
+        if visible and focus:
+            self.call_after_refresh(
+                self._focus_widget,
+                "console-prompts-persistence-retry",
+            )
+
+    def _reset_persistence_retry(self) -> None:
+        self._pending_persistence_result = None
+        self._set_persistence_retry_visible(False)
+
     def _next_request_id(self) -> str:
         self._request_counter += 1
         return f"prompt-improvement-{self._request_counter}"
@@ -1163,6 +1189,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     async def _coordinate_apply(
         self, result: ConsolePromptsResult, captured: Any
     ) -> None:
+        self._reset_persistence_retry()
         if self._apply_improvement_result is None:
             self.dismiss(result)
             return
@@ -1184,8 +1211,9 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             self._set_improvement_status(
                 "Applied to this session, but could not save to the conversation."
             )
-            self._set_improvement_action_visible(
-                "#console-prompts-persistence-retry", True
+            self._set_persistence_retry_visible(
+                True,
+                focus=True,
             )
             return
         if (
@@ -1262,43 +1290,25 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             self.state = self.state.as_unsaved_copy(True).with_dirty(True)
         body = self.query_one("#console-prompts-body", Vertical)
         await body.remove_children()
+        self._reset_persistence_retry()
         heading = (
             "Filled Prompt review"
             if artifact_type == "prompt"
             else "Structured Recipe working copy"
         )
+        retry = Button(
+            "Retry save",
+            id="console-prompts-persistence-retry",
+            disabled=True,
+        )
+        retry.display = False
+        retry.can_focus = False
         widgets: list[Any] = [
             Static(heading, markup=False),
             Static(
                 improvement_provider_summary(self._improvement_context),
                 id="console-prompts-provider-summary",
                 markup=False,
-            ),
-            Checkbox(
-                "Include system prompt as analysis context",
-                value=self._include_system_context,
-                id="console-prompts-include-system",
-                disabled=not bool(
-                    getattr(
-                        self._improvement_context,
-                        "current_system_prompt",
-                        "",
-                    )
-                ),
-            ),
-            Static(
-                "Controls analysis context for Fill only. It does not enable "
-                "System apply; System apply remains a separate, off-by-default "
-                "review choice.",
-                id="console-prompts-recipe-analysis-disclosure",
-                markup=False,
-            ),
-            Static("", id="console-prompts-improvement-status", markup=False),
-            Button("Retry save", id="console-prompts-persistence-retry"),
-            PromptBlockEditor(
-                self._editor_state,
-                can_update_original=False,
-                id="console-prompts-editor",
             ),
         ]
         if artifact_type == "recipe":
@@ -1316,7 +1326,41 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     self._improve_unavailable_reason
                     or "Add text to the unsent message before using AI fill."
                 )
-            widgets.insert(4, fill)
+            widgets.extend(
+                [
+                    Checkbox(
+                        "Include system prompt as analysis context",
+                        value=self._include_system_context,
+                        id="console-prompts-include-system",
+                        disabled=not bool(
+                            getattr(
+                                self._improvement_context,
+                                "current_system_prompt",
+                                "",
+                            )
+                        ),
+                    ),
+                    Static(
+                        "Controls analysis context for Fill only. It does not enable "
+                        "System apply; System apply remains a separate, off-by-default "
+                        "review choice.",
+                        id="console-prompts-recipe-analysis-disclosure",
+                        markup=False,
+                    ),
+                    fill,
+                ]
+            )
+        widgets.extend(
+            [
+                Static("", id="console-prompts-improvement-status", markup=False),
+                retry,
+                PromptBlockEditor(
+                    self._editor_state,
+                    can_update_original=False,
+                    id="console-prompts-editor",
+                ),
+            ]
+        )
         await body.mount(
             VerticalScroll(
                 *widgets,
@@ -1526,10 +1570,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             return
         kind = str(getattr(outcome, "kind", ""))
         if kind == "applied":
-            self._pending_persistence_result = None
-            self._set_improvement_action_visible(
-                "#console-prompts-persistence-retry", False
-            )
+            self._reset_persistence_retry()
             self.dismiss(result)
             return
         if kind == "persistence_failed":
@@ -1537,10 +1578,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 "Applied to this session, but could not save to the conversation."
             )
             return
-        self._pending_persistence_result = None
-        self._set_improvement_action_visible(
-            "#console-prompts-persistence-retry", False
-        )
+        self._reset_persistence_retry()
         self._set_improvement_status(
             str(
                 getattr(outcome, "user_message", "")

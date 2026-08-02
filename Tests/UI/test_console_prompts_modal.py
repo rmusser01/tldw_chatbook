@@ -1385,6 +1385,68 @@ async def test_compact_recipe_working_copy_scrolls_to_the_block_editor() -> None
 
 
 @pytest.mark.asyncio
+async def test_recipe_retry_save_is_absent_from_compact_tab_order_until_failure() -> (
+    None
+):
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+
+    async def persistence_failure(_result: Any, _snapshot: Any) -> Any:
+        return SimpleNamespace(kind="persistence_failed", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = persistence_failure
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+
+        retry = modal.query_one("#console-prompts-persistence-retry", Button)
+        assert retry.display is False
+        assert retry.disabled is True
+        assert retry.can_focus is False
+        assert retry.region.width == 0 and retry.region.height == 0
+
+        focused_ids: list[str | None] = []
+        for _ in range(24):
+            await pilot.press("tab")
+            focused_ids.append(getattr(app.focused, "id", None))
+        assert "console-prompts-persistence-retry" not in focused_ids
+
+        captured = SimpleNamespace(
+            composer_snapshot=driver.snapshot,
+            mode="recipe",
+        )
+        result = modal._result_for(
+            user_text=None,
+            system_text="Updated System",
+            apply_user=False,
+            apply_system=True,
+            captured=captured,
+        )
+        await modal._coordinate_apply(result, captured)
+        await pilot.pause()
+
+        assert retry.display is True
+        assert retry.disabled is False
+        assert retry.can_focus is True
+        assert app.focused is retry
+
+        await modal._back_internal(discard=True)
+        await pilot.pause()
+        assert retry.display is False
+        assert retry.disabled is True
+        assert retry.can_focus is False
+        assert modal._pending_persistence_result is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("navigation", ["close", "back", "escape"])
 async def test_held_improve_activation_navigation_cancels_and_ignores_late_resolution(
     navigation: str,
@@ -1880,6 +1942,16 @@ async def test_recipe_fill_mounts_service_block_prompt_as_unsaved_prompt_review(
         assert app.screen._recipe_source_id == "builtin:outcome-first"
         assert app.screen._recipe_source_fingerprint == source_fingerprint
         assert backend.usage_mutations == 0
+        assert len(app.screen.query("#console-prompts-recipe-fill")) == 0
+        assert len(app.screen.query("#console-prompts-include-system")) == 0
+        assert len(app.screen.query("#console-prompts-recipe-analysis-disclosure")) == 0
+        assert (
+            app.screen.query_one("#prompt-editor-apply-system", Checkbox).value is False
+        )
+        retry = app.screen.query_one("#console-prompts-persistence-retry", Button)
+        assert retry.display is False
+        assert retry.disabled is True
+        assert retry.can_focus is False
 
 
 @pytest.mark.asyncio
@@ -1991,6 +2063,8 @@ async def test_stale_persistence_retry_shows_host_message_and_stops_retrying() -
         )
         retry = app.screen.query_one("#console-prompts-persistence-retry", Button)
         retry.display = True
+        retry.disabled = False
+        retry.can_focus = True
 
         await app.screen._retry_persistence()
         await pilot.pause()
@@ -2005,6 +2079,8 @@ async def test_stale_persistence_retry_shows_host_message_and_stops_retrying() -
         )
         assert app.screen._pending_persistence_result is None
         assert retry.display is False
+        assert retry.disabled is True
+        assert retry.can_focus is False
 
 
 @pytest.mark.asyncio
