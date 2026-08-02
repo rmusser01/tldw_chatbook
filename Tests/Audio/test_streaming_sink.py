@@ -466,3 +466,85 @@ def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
     assert elapsed < 0.2, f"stop() blocked for {elapsed:.3f}s -- must never join the notify queue"
     assert sink.settle(timeout=2.0), "notify queue never settled"
     assert any(isinstance(e, SinkStopped) for e in events)
+
+
+def test_on_event_may_be_invoked_concurrently_from_multiple_threads():
+    """Re-review fix-round N1 pin: `stop()`'s non-joining redesign (H2)
+    means a `SinkStarted` job still executing inside `on_event` on the
+    notify thread does not block a caller thread's `stop()` from
+    delivering `SinkStopped` synchronously, on ITS OWN thread, at the
+    same time -- not merely "out of order" (already pinned above by the
+    H2 test), but genuinely concurrently, inside `on_event` on two
+    threads at once. Demonstrates the contract directly (both handlers
+    entered, neither event lost) so a future change can't silently
+    narrow `on_event` back to "one thread at a time" without this test
+    noticing.
+
+    Deterministic by construction: `started_may_finish` is only set
+    AFTER `sink.stop()` (and therefore its synchronous `SinkStopped`
+    delivery) has already returned, so the `SinkStopped` handler is
+    guaranteed to observe the `SinkStarted` handler as still blocked,
+    every run -- no timing luck involved.
+    """
+    events = []
+    events_lock = threading.Lock()
+    started_entered = threading.Event()
+    started_may_finish = threading.Event()
+    entered_concurrently = threading.Event()
+
+    def on_event(e):
+        thread_name = threading.current_thread().name
+        with events_lock:
+            events.append((type(e).__name__, thread_name))
+        if isinstance(e, SinkStarted):
+            started_entered.set()
+            started_may_finish.wait(timeout=2.0)   # hold this thread inside on_event
+        elif isinstance(e, SinkStopped):
+            if started_entered.is_set() and not started_may_finish.is_set():
+                entered_concurrently.set()
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        return FakeStream(callback, samplerate, channels, blocksize)
+
+    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))
+    out = np.zeros((FRAMES, 1), dtype=np.int16)
+    sink._callback(out, FRAMES, None, None)  # queues SinkStarted's "emit" job
+    assert started_entered.wait(timeout=2.0), "listener never started"
+
+    sink.stop()   # SinkStopped delivered synchronously HERE, on this thread,
+                  # while the notify thread is still blocked inside SinkStarted's handler
+    started_may_finish.set()
+
+    assert entered_concurrently.is_set(), \
+        "on_event was not actually re-entered concurrently -- test failed to demonstrate the contract"
+    assert sink.settle(timeout=2.0)
+    with events_lock:
+        recorded = list(events)
+    kinds = sorted(kind for kind, _ in recorded)
+    assert kinds == ["SinkStarted", "SinkStopped"], "no event may be lost to the concurrency"
+    threads_by_kind = dict(recorded)
+    assert threads_by_kind["SinkStarted"] != threads_by_kind["SinkStopped"], \
+        "the two events must genuinely have been delivered from different threads"
+
+
+def test_settle_on_a_sink_whose_notify_thread_never_ran_returns_false_immediately():
+    """Re-review fix-round N2 pin: `stop()`-ing a sink that never
+    `open()`'d (still `"idle"`) still unconditionally pushes the exit
+    sentinel onto `_notify_q` -- but no notify thread was ever published
+    to read it, so `unfinished_tasks` stays 1 forever. `settle()` must
+    recognize "no notify thread was ever published" and return `False`
+    immediately, not burn the full `timeout` for a foregone conclusion.
+    """
+    events = []
+    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS)
+    sink.stop()
+    assert sink._notify_thread is None
+
+    start = time.monotonic()
+    result = sink.settle(timeout=5.0)
+    elapsed = time.monotonic() - start
+
+    assert result is False
+    assert elapsed < 0.2, f"settle() took {elapsed:.3f}s -- must return immediately, not wait out the timeout"

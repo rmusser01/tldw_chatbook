@@ -21,6 +21,16 @@ failed open() must not evict a healthy live sink; L9: pump on a
 never-`open()`'d sink must still terminalize it; L10: an externally-closed
 sink must not busy-retry `feed()` forever; L11: the drain wait must have a
 deadline; L12: this fixture).
+
+Re-review fix-round additions (`task-2-review.md`'s "Fix-round re-review"
+section, verdict SPEC PASS / CODE QUALITY APPROVED with 3 follow-ups):
+pins for N3 (a `stop()` landing between `open()` winning "open" and
+registering must not leave a dead sink as the registered live one) and
+N5 (M6's source-release guarantee, previously pinned only for the
+barge-in path, also holds under cancellation). N1's pin lives in
+`test_streaming_sink.py` (it is a `StreamingPcmSink`/`on_event` contract
+test, not a `pump()` one); N2's pin lives there too (`settle()`); N4 is a
+docstring-only nit with no new test.
 """
 import asyncio
 import contextlib
@@ -354,6 +364,31 @@ async def test_pump_closes_a_class_based_source_on_early_exit():
     assert source.aclose_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_pump_cancelled_mid_feed_still_closes_the_class_based_source():
+    """Re-review fix-round N5 pin: the M6 pin above only covers the
+    barge-in early exit. The cancellation path (H1's `finally`) releases
+    the source too -- `_aclose_source` runs there unconditionally, same
+    as every other exit -- but nothing held that guarantee down. Cancel
+    `pump()` mid-feed and assert `aclose()` was still called exactly
+    once despite the cancellation.
+    """
+    events = []
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    source = _RecordingAsyncSource()
+
+    task = asyncio.ensure_future(pump(sink, source))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert source.aclose_calls == 1
+    assert sink.terminal_reason is not None
+
+
 # ---------------------------------------------------------------------------
 # Fix-round Lows
 # ---------------------------------------------------------------------------
@@ -377,6 +412,56 @@ def test_failed_open_does_not_evict_the_live_sink():
     assert s2.state == "failed"
     assert s1.state == "open", "a sink that never played one sample must not evict the healthy live voice"
     assert h1["s"].aborted is False
+
+
+def test_stop_between_became_open_and_registration_does_not_leave_a_dead_sink_live(monkeypatch):
+    """Re-review fix-round N3 pin: `open()` commits `state="open"` under
+    the lock, then registers a few statements later. A `stop()` landing
+    in that gap must not leave the (now dead) sink installed as the
+    registered live one -- it would kill a healthy previously-live voice
+    for a sink that will never play (the same shape as L7, via a
+    different race) and, worse, leave a stale `_LIVE_SINK` nothing would
+    ever clear until some later `open()` happened to displace the
+    corpse.
+
+    Hooks `_register_live_sink` itself -- the exact call site `open()`
+    reaches right after committing `state == "open"` -- to call `stop()`
+    reentrantly first, the same "reentrant call from inside the thing
+    being hooked" technique Task 1's own N1/H3 races use.
+
+    Note: this does NOT prevent the previously-live sink from being
+    stopped (that stop() call already happened, inside the real
+    `_register_live_sink`, before this test's own re-check can run --
+    the re-reviewer judged that bounded, pre-existing harm acceptable,
+    same as L7's trade-off). What this pin holds is narrower and is what
+    the fix actually targets: `_LIVE_SINK` must not still be the dead
+    sink afterward.
+    """
+    import tldw_chatbook.Audio.streaming_sink as mod
+
+    e1, e2 = [], []
+    s1, h1 = _mk(e1)
+    s1.open(sample_rate=RATE)
+    assert s1.state == "open"
+
+    holder = {}
+    real_register = mod._register_live_sink
+
+    def hooked_register(sink):
+        if sink is holder.get("s2"):
+            holder["s2"].stop()   # reentrant, landing exactly in the N3 gap
+        real_register(sink)
+
+    monkeypatch.setattr(mod, "_register_live_sink", hooked_register)
+
+    s2, h2 = _mk(e2)
+    holder["s2"] = s2
+    s2.open(sample_rate=RATE)
+
+    assert s2.state == "stopped"
+    assert s2.terminal_reason == "stopped"
+    assert mod._LIVE_SINK is None, \
+        "a dead sink must not remain the registered live one -- must self-heal within this open() call"
 
 
 @pytest.mark.asyncio

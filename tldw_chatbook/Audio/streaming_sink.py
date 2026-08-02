@@ -67,6 +67,19 @@ sinks whose listeners `stop()` each other synchronously would, under the
 old joining design, deadlock; under this design they no longer can, but
 it remains a confusing, unsupported pattern, so don't.
 
+A second, stronger consequence (fix-round N1): `on_event` may now be
+invoked **concurrently, on two different threads at once** -- not merely
+out of order. A `SinkStarted`/`SinkUnderrun` job still executing inside
+`on_event` on the notify thread does not block a caller thread's `stop()`
+from delivering `SinkStopped` synchronously, on its own thread, while
+that first call is still running. No event is dropped by this (each
+delivery is independent; `stop()`'s own `SinkStopped` is emitted directly,
+never via the queue, so it cannot be lost racing the queue), but
+`on_event` **must be thread-safe and safe to re-enter concurrently with
+itself**. A `post_message`-shaped listener already is (posting onto a
+Textual message queue is inherently thread-safe); a listener that
+mutates shared state directly must synchronize itself.
+
 The `stream_factory` constructor argument is the testability seam: in
 production it is left `None` and `open()` lazily builds a real
 `sounddevice.OutputStream`; tests inject a fake stream whose callback can
@@ -421,6 +434,20 @@ class StreamingPcmSink:
         # `self._fail(...)` branches above) never evicts a still-healthy
         # previously-live sink for a voice that never played one sample.
         _register_live_sink(self)
+        with self._lock:
+            still_open = self._state == "open"
+        if not still_open:
+            # N3 fix-round: a stop() landed in the narrow gap between the
+            # `became_open` flip above and this registration -- that
+            # concurrent stop() already ran its own full teardown+emit
+            # against a sink `_register_live_sink` above had not yet
+            # published as live, so it could not un-register what it
+            # didn't know was registered. Left alone, `_LIVE_SINK` would
+            # now point at this already-dead sink until some *later*
+            # `open()` happened to displace the corpse. Un-register
+            # immediately instead of waiting for that.
+            _clear_live_sink(self)
+            return
         self._notify_thread = threading.Thread(
             target=self._notify_loop, name="StreamingPcmSinkNotify", daemon=True,
         )
@@ -549,10 +576,14 @@ class StreamingPcmSink:
         to; tests and deterministic-teardown paths that DO need to know
         "has every event this sink will ever emit already been
         delivered" should call this instead. Deadline-polled rather than
-        an unbounded `queue.Queue.join()`, so a job orphaned by a bug (or
-        a notify thread that never started at all, e.g. a sink stopped
-        while still `"idle"`) turns into a fast, informative `False`
-        instead of hanging forever.
+        an unbounded `queue.Queue.join()`, so a job orphaned by a bug
+        turns into a fast, informative `False` instead of hanging
+        forever -- and a sink whose notify thread never started at all
+        (fix-round N2: e.g. `stop()`d while still `"idle"`, which still
+        unconditionally pushes the exit sentinel onto a queue nothing
+        will ever read, permanently leaving `unfinished_tasks == 1`)
+        returns `False` immediately rather than waiting out the full
+        `timeout` for a foregone conclusion.
 
         Args:
             timeout: Maximum time, in seconds, to wait for the notify
@@ -561,8 +592,12 @@ class StreamingPcmSink:
         Returns:
             `True` if the queue settled (every queued job's `task_done()`
             was called) within `timeout`, `False` if the deadline was
-            reached first. Never raises, never blocks past `timeout`.
+            reached first, or immediately if no notify thread was ever
+            published for this sink. Never raises, never blocks past
+            `timeout`.
         """
+        if self._notify_thread is None:
+            return False
         deadline = time.monotonic() + timeout
         while self._notify_q.unfinished_tasks > 0:
             if time.monotonic() >= deadline:
@@ -1071,6 +1106,19 @@ async def pump(
     calls is now non-blocking (`stop()` no longer joins the sink's notify
     queue -- see the module docstring's thread contract, fix-round H2),
     so `pump` never risks stalling the event loop it runs on.
+
+    Fix-round N4: `pump` returning does NOT imply the terminal *event*
+    (`SinkDrained`/`SinkStopped`/`SinkFailed`) has already reached
+    `on_event` -- `terminal_reason` is set at the state transition itself,
+    before the notify thread (for a drain or a callback failure) gets
+    around to actually delivering the corresponding event and tearing
+    down the stream, so `pump` can return before that delivery happens.
+    (`"stopped"` outcomes from an explicit `stop()` call are the one
+    exception -- `SinkStopped` is emitted synchronously, never via the
+    queue, so it is always already delivered by the time `stop()`
+    returns.) Callers that need to know the event itself has been
+    delivered (not just that the sink reached a terminal state) should
+    call `sink.settle()` after `pump` returns.
 
     Args:
         sink: The (already-`open()`ed) sink to feed. A sink that is still
