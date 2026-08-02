@@ -130,3 +130,8 @@ temp path), then restored the fix and confirmed green again.
 
 Left In Progress per instructions (not moved to Done in this pass).
 <!-- SECTION:NOTES:END -->
+
+Review correction (2026-08-02): the residual-risk audit line "no test builds two apps in one test"
+was overstated — two same-test double-builds exist (`test_console_resize_reflow.py` converge test,
+`test_console_fleet_discoverability.py` restart test); both are safe because the first app is fully
+torn down before the second build, i.e. safe by test structure, not by harness guarantee.
