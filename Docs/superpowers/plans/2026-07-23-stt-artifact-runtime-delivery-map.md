@@ -24,11 +24,9 @@ profiles, routing, migration, and legacy removal.
 
 ## Planning policy
 
-- TASK-505 is the only active delivery slice and has a complete executable
-  implementation plan.
-- TASK-593 through TASK-605 remain `To Do`. Each receives its own executable
-  implementation plan only after it moves to `In Progress`, before production
-  code changes begin.
+- Backlog task files are the source of truth for current status.
+- Each delivery slice receives its own executable implementation plan only
+  after it moves to `In Progress` and before production code changes begin.
 - A task may be split further before implementation if its file map or
   acceptance criteria cannot remain one independently testable pull request.
 - No task may weaken ADR-025 or silently cross an explicit dependency boundary.

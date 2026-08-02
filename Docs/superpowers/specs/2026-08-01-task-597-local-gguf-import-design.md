@@ -126,7 +126,9 @@ TASK-604 consumes the admission API and owns the user-visible path:
 - admission when selecting and inside the ingestion worker immediately before
   native model load;
 - lazy import of `transcribe.cpp==0.1.3` in that worker;
-- authoritative model-capability checks after native load but before inference;
+- one native load per job, followed by authoritative capability discovery,
+  construction of the exact per-job declaration and sealed registry, and
+  coordinator verification before inference;
 - one active inference through the existing spawn-isolated batch parse pool's
   heavy-lane cap; and
 - normalized results/provenance without the local path.
@@ -166,19 +168,26 @@ Direct local paths continue to work after managed acquisition lands.
 4. The real Library audio/video form offers `transcribe-cpp`; submission carries
    that exact manual provider through the production batch-ingestion path.
 5. Inside the existing spawn worker, TASK-604 reruns admission against the
-   current path, constructs the exact per-job adapter/registry declaration, and
-   lazily imports the pinned runtime.
-6. The adapter's coordinator preflight loads the model once, reads authoritative
-   native capabilities, and retains that model for the immediately following
-   transcription in the same job. It rejects an incompatible request before
-   inference, transcribes normalized 16 kHz mono audio, and closes the model at
-   job end.
+   current path, lazily imports the pinned runtime, loads the model once, and
+   reads authoritative native capabilities.
+6. The worker constructs the exact per-job adapter declaration and sealed
+   registry from those observed capabilities. Coordinator preflight returns
+   the already-loaded observation, verifies exact equality with the declaration,
+   rejects incompatible requests before inference, and reuses that model for
+   the immediately following transcription. The adapter transcribes normalized
+   16 kHz mono audio and closes the model at job end.
 7. The existing parent-side writer persists transcript content and normalized
    provenance atomically.
-8. Provenance records provider, architecture/model identity, runtime version,
-   precision reported by the file/runtime where available, device, language,
-   and attempt lineage—but never the local path. `artifact_root` is null and
-   `artifact_dependencies` is empty for direct-local execution.
+8. A failed worker returns a bounded, path-safe STT failure/action envelope by
+   extending the existing `error_detail` payload. The parent job record and
+   Library failure UI preserve its stable failure code and only the eligible
+   `choose_another_gguf` and `retry_faster_whisper` actions.
+9. Provenance records provider, architecture/model identity, precision reported
+   by the file/runtime where available, device, language, and attempt
+   lineage—but never the local path. `artifact_root` is null and
+   `artifact_dependencies` is empty for direct-local execution. The exact
+   provider package remains pinned, but v1 does not add a runtime-version field
+   to the persisted provenance schema.
 
 ## Pinned compatibility
 
@@ -283,6 +292,11 @@ excluded from its representation, provider settings use the key-only atomic
 config writer rather than the value-logging single-setting helper, and native
 exceptions/log callbacks are sanitized at the adapter boundary.
 
+Worker failures extend the existing bounded, picklable `error_detail` payload
+with a stable STT failure code and an allowlisted action list. The parent job
+record carries that envelope to the Library failure UI. It does not serialize
+provider exceptions or introduce a second IPC/error transport.
+
 ## Direct-local provenance
 
 Direct-local execution has no immutable artifact revision and cannot reproduce
@@ -294,8 +308,8 @@ nullable provider-neutral provenance contract:
 - `model_id` is the deterministic bounded identity
   `local-gguf:<allowlisted-architecture>`;
 - `precision` is the bounded admitted/runtime-reported value where available;
-- provider, runtime version, device, language, capabilities, warnings, attempt,
-  and retry lineage remain populated; and
+- provider, device, language, capabilities, warnings, attempt, and retry
+  lineage remain populated; and
 - the path and source snapshot are never persisted.
 
 ADR-040 explicitly amends ADR-025's immutable-root expectation for this manual
@@ -320,12 +334,15 @@ TASK-604 tests later cover:
 - picker/config save and restart round trip through key-only persistence;
 - the actual Library selector, submission, spawn-worker provider call, parent
   writer, and persisted transcript/provenance path;
-- admission rerun in the spawn worker as part of coordinator preflight
-  immediately before native model load;
+- admission rerun in the spawn worker immediately before native model load,
+  capability-derived declaration/registry sealing after that single load, and
+  exact coordinator equality verification before inference;
 - missing/invalid path recovery and acceptance of a later compatible
   replacement at the same configured path;
 - lazy optional import, final ABI availability, load, post-load capability
   validation, batch transcription, worker crash containment, and shutdown;
+- bounded typed worker failure/action propagation through the existing
+  `error_detail` payload to the Library failure UI;
 - no local path in config logs, native logs/exceptions, normalized provenance,
   result representations, or generic error copy;
 - no automatic routing or silent fallback; and

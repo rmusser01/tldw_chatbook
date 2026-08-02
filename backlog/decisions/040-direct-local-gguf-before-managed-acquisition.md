@@ -1,6 +1,6 @@
 # ADR-040: Use explicit local GGUF paths before managed acquisition
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-02
 Related Tasks: TASK-597, TASK-601, TASK-604, TASK-1861
 Amends: ADR-025
@@ -24,11 +24,12 @@ as the new current file rather than treated as a persistent-identity violation.
 TASK-601 may later use the same snapshot for resident-worker reuse/recycle.
 
 Direct-local transcript provenance uses `artifact_root = null` and an empty
-artifact dependency set. It records provider/model/runtime/precision/device/
-language/attempt fields but neither the path nor a fabricated artifact
-revision. This explicitly amends ADR-025's immutable-root expectation for the
-manual direct-local provider. Exact-byte reproducibility is unavailable until
-managed acquisition lands.
+artifact dependency set. It records provider/model/precision/device/language/
+attempt fields but neither the path nor a fabricated artifact revision. The
+provider package is pinned, but the first release does not add a runtime-version
+field to the persisted provenance schema. This explicitly amends ADR-025's
+immutable-root expectation for the manual direct-local provider. Exact-byte
+reproducibility is unavailable until managed acquisition lands.
 
 The file is never an automatic-routing candidate and is not labeled installed,
 curated, or integrity verified. transcribe.cpp remains an exact manual provider
@@ -60,6 +61,10 @@ without changing inference behavior.
 - The ingestion worker revalidates immediately before native model load but
   cannot eliminate a race between validation and the native runtime reopening
   the path.
+- After the single per-job native load, the worker reads authoritative
+  capabilities, builds the exact per-job declaration and sealed registry, and
+  lets coordinator preflight equality-check that already-loaded observation
+  before inference. No coordinator or registry contract is weakened.
 - The first release loads once per ingest job. A native worker crash is
   contained by the existing pool monitor but can make other in-flight parse
   jobs retryable; TASK-601 later adds dedicated heavy-process isolation and
@@ -72,6 +77,10 @@ without changing inference behavior.
   reproducibility claim.
 - Local paths may be stored in provider configuration but never in transcript
   provenance or generic logs.
+- Worker failures extend the existing bounded `error_detail` payload with a
+  path-safe STT failure code and allowlisted recovery actions for the parent job
+  record and Library failure UI; raw native exceptions do not cross that
+  boundary.
 - Managed acquisition remains the stronger optional path and lands later.
 - Existing Parakeet/faster-whisper routing and explicit retry policy are
   unchanged.
