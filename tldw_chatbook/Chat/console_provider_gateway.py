@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import threading
 import weakref
 from collections.abc import Iterator, Mapping
@@ -309,15 +310,23 @@ class ConsoleProviderResolution:
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
-    """Copy a request value into an immutable representation."""
+    """Copy a JSON-safe request value into an immutable representation."""
 
     if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("Auxiliary mapping keys must be strings.")
         return MappingProxyType(
-            {str(key): _freeze_auxiliary_value(item) for key, item in value.items()}
+            {key: _freeze_auxiliary_value(item) for key, item in value.items()}
         )
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_auxiliary_value(item) for item in value)
-    return value
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Auxiliary numeric values must be finite.")
+        return value
+    raise TypeError("Auxiliary values must be JSON-safe scalars, mappings, or sequences.")
 
 
 def _thaw_auxiliary_value(value: Any) -> Any:
@@ -571,6 +580,9 @@ def build_llamacpp_chat_payload(
     min_p: float | None = None,
     top_k: int | None = None,
     max_tokens: int | None = None,
+    seed: int | None = None,
+    presence_penalty: float | None = None,
+    frequency_penalty: float | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -583,6 +595,9 @@ def build_llamacpp_chat_payload(
         min_p: Optional min-p sampling value.
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
+        seed: Optional deterministic generation seed.
+        presence_penalty: Optional presence penalty value.
+        frequency_penalty: Optional frequency penalty value.
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
@@ -617,6 +632,12 @@ def build_llamacpp_chat_payload(
         payload["top_k"] = top_k
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if seed is not None:
+        payload["seed"] = seed
+    if presence_penalty is not None:
+        payload["presence_penalty"] = presence_penalty
+    if frequency_penalty is not None:
+        payload["frequency_penalty"] = frequency_penalty
     if messages and messages[-1].get("role") == "assistant":
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     return payload
@@ -1228,6 +1249,9 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        seed: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
         strict_response: bool = False,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
@@ -1241,6 +1265,9 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            seed: Optional deterministic generation seed.
+            presence_penalty: Optional presence penalty value.
+            frequency_penalty: Optional frequency penalty value.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
 
@@ -1262,6 +1289,9 @@ class ConsoleProviderGateway:
                 min_p=min_p,
                 top_k=top_k,
                 max_tokens=max_tokens,
+                seed=seed,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
             ),
         )
         response.raise_for_status()
@@ -1300,6 +1330,11 @@ class ConsoleProviderGateway:
         try:
             with sensitive_llm_request():
                 if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                    # llama.cpp's OpenAI-compatible chat endpoint accepts these
+                    # standard samplers and penalties. Provider-specific
+                    # reasoning/thinking/verbosity controls and response_format
+                    # are deliberately omitted because this direct endpoint does
+                    # not define them consistently.
                     text = await self.complete_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=model,
@@ -1309,6 +1344,9 @@ class ConsoleProviderGateway:
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
                         max_tokens=request.max_output_tokens,
+                        seed=resolution.seed,
+                        presence_penalty=resolution.presence_penalty,
+                        frequency_penalty=resolution.frequency_penalty,
                         strict_response=True,
                     )
                 else:
@@ -1389,6 +1427,7 @@ class ConsoleProviderGateway:
                 system_parts.append(content)
         kwargs: dict[str, Any] = {
             "api_endpoint": resolution.execution_key,
+            "api_base_url": resolution.base_url or None,
             "system_message": "\n\n".join(system_parts) or None,
             "messages_payload": payload,
             "api_key": resolution.api_key,

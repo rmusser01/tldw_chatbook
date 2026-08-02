@@ -518,6 +518,7 @@ def chat_with_openai(
     reasoning_summary: Optional[str] = None,
     verbosity: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the OpenAI API.
@@ -722,9 +723,8 @@ def chat_with_openai(
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = (
-        openai_config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
-        + api_path
-    )
+        api_base_url or openai_config.get("api_base_url", "https://api.openai.com/v1")
+    ).rstrip("/") + api_path
 
     start_time = time.time()
     log_counter(
@@ -1133,6 +1133,7 @@ def chat_with_anthropic(
     # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """Call the Anthropic Messages API (streaming or non-streaming).
 
@@ -1456,9 +1457,9 @@ def chat_with_anthropic(
         }
 
     api_url = (
-        anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
-        + "/messages"
-    )
+        api_base_url
+        or anthropic_config.get("api_base_url", "https://api.anthropic.com/v1")
+    ).rstrip("/") + "/messages"
     logger.debug(
         "Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -2078,6 +2079,7 @@ def chat_with_cohere(
     custom_prompt_arg: Optional[
         str
     ] = None,  # Kept for legacy, but focus on structured input
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
@@ -2105,9 +2107,9 @@ def chat_with_cohere(
     log_counter(
         "cohere_api_request", labels={"model": final_model, "streaming": str(streaming)}
     )
-    api_base_url = cohere_config.get("api_base_url", "https://api.cohere.com").rstrip(
-        "/"
-    )
+    api_base_url = (
+        api_base_url or cohere_config.get("api_base_url", "https://api.cohere.com")
+    ).rstrip("/")
     # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
     # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
     # lived outside the history model, and there were no call ids. v2 is
@@ -2790,6 +2792,7 @@ def chat_with_deepseek(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,  # If supported
     logit_bias: Optional[Dict[str, float]] = None,  # If supported
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -2879,9 +2882,8 @@ def chat_with_deepseek(
         data["logit_bias"] = logit_bias
 
     api_url = (
-        deepseek_config.get("api_base_url", "https://api.deepseek.com").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url or deepseek_config.get("api_base_url", "https://api.deepseek.com")
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -3102,6 +3104,7 @@ def chat_with_google(
     response_format: Optional[Dict[str, str]] = None,  # for response_mime_type
     tools: Optional[List[Dict[str, Any]]] = None,  # Gemini 'tools' config
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     loaded_config_data = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -3286,7 +3289,13 @@ def chat_with_google(
     stream_suffix = (
         ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     )
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
+    google_api_base = (
+        api_base_url
+        or google_config.get(
+            "api_base_url", "https://generativelanguage.googleapis.com/v1beta"
+        )
+    ).rstrip("/")
+    api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
     logger.debug(
         "Google Gemini Request Payload (excluding contents): {k: v for k,v in payload.items() if k != 'contents'}"
@@ -3788,6 +3797,7 @@ def chat_with_groq(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -3874,9 +3884,9 @@ def chat_with_groq(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        groq_config.get("api_base_url", "https://api.groq.com/openai/v1").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url
+        or groq_config.get("api_base_url", "https://api.groq.com/openai/v1")
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -4045,6 +4055,7 @@ def chat_with_huggingface(
     logprobs: Optional[bool] = None,  # OpenAI compatible name
     top_logprobs: Optional[int] = None,  # OpenAI compatible name
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
@@ -4092,9 +4103,9 @@ def chat_with_huggingface(
         # This format explicitly puts the model in the URL path.
         # User must ensure router_base_url and model_id result in a valid endpoint.
         router_base = _optional_config_string(
-            hf_config.get(
-                "router_base_url",
-                hf_config.get("huggingface_router_base_url"),
+            api_base_url
+            or hf_config.get(
+                "router_base_url", hf_config.get("huggingface_router_base_url")
             ),
             default="https://router.huggingface.co/hf-inference",
         ).rstrip("/")
@@ -4114,7 +4125,9 @@ def chat_with_huggingface(
             f"Target host: {safe_llm_url_host(api_url)}"
         )
     else:  # use_router_url_format is false, standard URL construction
-        configured_api_base_url = _optional_config_string(hf_config.get("api_base_url"))
+        configured_api_base_url = _optional_config_string(
+            api_base_url or hf_config.get("api_base_url")
+        )
         # Default chat path can be just "chat/completions" if base_url includes /v1, or "v1/chat/completions" if not.
         # Let's make the default api_chat_path more flexible.
         # If using the public HF API, base is /v1 and path is chat/completions.
@@ -4549,6 +4562,7 @@ def chat_with_mistral(
     tool_choice: Optional[str] = None,
     response_format: Optional[Dict[str, str]] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -4636,9 +4650,8 @@ def chat_with_mistral(
         data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = (
-        mistral_config.get("api_base_url", "https://api.mistral.ai/v1").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url or mistral_config.get("api_base_url", "https://api.mistral.ai/v1")
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -4792,6 +4805,7 @@ def chat_with_openrouter(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -4882,11 +4896,9 @@ def chat_with_openrouter(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        openrouter_config.get("api_base_url", "https://openrouter.ai/api/v1").rstrip(
-            "/"
-        )
-        + "/chat/completions"
-    )
+        api_base_url
+        or openrouter_config.get("api_base_url", "https://openrouter.ai/api/v1")
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -5038,6 +5050,7 @@ def chat_with_moonshot(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     user: Optional[str] = None,  # User identifier
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Moonshot AI API.
@@ -5257,12 +5270,18 @@ def chat_with_moonshot(
 
     # Determine API endpoint based on config (default to international)
     api_region = moonshot_config.get("api_region", "international").lower()
-    if api_region == "china":
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.cn/v1")
+    if api_base_url:
+        effective_api_base_url = api_base_url
+    elif api_region == "china":
+        effective_api_base_url = moonshot_config.get(
+            "api_base_url", "https://api.moonshot.cn/v1"
+        )
     else:
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.ai/v1")
+        effective_api_base_url = moonshot_config.get(
+            "api_base_url", "https://api.moonshot.ai/v1"
+        )
 
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
     start_time = time.time()
     log_counter(
@@ -5465,6 +5484,7 @@ def chat_with_zai(
     do_sample: Optional[bool] = None,
     request_id: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Z.AI API.
@@ -5563,8 +5583,10 @@ def chat_with_zai(
         "Content-Type": "application/json",
     }
 
-    api_base_url = zai_config.get("api_base_url", "https://api.z.ai/api/paas/v4")
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
+    effective_api_base_url = api_base_url or zai_config.get(
+        "api_base_url", "https://api.z.ai/api/paas/v4"
+    )
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
     logger.debug(
         "Z.AI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"

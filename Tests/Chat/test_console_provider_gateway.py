@@ -3130,6 +3130,46 @@ def test_auxiliary_request_is_frozen_and_copies_nested_input() -> None:
         request.max_output_tokens = 11  # type: ignore[misc]
 
 
+def test_auxiliary_request_preserves_exact_text_and_freezes_json_sequences() -> None:
+    content = "\n  Preserve this spacing exactly.  \t"
+    enum_values = ["alpha", {"nested": [True, None, 3, 1.25]}]
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=({"role": "user", "content": content},),
+        response_format={"schema": {"enum": enum_values}},
+        max_output_tokens=10,
+    )
+    enum_values[1]["nested"].append("MUTATED")
+
+    assert request.messages[0]["content"] == content
+    assert request.response_format == {
+        "schema": {"enum": ("alpha", {"nested": (True, None, 3, 1.25)})}
+    }
+
+
+@pytest.mark.parametrize(
+    "response_format",
+    [
+        {"schema": {"bad": {"set-value"}}},
+        {"schema": {"bad": object()}},
+        {"schema": {"bad": b"bytes"}},
+        {"schema": {"bad": range(2)}},
+        {"schema": {"bad": float("nan")}},
+        {"schema": {"bad": float("inf")}},
+        {1: "non-string-key"},
+    ],
+)
+def test_auxiliary_request_rejects_nested_non_json_values(response_format) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        AuxiliaryCompletionRequest(
+            resolution=_auxiliary_resolution(),
+            messages=({"role": "user", "content": "x"},),
+            response_format=response_format,
+            max_output_tokens=10,
+        )
+
+
 def test_auxiliary_contract_repr_omits_sensitive_request_and_response_fields() -> None:
     request = _auxiliary_request()
     result = AuxiliaryCompletionResult(
@@ -3198,6 +3238,7 @@ async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> 
     call = calls[0]
     assert call == {
         "api_endpoint": "openai",
+        "api_base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
         "system_message": "OPTIMIZER-CANARY",
         "messages_payload": [{"role": "user", "content": "USER-CANARY"}],
         "api_key": "API-KEY-CANARY",
@@ -3365,6 +3406,9 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
         "min_p": 0.03,
         "top_k": 17,
         "max_tokens": 321,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
     }
     await client.aclose()
 

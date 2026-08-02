@@ -779,6 +779,7 @@ def chat_api_call(
     thinking_budget_tokens: Optional[int] = None,
     prompt_caching: Optional[bool] = None,
     llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
+    api_base_url: Optional[str] = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
@@ -792,6 +793,7 @@ def chat_api_call(
         api_endpoint: The identifier for the target LLM provider (e.g., "openai", "anthropic").
         messages_payload: A list of message objects (OpenAI format: `{'role': ..., 'content': ...}`)
                           representing the conversation history and current user message.
+        api_base_url: Optional request-pinned provider endpoint override.
         api_key: The API key for the specified provider.
         temp: Temperature for sampling, controlling randomness.
         system_message: An optional system-level instruction for the LLM. How this is
@@ -877,6 +879,9 @@ def chat_api_call(
             call_kwargs[provider_param_name] = available_generic_params[
                 generic_param_name
             ]
+
+    if api_base_url is not None:
+        call_kwargs["api_base_url"] = api_base_url
 
     if call_kwargs.get(params_map.get("api_key", "api_key")):
         logger.info("Debug - Chat API Call - API key provided.")

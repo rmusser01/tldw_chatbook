@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 from collections.abc import Callable, Iterator
@@ -18,6 +19,7 @@ import tldw_chatbook.LLM_Calls.LLM_API_Calls as cloud_adapters
 import tldw_chatbook.LLM_Calls.LLM_API_Calls_Local as local_adapters
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
     ConsoleProviderGateway,
@@ -45,6 +47,9 @@ CANARIES = (
     "ERROR-BODY-CANARY",
     "EXCEPTION-CANARY",
     "ENDPOINT-QUERY-CANARY",
+    "ENDPOINT-PATH-CANARY",
+    "ENDPOINT-USER-CANARY",
+    "ENDPOINT-PASSWORD-CANARY",
 )
 
 
@@ -255,6 +260,16 @@ def test_sensitive_audit_registry_covers_every_registered_chat_handler() -> None
     assert SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS == frozenset(
         chat_functions.API_CALL_HANDLERS
     )
+
+
+def test_registered_chat_handlers_accept_pinned_endpoint_override() -> None:
+    missing = {
+        endpoint
+        for endpoint, handler in chat_functions.API_CALL_HANDLERS.items()
+        if "api_base_url" not in inspect.signature(handler).parameters
+    }
+
+    assert missing == set()
 
 
 @pytest.mark.parametrize("endpoint", sorted(chat_functions.API_CALL_HANDLERS))
@@ -539,10 +554,15 @@ def test_sensitive_native_kobold_prompt_response_and_errors_are_not_logged(
 
 
 @pytest.mark.asyncio
-async def test_sensitive_direct_llama_logs_no_request_response_or_endpoint_query() -> (
+async def test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secrets() -> (
     None
 ):
+    sensitive_started = asyncio.Event()
+    release_sensitive = asyncio.Event()
+
     async def handler(_request: httpx.Request) -> httpx.Response:
+        sensitive_started.set()
+        await release_sensitive.wait()
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": "RESPONSE-CANARY"}}]},
@@ -553,7 +573,11 @@ async def test_sensitive_direct_llama_logs_no_request_response_or_endpoint_query
     request = AuxiliaryCompletionRequest(
         resolution=ConsoleProviderResolution(
             provider="llama_cpp",
-            base_url="http://127.0.0.1:9099/v1?token=ENDPOINT-QUERY-CANARY",
+            base_url=(
+                "http://127.0.0.1:9099/ENDPOINT-PATH-CANARY/"
+                "userinfo-ENDPOINT-USER-CANARY/credential-ENDPOINT-PASSWORD-CANARY"
+                "?token=ENDPOINT-QUERY-CANARY"
+            ),
             model="llama-test",
             ready=True,
             readiness_key="llama_cpp",
@@ -568,8 +592,97 @@ async def test_sensitive_direct_llama_logs_no_request_response_or_endpoint_query
     )
 
     with _captured_logs() as logs:
-        result = await gateway.complete_auxiliary(request)
+        sensitive_task = asyncio.create_task(gateway.complete_auxiliary(request))
+        try:
+            await asyncio.wait_for(sensitive_started.wait(), timeout=1)
+            logging.getLogger("httpx").info("ordinary downstream HTTP diagnostic")
+        finally:
+            release_sensitive.set()
+        result = await sensitive_task
 
     assert result.text == "RESPONSE-CANARY"
     _assert_canaries_absent(logs)
+    assert "ordinary downstream HTTP diagnostic" in "\n".join(logs)
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sensitive_direct_llama_rejects_embedded_userinfo_without_logging_it() -> (
+    None
+):
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200))
+    )
+    gateway = ConsoleProviderGateway(http_client=client)
+    request = AuxiliaryCompletionRequest(
+        resolution=ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=(
+                "http://ENDPOINT-USER-CANARY:ENDPOINT-PASSWORD-CANARY@"
+                "127.0.0.1:9099/v1?token=ENDPOINT-QUERY-CANARY"
+            ),
+            model="llama-test",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        ),
+        messages=({"role": "user", "content": "USER-CANARY"},),
+        response_format=None,
+        max_output_tokens=8,
+    )
+
+    with _captured_logs() as logs, pytest.raises(ChatProviderError):
+        await gateway.complete_auxiliary(request)
+
+    _assert_canaries_absent(logs)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_uses_pinned_endpoint_after_provider_config_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned_endpoint = "https://pinned.example.test/v1"
+    changed_endpoint = "https://changed.example.test/v1"
+    gateway_config = {
+        "api_settings": {
+            "openai": {
+                "api_key": "key",
+                "api_base_url": pinned_endpoint,
+                "model": "gpt-test",
+            }
+        }
+    }
+    adapter_config = {
+        "openai_api": {
+            "api_base_url": pinned_endpoint,
+            "api_retries": 3,
+        }
+    }
+    session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
+    monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai",
+            base_url=pinned_endpoint,
+            explicit_model="gpt-test",
+        )
+    )
+    assert resolution.ready is True
+
+    request = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=({"role": "user", "content": "USER-CANARY"},),
+        response_format=None,
+        max_output_tokens=8,
+    )
+    gateway_config["api_settings"]["openai"]["api_base_url"] = changed_endpoint
+    adapter_config["openai_api"]["api_base_url"] = changed_endpoint
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == "ok"
+    assert session.posts[0]["url"] == f"{pinned_endpoint}/chat/completions"
+    assert changed_endpoint not in str(session.posts)

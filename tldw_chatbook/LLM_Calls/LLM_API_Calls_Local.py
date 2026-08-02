@@ -524,6 +524,7 @@ def chat_with_local_llm(
     top_logprobs: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -541,7 +542,7 @@ def chat_with_local_llm(
     # immutable runtime snapshot instead of the mutable module-level mapping.
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get("local-llm", {})
-    api_base_url = cfg.get("api_url") or cfg.get("api_ip")
+    api_base_url = api_base_url or cfg.get("api_url") or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="local-llm",
@@ -661,6 +662,7 @@ def chat_with_llama(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -678,7 +680,7 @@ def chat_with_llama(
     llama_config = api_settings_table.get(
         llama_cpp_config_key_in_api_settings, {}
     )  # Safely get the llama_cpp config
-    api_base_url = llama_config.get("api_url")
+    api_base_url = api_base_url or api_url or llama_config.get("api_url")
     if not api_base_url:
         # Using the provider name for the error message
         raise ChatConfigurationError(
@@ -815,6 +817,7 @@ def chat_with_kobold(
     fixed_tokens_mode: bool = False,  # New parameter
     # Add api_url as an optional parameter if it can be passed directly
     api_url: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     if model and (model.lower() == "none" or model.strip() == ""):
@@ -831,7 +834,7 @@ def chat_with_kobold(
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.koboldcpp].api_url
     # Note: CONFIG_TOML_CONTENT uses 'api_url' for koboldcpp, not 'api_ip'.
     # Ensure your function arguments and cfg.get() match the TOML key.
-    current_api_base_url = api_url or cfg.get("api_url")
+    current_api_base_url = api_base_url or api_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider="koboldcpp",  # Consistent with the key used for cfg
@@ -1130,6 +1133,7 @@ def chat_with_oobabooga(
     presence_penalty: Optional[float] = None,  # from map
     frequency_penalty: Optional[float] = None,  # from map
     api_url: Optional[str] = None,  # Specific, not from generic map unless handled
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1139,7 +1143,7 @@ def chat_with_oobabooga(
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("ooba_api", {})
 
-    api_url = cfg.get("api_ip")  # api_url passed via chat_api_call or from config
+    api_url = api_base_url or api_url or cfg.get("api_ip")
     if not api_url:
         raise ChatConfigurationError(
             provider="ooba_api",
@@ -1245,6 +1249,7 @@ def chat_with_tabbyapi(
     # response_format, n, user_identifier, logit_bias, presence_penalty, frequency_penalty,
     # logprobs, top_logprobs, tools, tool_choice.
     # Add them to signature if TabbyAPI (OpenAI compatible) supports them.
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1254,7 +1259,7 @@ def chat_with_tabbyapi(
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("tabby_api", {})
 
-    api_base_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    api_base_url = api_base_url or cfg.get("api_url")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="tabbyapi",
@@ -1352,6 +1357,7 @@ def chat_with_vllm(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1362,7 +1368,7 @@ def chat_with_vllm(
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(vllm_config_key, {})
 
-    vllm_api_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    vllm_api_url = api_base_url or vllm_api_url or cfg.get("api_url")
     if not vllm_api_url:
         raise ChatConfigurationError(
             provider=vllm_config_key,
@@ -1482,6 +1488,7 @@ def chat_with_aphrodite(
     logprobs: Optional[bool] = None,  # from map
     user_identifier: Optional[str] = None,  # from map
     # top_logprobs, tools, tool_choice not in Aphrodite's map currently
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1490,7 +1497,7 @@ def chat_with_aphrodite(
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get("aphrodite_api", {})
 
-    api_base_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    api_base_url = api_base_url or cfg.get("api_url")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="aphrodite",
@@ -1608,6 +1615,7 @@ def chat_with_ollama(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1622,7 +1630,7 @@ def chat_with_ollama(
 
     # API URL: function argument 'api_url' takes precedence, then config.
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].api_url
-    current_api_base_url = api_url or cfg.get("api_url")
+    current_api_base_url = api_base_url or api_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider=ollama_config_key,  # Use the dynamic provider name
@@ -1804,6 +1812,7 @@ def chat_with_custom_openai(
     frequency_penalty: Optional[float] = None,
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1813,9 +1822,7 @@ def chat_with_custom_openai(
     cfg = cli_api_settings.get(
         "custom", {}
     )  # Key for custom_openai_api in CLI is 'custom'
-    current_api_base_url = cfg.get(
-        "api_url"
-    )  # api_url passed via chat_api_call or from config
+    current_api_base_url = api_base_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider="ollama",
@@ -1947,6 +1954,7 @@ def chat_with_custom_openai_2(
     top_logprobs: Optional[int] = None,
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1954,7 +1962,7 @@ def chat_with_custom_openai_2(
     cfg_section = "custom_openai_api_2"
     cfg = loaded_config_data.get(cfg_section, {})
 
-    api_base_url = cfg.get("api_ip")
+    api_base_url = api_base_url or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
@@ -2109,6 +2117,7 @@ def chat_with_mlx_lm(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
     **kwargs: Any,  # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
@@ -2130,8 +2139,8 @@ def chat_with_mlx_lm(
             message="MLX-LM model path (model_path or model in config) is required and could not be determined.",
         )
 
-    if api_url:
-        current_api_base_url = api_url.rstrip("/")
+    if api_base_url or api_url:
+        current_api_base_url = (api_base_url or api_url).rstrip("/")
     else:
         host = mlx_cfg.get("host", "127.0.0.1")
         port = mlx_cfg.get("port", 8080)  # Default port for MLX server is 8080
@@ -2191,7 +2200,7 @@ def chat_with_mlx_lm(
         current_logprobs = current_logprobs.lower() == "true"
 
     logging.debug(
-        f"{provider_name}: Using API base: {current_api_base_url}, Model (path): {current_model_path}"
+        f"{provider_name}: Using API host: {safe_llm_url_host(current_api_base_url)}, Model (path): {current_model_path}"
     )
 
     return _chat_with_openai_compatible_local_server(
