@@ -324,8 +324,9 @@ graph LR
      guarantee.
    - The active OPML import path, `WatchlistOpmlService`, uses
      `xml.etree.ElementTree` directly.
-   - Parser selection is dependency-controlled; no configuration setting,
-     including a legacy subscriptions security table, controls it.
+   - For those network-feed parsers, parser selection is dependency-controlled;
+     no configuration setting, including a legacy subscriptions security table,
+     controls it.
 
 3. **Rate Limiting**:
    - Per-domain token buckets
