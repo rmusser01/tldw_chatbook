@@ -21,6 +21,24 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
 )
 
+_STT_RECOVERY_ACTIONS = frozenset(
+    {"choose_another_gguf", "retry_faster_whisper"}
+)
+
+
+def _stt_recovery_actions(error_detail: dict[str, Any] | None) -> frozenset[str]:
+    """Return only the bounded STT recovery actions implemented here."""
+    if not error_detail or error_detail.get("category") != "stt_failure":
+        return frozenset()
+    actions = error_detail.get("actions")
+    if not isinstance(actions, list):
+        return frozenset()
+    return frozenset(
+        action
+        for action in actions
+        if isinstance(action, str) and action in _STT_RECOVERY_ACTIONS
+    )
+
 
 def _summarise_option(field: Any, value: Any) -> str:
     """Describe one option for the collapsed panel title, in plain language.
@@ -69,6 +87,9 @@ class LibraryIngestCanvas(VerticalScroll):
 
     class ParakeetInstallRequested(Message):
         """The user requested the curated Parakeet v2 installer."""
+
+    class TranscribeCppGGUFRequested(Message):
+        """The user requested a local transcribe.cpp GGUF picker."""
 
     def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -166,6 +187,26 @@ class LibraryIngestCanvas(VerticalScroll):
                     disabled=provider_value != "parakeet-onnx",
                 )
             )
+            if provider_value == "transcribe-cpp":
+                configured = self.state.transcribe_cpp_configured
+                children.append(
+                    Static(
+                        "Local GGUF configured."
+                        if configured
+                        else "No local GGUF configured.",
+                        id="opt-audio_video-transcribe-cpp-status",
+                        classes="type-group-scope",
+                        markup=False,
+                    )
+                )
+                children.append(
+                    Button(
+                        "Choose another GGUF…" if configured else "Choose GGUF…",
+                        id="opt-audio_video-choose-transcribe-cpp-gguf",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                )
 
         children.append(
             Button(
@@ -398,6 +439,7 @@ class LibraryIngestCanvas(VerticalScroll):
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
+            stt_actions = _stt_recovery_actions(row.error_detail)
             has_actions = (
                 row.can_open
                 or row.can_open_on_server
@@ -405,6 +447,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 or row.can_dismiss
                 or row.can_cancel
                 or bool(row.error_detail)
+                or bool(stt_actions)
             )
             if has_actions:
                 # A row with action buttons below it gets its own
@@ -494,7 +537,31 @@ class LibraryIngestCanvas(VerticalScroll):
                             ),
                             compact=True,
                         )
-                    if row.can_retry:
+                    if "choose_another_gguf" in stt_actions:
+                        yield Button(
+                            "Choose another GGUF…",
+                            id=f"library-ingest-choose-gguf-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-choose-gguf "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if "retry_faster_whisper" in stt_actions:
+                        yield Button(
+                            "Retry with faster-whisper",
+                            id=(
+                                "library-ingest-retry-faster-whisper-"
+                                f"{row.job_id}"
+                            ),
+                            classes=(
+                                "library-canvas-action "
+                                "library-ingest-retry-faster-whisper "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_retry and not stt_actions:
                         yield Button(
                             "Retry",
                             id=f"library-ingest-retry-{row.job_id}",
@@ -607,3 +674,9 @@ class LibraryIngestCanvas(VerticalScroll):
         """Request explicit install confirmation from the owning screen."""
         event.stop()
         self.post_message(self.ParakeetInstallRequested())
+
+    @on(Button.Pressed, "#opt-audio_video-choose-transcribe-cpp-gguf")
+    def _request_transcribe_cpp_gguf(self, event: Button.Pressed) -> None:
+        """Request the shared local-GGUF picker from the owning screen."""
+        event.stop()
+        self.post_message(self.TranscribeCppGGUFRequested())

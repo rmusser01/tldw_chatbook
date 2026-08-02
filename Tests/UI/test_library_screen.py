@@ -14,6 +14,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -50,6 +51,7 @@ def _minimal_ingest_screen() -> LibraryScreen:
     """Return a LibraryScreen instance without mounting the full UI."""
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
+    screen._transcribe_cpp_configured = False
     # Set by ``__init__``, which this shortcut bypasses.
     screen._library_ingest_preflight_worker = None
     return screen
@@ -184,6 +186,7 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
         ("library.ingest_options.pdf", "pdf_engine"): "docling",
         ("library.ingest_options.pdf", "ocr"): True,
         ("library.ingest_options.audio_video", "transcription_model"): "small",
+        ("transcription.transcribe_cpp", "model_path"): "/private/model.gguf",
     }
 
     def fake_get_cli_setting(section: str, key: str = None, default: object = None):
@@ -203,6 +206,75 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
     assert screen._library_ingest_form.type_options["audio_video"] == {
         "transcription_model": "small"
     }
+    assert screen._transcribe_cpp_configured is True
+    assert "/private/model.gguf" not in repr(screen._library_ingest_form)
+
+
+def test_transcribe_cpp_picker_filters_to_gguf() -> None:
+    filters = library_screen_module._transcribe_cpp_gguf_filters()
+
+    assert filters.selections == [("GGUF models", 0)]
+    assert filters[0](Path("model.gguf"))
+    assert not filters[0](Path("model.bin"))
+
+
+def test_transcribe_cpp_config_worker_reports_path_free_success(
+    tmp_path, monkeypatch
+) -> None:
+    screen = _minimal_ingest_screen()
+    selected = tmp_path / "private-model.gguf"
+    configured: list[Path] = []
+    fake_app = MagicMock()
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda _self: fake_app)
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "configure_transcribe_cpp_model_path",
+        lambda path: configured.append(path),
+    )
+    screen._apply_transcribe_cpp_gguf_result = MagicMock()
+
+    LibraryScreen._configure_transcribe_cpp_gguf.__wrapped__(
+        screen, selected, retry_job_id="ingest-job-1"
+    )
+
+    assert configured == [selected]
+    fake_app.call_from_thread.assert_called_once_with(
+        screen._apply_transcribe_cpp_gguf_result,
+        True,
+        "ingest-job-1",
+    )
+    assert str(selected) not in repr(fake_app.call_from_thread.call_args)
+
+
+def test_transcribe_cpp_config_success_requeues_failed_job_without_path() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+
+    screen._apply_transcribe_cpp_gguf_result(True, "ingest-job-1")
+
+    screen.app_instance.retry_library_ingest_job.assert_called_once_with(
+        "ingest-job-1"
+    )
+    assert screen._transcribe_cpp_configured is True
+    assert "GGUF configured" in screen.app_instance.notify.call_args.args[0]
+
+
+def test_faster_whisper_recovery_handler_uses_explicit_provider() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+    event = MagicMock()
+    event.button.id = "library-ingest-retry-faster-whisper-ingest-job-1"
+
+    screen.handle_library_ingest_retry_faster_whisper(event)
+
+    event.stop.assert_called_once_with()
+    screen.app_instance.retry_library_ingest_job_with_provider.assert_called_once_with(
+        "ingest-job-1", "faster-whisper"
+    )
 
 
 # ----- Pre-flight retry (Task 18) -------------------------------------------

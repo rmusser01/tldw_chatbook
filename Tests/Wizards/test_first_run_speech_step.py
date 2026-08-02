@@ -165,6 +165,55 @@ async def test_compose_shows_recommended_defaults_and_disables_unavailable_optio
         assert not any(str(b.label).upper().startswith("INT8") for b in disabled)
 
 
+@pytest.mark.asyncio
+async def test_compose_exposes_path_free_existing_gguf_configuration():
+    wizard = _wizard(
+        app_instance=MagicMock(
+            app_config={
+                "transcription": {
+                    "transcribe_cpp": {"model_path": "/private/model.gguf"}
+                }
+            }
+        )
+    )
+    step = _step(wizard=wizard)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-speech-choose-transcribe-cpp-gguf", Button)
+        status = step.query_one("#setup-speech-transcribe-cpp-status", Static)
+        assert "Choose another GGUF" in str(button.label)
+        assert "configured" in str(status.renderable).lower()
+        assert "/private/model.gguf" not in str(status.renderable)
+
+
+def test_transcribe_cpp_config_worker_reports_path_free_success(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    selected = tmp_path / "private-model.gguf"
+    configured: list[Path] = []
+    fake_app = _patch_app(monkeypatch)
+    monkeypatch.setattr(
+        wizard_module,
+        "configure_transcribe_cpp_model_path",
+        lambda path: configured.append(path),
+    )
+    step = _step()
+    step._apply_transcribe_cpp_gguf_result = MagicMock()
+
+    SpeechSetupStep._configure_transcribe_cpp_gguf.__wrapped__(step, selected)
+
+    assert configured == [selected]
+    fake_app.call_from_thread.assert_called_once_with(
+        step._apply_transcribe_cpp_gguf_result,
+        True,
+    )
+    assert str(selected) not in repr(fake_app.call_from_thread.call_args)
+
+
 def test_compose_step_alone_does_no_io():
     """compose_step() itself (before any I/O-triggering lifecycle hook runs)
     must build entirely from pure catalog/curated-registry state -- neither

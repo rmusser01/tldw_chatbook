@@ -152,6 +152,7 @@ def test_get_capabilities_audio_video() -> None:
         "default",
         "parakeet-onnx",
         "faster-whisper",
+        "transcribe-cpp",
     )
     assert provider_field.default == "default"
 
