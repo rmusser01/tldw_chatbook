@@ -11794,3 +11794,154 @@ async def test_a_condition_met_during_the_last_pause_is_not_a_timeout():
         )
 
     assert found is not None, "an already-satisfied condition must not time out"
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
+    """(task-2011) A pre-flight worker started BEFORE a submit/clear must not
+    repopulate the summary it cleared: ``_do_submit_ingest`` empties
+    ``form.preflight`` on purpose, and worker cancellation is cooperative, so
+    the guard is a generation stamp, not the cancel."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        stale_generation = screen._library_ingest_preflight_generation
+        # The submit/clear path invalidates any in-flight pre-flight.
+        screen._invalidate_library_ingest_preflight()
+        assert screen._library_ingest_form.preflight is None
+
+        late_result = PreflightResult(
+            type_groups={"generic": ["/tmp/whatever.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=277,
+            truncated=False,
+            total_files=1,
+        )
+        # The worker thread delivers its result with the generation it was
+        # started under -- one bump ago.
+        screen._apply_library_ingest_preflight_result(late_result, stale_generation)
+        assert screen._library_ingest_form.preflight is None, (
+            "stale pre-flight result must be dropped, not applied"
+        )
+
+        # A result carrying the CURRENT generation still applies.
+        screen._apply_library_ingest_preflight_result(
+            late_result, screen._library_ingest_preflight_generation
+        )
+        assert screen._library_ingest_form.preflight is late_result
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_job_tick_recompose_preserves_typing_focus():
+    """(task-2010) A registry notification recomposes the canvas; the path
+    Input the user is typing into must keep focus, text, and cursor. Without
+    the restore, focus silently falls to the screen and the next digit
+    keystroke navigates the whole app."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        # Programmatic value assignment posts Input.Changed exactly like
+        # typing does, so the screen's path handler tracks it into the form.
+        path_input.value = "/tmp"
+        path_input.cursor_position = 4
+        await pilot.pause()
+        assert screen._library_ingest_form.path == "/tmp"
+
+        # A background job transition fires the registry listener.
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await pilot.pause()
+
+        remounted = screen.query_one("#library-ingest-path", Input)
+        focused = screen.app.focused
+        assert focused is remounted, (
+            f"focus fell to {focused!r} after the job-tick recompose"
+        )
+        assert remounted.value == "/tmp"
+        assert remounted.cursor_position == 4
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_restore_context_survives_vanished_widget():
+    """(task-2010) Restoring focus to a widget id that no longer exists after
+    the recompose (a finished job's row-action button) must not raise."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        screen._restore_library_ingest_canvas_context(
+            "library-ingest-retry-ingest-job-999", 3, 12.0
+        )
+        await pilot.pause()  # no exception is the assertion
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_option_value_inputs_carry_visible_labels():
+    """(task-2012) Populated Inputs never show their placeholder, so
+    placeholder-as-label leaves bare "1000"/"100"/"auto" values. Every value
+    field must be preceded by a visible Static label."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        # Stage a generic-group pre-flight with the panel expanded, exactly
+        # as a real .txt pre-flight followed by an expand leaves the form.
+        screen._library_ingest_form.preflight = PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=316,
+            truncated=False,
+            total_files=1,
+        )
+        screen._library_ingest_form.expanded_type_groups = {"generic"}
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#opt-generic-chunk_size")
+
+        labels = [
+            str(w.renderable)
+            for w in screen.query(".type-group-field-label").results(Static)
+        ]
+        caps = get_capabilities("generic")
+        expected = [
+            f.label for f in caps.fields if f.type not in ("checkbox", "select")
+        ]
+        assert expected, "generic group unexpectedly has no value fields"
+        for label in expected:
+            assert label in labels, f"value field {label!r} has no visible label"

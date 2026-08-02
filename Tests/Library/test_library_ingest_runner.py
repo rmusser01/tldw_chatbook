@@ -2655,3 +2655,76 @@ async def test_a_submission_we_cannot_track_fails_instead_of_queueing_forever(
     job = app.library_ingest_jobs.jobs()[0]
     assert "track" in (job.error or "").lower(), job.error
     assert service.list_calls == 0, "an untrackable batch must not be polled"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_content_at_different_path_resolves_existing_media_id(
+    tmp_path: Path,
+) -> None:
+    """(task-2013) Byte-identical content at a DIFFERENT path takes the DB's
+    duplicate-skip path (``add_media_with_keywords`` returns ``media_id=None``)
+    and the writer's URL fallback misses (URLs differ). The job must still
+    resolve the EXISTING item's id -- so the row keeps "Open in Library" --
+    and must say it was a duplicate instead of impersonating a fresh ingest.
+    """
+    db = _make_db(tmp_path)
+    body = "identical body " * 20
+    first = _write_text_file(tmp_path, "report.txt", body)
+    second = _write_text_file(tmp_path, "copy_of_report.txt", body)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first_job = app.submit_library_ingest_job(source_path=str(first))
+        first_done = await _wait_for_job_state(
+            app, pilot, first_job.job_id, IngestJobState.DONE
+        )
+        assert first_done.media_id is not None
+        assert first_done.progress["message"].startswith("Ingested ")
+
+        second_job = app.submit_library_ingest_job(source_path=str(second))
+        second_done = await _wait_for_job_state(
+            app, pilot, second_job.job_id, IngestJobState.DONE
+        )
+        assert second_done.media_id == first_done.media_id, (
+            "duplicate must resolve to the existing media item"
+        )
+        assert second_done.progress["message"].startswith("Already in Library"), (
+            f"duplicate impersonated a fresh ingest: {second_done.progress}"
+        )
+
+        await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_hash_lookup_db_error_keeps_job_done_without_media_id(
+    tmp_path: Path,
+) -> None:
+    """(task-2013, review follow-up) A ``DatabaseError`` from the hash-fallback
+    lookup must not fail the job (the media row exists -- the DB deduped
+    against it) and must not be swallowed into a fake match: the job stays
+    DONE, unlinked, still labelled a duplicate."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
+
+    db = _make_db(tmp_path)
+    body = "identical body " * 20
+    first = _write_text_file(tmp_path, "report.txt", body)
+    second = _write_text_file(tmp_path, "copy_of_report.txt", body)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first_job = app.submit_library_ingest_job(source_path=str(first))
+        await _wait_for_job_state(app, pilot, first_job.job_id, IngestJobState.DONE)
+
+        def _boom(_content_hash, **_kwargs):
+            raise DatabaseError("simulated lookup failure")
+
+        db.get_media_by_hash = _boom
+
+        second_job = app.submit_library_ingest_job(source_path=str(second))
+        second_done = await _wait_for_job_state(
+            app, pilot, second_job.job_id, IngestJobState.DONE
+        )
+        assert second_done.media_id is None
+        assert second_done.progress["message"].startswith("Already in Library")
+
+        await _wait_for_runner_idle(app, pilot)

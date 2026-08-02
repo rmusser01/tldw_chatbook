@@ -5745,3 +5745,43 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
     text-opacity: 1;
     color: rgb(245,245,245);
 }
+
+/* task-2012: css/features/_conversations.tcss ships an UNSCOPED
+   `Checkbox { width: 100%; height: 2; }` that clips the ingest option
+   panel's checkbox content row to a border-only husk (same escape family
+   as the per-ID escapes other screens carry against that rule). The
+   container rule kills the panel's trailing phantom height; the label
+   rule styles the value-field labels added beside it. */
+LibraryIngestCanvas .type-group-contents {
+    height: auto;
+}
+LibraryIngestCanvas .type-group-contents Checkbox {
+    width: auto;
+    height: auto;
+}
+LibraryIngestCanvas .type-group-field-label {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+/* task-2014: focus on this canvas was a background-color change only --
+   invisible in monochrome and to low-vision users, and it hides the
+   job-tick focus-theft (task-2010). DESIGN.md's focus contract is
+   `outline: heavy $accent`; outlines draw over the widget's own edge
+   cells, so dimensions stay stable. */
+LibraryIngestCanvas Input:focus {
+    outline: heavy $accent;
+}
+LibraryIngestCanvas Button:focus {
+    outline: heavy $accent;
+    text-style: bold;
+}
+LibraryIngestCanvas Checkbox:focus {
+    outline: heavy $accent;
+}
+LibraryIngestCanvas Select:focus {
+    outline: heavy $accent;
+}
+LibraryIngestCanvas CollapsibleTitle:focus {
+    text-style: bold reverse;
+}

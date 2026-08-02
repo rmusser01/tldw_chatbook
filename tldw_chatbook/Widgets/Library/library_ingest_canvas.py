@@ -164,6 +164,16 @@ class LibraryIngestCanvas(VerticalScroll):
                 )
             else:
                 self._reported_option_values[(group, field.name)] = str(value)
+                # A populated Input never shows its placeholder, so
+                # placeholder-as-label left values like "1000" with no
+                # visible meaning (task-2012). The label gets its own line.
+                children.append(
+                    Static(
+                        field.label,
+                        classes="type-group-field-label",
+                        markup=False,
+                    )
+                )
                 children.append(
                     Input(
                         value=str(value),
