@@ -14,7 +14,7 @@ from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from textual.app import App
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -3035,21 +3035,104 @@ async def test_a_character_bench_with_no_targets_cannot_be_run(
 
 
 @pytest.mark.asyncio
-async def test_a_fully_configured_character_bench_still_blocks_the_primary_action(
+async def test_a_fully_configured_character_bench_enables_the_primary_action(
     evals_app, character_bench_id
 ):
-    """Task 5 wires the DISABLED-reason messaging only; actually running a
-    character bench (cost preview, the real grid run) is Task 6's own
-    deliverable. `character_bench_id` has both characters and targets, so
-    if this ever flips to enabled with no run worker behind it, pressing
-    it would silently no-op -- pinned here so that can't happen by
-    accident before Task 6 lands the real run path."""
+    """task-1691 phase 2 Task 6: running a character bench (cost preview,
+    the real grid run) is this task's own deliverable -- `character_bench_
+    id` has both characters and targets, so this now flips to enabled,
+    naming the bench exactly like the word-bench ready branch does.
+
+    Supersedes the Task 5 test of the (almost) same name, which pinned the
+    OPPOSITE -- that the button stayed disabled with an "isn't available
+    yet" tooltip -- as a deliberate placeholder until this task landed the
+    real run path. The two states this bench type can still legitimately
+    block Run in (no characters picked, no targets resolvable) are
+    unchanged and covered separately by `test_a_character_bench_with_no_
+    characters_cannot_be_run`/`test_a_character_bench_with_no_targets_
+    cannot_be_run` just above."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         pilot.app.screen.select(kind="character_bench", id=character_bench_id)
         await pilot.pause()
         action = pilot.app.screen.query_one("#evals-primary-action", Button)
-        assert action.disabled
-        assert "isn't available yet" in str(action.tooltip)
+        assert not action.disabled
+        assert "villain bench" in str(action.label)
+        assert "isn't available yet" not in str(action.tooltip)
+        assert "villain bench" in str(action.tooltip)
+        assert "configured targets" in str(action.tooltip)
+
+
+@pytest.mark.parametrize("size", [(160, 45), (235, 52)], ids=["160x45", "235x52"])
+@pytest.mark.asyncio
+async def test_the_character_bench_estimate_pushes_the_primary_action_down_but_it_stays_hit_testable(
+    evals_app, character_bench_id, size
+):
+    """Global constraint (task-1764): this task adds `CharacterBenchEstimate`
+    (an "Estimate" title Static plus a calls/duration Static) above
+    `#evals-primary-action` and `#evals-delete-bench` in the inspector pane
+    for a character-bench selection -- painted geometry is the arbiter,
+    not the stylesheet's intent, per every prior round this pane has
+    pushed a control out of reach.
+
+    The two extra rows are enough to push both controls below the fold at
+    BOTH sizes for this fixture (confirmed empirically -- the inspector
+    pane was already tight for a single-target/single-character bench
+    before this task added anything). This mirrors ``test_readiness_rows_
+    with_several_continuations_paint_inside_the_inspector_viewport``'s own
+    established convention exactly: the pane is a real, scrollable
+    ``VerticalScroll`` (``#lab-inspector``), and the contract this test
+    enforces is "reachable via scroll_visible(), and paints inside the
+    inspector's own viewport once scrolled to" -- not "visible without
+    scrolling", which this file's OWN single-target word-bench tests only
+    ever claim for a strictly SHORTER pane than this one now is.
+    """
+    async with evals_app.run_test(size=size) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        screen = pilot.app.screen
+        lab_inspector = screen.query_one("#lab-inspector")
+        for control_id in ("evals-primary-action", "evals-delete-bench"):
+            control = screen.query_one(f"#{control_id}", Button)
+            control.scroll_visible(animate=False)
+            await pilot.pause()
+            assert control.region.width > 0 and control.region.height > 0, (
+                f"#{control_id} has an empty region at {size[0]}x{size[1]}"
+            )
+            assert lab_inspector.region.contains_region(control.region), (
+                f"#{control_id} at {control.region} escapes the inspector's "
+                f"own visible viewport {lab_inspector.region} at "
+                f"{size[0]}x{size[1]}"
+            )
+            center = control.region.center
+            hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
+            assert hit is control, (
+                f"#{control_id} at {control.region} is not hit-testable at "
+                f"{size[0]}x{size[1]} -- resolved to {hit!r} instead"
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_character_bench_estimate_carries_no_logprobs_or_canary_vocabulary(
+    evals_app, character_bench_id
+):
+    """Global constraint: "No logprobs / top-K / normalizer / canary
+    vocabulary anywhere in character-probe UI." A degenerate-canary
+    warning must never appear on this bench type -- checked against every
+    Static this selection composes in the inspector pane, not just the
+    estimate line itself, so a future addition to this branch can't
+    reintroduce the vocabulary by rendering it somewhere else nearby."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        inspector_pane = pilot.app.screen.query_one("#evals-inspector-pane")
+        rendered = " ".join(
+            str(static.renderable) for static in inspector_pane.query(Static)
+        )
+        for banned in ("logprob", "top-k", "top_k", "canary", "normalizer"):
+            assert banned not in rendered.lower(), (
+                f"{banned!r} leaked into the character-bench inspector pane: "
+                f"{rendered!r}"
+            )
 
 
 @pytest.mark.asyncio
