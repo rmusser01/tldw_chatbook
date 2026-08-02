@@ -3,17 +3,19 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
-    LibraryNoteEditorState,
+    LibraryNoteSessionSnapshot,
     LibraryNotesListState,
     build_library_note_template_rows,
+    ellipsize_note_title_cells,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
@@ -29,6 +31,29 @@ from tldw_chatbook.Library.library_notes_sync_state import (
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
 
+@dataclass(frozen=True)
+class LibraryNotePresentationState:
+    """Immutable presentation input for one mounted Database Note canvas.
+
+    The coordinator snapshot is the only source of draft text. Everything
+    else describes how that draft is presented; applying this state must not
+    perform persistence, navigation, or draft mutation.
+    """
+
+    snapshot: LibraryNoteSessionSnapshot
+    metadata_line: str
+    status_line: str
+    region: Literal["editor", "context"] = "editor"
+    presentation: Literal["edit", "preview"] = "edit"
+    compact: bool = False
+    validation: bool = False
+    conflict: bool = False
+    conflict_running: bool = False
+    confirming_delete: bool = False
+    destructive_running: bool = False
+    transfer_status: str = ""
+
+
 class LibraryNotesCanvas(Vertical):
     """Render the Library notes canvas: the list view, or the note editor.
 
@@ -40,31 +65,14 @@ class LibraryNotesCanvas(Vertical):
         filter_value: Current notes filter text, prefilled into the filter
             ``Input``.
         mode: ``"list"`` renders the notes list; ``"editor"`` renders the
-            in-canvas note editor for ``editor_state``; ``"create"`` renders
+            in-canvas note editor for ``presentation_state``; ``"create"`` renders
             the Blank note / template picker reached from the rail's
             Create > New note row; ``"sync"`` renders the in-canvas notes
             sync panel for ``sync_state``.
-        editor_state: The note to render in editor mode. Required when
-            ``mode == "editor"``.
+        presentation_state: Canonical snapshot plus presentation-only state.
+            Required when ``mode == "editor"``.
         sync_state: The sync panel's display state. Required when
             ``mode == "sync"``.
-        preview: When ``True`` (editor mode only), renders ``editor_state``'s
-            content as read-only ``Markdown`` in place of the editable
-            ``TextArea`` -- the screen is responsible for threading the
-            live (possibly unsaved) body text into ``editor_state.content``
-            before toggling this on, so switching to preview never drops
-            in-progress edits. The Preview/Edit action button's label
-            reflects this flag.
-        conflict: When ``True`` (editor mode only), renders the save
-            conflict banner -- a quiet explanatory line plus Overwrite/
-            Reload actions -- in addition to the normal editor fields.
-            ``editor_state`` must already reflect the user's kept text
-            (never the server's stale detail) when this is set.
-        confirming_delete: When ``True`` (editor mode only, and only when
-            ``conflict`` is not also set), renders the inline delete
-            confirmation affordance -- a quiet explanatory line plus
-            Delete/Cancel actions -- in place of the normal action row.
-            Mirrors ``LibraryMediaViewer.confirming_delete``.
         title_placeholder_only: When ``True`` (editor mode only), the title
             ``Input`` renders empty with an "Untitled" placeholder instead
             of a literal editable "Untitled" value -- LIB-14's fix for a
@@ -88,10 +96,7 @@ class LibraryNotesCanvas(Vertical):
         sort_mode: str = "newest",
         filter_value: str = "",
         mode: str = "list",
-        editor_state: LibraryNoteEditorState | None = None,
-        preview: bool = False,
-        conflict: bool = False,
-        confirming_delete: bool = False,
+        presentation_state: LibraryNotePresentationState | None = None,
         sync_state: LibraryNotesSyncState | None = None,
         title_placeholder_only: bool = False,
         **kwargs: Any,
@@ -101,10 +106,7 @@ class LibraryNotesCanvas(Vertical):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
-        self.editor_state = editor_state
-        self.preview = preview
-        self.conflict = conflict
-        self.confirming_delete = confirming_delete
+        self.presentation_state = presentation_state
         self.sync_state = sync_state
         self.title_placeholder_only = title_placeholder_only
         self.styles.width = "1fr"
@@ -286,118 +288,86 @@ class LibraryNotesCanvas(Vertical):
                 yield button
 
     def _compose_editor(self) -> ComposeResult:
-        """Render the note editor: Back, title, body, keywords, meta, actions.
-
-        Stacked full-width widgets (mirroring ``LibraryMediaViewer.compose``)
-        plus a single plain ``ds-toolbar`` action row -- the render-safe
-        shape already proven by the media viewer canvas. All fields render
-        with their current values; the action buttons are wired with ids
-        only here (Save/Preview/Use in Console/Export/Copy/Delete stay
-        inert until later tasks add their handlers).
-        """
-        editor_state = self.editor_state
-        if editor_state is None:
+        """Mount every editor-session presentation surface exactly once."""
+        presentation_state = self.presentation_state
+        if presentation_state is None:
             return
+        snapshot = presentation_state.snapshot
+        title = snapshot.title
+        content = snapshot.body
+        keywords_text = snapshot.keywords_text
+        metadata_line = presentation_state.metadata_line
+        status_line = presentation_state.status_line
+
         yield Button(
             "‹ Back to list",
             id="library-note-back",
             classes="library-canvas-action",
             compact=True,
         )
-        yield Input(
-            value="" if self.title_placeholder_only else editor_state.title,
-            placeholder="Untitled" if self.title_placeholder_only else "",
-            id="library-note-title",
-        )
-        if self.preview:
-            # TASK-1993: consume YAML front matter (file-synced notes carry
-            # it) instead of rendering the --- block as noise; None falls
-            # back to the default parser when mdit-py-plugins is absent.
-            from tldw_chatbook.Utils.markdown_parsing import (
-                front_matter_parser_factory,
+        with Vertical(id="library-note-editor-region"):
+            yield Static("Title", id="library-note-title-label", markup=False)
+            yield Input(
+                value="" if self.title_placeholder_only else title,
+                placeholder="Untitled" if self.title_placeholder_only else "",
+                id="library-note-title",
             )
+            yield Static("Body", id="library-note-body-label", markup=False)
+            yield TextArea(content, id="library-note-body")
 
+        # TASK-1993: consume YAML front matter (file-synced notes carry it)
+        # instead of rendering the --- block as noise; None falls back to
+        # the default parser when mdit-py-plugins is absent.
+        from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+
+        with VerticalScroll(id="library-note-preview-region", can_focus=True):
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-preview-title",
+                markup=False,
+            )
             yield Markdown(
-                editor_state.content,
+                content,
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
-        else:
-            yield TextArea(
-                editor_state.content,
-                id="library-note-body",
-            )
-        yield Input(
-            value=editor_state.keywords_text,
-            placeholder="Keywords (comma-separated)",
-            id="library-note-keywords",
+        yield Static(status_line, id="library-note-status", markup=False)
+
+        primary_actions = Horizontal(
+            id="library-note-primary-actions", classes="ds-toolbar"
         )
-        yield Static(
-            editor_state.meta_line,
-            id="library-note-meta",
-            markup=False,
-        )
-        if self.conflict:
-            yield Static(
-                "This note changed elsewhere — Overwrite saves your text; "
-                "Reload discards it.",
-                id="library-note-conflict-copy",
-                classes="destination-purpose",
-                markup=False,
+        primary_actions.styles.height = "auto"
+        with primary_actions:
+            yield Button(
+                "Save",
+                id="library-note-save",
+                classes="library-canvas-action",
+                compact=True,
             )
-        confirming_delete = self.confirming_delete and not self.conflict
-        if confirming_delete:
-            # A single full-width Static above the toolbar, not inside it --
-            # mixing a Static with the toolbar's Buttons is the known
-            # non-rendering failure mode called out on the media viewer's
-            # ``compose`` (the pattern this mirrors).
-            yield Static(
-                "Delete this note? This cannot be undone from Library.",
-                id="library-note-delete-confirm-copy",
-                markup=False,
+            yield Button(
+                "Edit" if presentation_state.presentation == "preview" else "Preview",
+                id="library-note-preview",
+                classes="library-canvas-action",
+                compact=True,
             )
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            if confirming_delete:
-                yield Button(
-                    "Delete",
-                    id="library-note-delete-confirm",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-note-delete-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                if self.conflict:
-                    yield Button(
-                        "Overwrite",
-                        id="library-note-conflict-overwrite",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    yield Button(
-                        "Reload",
-                        id="library-note-conflict-reload",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                yield Button(
-                    "Save",
-                    id="library-note-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Edit" if self.preview else "Preview",
-                    id="library-note-preview",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
+            yield Button(
+                "Context",
+                id="library-note-context",
+                classes="library-canvas-action",
+                compact=True,
+            )
+
+        with Vertical(id="library-note-wide-utilities"):
+            yield Static("Keywords", id="library-note-keywords-label", markup=False)
+            yield Input(
+                value=keywords_text,
+                placeholder="Comma-separated keywords",
+                id="library-note-keywords",
+            )
+            yield Static(metadata_line, id="library-note-meta", markup=False)
+            wide_actions = Horizontal(classes="ds-toolbar")
+            wide_actions.styles.height = "auto"
+            with wide_actions:
                 yield Button(
                     "Use in Console",
                     id="library-note-use-in-console",
@@ -405,13 +375,13 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Export .md",
+                    "Export Markdown",
                     id="library-note-export-md",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 yield Button(
-                    "Export .txt",
+                    "Export text",
                     id="library-note-export-txt",
                     classes="library-canvas-action",
                     compact=True,
@@ -428,6 +398,258 @@ class LibraryNotesCanvas(Vertical):
                     classes="library-canvas-action library-media-action-danger",
                     compact=True,
                 )
+
+        with VerticalScroll(id="library-note-context-region"):
+            yield Button(
+                "‹ Note",
+                id="library-note-context-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-context-title",
+                markup=False,
+            )
+            yield Static(status_line, id="library-note-context-status", markup=False)
+            yield Static("Properties", classes="destination-section", markup=False)
+            yield Static(
+                "Keywords", id="library-note-context-keywords-label", markup=False
+            )
+            yield Input(
+                value=keywords_text,
+                placeholder="Comma-separated keywords",
+                id="library-note-context-keywords",
+            )
+            yield Static("Metadata", classes="destination-section", markup=False)
+            yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            yield Static("Chatbook", classes="destination-section", markup=False)
+            yield Button(
+                "Use in Console",
+                id="library-note-context-use-in-console",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static("Utilities", classes="destination-section", markup=False)
+            yield Button(
+                "Copy",
+                id="library-note-context-copy",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export Markdown",
+                id="library-note-context-export-md",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export text",
+                id="library-note-context-export-txt",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static(
+                presentation_state.transfer_status
+                if presentation_state is not None
+                else "",
+                id="library-note-context-transfer-status",
+                markup=False,
+            )
+            yield Static("Danger zone", classes="destination-section", markup=False)
+            yield Button(
+                "Delete",
+                id="library-note-context-delete",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+
+        with Vertical(id="library-note-conflict-region"):
+            yield Static(
+                "This note changed elsewhere — Overwrite saves your text; "
+                "Reload discards it.",
+                id="library-note-conflict-copy",
+                classes="destination-purpose",
+                markup=False,
+            )
+            conflict_actions = Horizontal(classes="ds-toolbar")
+            conflict_actions.styles.height = "auto"
+            with conflict_actions:
+                yield Button(
+                    "Overwrite",
+                    id="library-note-conflict-overwrite",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Reload",
+                    id="library-note-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+
+        with Vertical(id="library-note-delete-confirmation"):
+            yield Static(
+                "Delete this note? This cannot be undone from Library.",
+                id="library-note-delete-confirm-copy",
+                markup=False,
+            )
+            delete_actions = Horizontal(classes="ds-toolbar")
+            delete_actions.styles.height = "auto"
+            with delete_actions:
+                yield Button(
+                    "Cancel",
+                    id="library-note-delete-cancel",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Delete",
+                    id="library-note-delete-confirm",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
+
+    def on_mount(self) -> None:
+        """Apply initial visibility after the stable editor subtree mounts."""
+        if self.mode == "editor" and self.presentation_state is not None:
+            self.apply_session_state(self.presentation_state)
+
+    @staticmethod
+    def _static_text(widget: Static) -> str:
+        renderable = widget.renderable
+        return getattr(renderable, "plain", str(renderable))
+
+    def apply_session_state(self, state: LibraryNotePresentationState) -> None:
+        """Synchronize stable editor surfaces from one immutable snapshot.
+
+        Value assignments are difference-checked so repeated application is
+        idempotent. The screen owns the presentation-sync guard around calls
+        that may assign ``Input`` or ``TextArea`` values.
+        """
+        if self.mode != "editor" or not self.is_mounted:
+            self.presentation_state = state
+            return
+        self.presentation_state = state
+        snapshot = state.snapshot
+        conflict = state.conflict
+        confirming_delete = state.confirming_delete and not conflict
+        show_context = (
+            state.region == "context" and not conflict and not confirming_delete
+        )
+        show_preview = (
+            not show_context
+            and not conflict
+            and not confirming_delete
+            and state.presentation == "preview"
+        )
+        show_editor = not show_context and not show_preview
+
+        title_input = self.query_one("#library-note-title", Input)
+        body_input = self.query_one("#library-note-body", TextArea)
+        wide_keywords = self.query_one("#library-note-keywords", Input)
+        context_keywords = self.query_one("#library-note-context-keywords", Input)
+        if title_input.value != snapshot.title:
+            with title_input.prevent(Input.Changed):
+                title_input.value = snapshot.title
+        if body_input.text != snapshot.body:
+            with body_input.prevent(TextArea.Changed):
+                body_input.text = snapshot.body
+        if wide_keywords.value != snapshot.keywords_text:
+            with wide_keywords.prevent(Input.Changed):
+                wide_keywords.value = snapshot.keywords_text
+        if context_keywords.value != snapshot.keywords_text:
+            with context_keywords.prevent(Input.Changed):
+                context_keywords.value = snapshot.keywords_text
+
+        title_width = 52 if state.compact else 72
+        title = ellipsize_note_title_cells(snapshot.title, title_width)
+        for selector in ("#library-note-preview-title", "#library-note-context-title"):
+            widget = self.query_one(selector, Static)
+            if self._static_text(widget) != title:
+                widget.update(title)
+
+        preview_body = self.query_one("#library-note-preview-body", Markdown)
+        # Markdown.update() parses and remounts asynchronously. Keep the
+        # hidden Preview stale while typing, then perform one canonical update
+        # when Preview becomes the active surface so edits cannot queue an
+        # unbounded hidden-render backlog.
+        if show_preview and preview_body.source != snapshot.body:
+            preview_body.update(snapshot.body)
+        for selector in ("#library-note-status", "#library-note-context-status"):
+            widget = self.query_one(selector, Static)
+            if self._static_text(widget) != state.status_line:
+                widget.update(state.status_line)
+        for selector in ("#library-note-meta", "#library-note-context-meta"):
+            widget = self.query_one(selector, Static)
+            if self._static_text(widget) != state.metadata_line:
+                widget.update(state.metadata_line)
+        transfer = self.query_one("#library-note-context-transfer-status", Static)
+        if self._static_text(transfer) != state.transfer_status:
+            transfer.update(state.transfer_status)
+        transfer.display = bool(state.transfer_status)
+
+        self.set_class(state.compact, "library-notes-compact")
+        self.set_class(state.validation, "library-note-validation")
+        self.query_one("#library-note-back").display = not show_context
+        self.query_one("#library-note-editor-region").display = show_editor
+        self.query_one("#library-note-preview-region").display = show_preview
+        self.query_one("#library-note-context-region").display = show_context
+        self.query_one("#library-note-status").display = not show_context
+        self.query_one("#library-note-primary-actions").display = (
+            not show_context and not conflict and not confirming_delete
+        )
+        self.query_one("#library-note-wide-utilities").display = (
+            not state.compact
+            and not show_context
+            and not conflict
+            and not confirming_delete
+        )
+        self.query_one("#library-note-conflict-region").display = conflict
+        self.query_one("#library-note-delete-confirmation").display = confirming_delete
+
+        locked = confirming_delete or state.destructive_running
+        title_input.disabled = not show_editor or locked
+        body_input.disabled = not show_editor or locked
+        wide_keywords.disabled = state.compact or show_context or locked
+        context_keywords.disabled = not show_context or locked
+        preview_body.can_focus = False
+        self.query_one("#library-note-preview-region").can_focus = show_preview
+        self.query_one("#library-note-context-region").can_focus = show_context
+
+        preview_button = self.query_one("#library-note-preview", Button)
+        preview_label = "Edit" if state.presentation == "preview" else "Preview"
+        if str(preview_button.label) != preview_label:
+            preview_button.label = preview_label
+
+        for selector in (
+            "#library-note-save",
+            "#library-note-preview",
+            "#library-note-context",
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-delete",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+            "#library-note-context-delete",
+        ):
+            self.query_one(selector, Button).disabled = state.destructive_running
+        for selector in (
+            "#library-note-conflict-overwrite",
+            "#library-note-conflict-reload",
+        ):
+            self.query_one(selector, Button).disabled = (
+                state.destructive_running or state.conflict_running
+            )
+        for selector in (
+            "#library-note-delete-confirm",
+            "#library-note-delete-cancel",
+        ):
+            self.query_one(selector, Button).disabled = state.destructive_running
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.

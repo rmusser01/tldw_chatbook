@@ -315,6 +315,7 @@ from ...Widgets.Library import (
 from ...Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
+from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelInstallModal,
@@ -1925,6 +1926,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_autosave_timer: Timer | None = None
         self._library_note_confirming_delete: bool = False
         self._library_note_preview: bool = False
+        self._library_note_context: bool = False
+        self._library_note_delete_origin_context: bool = False
+        self._library_note_delete_origin_preview: bool = False
+        # Task 7 owns measured breakpoint transitions. Task 5 consumes this
+        # explicit presentation input now so compact/wide utility grouping is
+        # testable without coupling the canvas to terminal geometry.
+        self._library_notes_compact: bool = False
+        self._library_note_presentation_syncing: bool = False
         # Guards against the spurious ``Input.Changed`` that Textual fires
         # when an ``Input(value=...)`` widget mounts with a non-empty
         # initial value: without this, opening a note (or leaving a
@@ -2277,6 +2286,57 @@ class LibraryScreen(BaseAppScreen):
             meta_line=meta_line,
             has_note=True,
         )
+
+    def _library_note_status_line(self) -> str:
+        """Return the persistent, text-labeled save state for both regions."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            return "No note open"
+        if self._library_note_autosave_state == "saving" or snapshot.saving:
+            return "Saving…"
+        if snapshot.in_conflict:
+            return snapshot.status_message or "Conflict — review the choices below."
+        if snapshot.status_message:
+            return snapshot.status_message
+        return "Unsaved changes" if snapshot.dirty else "Saved"
+
+    def _library_note_presentation_state(self) -> LibraryNotePresentationState:
+        """Project the canonical session into presentation-only canvas state."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            raise RuntimeError("A note presentation requires an active session.")
+        base_meta = self._library_note_meta_base_line()
+        word_count = self._note_word_count(snapshot.body)
+        word_copy = f"{word_count} words" if word_count != 1 else "1 word"
+        status_line = self._library_note_status_line()
+        metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
+        return LibraryNotePresentationState(
+            snapshot=snapshot,
+            metadata_line=metadata_line,
+            status_line=status_line,
+            region="context" if self._library_note_context else "editor",
+            presentation="preview" if self._library_note_preview else "edit",
+            compact=self._library_notes_compact,
+            validation=self._library_note_autosave_state == "validation",
+            conflict=snapshot.in_conflict,
+            conflict_running=self._library_note_session.conflict_resolution_running,
+            confirming_delete=self._library_note_confirming_delete,
+            destructive_running=self._library_note_session.destructive_running,
+        )
+
+    def _apply_library_note_presentation_state(self) -> None:
+        """Synchronize the mounted canvas without changing its composition."""
+        if not self.is_mounted or self._library_note_session.snapshot is None:
+            return
+        try:
+            canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        except (NoMatches, QueryError):
+            return
+        self._library_note_presentation_syncing = True
+        try:
+            canvas.apply_session_state(self._library_note_presentation_state())
+        finally:
+            self._library_note_presentation_syncing = False
 
     def _register_footer_shortcuts(self) -> None:
         """Register Library shortcuts via BaseAppScreen's persisting API.
@@ -5251,17 +5311,7 @@ class LibraryScreen(BaseAppScreen):
                     and self._library_notes_view == "editor"
                 ):
                     editor_state = self._library_note_editor_state()
-                    if (
-                        editor_state is not None
-                        and self._library_note_conflict_snapshot
-                    ):
-                        yield LibraryNotesCanvas(
-                            mode="editor",
-                            editor_state=editor_state,
-                            conflict=True,
-                            id="library-notes-canvas",
-                        )
-                    elif editor_state is None:
+                    if editor_state is None:
                         with Vertical(id="library-note-load-state"):
                             yield Button(
                                 "‹ Back to list",
@@ -5290,9 +5340,7 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryNotesCanvas(
                             mode="editor",
-                            editor_state=editor_state,
-                            confirming_delete=self._library_note_confirming_delete,
-                            preview=self._library_note_preview,
+                            presentation_state=self._library_note_presentation_state(),
                             title_placeholder_only=(
                                 self._library_note_pending_blank_gc_id is not None
                                 and self._library_note_pending_blank_gc_id
@@ -6010,6 +6058,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
         self._library_note_preview = False
+        self._library_note_context = False
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -6025,6 +6074,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state = "idle"
         self._library_note_confirming_delete = False
         self._library_note_preview = False
+        self._library_note_context = False
+        self._library_note_delete_origin_context = False
+        self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
         self.run_worker(
             self._refresh_library_note_detail(note_id),
@@ -6054,6 +6106,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state = "idle"
         self._library_note_confirming_delete = False
         self._library_note_preview = False
+        self._library_note_context = False
+        self._library_note_delete_origin_context = False
+        self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
         # Defense in depth: the normal exit path is ``_flush_library_note_
         # save`` (which GCs a still-pending blank note and clears both
@@ -7606,10 +7661,14 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Input change event emitted by the editor's title field.
         """
-        if not self._library_note_editor_armed:
+        if (
+            self._library_note_presentation_syncing
+            or not self._library_note_editor_armed
+        ):
             return
         if self._library_note_session.mutate(title=event.value):
             self._schedule_library_note_autosave()
+            self._apply_library_note_presentation_state()
 
     @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
@@ -7618,10 +7677,14 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Text change event emitted by the editor's body ``TextArea``.
         """
-        if not self._library_note_editor_armed:
+        if (
+            self._library_note_presentation_syncing
+            or not self._library_note_editor_armed
+        ):
             return
         if self._library_note_session.mutate(body=event.text_area.text):
             self._schedule_library_note_autosave()
+            self._apply_library_note_presentation_state()
 
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
@@ -7630,10 +7693,28 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Input change event emitted by the editor's keywords field.
         """
-        if not self._library_note_editor_armed:
+        if (
+            self._library_note_presentation_syncing
+            or not self._library_note_editor_armed
+        ):
             return
         if self._library_note_session.mutate(keywords_text=event.value):
             self._schedule_library_note_autosave()
+            self._apply_library_note_presentation_state()
+
+    @on(Input.Changed, "#library-note-context-keywords")
+    def handle_library_note_context_keywords_changed(
+        self, event: Input.Changed
+    ) -> None:
+        """Mutate the canonical keyword draft from the Context properties field."""
+        if (
+            self._library_note_presentation_syncing
+            or not self._library_note_editor_armed
+        ):
+            return
+        if self._library_note_session.mutate(keywords_text=event.value):
+            self._schedule_library_note_autosave()
+            self._apply_library_note_presentation_state()
 
     def _fire_library_note_autosave(self) -> None:
         """Debounce-timer callback: kick the actual autosave worker."""
@@ -7681,40 +7762,14 @@ class LibraryScreen(BaseAppScreen):
         ).meta_line
 
     def _update_library_note_meta_static(self, *, content: str) -> None:
-        """Targeted update of the meta line's autosave status suffix.
-
-        Never recomposes: the ``#library-note-meta`` ``Static`` is updated
-        in place, composing its already-known base meta line with the
-        current autosave status text, so the ``TextArea``/``Input`` widget
-        instances are left untouched by a save.
+        """Synchronize persistent metadata and status without recomposition.
 
         Args:
-            content: The just-saved (or attempted) note body, used only to
-                compute the word count shown in the status text.
+            content: Compatibility input from save callers. Canonical content
+                is read from the coordinator snapshot.
         """
-        try:
-            meta_static = self.query_one("#library-note-meta", Static)
-        except (NoMatches, QueryError):
-            return
-        status_text = notes_autosave_status_text(
-            self._library_note_autosave_state, word_count=self._note_word_count(content)
-        )
-        snapshot = self._library_note_session.snapshot
-        if (
-            snapshot is not None
-            and snapshot.status_message
-            and (
-                snapshot.dirty
-                or self._library_note_autosave_state in {"error", "validation"}
-            )
-        ):
-            word_count = self._note_word_count(content)
-            word_copy = f"{word_count} words" if word_count != 1 else "1 word"
-            status_text = f"{word_copy} · {snapshot.status_message}"
-        base_meta_line = self._library_note_meta_base_line()
-        meta_static.update(
-            f"{base_meta_line} · {status_text}" if base_meta_line else status_text
-        )
+        del content
+        self._apply_library_note_presentation_state()
 
     def _patch_library_note_list_from_session(self) -> None:
         """Patch list caches from the payload the coordinator actually saved."""
@@ -7743,7 +7798,11 @@ class LibraryScreen(BaseAppScreen):
         selector = {
             "title": "#library-note-title",
             "body": "#library-note-body",
-            "keywords": "#library-note-keywords",
+            "keywords": (
+                "#library-note-context-keywords"
+                if self._library_notes_compact
+                else "#library-note-keywords"
+            ),
         }.get(field)
         if selector is None or not self.is_mounted:
             return
@@ -7755,6 +7814,17 @@ class LibraryScreen(BaseAppScreen):
                 return
 
         self.call_after_refresh(focus_field)
+
+    def _route_library_note_validation_field(self, field: str) -> None:
+        """Expose the region that owns a vetoed field without recomposing."""
+        if field in {"title", "body"}:
+            self._library_note_preview = False
+            self._library_note_context = False
+        elif field == "keywords":
+            # Compact has no inline utilities, while wide deliberately keeps
+            # the incumbent keyword field directly reachable from both Edit
+            # and Preview. Context therefore follows the measured ownership.
+            self._library_note_context = self._library_notes_compact
 
     def _focus_library_note_conflict_callout(self) -> None:
         """Move keyboard focus to the explanatory conflict callout."""
@@ -7801,13 +7871,12 @@ class LibraryScreen(BaseAppScreen):
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"
             self._library_note_preview = False
-            self._library_note_editor_armed = False
+            self._library_note_context = False
             if self._library_notes_autosave_timer is not None:
                 self._library_notes_autosave_timer.stop()
                 self._library_notes_autosave_timer = None
             if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
+                self._apply_library_note_presentation_state()
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
             return
         self._library_note_autosave_state = (
@@ -7816,14 +7885,10 @@ class LibraryScreen(BaseAppScreen):
             else "error"
         )
         validation_field = outcome.veto.field if outcome.veto is not None else ""
-        if self._library_note_preview:
+        if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO:
+            self._route_library_note_validation_field(validation_field)
+        elif self._library_note_preview:
             self._library_note_preview = False
-            self._library_note_editor_armed = False
-            if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
-                self._focus_library_note_validation_field(validation_field)
-            return
         self._update_library_note_meta_static(content=snapshot.body)
         self._focus_library_note_validation_field(validation_field)
 
@@ -7874,10 +7939,9 @@ class LibraryScreen(BaseAppScreen):
         if outcome.kind is NoteFlushOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"
             self._library_note_preview = False
-            self._library_note_editor_armed = False
+            self._library_note_context = False
             if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
+                self._apply_library_note_presentation_state()
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
             return outcome
         if outcome.kind is NoteFlushOutcomeKind.BLOCKED:
@@ -7887,19 +7951,14 @@ class LibraryScreen(BaseAppScreen):
             if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO
             else "error"
         )
-        if (
-            outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO
-            and self._library_note_preview
-        ):
-            self._library_note_preview = False
-            self._library_note_editor_armed = False
-            if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
-        else:
-            self._update_library_note_meta_static(content=snapshot.body)
+        validation_field = ""
         if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
-            self._focus_library_note_validation_field(outcome.save_outcome.veto.field)
+            validation_field = outcome.save_outcome.veto.field
+        if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO:
+            self._route_library_note_validation_field(validation_field)
+        self._update_library_note_meta_static(content=snapshot.body)
+        if validation_field:
+            self._focus_library_note_validation_field(validation_field)
         return outcome
 
     async def _gc_pending_blank_note(self) -> None:
@@ -7996,7 +8055,22 @@ class LibraryScreen(BaseAppScreen):
             overwrite: ``True`` for Overwrite, ``False`` for Reload.
         """
         action = ConflictAction.OVERWRITE if overwrite else ConflictAction.RELOAD
-        outcome = await self._library_note_session.resolve_conflict(action)
+        operation = asyncio.create_task(
+            self._library_note_session.resolve_conflict(action)
+        )
+        try:
+            # Let the coordinator atomically claim its conflict token before
+            # reflecting the running state. The operation's first service
+            # boundary yields here; a synchronous rejection/finish needs no
+            # intermediate presentation.
+            await asyncio.sleep(0)
+            if self._library_note_session.conflict_resolution_running:
+                self._apply_library_note_presentation_state()
+            outcome = await operation
+        except asyncio.CancelledError:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            raise
         if outcome.kind in {
             ConflictOutcomeKind.STALE,
             ConflictOutcomeKind.ALREADY_RUNNING,
@@ -8035,10 +8109,11 @@ class LibraryScreen(BaseAppScreen):
             ):
                 validation_field = outcome.save_outcome.veto.field
         self._library_note_preview = False
-        self._library_note_editor_armed = False
+        self._library_note_context = False
+        if outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:
+            self._route_library_note_validation_field(validation_field)
         if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_note_editor)
+            self._apply_library_note_presentation_state()
             if snapshot is not None and snapshot.in_conflict:
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
             elif validation_field:
@@ -8106,9 +8181,40 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_session.snapshot is None:
             return
         self._library_note_preview = not self._library_note_preview
-        self._library_note_editor_armed = False
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._arm_library_note_editor)
+        self._apply_library_note_presentation_state()
+
+    @on(Button.Pressed, "#library-note-context")
+    def handle_library_note_context_open(self, event: Button.Pressed) -> None:
+        """Show the stable Context region without replacing editor widgets."""
+        event.stop()
+        snapshot = self._library_note_session.snapshot
+        if (
+            self._library_notes_view != "editor"
+            or snapshot is None
+            or snapshot.in_conflict
+            or self._library_note_confirming_delete
+        ):
+            return
+        self._library_note_context = True
+        self._apply_library_note_presentation_state()
+        try:
+            context = self.query_one("#library-note-context-region")
+        except (NoMatches, QueryError):
+            return
+        context.focus()
+
+    @on(Button.Pressed, "#library-note-context-back")
+    def handle_library_note_context_back(self, event: Button.Pressed) -> None:
+        """Return Context to the Edit or Preview presentation that opened it."""
+        event.stop()
+        if not self._library_note_context:
+            return
+        self._library_note_context = False
+        self._apply_library_note_presentation_state()
+        try:
+            self.query_one("#library-note-context", Button).focus()
+        except (NoMatches, QueryError):
+            return
 
     async def _export_library_note(self, export_format: str) -> None:
         """Push the Export dialog for the open Library note.
@@ -8242,6 +8348,7 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
 
+    @on(Button.Pressed, "#library-note-context-export-md")
     @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
         """Export the open note as Markdown via a ``FileSave`` dialog.
@@ -8252,6 +8359,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._export_library_note("markdown")
 
+    @on(Button.Pressed, "#library-note-context-export-txt")
     @on(Button.Pressed, "#library-note-export-txt")
     async def handle_library_note_export_text(self, event: Button.Pressed) -> None:
         """Export the open note as plain text via a ``FileSave`` dialog.
@@ -8262,6 +8370,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._export_library_note("text")
 
+    @on(Button.Pressed, "#library-note-context-copy")
     @on(Button.Pressed, "#library-note-copy")
     def handle_library_note_copy(self, event: Button.Pressed) -> None:
         """Copy the open Library note to the clipboard as markdown.
@@ -8377,6 +8486,7 @@ class LibraryScreen(BaseAppScreen):
             return
         open_chat_with_handoff(payload, action_label="Use in Console")
 
+    @on(Button.Pressed, "#library-note-context-use-in-console")
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
         """Hand the open note off to Console as chat context.
@@ -16482,6 +16592,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, "#library-note-context-delete")
     @on(Button.Pressed, "#library-note-delete")
     async def handle_library_note_delete(self, event: Button.Pressed) -> None:
         """Enter the inline delete-confirmation state for the open note.
@@ -16511,10 +16622,35 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        self._library_note_delete_origin_context = self._library_note_context
+        self._library_note_delete_origin_preview = self._library_note_preview
         self._library_note_confirming_delete = True
-        self._library_note_editor_armed = False
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._arm_library_note_editor)
+        self._library_note_preview = False
+        self._library_note_context = False
+        self._apply_library_note_presentation_state()
+        self._focus_library_note_control("#library-note-delete-cancel")
+
+    def _focus_library_note_control(self, selector: str) -> None:
+        """Focus one stable note control when its presentation is visible."""
+        try:
+            self.query_one(selector, Button).focus()
+        except (NoMatches, QueryError):
+            return
+
+    def _restore_library_note_delete_origin(self) -> None:
+        """Leave confirmation and restore its stable source presentation."""
+        origin_context = self._library_note_delete_origin_context
+        origin_preview = self._library_note_delete_origin_preview
+        self._library_note_confirming_delete = False
+        self._library_note_context = origin_context
+        self._library_note_preview = origin_preview
+        self._apply_library_note_presentation_state()
+        selector = (
+            "#library-note-context-delete" if origin_context else "#library-note-delete"
+        )
+        self._focus_library_note_control(selector)
+        self._library_note_delete_origin_context = False
+        self._library_note_delete_origin_preview = False
 
     @on(Button.Pressed, "#library-note-delete-cancel")
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
@@ -16525,10 +16661,7 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
-        self._library_note_confirming_delete = False
-        self._library_note_editor_armed = False
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._arm_library_note_editor)
+        self._restore_library_note_delete_origin()
 
     @on(Button.Pressed, "#library-note-delete-confirm")
     def handle_library_note_delete_confirm(self, event: Button.Pressed) -> None:
@@ -16546,8 +16679,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         note_id = self._selected_note_id
         if not note_id:
-            self._library_note_confirming_delete = False
-            self.refresh(recompose=True)
+            self._restore_library_note_delete_origin()
             return
         self.run_worker(
             self._delete_library_note(note_id, version=self._library_note_version),
@@ -16589,12 +16721,9 @@ class LibraryScreen(BaseAppScreen):
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
-            self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning("Note deletion is unavailable.")
-            self._library_note_editor_armed = False
             if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
+                self._restore_library_note_delete_origin()
             return
 
         try:
@@ -16617,12 +16746,9 @@ class LibraryScreen(BaseAppScreen):
                 or self._library_notes_view != "editor"
             ):
                 return
-            self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning("Could not delete this note.")
-            self._library_note_editor_armed = False
             if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
+                self._restore_library_note_delete_origin()
             return
 
         # Discard a stale result: the user has since switched to a different
@@ -16631,14 +16757,11 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if not deleted:
-            self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning(
                 "This note changed elsewhere — refresh and try again."
             )
-            self._library_note_editor_armed = False
             if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
+                self._restore_library_note_delete_origin()
             return
 
         self._reset_library_note_editor_state()
