@@ -452,12 +452,10 @@ unsupported claim.
 | #5 cancellation/mutation/failure containment | Cancellation, cleanup, and error contract |
 | #6 focused security/lifecycle tests | Parser, importer, UI, and platform test sections |
 
-## Backlog correction
+## Backlog alignment
 
-TASK-597 currently depends on unfinished TASK-596 even though TASK-597 is the
-next bounded Phase 3 slice required to advance that parent. Before
-implementation, make TASK-597 a child of TASK-596 and replace the blocking
-parent dependency with the landed foundations TASK-594 and TASK-595.
+TASK-597 is a child of TASK-596 and depends directly on the landed foundations
+TASK-594 and TASK-595. The task metadata links this design specification.
 
 ## References
 
