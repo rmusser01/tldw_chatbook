@@ -47,6 +47,7 @@ from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.provider_usage import ProviderUsage
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
     console_attached_dictionaries,
@@ -7803,6 +7804,7 @@ class ChatScreen(BaseAppScreen):
             )
             raw_mime = node.get("image_mime_type")
             image_mime_type = str(raw_mime) if raw_mime else None
+            usage = ProviderUsage.from_json(node.get("usage_json"))
             raw_id = node.get("id")
             node_persisted_id = str(raw_id) if raw_id is not None else None
             kept = bool(content) or image_data is not None
@@ -7832,6 +7834,7 @@ class ChatScreen(BaseAppScreen):
                         image_data=image_data,
                         image_mime_type=image_mime_type,
                         attachments=attachments,
+                        usage=usage,
                     )
                 )
             # Children re-parent to this node when kept, else pass the nearest
