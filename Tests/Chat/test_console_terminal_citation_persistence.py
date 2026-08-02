@@ -231,6 +231,7 @@ class _RealDirectGateway:
         self,
         _resolution: object,
         _messages: object,
+        **_kwargs,
     ):
         for chunk in self.chunks:
             yield chunk

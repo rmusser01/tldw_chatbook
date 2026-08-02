@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -1964,6 +1965,14 @@ class ConsoleChatStore:
         self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
         self._bump_message_speech_revision(message.id)
+        return self._snapshot(message)
+
+    def set_message_usage(
+        self, message_id: str, usage: ProviderUsage
+    ) -> ConsoleChatMessage:
+        """Attach normalized usage; the terminal mark persists it."""
+        message = self._message_or_raise(message_id)
+        message.usage = usage
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:

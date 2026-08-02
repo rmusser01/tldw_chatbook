@@ -1121,7 +1121,7 @@ async def test_direct_user_stop_does_not_seal_and_clears_terminal_state():
     stream_parked = asyncio.Event()
 
     class _ParkedGateway(_RecordingGateway):
-        async def stream_chat(self, _resolution, messages):
+        async def stream_chat(self, _resolution, messages, **kwargs):
             self.messages_seen = messages
             yield "partial"
             stream_parked.set()

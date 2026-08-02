@@ -137,7 +137,7 @@ class _ChunkGateway:
         self.calls = 0
         self.tools_seen = []
 
-    async def stream_chat(self, resolution, messages, tools=None):
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
         self.tools_seen.append(tools)
         chunks = self._scripts[self.calls]
         self.calls += 1
@@ -524,7 +524,7 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     seen_loops = []
 
     class _LoopSpyGateway(_ChunkGateway):
-        async def stream_chat(self, resolution, messages, tools=None):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
             seen_loops.append(asyncio.get_running_loop())
             async for chunk in super().stream_chat(resolution, messages, tools=tools):
                 yield chunk

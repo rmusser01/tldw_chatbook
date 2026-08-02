@@ -48,6 +48,35 @@ def test_begin_variant_stream_resets_buffer_and_keeps_base():
     assert final.variants.selected_index == 1
 
 
+def test_finalize_variant_stream_preserves_attached_usage():
+    """PR1 Task 6: ``set_message_usage`` mutates the SAME in-memory node
+    ``finalize_variant_stream`` later reads -- both resolve the message via
+    ``_message_or_raise`` off the shared node tree, never a copy -- so an
+    attach ordered right before the finalize call (mirroring
+    ``_attach_stream_usage``'s placement immediately before the controller's
+    own ``finalize_variant_stream``/``mark_message_complete`` call in
+    ``_run_direct_provider_reply``) survives the variant-selection mutation
+    and lands on the returned snapshot. Store-level only: no live controller
+    call site currently sets ``variant_mode=True`` (see module docstring and
+    ``test_regenerate_new_sibling_carries_its_own_generation_usage`` below),
+    but the primitive itself remains correct should that path be reactivated.
+    """
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store, _session, mid = _store_with_answer()
+    store.begin_variant_stream(mid)
+    store.append_stream_chunk(mid, "second take")
+    usage = ProviderUsage(
+        uncached_input=42, output=7, provider="anthropic", model="claude"
+    )
+    store.set_message_usage(mid, usage)
+
+    final = store.finalize_variant_stream(mid)
+
+    assert final.usage == usage
+    assert store.get_message(mid).usage == usage
+
+
 def test_finalize_variant_stream_appends_to_existing_set():
     store, _session, mid = _store_with_answer()
     store.begin_variant_stream(mid)
@@ -77,7 +106,7 @@ class _ScriptedGateway:
 
         return _R()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in self._chunks:
             yield chunk
 
@@ -187,7 +216,7 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
 
             return _R()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial regen "
             await self.release.wait()
@@ -230,3 +259,74 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
     # (stop_active_run's own "Response stopped by user." system row becomes
     # the new active leaf, parented under the stopped sibling above --
     # pre-existing behavior, unrelated to Task 6, not asserted here.)
+
+
+class _UsageEmittingScriptedGateway(_ScriptedGateway):
+    """``_ScriptedGateway`` plus a signals-recorded usage payload and a
+    resolution carrying ``provider``/``model`` (the base stub's bare ``_R``
+    has neither, which ``ProviderUsage.from_provider_payload`` needs for
+    attribution)."""
+
+    async def resolve_for_send(self, selection):
+        class _R:  # noqa: D401 - tiny stub
+            ready = True
+            visible_copy = ""
+            provider = "llama_cpp"
+            model = "test-model"
+
+        return _R()
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        signals = kwargs.get("signals")
+        for chunk in self._chunks:
+            yield chunk
+        if signals is not None:
+            signals.record_usage_payload(
+                {"prompt_tokens": 100, "completion_tokens": 20}
+            )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_new_sibling_carries_its_own_generation_usage():
+    """PR1 Task 6, Step 5 finding: TASK-6 (Phase A, see module docstring)
+    already forks ``regenerate_message`` onto a brand-new SIBLING node
+    streamed with ``variant_mode=False`` -- so the LIVE regenerate path
+    never reaches ``finalize_variant_stream`` at all. It goes through the
+    exact same ``mark_message_complete`` attach-then-flush ordering as an
+    ordinary send (``_run_direct_provider_reply``'s success block calls
+    ``_attach_stream_usage(..., partial=False)`` immediately before
+    ``mark_message_complete``/``finalize_variant_stream``, keyed off
+    ``variant_mode`` -- which is always False here).
+
+    What this test actually proves: usage attaches to the NEW sibling node
+    (this generation's own id), not the anchor -- correct per-generation
+    attribution. A regenerate must never clobber the anchor's own usage
+    (or, as here, its absence) with the new generation's numbers, since
+    the anchor remains a separate, independently reachable node.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    store, session, mid = _store_with_answer()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_UsageEmittingScriptedGateway(
+            ["Paris", " is", " the", " answer."]
+        ),
+        provider="llama_cpp",
+        model="test-model",
+    )
+
+    result = await controller.regenerate_message(mid)
+    assert result.accepted is True
+
+    anchor = store.get_message(mid)
+    assert anchor.usage is None  # prior generation recorded no usage
+
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != mid
+    new_sibling = store.get_message(new_leaf_id)
+    assert new_sibling.usage is not None
+    assert new_sibling.usage.uncached_input == 100
+    assert new_sibling.usage.output == 20
+    assert new_sibling.usage.partial is False
+    assert new_sibling.usage.provider == "llama_cpp"

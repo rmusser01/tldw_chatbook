@@ -38,7 +38,7 @@ class SummaryGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.captured_messages = messages
         for chunk in _as_chunks(self.summary):
             if chunk:

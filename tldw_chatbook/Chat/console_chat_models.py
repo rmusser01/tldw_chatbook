@@ -6,8 +6,11 @@ import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
 class ConsoleMessageRole(str, Enum):
@@ -432,6 +435,9 @@ class ConsoleChatMessage:
     #: that is not a tool marker, and for a marker whose result was short
     #: enough that ``content`` already shows all of it.
     tool_output_full: str | None = None
+    # Normalized token usage for THIS generation (None for user rows, legacy
+    # rows, and providers that reported nothing). Persisted as usage_json.
+    usage: "ProviderUsage | None" = None
 
 
 @dataclass(frozen=True)

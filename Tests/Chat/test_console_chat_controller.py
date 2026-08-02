@@ -63,7 +63,7 @@ class StreamingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
 
@@ -72,7 +72,7 @@ class RecordingStreamingGateway(StreamingGateway):
     def __init__(self):
         self.messages_seen = None
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.messages_seen = messages
         yield "ok"
 
@@ -99,26 +99,26 @@ class WipBlockedGateway:
 
 
 class FailingStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"
         raise RuntimeError("llama.cpp stream failed")
 
 
 class FailingBeforeChunkGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         if getattr(resolution, "never_yield", False):
             yield ""
         raise RuntimeError("retry failed before streaming")
 
 
 class EmptyStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         if getattr(resolution, "never_yield", False):
             yield ""
 
 
 class EmptyHeartbeatStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield ""
 
 
@@ -706,7 +706,7 @@ async def test_stop_active_run_marks_assistant_message_stopped():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.release.wait()
@@ -778,7 +778,7 @@ async def test_submit_draft_rejects_concurrent_send_while_streaming():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.release.wait()
@@ -818,7 +818,7 @@ async def test_submit_draft_rejects_concurrent_send_during_provider_validation()
             await self.release.wait()
             return await super().resolve_for_send(selection)
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "done"
 
     gateway = SlowResolveGateway()
@@ -846,7 +846,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
             self.started = asyncio.Event()
             self.never_release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.never_release.wait()
@@ -881,7 +881,7 @@ async def test_shutdown_stops_and_awaits_active_stream_task():
             self.started = asyncio.Event()
             self.never_release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.never_release.wait()
@@ -935,7 +935,7 @@ async def test_close_streaming_session_stops_run_without_key_error():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "partial"
             self.started.set()
             await self.release.wait()
@@ -1064,7 +1064,7 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
     observed = []
 
     class ObservingGateway(StreamingGateway):
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             observed.append(controller.run_state.status)
             yield "recovered"
 
@@ -1447,7 +1447,7 @@ class _AutoTitleReadyGateway:
     async def resolve_for_send(self, selection):
         return SimpleNamespace(ready=True, visible_copy="")
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "ok"
 
 
@@ -1567,7 +1567,7 @@ async def test_regenerate_failure_adds_system_row_without_touching_variants():
     controller.provider_gateway = FailingStreamingGateway()
 
     class FailingBeforeAnyChunkGateway(StreamingGateway):
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             if getattr(resolution, "never_yield", False):
                 yield ""
             raise RuntimeError("regen exploded")
@@ -3290,7 +3290,7 @@ async def test_stop_mid_stream_consumes_one_shot():
         def __init__(self):
             self.controller = None
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "partial"
             # Fix round 1 (Critical 1): the direct/legacy stream loop now
             # reads only its OWN run's per-session cancel_event, never the
@@ -3326,7 +3326,7 @@ async def test_re_armed_one_shot_survives_in_flight_send_completion():
             self.store = None
             self.session_id = None
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "chunk-one"
             # Simulate a `/prefill SECOND` issued while this send is
             # still streaming.
@@ -4032,3 +4032,33 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
     assert verdicts == {}, (
         f"unclaimed names must pass through unreviewed, got: {verdicts}"
     )
+class UsageEmittingGateway(StreamingGateway):
+    async def stream_chat(self, resolution, messages, **kwargs):
+        signals = kwargs.get("signals")
+        for chunk in ("hel", "lo"):
+            yield chunk
+        if signals is not None:
+            signals.record_usage_payload(
+                {"prompt_tokens": 100, "completion_tokens": 20}
+            )
+
+
+@pytest.mark.asyncio
+async def test_completed_message_carries_normalized_usage():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=UsageEmittingGateway()
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    result = await controller.submit_draft("hi")
+    assert result.accepted
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.status == "complete"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 100
+    assert assistant.usage.output == 20
+    assert assistant.usage.partial is False
+    assert assistant.usage.provider  # attributed from resolution

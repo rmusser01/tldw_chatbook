@@ -92,6 +92,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
@@ -6000,6 +6001,31 @@ class ConsoleChatController:
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
 
+    def _attach_stream_usage(
+        self,
+        assistant_message_id: str,
+        stream_signals: ConsoleProviderStreamSignals | None,
+        resolution: Any,
+        *,
+        partial: bool,
+    ) -> None:
+        """Best-effort: absent usage must never fail a send (spec PR1)."""
+        payload = getattr(stream_signals, "usage_payload", None)
+        if not payload:
+            return
+        usage = ProviderUsage.from_provider_payload(
+            payload,
+            provider=str(getattr(resolution, "provider", "") or ""),
+            model=str(getattr(resolution, "model", "") or ""),
+            partial=partial,
+        )
+        if usage is None:
+            return
+        try:
+            self.store.set_message_usage(assistant_message_id, usage)
+        except KeyError:
+            pass
+
     async def _run_direct_provider_reply(
         self,
         *,
@@ -6062,20 +6088,19 @@ class ConsoleChatController:
         emitted_content = False
         try:
             if stream_signals is None:
-                provider_stream = self.provider_gateway.stream_chat(
-                    resolution,
-                    provider_messages,
-                )
-            else:
-                provider_stream = self.provider_gateway.stream_chat(
-                    resolution,
-                    provider_messages,
-                    signals=stream_signals,
-                )
+                stream_signals = ConsoleProviderStreamSignals()
+            provider_stream = self.provider_gateway.stream_chat(
+                resolution,
+                provider_messages,
+                signals=stream_signals,
+            )
             async for chunk in provider_stream:
                 if not chunk:
                     continue
                 if cancel_event.is_set():
+                    self._attach_stream_usage(
+                        assistant_message_id, stream_signals, resolution, partial=True
+                    )
                     try:
                         stopped = self._mark_stream_stopped(
                             assistant_message_id,
@@ -6104,6 +6129,9 @@ class ConsoleChatController:
                 if chunk:
                     emitted_content = True
             if cancel_event.is_set():
+                self._attach_stream_usage(
+                    assistant_message_id, stream_signals, resolution, partial=True
+                )
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -6155,6 +6183,9 @@ class ConsoleChatController:
                         one_shot_used,
                     )
                     return ConsoleSubmitResult(True, True, selection.selected_body)
+            self._attach_stream_usage(
+                assistant_message_id, stream_signals, resolution, partial=False
+            )
             try:
                 if variant_mode:
                     completed = self.store.finalize_variant_stream(assistant_message_id)
@@ -6170,6 +6201,9 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if cancel_event.is_set():
+                self._attach_stream_usage(
+                    assistant_message_id, stream_signals, resolution, partial=True
+                )
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,

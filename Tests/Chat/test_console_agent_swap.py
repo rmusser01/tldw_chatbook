@@ -57,7 +57,7 @@ class _Gateway:
 
         return _R()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
@@ -523,7 +523,7 @@ class _ParkingGateway:
     async def resolve_for_send(self, _selection):
         return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-    async def stream_chat(self, _resolution, _messages):
+    async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
         # Blocking (not async) wait: this runs inside the bridge's own
         # private per-run event loop (``run_loop.run_until_complete`` in
@@ -1173,7 +1173,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
         async def resolve_for_send(self, _selection):
             return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-        async def stream_chat(self, _resolution, _messages):
+        async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
                 yield chunk
 
@@ -1692,7 +1692,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
         (empty rows defer -- the AC#3 NULL case, covered separately below), so
         the persisted-id recording needs a partial reply in the buffer."""
 
-        async def stream_chat(self, _resolution, _messages):
+        async def stream_chat(self, _resolution, _messages, **kwargs):
             yield "partial answer\n"
             self.started.set()
             self.release.wait(timeout=60)

@@ -2600,3 +2600,28 @@ def test_deleting_an_anchor_node_purges_the_markers_it_anchored():
         anchor == answer.id
         for anchor, _marker in store._tool_markers_by_session.get(session.id, [])
     ), "a marker is still anchored to a deleted node"
+
+
+def test_set_message_usage_sets_field_without_persist_call():
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="hi"
+    )
+    usage = ProviderUsage(uncached_input=10, output=5, provider="openai", model="gpt-4o")
+
+    updated = store.set_message_usage(message.id, usage)
+
+    assert updated.usage == usage
+    assert store.get_message(message.id).usage == usage
+
+
+def test_set_message_usage_unknown_id_raises_keyerror():
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store = ConsoleChatStore()
+    store.ensure_session(title="Chat 1")
+    with pytest.raises(KeyError):
+        store.set_message_usage("missing", ProviderUsage())

@@ -467,7 +467,7 @@ class TwoStreamGateway:
                     return "b"
         raise AssertionError(f"unrecognized draft in {messages!r}")
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         key = self._key_for(messages)
         yield f"{key}-chunk-1-"
         self.started[key].set()

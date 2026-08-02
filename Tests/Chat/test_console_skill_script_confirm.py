@@ -231,7 +231,7 @@ def _capture_run_skill_script_tool(
     class _ChunkGateway:
         """Minimal provider gateway: yields one plain-text reply, no tool calls."""
 
-        async def stream_chat(self, resolution, messages, tools=None):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
             yield "ok"
 
     captured: dict[str, Any] = {}
@@ -860,7 +860,7 @@ class _StubGateway:
     async def resolve_for_send(self, selection):
         return _StubResolution()
 
-    async def stream_chat(self, resolution, messages):  # pragma: no cover
+    async def stream_chat(self, resolution, messages, **kwargs):  # pragma: no cover
         yield "unused"
 
 
