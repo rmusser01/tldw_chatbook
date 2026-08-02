@@ -450,3 +450,38 @@ def test_adding_a_folder_binding_snapshots_it_in_the_background(tmp_path):
             break
         _time.sleep(0.05)
     assert tip, "the registered root never received its initial snapshot"
+
+
+def test_carveout_survives_a_symlink_spelled_root(tmp_path):
+    """Review finding: `_paths_within` resolves each touched path but the
+    roots were stored UNRESOLVED — a run whose root arrived spelled through
+    a symlink made `relative_to` fail, silently skipping the force-add: the
+    `.env` carve-out dying without a trace.
+    """
+    real_root = tmp_path / "real_root"
+    real_root.mkdir()
+    (real_root / ".gitignore").write_text(".env\n")
+    link = tmp_path / "root_link"
+    try:
+        link.symlink_to(real_root, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
+
+    tracker = ChangeTurnTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    handle = tracker.begin_turn([link])  # the SYMLINK spelling
+    handle.await_baseline()
+    (real_root / ".env").write_text("SECRET=1\n")
+
+    records = tracker.end_turn(
+        handle, touched_paths=[str(real_root / ".env")]
+    )
+
+    assert len(records) == 1 and not records[0].tracking_error
+    changed = tracker.service.repo_for_root(real_root).changed_files(
+        records[0].baseline_sha, records[0].end_sha
+    )
+    assert ".env" in [c.path for c in changed], (
+        "the carve-out silently died for a symlink-spelled root"
+    )

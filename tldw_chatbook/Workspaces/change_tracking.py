@@ -135,10 +135,12 @@ class ShadowRepoService:
         data_dir: Path | None = None,
         git_executable: str | None = None,
     ) -> None:
-        """Args:
-        data_dir: Base directory for shadow repos; defaults to the app
-            data dir's ``change_review/`` subtree.
-        git_executable: Override for tests; defaults to ``git`` on PATH.
+        """Create the service.
+
+        Args:
+            data_dir: Base directory for shadow repos; defaults to the app
+                data dir's ``change_review/`` subtree.
+            git_executable: Override for tests; defaults to ``git`` on PATH.
         """
         if data_dir is None:
             from tldw_chatbook.Utils.paths import get_user_data_dir

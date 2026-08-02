@@ -745,7 +745,9 @@ class LocalWorkspaceRegistryService:
 
             initial_snapshot_in_background(resolved)
         except Exception:  # noqa: BLE001 -- registration must never fail on this
-            pass
+            logger.opt(exception=True).debug(
+                "change_review: initial-snapshot hook failed at registration"
+            )
         return binding_result
 
     def list_folder_bindings(

@@ -192,7 +192,7 @@ class AgentRunsDB(BaseDB):
             dels: Total deleted lines.
             tracking_error: Non-empty when tracking failed for this root.
         """
-        with self.connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO change_snapshots
@@ -212,7 +212,6 @@ class AgentRunsDB(BaseDB):
                     _now_iso(),
                 ),
             )
-            conn.commit()
 
     def change_snapshots_for_run(self, run_id: str) -> list[dict]:
         """Return a run's change-snapshot rows, oldest first.

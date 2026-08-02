@@ -117,9 +117,11 @@ class ChangeTurnTracker:
     """Orchestrates B/E snapshots for agent turns. One instance per app."""
 
     def __init__(self, service: ShadowRepoService | None = None) -> None:
-        """Args:
-        service: Shadow-repo service; a default (app data dir, PATH git)
-            is built when omitted.
+        """Create a tracker over a shadow-repo service.
+
+        Args:
+            service: Shadow-repo service; a default (app data dir, PATH
+                git) is built when omitted.
         """
         self.service = service if service is not None else ShadowRepoService()
 
@@ -142,7 +144,13 @@ class ChangeTurnTracker:
         Returns:
             A handle for :meth:`TurnHandle.await_baseline` / :meth:`end_turn`.
         """
-        handle = TurnHandle([Path(r) for r in roots])
+        # Roots are RESOLVED here (review finding): `_paths_within` resolves
+        # each touched path, so an unresolved (symlink-spelled) root would
+        # make `relative_to` fail and silently skip the force-add -- the
+        # .gitignore carve-out dying without a trace.
+        handle = TurnHandle(
+            [Path(r).expanduser().resolve() for r in roots]
+        )
 
         def _baseline() -> None:
             for root in handle.roots:

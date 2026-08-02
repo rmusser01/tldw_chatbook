@@ -93,8 +93,19 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
         registry = _registry_factory()
         for binding in registry.list_folder_bindings(workspace_id):
             folder = Path(binding.locator)
-            if folder.is_dir():
-                roots.append(folder)
+            if not folder.is_dir():
+                continue
+            if folder.is_symlink() or folder.resolve() != folder:
+                # Same drift exclusion `allowed_file_roots` applies: a
+                # binding that no longer resolves to its bound path is
+                # stale config, and tracking its TARGET could snapshot an
+                # unintended (potentially huge) tree.
+                logger.warning(
+                    "folder_binding_roots: excluding drifted root {!r}",
+                    binding.locator,
+                )
+                continue
+            roots.append(folder)
     except Exception:
         logger.opt(exception=True).debug(
             "folder_binding_roots: registry unavailable"
