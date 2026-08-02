@@ -45,7 +45,12 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot, load_settings
+from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.config import (
+    get_cli_setting,
+    get_runtime_config_snapshot,
+    load_settings,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -723,7 +728,9 @@ def chat_with_openai(
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = (
-        api_base_url or openai_config.get("api_base_url", "https://api.openai.com/v1")
+        api_base_url
+        or openai_config.get("api_base_url")
+        or builtin_provider_endpoint("openai", openai_config)
     ).rstrip("/") + api_path
 
     start_time = time.time()
@@ -1458,7 +1465,8 @@ def chat_with_anthropic(
 
     api_url = (
         api_base_url
-        or anthropic_config.get("api_base_url", "https://api.anthropic.com/v1")
+        or anthropic_config.get("api_base_url")
+        or builtin_provider_endpoint("anthropic", anthropic_config)
     ).rstrip("/") + "/messages"
     logger.debug(
         "Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
@@ -2108,7 +2116,9 @@ def chat_with_cohere(
         "cohere_api_request", labels={"model": final_model, "streaming": str(streaming)}
     )
     api_base_url = (
-        api_base_url or cohere_config.get("api_base_url", "https://api.cohere.com")
+        api_base_url
+        or cohere_config.get("api_base_url")
+        or builtin_provider_endpoint("cohere", cohere_config)
     ).rstrip("/")
     # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
     # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
@@ -2882,7 +2892,9 @@ def chat_with_deepseek(
         data["logit_bias"] = logit_bias
 
     api_url = (
-        api_base_url or deepseek_config.get("api_base_url", "https://api.deepseek.com")
+        api_base_url
+        or deepseek_config.get("api_base_url")
+        or builtin_provider_endpoint("deepseek", deepseek_config)
     ).rstrip("/") + "/chat/completions"
     logger.debug(
         "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
@@ -3291,9 +3303,8 @@ def chat_with_google(
     )
     google_api_base = (
         api_base_url
-        or google_config.get(
-            "api_base_url", "https://generativelanguage.googleapis.com/v1beta"
-        )
+        or google_config.get("api_base_url")
+        or builtin_provider_endpoint("google", google_config)
     ).rstrip("/")
     api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
@@ -3885,7 +3896,8 @@ def chat_with_groq(
 
     api_url = (
         api_base_url
-        or groq_config.get("api_base_url", "https://api.groq.com/openai/v1")
+        or groq_config.get("api_base_url")
+        or builtin_provider_endpoint("groq", groq_config)
     ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
@@ -4107,7 +4119,7 @@ def chat_with_huggingface(
             or hf_config.get(
                 "router_base_url", hf_config.get("huggingface_router_base_url")
             ),
-            default="https://router.huggingface.co/hf-inference",
+            default=builtin_provider_endpoint("huggingface", hf_config) or "",
         ).rstrip("/")
         chat_path = _optional_config_string(
             hf_config.get("api_chat_path"), "v1/chat/completions"
@@ -4161,9 +4173,7 @@ def chat_with_huggingface(
         else:
             # Fallback if no api_base_url is configured.
             # Use the public Hugging Face Inference API endpoint for OpenAI-like chat completions.
-            default_hf_api_base = (
-                "https://api-inference.huggingface.co/v1"  # Base includes /v1
-            )
+            default_hf_api_base = builtin_provider_endpoint("huggingface", hf_config)
             default_chat_path_for_api_inference = (
                 "chat/completions"  # Path relative to /v1 base
             )
@@ -4650,7 +4660,9 @@ def chat_with_mistral(
         data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = (
-        api_base_url or mistral_config.get("api_base_url", "https://api.mistral.ai/v1")
+        api_base_url
+        or mistral_config.get("api_base_url")
+        or builtin_provider_endpoint("mistralai", mistral_config)
     ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
@@ -4897,7 +4909,8 @@ def chat_with_openrouter(
 
     api_url = (
         api_base_url
-        or openrouter_config.get("api_base_url", "https://openrouter.ai/api/v1")
+        or openrouter_config.get("api_base_url")
+        or builtin_provider_endpoint("openrouter", openrouter_config)
     ).rstrip("/") + "/chat/completions"
     logger.debug(
         "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
@@ -5269,17 +5282,12 @@ def chat_with_moonshot(
     )
 
     # Determine API endpoint based on config (default to international)
-    api_region = moonshot_config.get("api_region", "international").lower()
     if api_base_url:
         effective_api_base_url = api_base_url
-    elif api_region == "china":
-        effective_api_base_url = moonshot_config.get(
-            "api_base_url", "https://api.moonshot.cn/v1"
-        )
     else:
         effective_api_base_url = moonshot_config.get(
-            "api_base_url", "https://api.moonshot.ai/v1"
-        )
+            "api_base_url"
+        ) or builtin_provider_endpoint("moonshot", moonshot_config)
 
     api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
@@ -5583,8 +5591,10 @@ def chat_with_zai(
         "Content-Type": "application/json",
     }
 
-    effective_api_base_url = api_base_url or zai_config.get(
-        "api_base_url", "https://api.z.ai/api/paas/v4"
+    effective_api_base_url = (
+        api_base_url
+        or zai_config.get("api_base_url")
+        or builtin_provider_endpoint("zai", zai_config)
     )
     api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 

@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    effective_provider_endpoint,
     generic_endpoint_differs,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
@@ -39,7 +40,10 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
-from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    sensitive_llm_request,
+)
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
@@ -1135,7 +1139,12 @@ class ConsoleProviderGateway:
 
         return ConsoleProviderResolution(
             provider=selection.provider,
-            base_url=selection.base_url or "",
+            base_url=effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
+            or "",
             model=model,
             ready=True,
             readiness_key=identity.readiness_key,
@@ -1278,21 +1287,29 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        response = await self._active_http_client().post(
-            f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
-            json=build_llamacpp_chat_payload(
-                model=model,
-                messages=messages,
-                stream=False,
-                temperature=temperature,
-                top_p=top_p,
-                min_p=min_p,
-                top_k=top_k,
-                max_tokens=max_tokens,
-                seed=seed,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-            ),
+        request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
+        payload = build_llamacpp_chat_payload(
+            model=model,
+            messages=messages,
+            stream=False,
+            temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
+        client = self._active_http_client()
+        response = (
+            await self._post_without_high_level_http_log(
+                client,
+                request_url,
+                json_payload=payload,
+            )
+            if is_sensitive_llm_request()
+            else await client.post(request_url, json=payload)
         )
         response.raise_for_status()
         content = self._content_from_completion_response(response)
@@ -1302,6 +1319,25 @@ class ConsoleProviderGateway:
                 provider="llama_cpp",
             )
         return content or ""
+
+    @staticmethod
+    async def _post_without_high_level_http_log(
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        json_payload: Mapping[str, Any],
+    ) -> httpx.Response:
+        """POST through this client's transport without HTTPX's URL-bearing INFO log."""
+
+        request = client.build_request("POST", url, json=json_payload)
+        transport = client._transport_for_url(request.url)
+        response = await transport.handle_async_request(request)
+        response.request = request
+        try:
+            await response.aread()
+        finally:
+            await response.aclose()
+        return response
 
     async def complete_auxiliary(
         self,

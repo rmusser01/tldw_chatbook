@@ -7,7 +7,6 @@ changing process-wide logger configuration or affecting concurrent chat work.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -21,37 +20,6 @@ SENSITIVE_CONTENT_REDACTION = "<sensitive-content-redacted>"
 SENSITIVE_ERROR_REDACTION = "<sensitive-error-detail-redacted>"
 
 
-class _SensitiveTransportLogFilter(logging.Filter):
-    """Drop downstream HTTP diagnostics only for the sensitive request context."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        del record
-        return not is_sensitive_llm_request()
-
-
-_SENSITIVE_TRANSPORT_LOG_FILTER = _SensitiveTransportLogFilter()
-_TRANSPORT_LOGGER_NAMES = (
-    "httpx",
-    "httpcore",
-    "httpcore.connection",
-    "httpcore.connection_pool",
-    "httpcore.http11",
-    "httpcore.http2",
-    "httpcore.proxy",
-    "urllib3",
-    "urllib3.connectionpool",
-)
-
-
-def _install_sensitive_transport_log_filters() -> None:
-    """Install one context-aware filter without changing process-wide levels."""
-
-    for logger_name in _TRANSPORT_LOGGER_NAMES:
-        target = logging.getLogger(logger_name)
-        if _SENSITIVE_TRANSPORT_LOG_FILTER not in target.filters:
-            target.addFilter(_SENSITIVE_TRANSPORT_LOG_FILTER)
-
-
 def is_sensitive_llm_request() -> bool:
     """Return whether the current execution context handles sensitive LLM data."""
 
@@ -62,7 +30,6 @@ def is_sensitive_llm_request() -> bool:
 def sensitive_llm_request() -> Iterator[None]:
     """Mark the current request sensitive and restore the prior policy on exit."""
 
-    _install_sensitive_transport_log_filters()
     token = _SENSITIVE_LLM_REQUEST.set(True)
     try:
         yield

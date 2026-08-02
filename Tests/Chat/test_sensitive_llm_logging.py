@@ -85,6 +85,38 @@ def _assert_canaries_absent(*values: object) -> None:
         assert canary not in rendered
 
 
+def _transport_logger_state() -> dict[str, dict[str, object]]:
+    state: dict[str, dict[str, object]] = {}
+    for name in ("httpx", "httpcore", "urllib3"):
+        target = logging.getLogger(name)
+        state[name] = {
+            "filters": (
+                len(target.filters),
+                tuple(id(item) for item in target.filters),
+            ),
+            "handlers": (
+                len(target.handlers),
+                tuple(id(item) for item in target.handlers),
+            ),
+            "level": target.level,
+            "propagate": target.propagate,
+        }
+    return state
+
+
+def test_sensitive_context_never_mutates_shared_transport_logger_configuration() -> (
+    None
+):
+    before = _transport_logger_state()
+
+    with sensitive_llm_request():
+        during = _transport_logger_state()
+
+    after = _transport_logger_state()
+    assert during == before
+    assert after == before
+
+
 class _FakeResponse:
     def __init__(
         self,
@@ -639,7 +671,7 @@ async def test_sensitive_direct_llama_rejects_embedded_userinfo_without_logging_
 
 
 @pytest.mark.asyncio
-async def test_auxiliary_uses_pinned_endpoint_after_provider_config_changes(
+async def test_auxiliary_pins_configured_endpoint_when_selection_url_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pinned_endpoint = "https://pinned.example.test/v1"
@@ -666,11 +698,11 @@ async def test_auxiliary_uses_pinned_endpoint_after_provider_config_changes(
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(
             provider="openai",
-            base_url=pinned_endpoint,
             explicit_model="gpt-test",
         )
     )
     assert resolution.ready is True
+    assert resolution.base_url == pinned_endpoint
 
     request = AuxiliaryCompletionRequest(
         resolution=resolution,
@@ -685,4 +717,80 @@ async def test_auxiliary_uses_pinned_endpoint_after_provider_config_changes(
 
     assert result.text == "ok"
     assert session.posts[0]["url"] == f"{pinned_endpoint}/chat/completions"
+    assert changed_endpoint not in str(session.posts)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_pins_default_openai_endpoint_before_config_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_endpoint = "https://api.openai.com/v1"
+    changed_endpoint = "https://changed-openai.example.test/v1"
+    gateway_config = {
+        "api_settings": {"openai": {"api_key": "key", "model": "gpt-test"}}
+    }
+    adapter_config = {"openai_api": {"api_retries": 3}}
+    session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
+    monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
+    )
+    assert resolution.base_url == default_endpoint
+    request = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=({"role": "user", "content": "USER-CANARY"},),
+        response_format=None,
+        max_output_tokens=8,
+    )
+    gateway_config["api_settings"]["openai"]["api_base_url"] = changed_endpoint
+    adapter_config["openai_api"]["api_base_url"] = changed_endpoint
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == "ok"
+    assert session.posts[0]["url"] == f"{default_endpoint}/chat/completions"
+    assert changed_endpoint not in str(session.posts)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_pins_default_anthropic_endpoint_before_config_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_endpoint = "https://api.anthropic.com/v1"
+    changed_endpoint = "https://changed-anthropic.example.test/v1"
+    gateway_config = {
+        "api_settings": {"anthropic": {"api_key": "key", "model": "claude-test"}}
+    }
+    adapter_config = {"anthropic_api": {"api_retries": 3}}
+    session = _FakeSession(
+        _FakeResponse(
+            {
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "model": "claude-test",
+            }
+        )
+    )
+    monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-test")
+    )
+    assert resolution.base_url == default_endpoint
+    request = AuxiliaryCompletionRequest(
+        resolution=resolution,
+        messages=({"role": "user", "content": "USER-CANARY"},),
+        response_format=None,
+        max_output_tokens=8,
+    )
+    gateway_config["api_settings"]["anthropic"]["api_base_url"] = changed_endpoint
+    adapter_config["anthropic_api"]["api_base_url"] = changed_endpoint
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == "ok"
+    assert session.posts[0]["url"] == f"{default_endpoint}/messages"
     assert changed_endpoint not in str(session.posts)

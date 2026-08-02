@@ -625,7 +625,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> (
+async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_endpoint() -> (
     None
 ):
     gateway = ConsoleProviderGateway(
@@ -648,7 +648,61 @@ async def test_resolve_for_send_ignores_cloud_session_base_url_without_configure
     assert resolved.ready is True
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
+    assert resolved.base_url == "http://127.0.0.1:9999/v1"
     assert "save the endpoint in Settings" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_base_url"),
+    [
+        ("openai", "gpt-test", "https://api.openai.com/v1"),
+        ("anthropic", "claude-test", "https://api.anthropic.com/v1"),
+    ],
+)
+async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
+    provider: str,
+    model: str,
+    expected_base_url: str,
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {"api_key": "unit-test-key", "model": model}}
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, explicit_model=model)
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == expected_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_materializes_configured_huggingface_router() -> None:
+    router_base_url = "https://router.example.test/hf-inference"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                    "router_base_url": router_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == router_base_url
 
 
 @pytest.mark.asyncio

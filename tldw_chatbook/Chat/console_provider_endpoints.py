@@ -34,9 +34,32 @@ _ENDPOINT_SETTING_KEYS = (
     "api_url",
     "api_endpoint",
     "endpoint",
+    "router_base_url",
+    "huggingface_router_base_url",
 )
-_URL_PROVIDER_SETTING_KEYS = ("api_base_url", "api_base", "base_url", "api_url")
+_URL_PROVIDER_SETTING_KEYS = (
+    "api_base_url",
+    "api_base",
+    "base_url",
+    "api_url",
+    "router_base_url",
+    "huggingface_router_base_url",
+)
 _INVALID_ENDPOINT_DISPLAY = "invalid endpoint"
+_BUILTIN_PROVIDER_ENDPOINTS = {
+    "anthropic": "https://api.anthropic.com/v1",
+    "cohere": "https://api.cohere.com",
+    "deepseek": "https://api.deepseek.com",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "groq": "https://api.groq.com/openai/v1",
+    "huggingface": "https://api-inference.huggingface.co/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "mistralai": "https://api.mistral.ai/v1",
+    "moonshot": "https://api.moonshot.ai/v1",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "zai": "https://api.z.ai/api/paas/v4",
+}
 
 
 def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | None:
@@ -57,6 +80,60 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
         if stripped:
             return stripped
     return None
+
+
+def effective_provider_endpoint(
+    provider_key: str,
+    selected_endpoint: str | None,
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Resolve the exact endpoint a provider call would use at this moment.
+
+    Explicit Console selection wins without normalization, followed by the
+    provider's configured endpoint aliases and finally the adapter's built-in
+    cloud default.
+
+    Args:
+        provider_key: Normalized provider readiness key.
+        selected_endpoint: Optional Console-selected endpoint.
+        provider_settings: Provider-specific configuration mapping.
+
+    Returns:
+        Effective endpoint to pin into the provider resolution, or ``None``
+        when the provider has neither a configured nor built-in endpoint.
+    """
+    if isinstance(selected_endpoint, str) and selected_endpoint.strip():
+        return selected_endpoint
+    configured_endpoint = first_configured_endpoint(provider_settings)
+    if configured_endpoint:
+        return configured_endpoint
+    return builtin_provider_endpoint(provider_key, provider_settings)
+
+
+def builtin_provider_endpoint(
+    provider_key: str,
+    provider_settings: Mapping[str, object] | None = None,
+) -> str | None:
+    """Return the canonical adapter fallback endpoint for a provider."""
+
+    settings = provider_settings or {}
+    if (
+        provider_key == "moonshot"
+        and str(settings.get("api_region", "")).lower() == "china"
+    ):
+        return "https://api.moonshot.cn/v1"
+    if (
+        provider_key == "huggingface"
+        and str(
+            settings.get(
+                "use_router_url_format",
+                settings.get("huggingface_use_router_url_format", "False"),
+            )
+        ).lower()
+        == "true"
+    ):
+        return "https://router.huggingface.co/hf-inference"
+    return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
 
 
 def provider_uses_endpoint(
