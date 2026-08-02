@@ -4,7 +4,7 @@ title: Build Prompt and Recipe artifact foundations
 status: In Progress
 assignee: []
 created_date: '2026-08-01 23:27'
-updated_date: '2026-08-02 02:35'
+updated_date: '2026-08-02 03:13'
 labels: []
 dependencies:
   - TASK-1773
@@ -44,5 +44,5 @@ ADR required: yes; ADR path: backlog/decisions/040-versioned-prompt-artifacts-an
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Task 4 server parity implementation committed in tldw_server2 on branch `codex/server-console-block-artifacts` at commit `7fd772cdd53e0c8bf5ade391c173e75403f1d6dd`.
+Task 4 server parity is committed in tldw_server2 on branch codex/server-console-block-artifacts. Commit set: 7fd772cdd53e0c8bf5ade391c173e75403f1d6dd (initial Console block artifact support); 76033df27d6d342de0bd829bab829fd3d757ae02 (review fix preserving artifact lifecycle identity, honest default search, exact byte limits, and migration/shared-fixture coverage). Final audited server head: 76033df27d6d342de0bd829bab829fd3d757ae02. TASK-1774 remains In Progress pending the remaining stage work.
 <!-- SECTION:NOTES:END -->
