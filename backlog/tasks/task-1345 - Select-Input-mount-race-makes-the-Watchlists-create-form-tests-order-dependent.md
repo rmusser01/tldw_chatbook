@@ -46,10 +46,18 @@ pattern generalised) or a focus API that survives remount.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The root cause of the mount race is identified and stated, not worked around with a sleep
+- [x] #1 The root cause of the mount race is identified and stated, not worked around with a sleep
 - [ ] #2 The create-form tests pass regardless of the order the UI suite runs in, demonstrated by running them immediately after the content-pane suite
-- [ ] #3 A deliberately re-introduced form of the race fails the tests, proving they discriminate it
+- [x] #3 A deliberately re-introduced form of the race fails the tests, proving they discriminate it
 <!-- AC:END -->
+
+AC#2 is met for every test that depends on the focus-restoration mechanism this task actually
+fixes (all pass, in either order, across 3 repeated runs of the content-pane -> create-form pair
+plus repeated isolated runs). It is **not** fully met for the file as a whole: one test,
+`test_a_source_can_be_created_end_to_end_through_the_form`, remains intermittently red **in
+isolation**, i.e. with no ordering involved at all. See Implementation Notes for why this is a
+separate, pre-existing bug this task's confirmed root cause does not cover, and is left open
+rather than papered over.
 
 ## Implementation Plan
 
@@ -70,3 +78,84 @@ None because focus never landed). Intent lost.
    same pump so both recomposes queue, and assert field 0 is focused after settle; run it
    immediately after the content-pane suite. AC#3: reverting to eager-clear reds it.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Fix.** `SourcesPane.recompose()` (`tldw_chatbook/UI/Watchlists_Modules/sources_pane.py`) no
+longer clears `_pending_create_focus` before `.focus()` has had a chance to land. It now computes
+`restore = self._pending_create_focus or self._focused_create_field_id()`, leaves
+`_pending_create_focus` armed across the method, and — if the form is still open and a target was
+resolved — calls `.focus()` and schedules a new `_confirm_create_focus(target)` via
+`call_after_refresh`. That confirmation clears the intent **only** once
+`self.screen.focused.id == target`; if focus hasn't landed yet it re-schedules itself against the
+next refresh (a wait on real, observable state — not a sleep or a bounded retry count). If the form
+closed while a recompose was in flight, the intent is dropped immediately (it's for a form that no
+longer exists). Whichever recompose is LAST in a burst therefore wins, because each one re-applies
+`.focus()` against whatever is currently mounted, and the intent survives until one of them is
+actually confirmed. Case 2 (user has tabbed elsewhere, then an unrelated rebuild happens) is
+unaffected: once confirmed, `_pending_create_focus` is `None` again, so later recomposes fall
+through to `_focused_create_field_id()`, which reports the user's current focus rather than
+resurrecting the stale opening intent.
+
+**Tests added** (`Tests/UI/test_watchlists_source_create_form.py`):
+- `test_a_sources_reload_interleaving_the_open_does_not_lose_focus` — the AC#2/#3 discriminator.
+  Forces the interleave deterministically by calling the internal `_check_recompose()` seam
+  directly, twice, back to back with no intervening `pilot.pause()`: `pane.show_create_form = True`
+  then `await pane._check_recompose()` (runs the opening recompose to completion; its `.focus()`
+  call has only *scheduled* the change via `app.call_later`, not landed it, since nothing has
+  yielded to the app's own queue yet), then `pane.sources = [...]` and `await
+  pane._check_recompose()` again (the interleaving reload, forced to run before that scheduled
+  focus lands). Confirmed both directions: fails with `screen.focused is None` when `recompose` is
+  reverted to eager-clear (mutation test), passes reliably (5/5 manual repeats) with the fix.
+  An earlier version of this test drove the interleave by monkeypatching `Widget.focus` to trigger
+  the `sources` reassignment from inside the scheduling call — that version passed even against the
+  unfixed eager-clear code, because `app.call_later`'s `set_focus` callback apparently tends to run
+  before a `call_next`-queued recompose gets a turn, so by the time the second recompose read
+  focus-restoration state, focus had already genuinely landed and the (unrelated) case-2 fallback
+  papered over the bug. The direct `_check_recompose()` approach avoids depending on that ordering.
+- `test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field` — case-2 regression guard.
+  No pre-existing test covered this specific scenario for the create form (searched thoroughly);
+  passes on both the fixed and the reverted code, as expected for a "must still work" guard rather
+  than a discriminator.
+
+**Known, separate, pre-existing issue — NOT fixed here (AC#2 partial).**
+`test_a_source_can_be_created_end_to_end_through_the_form` fails intermittently **in isolation**
+(no ordering involved), on the unmodified `dev` baseline and unchanged by this fix: reproduced
+2/2 in isolation before this change, and confirmed to still fail 2/2 in isolation with the sticky
+fix applied. Root-caused with `TEXTUAL=debug` (prints all captured exceptions, not just the
+first): `Select._on_mount` → `_init_selected_option` → `self.value = hint` → `_watch_value` →
+`select_current.update(prompt)` → `SelectCurrent.query_one("#label", Static)` raises `NoMatches` —
+i.e. a **`Select` widget's own internal mount race**, unrelated to `_pending_create_focus`. It
+happens specifically on the recompose that *closes* the form after a successful submit (never on
+the *opening* recompose, which mounts the same 3 toolbar `Select` filters without incident), while
+`WatchlistsCollectionsScreen._create_source` has a worker chain concurrently active
+(`_refresh_overview_data`, `_load_sources`, `_load_tree_data` — the screen's own
+`handle_create_source_requested` comment already documents "`_create_source` ... can ... trigger a
+full-screen recompose fast enough to win the race", i.e. this general hazard class is known
+elsewhere in this screen). Two things were tried and did **not** fix it, ruling out the obvious
+narrow explanations: (1) swapping `_finish_create_submit`'s `self.call_later(...)` for
+`self.call_after_refresh(...)` (still failed ~4/5 runs); (2) the sticky-focus fix itself (no
+effect, confirmed above). This points to genuine asyncio task-scheduling nondeterminism in
+Textual's own Mount-event ordering for nested compound widgets (`Select` → `SelectCurrent` →
+`#label`) under concurrent load, not anything `SourcesPane.recompose()` controls. A real fix likely
+means not tearing down/rebuilding the toolbar's filter `Select`s on every `show_create_form`
+toggle at all (a `compose()`/reactive-scoping change), which is a materially different, larger
+change than this task's confirmed root cause and plan — left open rather than attempted here.
+Recommend a follow-up task specifically for the `Select`/toolbar-churn half of this task's
+original title.
+
+**Verification:** isolated file run 16 passed / 1 failed (the known issue above); the
+content-pane → create-form ordered pair run 3× back to back: 56 passed/1 failed, 56/1, 55/2 (the
+known issue, 1 or 2 of its 2 size-parametrized cases, every time — no focus-related test failed in
+any of the 3 runs); `Tests/UI/ -k watchlist` (full file, unfiltered by name): 261 passed, 1 failed
+(the known issue), 7076 deselected, in ~588s — no tree-chevron failures observed this run. Mutation
+test on the AC#2/#3 discriminator: reverting `recompose()` to eager-clear reds it with
+`screen.focused is None`, confirming it actually discriminates the fixed mechanism.
+
+**Modified files:**
+- `tldw_chatbook/UI/Watchlists_Modules/sources_pane.py` — sticky-until-confirmed `recompose()` /
+  new `_confirm_create_focus()`.
+- `Tests/UI/test_watchlists_source_create_form.py` — two new tests (interleave discriminator,
+  case-2 regression guard).
+<!-- SECTION:NOTES:END -->

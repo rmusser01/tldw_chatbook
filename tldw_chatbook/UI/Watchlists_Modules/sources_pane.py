@@ -624,6 +624,26 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         from the first form field. That is what the 2026-07-28 UAT reported
         as "the create-source form cannot be filled in".
 
+        TASK-1345: `.focus()` below only *schedules* the actual focus change
+        (`Widget.focus` posts to `app.call_later`) -- it has not landed by
+        the time this method returns. The previous version read and cleared
+        `_pending_create_focus` *before* that schedule fired, so a SECOND
+        `recompose=True` assignment landing in that gap (`sources` reloading
+        from `_load_sources`, a filter changing) remounted the form's fields
+        out from under the still-pending callback: it then fired on a
+        **detached** widget and was silently dropped, and because the intent
+        was already `None`, the interleaving recompose had nothing to
+        re-apply either (`_focused_create_field_id()` also reports `None` --
+        focus never actually landed). The armed intent was lost to the
+        interleave.
+
+        The fix keeps `_pending_create_focus` STICKY -- armed across this
+        method -- and only clears it once `_confirm_create_focus` (scheduled
+        below) observes that focus has actually landed on the target.
+        Whichever recompose in a burst runs LAST therefore wins: each one
+        re-applies `.focus()` against whatever is currently mounted, and the
+        intent survives until one of them is actually confirmed.
+
         Two cases are handled, and only these two — focus is never taken
         from anywhere outside this pane's own create form:
 
@@ -634,11 +654,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
            something *else* rebuilt this pane underneath it — a `sources`
            reload, a region collapse. The draft text already survives that
            (`CreateFormDraftChanged`); this puts the caret back with it.
+           Once `_confirm_create_focus` has cleared the intent from case 1
+           (or a previous case-2 pass), later recomposes fall through to
+           `_focused_create_field_id()` here, so a user who has since tabbed
+           elsewhere in the form is not yanked back to field 0 by a later,
+           unrelated rebuild.
         """
-        restore = self._pending_create_focus
-        self._pending_create_focus = None
-        if restore is None:
-            restore = self._focused_create_field_id()
+        restore = self._pending_create_focus or self._focused_create_field_id()
         await super().recompose()
         # Guard explicitly after the await: the pane can be torn down while
         # `super().recompose()` is in flight (a section switch, a region
@@ -646,7 +668,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # post-recompose work.
         if not self.is_mounted or not self.is_running:
             return
-        if not restore or not self.show_create_form:
+        if not self.show_create_form:
+            # The form closed (Cancel/Create) while this recompose was in
+            # flight. Any focus intent still armed is for a form that no
+            # longer exists -- drop it so it cannot resurface later and
+            # steal focus for an unrelated rebuild (TASK-1345).
+            self._pending_create_focus = None
+            return
+        if not restore:
             return
         try:
             self.query_one(f"#{restore}").focus()
@@ -658,6 +687,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 f"SourcesPane: #{restore} was gone after recompose; "
                 "nothing to focus."
             )
+            return
         except Exception:
             # Anything else is a real fault in the focus path, and this pane
             # exists in its current form *because* focus silently going
@@ -670,6 +700,47 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 f"SourcesPane: unexpected failure focusing #{restore} after "
                 "recompose; the create form may open with nothing focused."
             )
+            return
+        # Keep the intent armed (TASK-1345) and confirm once it has actually
+        # landed -- see `_confirm_create_focus` and the docstring above.
+        self._pending_create_focus = restore
+        self.call_after_refresh(self._confirm_create_focus, restore)
+
+    def _confirm_create_focus(self, target: str) -> None:
+        """Clear the sticky create-focus intent once it is CONFIRMED landed.
+
+        TASK-1345. See `recompose`: `.focus()` only *schedules* the focus
+        change, so this is the seam that turns "we asked for focus" into
+        "focus actually arrived". Scheduled via `call_after_refresh`, which
+        runs after the next screen refresh -- if `.focus()`'s own scheduled
+        callback has not fired yet by then, this defers to the refresh after
+        THAT one, and so on, until it either confirms or is superseded. That
+        waits on a real, observable condition (`screen.focused`), not a
+        sleep or a bounded retry count: `.focus()` guarantees the change
+        lands eventually unless something else re-targets focus first, and
+        a re-target is exactly the case (another `recompose`) that already
+        re-arms and re-confirms this same seam.
+
+        Guarded on identity (`self._pending_create_focus != target`): if a
+        later recompose has since armed a *different* target, that
+        recompose's own confirmation owns clearing the intent, and this
+        stale one must not clear a newer arm out from under it.
+        """
+        if self._pending_create_focus != target:
+            return
+        if not self.is_mounted or not self.is_running or not self.show_create_form:
+            # Torn down or closed while this confirmation was pending --
+            # the intent is stale either way.
+            self._pending_create_focus = None
+            return
+        try:
+            focused = self.screen.focused
+        except Exception:
+            focused = None
+        if focused is not None and focused.id == target:
+            self._pending_create_focus = None
+            return
+        self.call_after_refresh(self._confirm_create_focus, target)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":
