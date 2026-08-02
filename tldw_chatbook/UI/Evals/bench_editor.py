@@ -155,7 +155,7 @@ from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.word_bench.models import BenchConfig, PreflightResult, Target
 from ...Evals.word_bench.storage import load_bench, model_steering, save_bench
 from .evals_state import EvalsViewModel
-from .snippet_editor import render_snippet_cell
+from .snippet_editor import guard_single_line, render_snippet_cell
 
 #: Verbatim. The design spec's own classic-task copy
 #: (`2026-07-25-evals-console-rebuild-design.md`, "Classic tasks" section) --
@@ -234,13 +234,17 @@ def _steering_preview_text(value: str) -> str:
     ``_INTERIOR_RUN_RE``) -- a single embedded ``"\\n"`` would slip through
     untouched and render as a literal line break inside the row's Static,
     breaking this row's single-line contract. Replaced with a visible "⏎"
-    marker here instead of being silently dropped, so a steering value that
-    happens to carry one (never possible to TYPE into the single-line
-    ``Input`` this form uses, but not excluded for a row created some other
-    way) is still an honest, if unusual, preview rather than a corrupted
-    one.
+    marker here instead of being silently dropped (via ``snippet_editor.
+    guard_single_line`` -- task-1691 phase 2 Task 4 extracted this
+    function's own newline guard into that shared, neutrally-named piece so
+    ``character_bench_editor.py``'s identical need for one-line probe
+    previews does not carry a second, private copy), so a steering value
+    that happens to carry a newline (never possible to TYPE into the
+    single-line ``Input`` this form uses, but not excluded for a row
+    created some other way) is still an honest, if unusual, preview rather
+    than a corrupted one.
     """
-    single_line = value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "⏎")
+    single_line = guard_single_line(value)
     if len(single_line) > _STEERING_PREVIEW_MAX_LEN:
         return single_line[:_STEERING_PREVIEW_MAX_LEN] + "…"
     return single_line

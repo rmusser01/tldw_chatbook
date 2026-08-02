@@ -162,6 +162,32 @@ def render_snippet_cell(text: str) -> Text:
     return rich_text
 
 
+def guard_single_line(value: str) -> str:
+    """Collapses every embedded newline in ``value`` to a visible "⏎"
+    marker, so a value that would otherwise wrap onto multiple lines stays
+    exactly one line wherever it is rendered in a single-row preview.
+
+    Extracted from ``bench_editor.py``'s own ``_steering_preview_text``
+    (task-1691 phase 2 Task 4) so that module and ``character_bench_
+    editor.py`` share ONE newline-guard rather than each carrying a private
+    copy that could quietly drift apart -- both call THIS function before
+    passing their own result through ``render_snippet_cell`` above for the
+    ␣-marker convention. Deliberately narrow: it does not also length-cap
+    its input, unlike ``_steering_preview_text`` -- a row-table preview's
+    length budget is that row table's own concern (see
+    ``bench_editor.py``'s ``_STEERING_PREVIEW_MAX_LEN``), not a general
+    property of "one line".
+
+    Args:
+        value: Raw text that may contain ``"\\n"``/``"\\r\\n"``/``"\\r"``.
+
+    Returns:
+        str: ``value`` with every line break replaced by ``"⏎"`` -- a
+        string with no ``"\\n"`` of its own, however many ``value`` had.
+    """
+    return value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "⏎")
+
+
 def normalize_snippet_whitespace(text: str) -> str:
     """Collapse whitespace runs to a single space and strip both ends --
     the equality this module's duplicate detector compares on. Two
