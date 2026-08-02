@@ -2910,7 +2910,9 @@ ConsoleRunLogModal {
     height: 1;
     min-height: 1;
     layout: horizontal;
-    align: right middle;
+    /* Left-aligned so Mic stays flush against the draft it dictates into;
+       Stop's budgeted-but-hidden slot sits after Send at the right edge. */
+    align: left middle;
 }
 
 .console-composer-recovery {
