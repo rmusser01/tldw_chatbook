@@ -18,7 +18,6 @@ from textual.widgets import (
     Static,
     Switch,
     Collapsible,
-    ListView,
 )
 from textual.widget import Widget
 from textual.reactive import reactive
@@ -718,7 +717,7 @@ Voice Commands (when enabled):
 
 Privacy Settings:
 • Local Only: All processing on your device
-• Save History: Keep transcripts between sessions
+• Transcript Storage: Transcripts are not automatically saved unless explicitly exported.
 • Auto-clear Buffer: Remove audio data after processing
 
 Performance Tips:

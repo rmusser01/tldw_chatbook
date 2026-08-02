@@ -301,7 +301,7 @@ def parse_user_dict_markdown_file(
     Args:
         file_path: The path to the markdown dictionary file.
         base_directory: Optional base directory to restrict file access to. If None,
-                       uses the config directory or current working directory.
+                       uses the active config directory.
 
     Returns:
         A dictionary where keys are strings and values are the corresponding

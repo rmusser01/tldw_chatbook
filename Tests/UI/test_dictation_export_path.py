@@ -53,6 +53,25 @@ def test_dictation_export_directory_retargets_each_call(
     assert module.dictation_export_directory() == bob / "exports" / "dictation"
 
 
+def test_help_explains_transcripts_require_explicit_export(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Help must not promise automatic or cross-session transcript storage."""
+    import tldw_chatbook.UI.Dictation_Window_Improved as module
+
+    window, notify = _window_with_transcript(module, monkeypatch)
+
+    window.action_show_help()
+
+    help_text = notify.call_args.args[0]
+    assert "Save History" not in help_text
+    assert "between sessions" not in help_text
+    assert (
+        "Transcripts are not automatically saved unless explicitly exported."
+        in help_text
+    )
+
+
 def test_export_as_text_creates_one_txt_file_under_active_user_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

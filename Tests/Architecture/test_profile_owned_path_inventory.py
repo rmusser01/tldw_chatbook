@@ -47,14 +47,16 @@ def test_scanner_detects_direct_indirect_and_join_function_roots() -> None:
 direct = Path.home() / ".config" / "tldw_cli" / "models"
 indirect = base / ".config" / "tldw_cli" / "themes"
 data = os.path.join(home, ".local", "share", "tldw_cli", "cache")
+logs = base.joinpath(".local", "share", "tldw_cli", "logs")
 """
 
     found = scan_source(source, "tldw_chatbook/example.py")
 
-    assert [item.expression for item in found] == [
-        "join:.config/tldw_cli",
-        "join:.config/tldw_cli",
-        "join:.local/share/tldw_cli",
+    assert [(item.line, item.context, item.expression) for item in found] == [
+        (2, "module:direct", "join:.config/tldw_cli"),
+        (3, "module:indirect", "join:.config/tldw_cli"),
+        (4, "module:data", "join:.local/share/tldw_cli"),
+        (5, "module:logs", "join:.local/share/tldw_cli"),
     ]
 
 
@@ -67,9 +69,9 @@ data = base.joinpath(".local/share/tldw_cli", "cache")
 
     found = scan_source(source, "tldw_chatbook/example.py")
 
-    assert [item.expression for item in found] == [
-        "join:.config/tldw_cli",
-        "join:.local/share/tldw_cli",
+    assert [(item.line, item.context, item.expression) for item in found] == [
+        (2, "module:config", "join:.config/tldw_cli"),
+        (3, "module:data", "join:.local/share/tldw_cli"),
     ]
 
 
@@ -82,9 +84,9 @@ def _default_base_data_dir():
 
     found = scan_source(source, "tldw_chatbook/config.py")
 
-    assert [(item.context, item.expression) for item in found] == [
-        ("module:BASE_DATA_DIR_CLI", "join:.local/share/tldw_cli"),
-        ("function:_default_base_data_dir", "join:.local/share/tldw_cli"),
+    assert [(item.line, item.context, item.expression) for item in found] == [
+        (1, "module:BASE_DATA_DIR_CLI", "join:.local/share/tldw_cli"),
+        (3, "function:_default_base_data_dir", "join:.local/share/tldw_cli"),
     ]
 
 
