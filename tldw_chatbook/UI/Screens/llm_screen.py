@@ -463,35 +463,47 @@ class LLMScreen(LabScreen):
     def _deliver_curated(self, message: InstallProgressed | InstallStatusChanged) -> None:
         """Post one curated-install message so it bubbles through ``LLMManagementWindow``.
 
-        Always posted at ``self.llm_window`` -- read fresh on every call,
-        so it already points at whichever ``LLMManagementWindow`` instance
-        is currently mounted even after a screen-level recompose replaces
-        it (``build_lab_body`` reassigns this attribute every time it
-        runs). Posting there lets the message bubble CuratedView-less
-        straight through ``LLMManagementWindow``'s own mirroring handlers
-        (``_managed_install_progressed``/``_managed_install_status_
-        changed``, which keep ``InstalledView`` in sync) and on up to this
-        screen's own ``@on(InstallProgressed)``/``@on(InstallStatusChanged)``
-        handlers -- the exact same single bubble path ``CuratedView`` used
-        to originate (``CuratedView`` -> ``LLMManagementWindow`` ->
-        ``LLMScreen``), except this screen is now the origin, not an
-        orphanable view, so there is no "closed widget, silent no-op"
-        failure mode left to compensate for (TASK-1803; this replaces the
-        removed ``CuratedView._deliver``/``_progress_screen``).
+        Tried first at ``self.llm_window`` -- read fresh on every call, so
+        it already points at whichever ``LLMManagementWindow`` instance is
+        currently mounted once a screen-level recompose has finished
+        replacing it (``build_lab_body`` reassigns this attribute every
+        time it runs). Posting there lets the message bubble CuratedView-
+        less straight through ``LLMManagementWindow``'s own mirroring
+        handlers (``_managed_install_progressed``/``_managed_install_
+        status_changed``, which keep ``InstalledView`` in sync) and on up
+        to this screen's own ``@on(InstallProgressed)``/
+        ``@on(InstallStatusChanged)`` handlers -- the exact same single
+        bubble path ``CuratedView`` used to originate (``CuratedView`` ->
+        ``LLMManagementWindow`` -> ``LLMScreen``), except this screen is
+        now the origin, not an orphanable view.
 
-        Falls back to posting directly on ``self`` only in the narrow gap
-        where a screen-level recompose is between tearing down the old
-        ``LLMManagementWindow`` and ``build_lab_body`` mounting the new
-        one: this screen's own handlers still update the status chip and
-        retained progress even though ``LLMManagementWindow``'s mirror is
-        briefly unreachable, and the very next tick -- once the fresh
-        window exists again -- resumes the full path.
+        ``self.llm_window`` is a plain attribute, not a live query:
+        ``LabScreen.recompose()`` tears down and closes the old
+        ``LLMManagementWindow`` SYNCHRONOUSLY, but only ``_mount_lab_body``
+        -- deferred via ``call_after_refresh`` -- reassigns this attribute
+        to the fresh instance. Between those two points, ``self.llm_window``
+        still refers to the closed widget, and ``post_message`` on a closed
+        target returns ``False`` without raising (this is the exact
+        "closed widget, silent no-op" hazard the deleted ``CuratedView.
+        _deliver``/``_progress_screen`` fallback chain existed to survive --
+        moving the worker here did not eliminate it, only relocated it to
+        this one narrower window). Checking that return value and falling
+        back to posting directly on ``self`` restores the guarantee this
+        method's own callers depend on: ``self`` is the screen running
+        this method, so it is never itself the thing a recompose closes.
+        This screen's own handlers -- the status chip and retained
+        progress/lifecycle state -- always update, even when
+        ``LLMManagementWindow``'s mirror is briefly unreachable; the very
+        next tick, once the fresh window exists and this attribute is
+        reassigned, resumes the full path.
 
         Args:
             message: The event to deliver; a fresh instance per call.
         """
         target: Widget = self.llm_window if self.llm_window is not None else self
-        target.post_message(message)
+        if target.post_message(message):
+            return
+        self.post_message(message)
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
