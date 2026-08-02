@@ -133,6 +133,30 @@ class EvalsViewModel:
 
         return [row for row in self.datasets() if is_probe_set(row)]
 
+    def character_cards(self, chacha_db: Any) -> list[dict[str, Any]]:
+        """Character cards for the picker (``card_picker.py``'s
+        ``CardPicker``), ordered by name.
+
+        Takes an explicit ``chacha_db`` handle rather than reading one off
+        ``self._db`` -- character cards live in ``ChaChaNotes_DB``, a
+        different database from the ``EvalsDB`` this view model otherwise
+        wraps (see ``card_picker.py``'s own module docstring). The caller
+        (the character-bench editor screen) owns resolving that second
+        handle; this method only shapes the read the same empty-safe way
+        every other method on this class does.
+
+        Args:
+            chacha_db: A ``CharactersRAGDB``-shaped handle, or None when the
+                character database is unavailable.
+
+        Returns:
+            list[dict[str, Any]]: Card rows, or an empty list when no handle
+            was supplied.
+        """
+        if chacha_db is None:
+            return []
+        return list(chacha_db.list_character_cards(limit=_LIST_LIMIT))
+
     def llama_targets(self) -> list[dict[str, Any]]:
         """Configured ``llama_cpp`` ``eval_models`` rows -- what the bench
         editor's Add-target picker offers (task-1482 Task 6).
