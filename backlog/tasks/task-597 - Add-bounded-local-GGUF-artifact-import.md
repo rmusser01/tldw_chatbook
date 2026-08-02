@@ -1,10 +1,11 @@
 ---
 id: TASK-597
 title: Add bounded local GGUF artifact import
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-02 04:26'
+updated_date: '2026-08-02 04:56'
 labels:
   - stt
   - artifacts
@@ -17,6 +18,7 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
   - Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md
+  - Docs/superpowers/plans/2026-08-01-task-597-local-gguf-import.md
 parent_task_id: TASK-596
 priority: high
 ---
@@ -36,3 +38,19 @@ Allow compatible local GGUF files to enter the managed artifact store without tr
 - [ ] #5 Cancellation, source mutation, parse failure, insufficient space, and hash failure leave no loadable partial artifact or external-path dependency.
 - [ ] #6 Focused tests cover valid curated and uncurated files, oversized metadata, truncation, symlinks, traversal, TOCTOU mutation, cancellation, and cleanup containment.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan: Docs/superpowers/plans/2026-08-01-task-597-local-gguf-import.md
+
+ADR required: no
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: direct implementation of ADR-025's approved managed local GGUF import boundary.
+
+1. Add bounded GGUF v3 parsing and pinned transcribe.cpp admission.
+2. Add content-derived descriptors and curated matching.
+3. Add lease-protected staging, copy/hash, cancellation, immutable install, and activation.
+4. Add Installed-view selection, progress, cancellation, and precise errors.
+5. Verify focused/regression/full-suite/static gates and complete review.
+<!-- SECTION:PLAN:END -->
