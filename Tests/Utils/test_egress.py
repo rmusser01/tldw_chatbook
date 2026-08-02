@@ -98,6 +98,13 @@ def test_metadata_ip_blocked_even_when_trusted(monkeypatch):
     ),
 )
 def test_metadata_endpoints_blocked_pre_resolution(monkeypatch, url):
+    """Reject metadata endpoints without attempting DNS resolution.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the resolver.
+        url: Canonical metadata endpoint URL under test.
+    """
+
     def _boom(host):  # pragma: no cover - must not be called
         raise AssertionError("resolved a metadata endpoint")
 

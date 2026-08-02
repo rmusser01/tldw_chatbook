@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+import io
 from pathlib import Path
+import subprocess
+import sys
+import tokenize
 import tomllib
 import warnings
 
@@ -25,11 +29,14 @@ CANONICAL_METADATA_ENDPOINTS = frozenset(
 )
 EGRESS_POLICY_PATH = Path("Utils/egress.py")
 SUBSCRIPTION_SECURITY_PATH = Path("Subscriptions/security.py")
+SUBSCRIPTION_EGRESS_WIRING_TEST_PATH = Path(
+    "Tests/Subscriptions/test_subscription_egress_wiring.py"
+)
 DISALLOWED_SCHEMES = frozenset({"file", "ftp", "gopher", "javascript", "data"})
 
 
 @dataclass(frozen=True)
-class _PolicyInventory:
+class PolicyInventory:
     """Immutable source-policy findings collected during one package scan."""
 
     metadata_owners: tuple[tuple[str, frozenset[Path]], ...]
@@ -43,13 +50,71 @@ def _production_python_files() -> list[Path]:
     return sorted(PACKAGE_ROOT.rglob("*.py"))
 
 
-def _source_tree(source_path: Path) -> ast.Module:
-    """Parse one production source file without reading comments as policy."""
+def _source_tree(source_path: Path, source: str | None = None) -> ast.Module:
+    """Parse one production source file without reading comments as policy.
+
+    Args:
+        source_path: Production file used for input and diagnostics.
+        source: Optional source already read by the candidate filter.
+
+    Returns:
+        Parsed module tree.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
         return ast.parse(
-            source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            source if source is not None else source_path.read_text(encoding="utf-8"),
+            filename=str(source_path),
         )
+
+
+def _source_requires_policy_scan(
+    source: str, metadata_endpoints: set[str] | frozenset[str]
+) -> bool:
+    """Check whether source can contain a policy match recognized by the AST scan.
+
+    Args:
+        source: Python source text to inspect cheaply.
+        metadata_endpoints: Endpoint literals owned by the egress policy.
+
+    Returns:
+        True when the source requires the full AST ownership scan.
+    """
+    decoded_strings: set[str] = set()
+    adjacent_tokens: list[str] = []
+
+    def flush_adjacent_tokens() -> None:
+        """Decode the current implicitly concatenated string-literal group."""
+        if not adjacent_tokens:
+            return
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                value = ast.literal_eval("".join(adjacent_tokens))
+        except (SyntaxError, ValueError):
+            pass
+        else:
+            if isinstance(value, str):
+                decoded_strings.add(value)
+        adjacent_tokens.clear()
+
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        for token in tokens:
+            if token.type == tokenize.STRING:
+                adjacent_tokens.append(token.string)
+                continue
+            if adjacent_tokens and token.type in {tokenize.COMMENT, tokenize.NL}:
+                continue
+            flush_adjacent_tokens()
+        flush_adjacent_tokens()
+    except (IndentationError, tokenize.TokenError):
+        return True
+
+    return (
+        bool(decoded_strings & metadata_endpoints)
+        or len(decoded_strings & DISALLOWED_SCHEMES) >= 3
+    )
 
 
 def _literal_collection_values(node: ast.AST) -> set[str] | None:
@@ -141,7 +206,7 @@ def _subscription_validator_policy(
 
 
 @pytest.fixture(scope="module")
-def _policy_inventory() -> _PolicyInventory:
+def _policy_inventory() -> PolicyInventory:
     """Scan production Python sources once for all shared-policy duplicates."""
     source_paths = _production_python_files()
     egress_source_path = PACKAGE_ROOT / EGRESS_POLICY_PATH
@@ -156,11 +221,16 @@ def _policy_inventory() -> _PolicyInventory:
 
     for source_path in source_paths:
         relative_path = source_path.relative_to(PACKAGE_ROOT)
-        source_tree = (
-            egress_tree
-            if source_path == egress_source_path
-            else _source_tree(source_path)
-        )
+        if source_path == egress_source_path:
+            source_tree = egress_tree
+        else:
+            source = source_path.read_text(encoding="utf-8")
+            if (
+                relative_path != SUBSCRIPTION_SECURITY_PATH
+                and not _source_requires_policy_scan(source, metadata_endpoints)
+            ):
+                continue
+            source_tree = _source_tree(source_path, source)
         if relative_path == SUBSCRIPTION_SECURITY_PATH:
             (
                 validator_allowed_schemes,
@@ -179,7 +249,7 @@ def _policy_inventory() -> _PolicyInventory:
                     blocked_schemes
                 )
 
-    return _PolicyInventory(
+    return PolicyInventory(
         metadata_owners=tuple(
             (endpoint, frozenset(paths))
             for endpoint, paths in sorted(endpoint_paths.items())
@@ -223,6 +293,60 @@ def test_scheme_diagnostic_names_are_sorted() -> None:
         "file",
         "javascript",
     )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('ENDPOINTS = {"metadata.future.invalid"}', True),
+        ('ENDPOINTS = {"metadata." "future.invalid"}', True),
+        ('SCHEMES = {"file", "ftp", "gopher"}', True),
+        (r'SCHEMES = {"\x66ile", "ftp", "gopher"}', True),
+        ('SCHEMES = {"file", "ftp"}', False),
+        ('"""Ordinary module documentation."""\nVALUE = 1', False),
+        ('description = "unrelated application module"', False),
+    ],
+)
+def test_policy_candidate_filter_retains_every_detectable_policy_source(
+    source: str, expected: bool
+) -> None:
+    """Candidate filtering skips only sources the AST scan cannot match.
+
+    Args:
+        source: Representative production source text.
+        expected: Whether the full AST scan must run for that source.
+    """
+    assert _source_requires_policy_scan(source, {"metadata.future.invalid"}) is expected
+
+
+def test_egress_wiring_collection_does_not_import_subscription_security() -> None:
+    """Collecting the wiring tests does not execute optional security imports."""
+    test_path = PACKAGE_ROOT.parent / SUBSCRIPTION_EGRESS_WIRING_TEST_PATH
+    script = (
+        "import runpy, sys; "
+        f"runpy.run_path({str(test_path)!r}, run_name='__collection_contract__'); "
+        "raise SystemExit(int("
+        "'tldw_chatbook.Subscriptions.security' in sys.modules))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PACKAGE_ROOT.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_policy_candidate_filter_suppresses_legacy_escape_warnings() -> None:
+    """Candidate token decoding does not surface unrelated source warnings."""
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        assert not _source_requires_policy_scan('ART = "  /|___|\\  "', set())
+
+    assert not captured
 
 
 def test_egress_metadata_endpoints_include_future_assigned_literals() -> None:
@@ -294,7 +418,7 @@ def test_shipped_subscription_config_has_no_security_child_table() -> None:
 
 
 def test_canonical_metadata_endpoints_are_owned_only_by_egress_policy(
-    _policy_inventory: _PolicyInventory,
+    _policy_inventory: PolicyInventory,
 ) -> None:
     """Metadata endpoint literals have one canonical production policy owner."""
     mismatches = tuple(
@@ -311,7 +435,7 @@ def test_canonical_metadata_endpoints_are_owned_only_by_egress_policy(
 
 
 def test_disallowed_url_scheme_collections_are_not_duplicated(
-    _policy_inventory: _PolicyInventory,
+    _policy_inventory: PolicyInventory,
 ) -> None:
     """The egress allowlist, rather than blocked-scheme tables, owns scheme policy."""
     assert not _policy_inventory.scheme_violations, (
@@ -320,7 +444,7 @@ def test_disallowed_url_scheme_collections_are_not_duplicated(
 
 
 def test_subscription_validator_retains_only_its_http_scheme_boundary(
-    _policy_inventory: _PolicyInventory,
+    _policy_inventory: PolicyInventory,
 ) -> None:
     """Subscription validation keeps its boundary but delegates shared policy."""
     assert not _policy_inventory.validator_duplicate_attributes

@@ -68,10 +68,15 @@ design, and the plan to describe the actual optional monitor `ssl_verify`
 mapping, network parser fallbacks, direct stdlib OPML path, and unused XML
 validator accurately. Review hardened the sentinel's collection, assignment,
 import-isolation, and diagnostic contracts; the final independent review found
-no remaining issues.
+no remaining issues. PR review then renamed the inventory data class, deferred
+the optional subscription-security import until test execution, documented the
+modified parameterized tests, and added a token-aware candidate filter. The
+filter preserves package-wide endpoint/scheme ownership detection, including
+escaped and implicitly concatenated literals, while avoiding a full AST parse
+for unrelated sources.
 
 Final verification on base `5a7400801ef75e1f9b510d8ab22fa883ad8a597b`
-recorded 115 focused passes, 604 `Tests/Subscriptions` passes outside the
+recorded 124 focused passes, 613 `Tests/Subscriptions` passes outside the
 sandbox, one installed-distribution contract pass, and green Ruff, format,
 compile, diff, ancestry, stale-key, and import-isolation checks. The full suite
 is not claimed green: on the pre-rebase branch pinned to base

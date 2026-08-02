@@ -2,7 +2,6 @@
 
 import pytest
 
-from tldw_chatbook.Subscriptions.security import SSRFError
 from tldw_chatbook.Utils import egress
 from tldw_chatbook.Utils.egress import EgressBlockedError
 
@@ -95,17 +94,24 @@ def test_validate_feed_url_rejects_ftp_when_web_security_disabled(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("url", "exception"),
+    ("url", "exception_name"),
     [
-        ("", ValueError),
-        ("example.com/feed", ValueError),
-        ("https:///feed", ValueError),
-        ("file:///etc/passwd", SSRFError),
+        ("", "ValueError"),
+        ("example.com/feed", "ValueError"),
+        ("https:///feed", "ValueError"),
+        ("file:///etc/passwd", "SSRFError"),
     ],
 )
-def test_validate_feed_url_rejects_invalid_or_unsupported_urls(url, exception):
-    """Input validation distinguishes malformed URLs from unsupported schemes."""
-    from tldw_chatbook.Subscriptions.security import SecurityValidator
+def test_validate_feed_url_rejects_invalid_or_unsupported_urls(url, exception_name):
+    """Input validation distinguishes malformed URLs from unsupported schemes.
+
+    Args:
+        url: Candidate feed URL.
+        exception_name: Expected public exception class name.
+    """
+    from tldw_chatbook.Subscriptions.security import SecurityValidator, SSRFError
+
+    exception = {"ValueError": ValueError, "SSRFError": SSRFError}[exception_name]
 
     with pytest.raises(exception):
         SecurityValidator.validate_feed_url(url)

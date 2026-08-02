@@ -671,7 +671,7 @@ complete.
 
 The reviewed development base was
 `5a7400801ef75e1f9b510d8ab22fa883ad8a597b`. At final verification the branch
-was clean, 19 commits ahead, and not behind `origin/dev`.
+was clean and not behind `origin/dev`.
 `git merge-base --is-ancestor origin/dev HEAD`, branch diff/status checks,
 `git diff --check`, the stale-key scan, and the source-only subscription import
 isolation probe were green. The final diff remained limited to TASK-859's
@@ -679,11 +679,11 @@ config/security/documentation files, three targeted tests, and task evidence.
 
 ### B. Focused and subscription verification
 
-The final focused matrix completed with **115 passed and 1
+The final focused matrix completed with **124 passed and 1
 `RequestsDependencyWarning`**. The latest rebase also introduced unrelated
 feed-server subscription tests. The first sandboxed `Tests/Subscriptions` run
 therefore reported **33 socket-permission failures**; rerunning the same suite
-with the required socket access outside the sandbox completed with **604 passed
+with the required socket access outside the sandbox completed with **613 passed
 and the same warning**.
 
 Static verification was green: normal Ruff lint for the selected config,
@@ -716,6 +716,18 @@ The final whole-branch reviewer independently reran the **115-test focused
 matrix**, a **13-pass config source-template probe**, the **1-pass installed
 distribution contract**, and static, ancestry, and branch-diff checks. All were
 green and the reviewer reported no findings.
+
+A subsequent Qodo PR review raised four findings. The follow-up renamed the
+inventory data class to `PolicyInventory`, deferred the optional
+`Subscriptions.security` import until test execution, added the requested
+Google-style test documentation, and replaced unconditional package-wide AST
+parsing with a token-aware candidate filter. The filter still inventories every
+shipped Python source and decodes escaped and implicitly concatenated string
+literals before deciding whether the full AST scan is needed; it therefore
+preserves the package-wide ownership contract instead of excluding vendored
+paths. Red-green coverage locks collection isolation, candidate completeness,
+and warning suppression. In the focused run, the ownership-fixture setup fell
+from about 4.6 seconds to about 2.0 seconds.
 
 The security assessment is bounded by the focused egress matrix, including the
 invariant that FTP remains rejected when egress policy is disabled. The diff
