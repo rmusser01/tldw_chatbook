@@ -25,7 +25,7 @@ from ..Chat.chat_conversation_service import ChatConversationService
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
-from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
@@ -328,6 +328,14 @@ class ChatbookImporter:
                     manifest,
                     content_selections[ContentType.MEDIA],
                     conflict_resolution,
+                    status,
+                )
+
+            if ContentType.KEPT_BRIEFING in content_selections:
+                self._import_kept_briefings(
+                    extract_dir,
+                    manifest,
+                    content_selections[ContentType.KEPT_BRIEFING],
                     status,
                 )
 
@@ -1171,6 +1179,316 @@ class ChatbookImporter:
                 status.failed_items += 1
                 status.add_error(f"Error importing media {media_id}: {str(e)}")
                 logger.error(f"Error importing media {media_id}: {e}")
+
+    # Mirrors ChatbookCreator._KEPT_SCRIPTS_EXPORT_LIMIT: a page-sized read of
+    # one briefing's kept scripts comfortably covers any realistic cast
+    # history without an unbounded fetch.
+    _KEPT_SCRIPTS_IMPORT_LIMIT = 1000
+
+    @staticmethod
+    def _kept_dt_key(value: Any) -> Any:
+        """Normalize a kept-row datetime-ish value for equality comparison.
+
+        The importer's `payload` values are always ISO strings (JSON has no
+        datetime type); a freshly-queried `existing` row's `DATETIME`
+        columns come back as real `datetime` objects (the connection's
+        registered converter). Rendering both sides through `.isoformat()`
+        (when present) lets the two representations compare equal.
+        """
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return value
+
+    @classmethod
+    def _kept_briefing_content_matches(
+        cls, existing: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> bool:
+        """True if a locally-existing kept briefing is byte-identical to an
+        incoming one sharing the same `source_briefing_id` (already-present,
+        safe to skip silently) vs. genuinely different content (a conflict
+        that must never be silently overwritten)."""
+        plain_fields = (
+            "watchlist_name",
+            "body_markdown",
+            "covers_through_item_id",
+            "selection_mode",
+            "model_used",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "origin",
+        )
+        if any(existing.get(f) != payload.get(f) for f in plain_fields):
+            return False
+        dt_fields = ("covers_from_ts", "original_created_at")
+        return all(
+            cls._kept_dt_key(existing.get(f)) == cls._kept_dt_key(payload.get(f))
+            for f in dt_fields
+        )
+
+    @classmethod
+    def _kept_script_content_matches(
+        cls, existing: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> bool:
+        """Same byte-identity check as `_kept_briefing_content_matches`, for
+        one kept script."""
+        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
+        if any(existing.get(f) != payload.get(f) for f in plain_fields):
+            return False
+        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
+            payload.get("original_created_at")
+        )
+
+    @staticmethod
+    def _kept_briefing_file_path(
+        extract_dir: Path,
+        kept_dir: Path,
+        manifest: ChatbookManifest,
+        kept_id: str,
+    ) -> Path:
+        for item in manifest.content_items:
+            if (
+                item.id == kept_id
+                and item.type == ContentType.KEPT_BRIEFING
+                and item.file_path
+            ):
+                return ChatbookImporter._safe_manifest_relative_path(
+                    extract_dir, item.file_path
+                )
+        fallback_filename = f"kept_briefing_{kept_id}.json"
+        validate_filename(fallback_filename)
+        return kept_dir / fallback_filename
+
+    def _import_kept_briefings(
+        self,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        kept_briefing_ids: List[str],
+        status: ImportStatus,
+    ) -> None:
+        """Import kept briefings and their kept scripts (task-1870).
+
+        Policy: `source_briefing_id` is a device-local Subscriptions_DB id,
+        so a cross-device import can collide with a *different* local kept
+        briefing that happens to share the same source id. Rather than
+        force this through the display-name-keyed ask/skip/rename/replace
+        machinery in `ConflictResolver` (built for conversations/notes/
+        characters, not a UNIQUE-source-id-keyed idempotent artifact), this
+        mirrors the "raced keep" handling the keep service itself already
+        uses (`Subscriptions/briefing_keep.py` -- see the kept-briefings
+        design doc's delivery notes): try the insert; if `create_kept_
+        briefing` raises `ConflictError` because a row for this source id
+        already exists, fall back to the existing row -- silently if its
+        content is byte-identical (an ordinary idempotent re-import), with
+        an honest warning if it differs (a genuine conflict; the existing
+        row is never overwritten). Kept scripts ride under the (possibly
+        pre-existing) parent under the same policy, except NULL-source
+        scripts (cast directly from a kept briefing, no subscriptions-side
+        source) are deduped by content match within the parent instead,
+        since NULL carries no identity of its own.
+        """
+        db_path = self.db_paths.get("ChaChaNotes")
+        if not db_path:
+            logger.error(
+                "ChatbookImporter._import_kept_briefings: ChaChaNotes database path not configured"
+            )
+            status.add_error("ChaChaNotes database path not configured")
+            return
+
+        db = CharactersRAGDB(db_path, "chatbook_importer")
+        kept_dir = extract_dir / "content" / "kept_briefings"
+
+        for kept_id in kept_briefing_ids:
+            status.processed_items += 1
+            try:
+                kept_file = self._kept_briefing_file_path(
+                    extract_dir, kept_dir, manifest, kept_id
+                )
+                if not kept_file.exists():
+                    status.add_warning(
+                        f"Kept briefing file not found: {kept_file.name}"
+                    )
+                    status.failed_items += 1
+                    continue
+
+                with open(kept_file, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+
+                source_briefing_id = payload["source_briefing_id"]
+
+                newly_inserted = False
+                conflict = False
+                target_kept_id: Optional[int] = None
+                try:
+                    target_kept_id = db.create_kept_briefing(
+                        source_briefing_id=source_briefing_id,
+                        watchlist_name=payload.get("watchlist_name"),
+                        body_markdown=payload["body_markdown"],
+                        covers_through_item_id=payload.get(
+                            "covers_through_item_id"
+                        ),
+                        covers_from_ts=payload.get("covers_from_ts"),
+                        selection_mode=payload.get("selection_mode"),
+                        model_used=payload.get("model_used"),
+                        item_count=payload.get("item_count", 0),
+                        featured_count=payload.get("featured_count", 0),
+                        overflow_count=payload.get("overflow_count", 0),
+                        origin=payload.get("origin", "manual"),
+                        original_created_at=payload.get("original_created_at"),
+                    )
+                    newly_inserted = True
+                except ConflictError:
+                    existing = db.get_kept_briefing_by_source(source_briefing_id)
+                    if existing is None:
+                        # Lost a race with another writer between the
+                        # failed insert and this read -- a hard failure
+                        # rather than a guess.
+                        status.failed_items += 1
+                        status.add_error(
+                            "Kept briefing conflict for "
+                            f"source_briefing_id={source_briefing_id} could not "
+                            "be resolved (row vanished mid-import)."
+                        )
+                        continue
+                    target_kept_id = existing["id"]
+                    if not self._kept_briefing_content_matches(existing, payload):
+                        conflict = True
+
+                scripts_inserted, scripts_present, scripts_conflicted = (
+                    self._import_kept_scripts(
+                        db, target_kept_id, payload.get("scripts") or []
+                    )
+                )
+
+                if newly_inserted:
+                    status.successful_items += 1
+                else:
+                    status.skipped_items += 1
+                    if conflict:
+                        status.add_warning(
+                            "Kept briefing conflict: source_briefing_id="
+                            f"{source_briefing_id} already exists locally with "
+                            "different content; existing kept briefing was not "
+                            "modified."
+                        )
+                if scripts_conflicted:
+                    status.add_warning(
+                        f"Kept briefing (source_briefing_id={source_briefing_id}): "
+                        f"{scripts_conflicted} kept script(s) already present "
+                        "locally with different content and were not modified."
+                    )
+                logger.info(
+                    "ChatbookImporter._import_kept_briefings: kept briefing "
+                    f"source_briefing_id={source_briefing_id} "
+                    f"({'inserted' if newly_inserted else 'already present'}); "
+                    f"scripts inserted={scripts_inserted} present={scripts_present} "
+                    f"conflicted={scripts_conflicted}"
+                )
+
+            except Exception as e:
+                status.failed_items += 1
+                status.add_error(
+                    f"Error importing kept briefing {kept_id}: {str(e)}"
+                )
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
+                    kept_id,
+                )
+
+    def _import_kept_scripts(
+        self,
+        db: CharactersRAGDB,
+        kept_briefing_id: int,
+        script_payloads: List[Dict[str, Any]],
+    ) -> Tuple[int, int, int]:
+        """Import one kept briefing's kept scripts under its (possibly
+        pre-existing) parent.
+
+        Returns (inserted, already_present, conflicted) counts. These are
+        deliberately kept out of `ImportStatus`'s top-level counters --
+        scripts are not independently selectable content items, so they
+        would inflate the "X/Y items" accounting beyond the selected kept
+        briefing count; the caller surfaces conflicts via a warning and logs
+        the full breakdown instead.
+        """
+        inserted = 0
+        already_present = 0
+        conflicted = 0
+        # Lazily fetched, and only for NULL-source scripts: the DB state for
+        # this kept briefing *before* this call touches it. A matched
+        # candidate is popped out of this pool (not merely flagged) so each
+        # pre-existing row can satisfy at most one incoming script -- two
+        # incoming scripts with genuinely identical content (legal: NULLs
+        # are mutually distinct) still both insert if only one matching row
+        # pre-existed, while re-importing the same chatbook twice matches
+        # one-for-one and adds nothing. Rows inserted earlier in *this same*
+        # loop are deliberately never added to the pool, so a source export
+        # that legitimately contains two distinct byte-identical scripts
+        # still round-trips as two rows, not one.
+        existing_scripts: Optional[List[Dict[str, Any]]] = None
+
+        for script_payload in script_payloads:
+            source_script_id = script_payload.get("source_script_id")
+            preset_name = script_payload.get("preset_name", "")
+            roster_snapshot_json = script_payload.get("roster_snapshot_json", "{}")
+            turns_json = script_payload.get("turns_json", "[]")
+            model_used = script_payload.get("model_used")
+            original_created_at = script_payload.get("original_created_at")
+
+            if source_script_id is not None:
+                try:
+                    db.create_kept_script(
+                        kept_briefing_id,
+                        source_script_id=source_script_id,
+                        preset_name=preset_name,
+                        roster_snapshot_json=roster_snapshot_json,
+                        turns_json=turns_json,
+                        model_used=model_used,
+                        original_created_at=original_created_at,
+                    )
+                    inserted += 1
+                except ConflictError:
+                    existing = db.get_kept_script_by_source(source_script_id)
+                    if existing is not None and self._kept_script_content_matches(
+                        existing, script_payload
+                    ):
+                        already_present += 1
+                    else:
+                        conflicted += 1
+                continue
+
+            if existing_scripts is None:
+                existing_scripts = db.list_kept_scripts(
+                    kept_briefing_id, limit=self._KEPT_SCRIPTS_IMPORT_LIMIT
+                )
+            match_index = next(
+                (
+                    idx
+                    for idx, row in enumerate(existing_scripts)
+                    if row.get("source_script_id") is None
+                    and self._kept_script_content_matches(row, script_payload)
+                ),
+                None,
+            )
+            if match_index is not None:
+                existing_scripts.pop(match_index)
+                already_present += 1
+                continue
+
+            db.create_kept_script(
+                kept_briefing_id,
+                source_script_id=None,
+                preset_name=preset_name,
+                roster_snapshot_json=roster_snapshot_json,
+                turns_json=turns_json,
+                model_used=model_used,
+                original_created_at=original_created_at,
+            )
+            inserted += 1
+
+        return inserted, already_present, conflicted
 
     def _generate_unique_media_title(self, base_title: str, db: MediaDatabase) -> str:
         """Generate a unique media title."""

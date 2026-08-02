@@ -185,7 +185,8 @@ class ContentSelectionStep(WizardStep):
         """Compose the content selection UI."""
         with Container(classes="selection-header"):
             yield Static(
-                "Select the conversations, notes, characters, media, and prompts to include in your chatbook."
+                "Select the conversations, notes, characters, media, prompts, and "
+                "kept briefings to include in your chatbook."
             )
 
         # Smart content tree
@@ -202,6 +203,7 @@ class ContentSelectionStep(WizardStep):
             ContentType.CHARACTER: [],
             ContentType.MEDIA: [],
             ContentType.PROMPT: [],
+            ContentType.KEPT_BRIEFING: [],
         }
 
         try:
@@ -291,6 +293,36 @@ class ContentSelectionStep(WizardStep):
                                 subtitle=description[:50] + "..."
                                 if description and len(description) > 50
                                 else description,
+                            )
+                        )
+
+                    # Kept briefings (task-1870). Kept scripts are not
+                    # independently selectable -- they ride along nested
+                    # inside their parent briefing's export payload -- so
+                    # the subtitle just reports how many come along.
+                    kept_briefings = main_db.list_kept_briefings(limit=200)
+                    logger.debug(
+                        f"Found {len(kept_briefings) if kept_briefings else 0} kept briefings"
+                    )
+
+                    for kept in kept_briefings:
+                        kept_id = kept.get("id")
+                        script_count = len(
+                            main_db.list_kept_scripts(kept_id, limit=1000)
+                        )
+                        title = kept.get("watchlist_name") or (
+                            f"Kept briefing {kept_id}"
+                        )
+
+                        content_data[ContentType.KEPT_BRIEFING].append(
+                            ContentNodeData(
+                                type=ContentType.KEPT_BRIEFING,
+                                id=str(kept_id),
+                                title=title,
+                                subtitle=f"{script_count} script"
+                                f"{'s' if script_count != 1 else ''}"
+                                if script_count
+                                else "no scripts",
                             )
                         )
 

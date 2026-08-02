@@ -117,6 +117,7 @@ class ChatbookCreationWindow(ModalScreen):
             ContentType.CHARACTER: set(),
             ContentType.PROMPT: set(),
             ContentType.MEDIA: set(),
+            ContentType.KEPT_BRIEFING: set(),
         }
 
         chatbook_db_paths = get_chatbook_database_paths()
@@ -235,6 +236,24 @@ class ChatbookCreationWindow(ModalScreen):
                 )
                 node.allow_expand = False
 
+            # Add kept briefings node. Kept scripts are not independently
+            # selectable -- they ride along with their parent briefing (see
+            # ContentType.KEPT_BRIEFING) -- so the subtitle just reports how
+            # many will come along.
+            kept_node = tree.root.add("📰 Kept Briefings", expand=False)
+            kept_briefings = db.list_kept_briefings(limit=200)
+
+            for kept in kept_briefings:
+                script_count = len(db.list_kept_scripts(kept["id"], limit=1000))
+                label = kept.get("watchlist_name") or f"Kept briefing {kept['id']}"
+                if script_count:
+                    label += f" ({script_count} script{'s' if script_count != 1 else ''})"
+                node = kept_node.add(
+                    label,
+                    data={"type": ContentType.KEPT_BRIEFING, "id": str(kept["id"])},
+                )
+                node.allow_expand = False
+
         # Load prompts
         if self.db_paths["prompts"].exists():
             db = PromptsDatabase(str(self.db_paths["prompts"]), "chatbook_ui")
@@ -283,6 +302,7 @@ class ChatbookCreationWindow(ModalScreen):
             + note_count
             + char_count
             + len(self.selected_content[ContentType.PROMPT])
+            + len(self.selected_content[ContentType.KEPT_BRIEFING])
         )
 
         self.query_one("#stat-conversations", Static).update(str(conv_count))

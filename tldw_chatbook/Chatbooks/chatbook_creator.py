@@ -325,6 +325,20 @@ class ChatbookCreator:
                     content_selections[ContentType.PROMPT], work_dir, manifest, content
                 )
 
+            # Collect kept briefings (task-1870); their kept scripts ride
+            # along nested inside each briefing's own payload, never as a
+            # separately selectable content type.
+            if ContentType.KEPT_BRIEFING in content_selections:
+                logger.info(
+                    f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.KEPT_BRIEFING])} kept briefings"
+                )
+                self._collect_kept_briefings(
+                    content_selections[ContentType.KEPT_BRIEFING],
+                    work_dir,
+                    manifest,
+                    content,
+                )
+
             # Auto-discover relationships
             logger.info("ChatbookCreator.create_chatbook: Discovering relationships")
             self._discover_relationships(manifest, content)
@@ -335,8 +349,9 @@ class ChatbookCreator:
             manifest.total_characters = len(content.characters)
             manifest.total_media_items = len(content.media_items)
             manifest.total_prompts = len(content.prompts)
+            manifest.total_kept_briefings = len(content.kept_briefings)
             logger.info(
-                f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}"
+                f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}, kept_briefings={manifest.total_kept_briefings}"
             )
 
             # Write manifest
@@ -1325,6 +1340,198 @@ class ChatbookCreator:
             except Exception as e:
                 logger.error(f"Error collecting prompt {prompt_id}: {e}")
 
+    # Kept scripts per briefing are denormalized, small text blobs (preset
+    # name + two JSON strings) -- a page-sized fetch comfortably covers any
+    # realistic cast history for one briefing without risking an unbounded
+    # read on a pathological row.
+    _KEPT_SCRIPTS_EXPORT_LIMIT = 1000
+
+    @staticmethod
+    def _kept_datetime_to_iso(value: Any) -> Optional[str]:
+        """Render a kept-row `DATETIME` column for JSON export.
+
+        `covers_from_ts`/`original_created_at`/`kept_at` come back from
+        `CharactersRAGDB` as real `datetime` objects (the connection's
+        registered `DATETIME` converter -- see `DB/sqlite_datetime_fix.py`),
+        which `json.dump` cannot serialize directly.
+        """
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    def _collect_kept_briefings(
+        self,
+        kept_briefing_ids: List[str],
+        work_dir: Path,
+        manifest: ChatbookManifest,
+        content: ChatbookContent,
+    ) -> None:
+        """Collect kept briefings and their kept scripts.
+
+        Kept scripts are not independently selectable -- they are nested
+        inside their parent briefing's JSON payload (mirroring how a
+        conversation's messages live inside the conversation's own JSON
+        rather than as separate content items), and a second, purely
+        human-readable Markdown rendition is written alongside it (the same
+        machine-JSON + human-Markdown split conversations use via their
+        citation report, and notes use via a single frontmatter+body file).
+        """
+        db_path = self.db_paths.get("ChaChaNotes")
+        if not db_path:
+            logger.warning(
+                "ChatbookCreator._collect_kept_briefings: ChaChaNotes database path not configured"
+            )
+            return
+
+        db = CharactersRAGDB(db_path, "chatbook_creator")
+        kept_dir = work_dir / "content" / "kept_briefings"
+        kept_dir.mkdir(parents=True, exist_ok=True)
+
+        total = len(kept_briefing_ids)
+        for idx, kept_id_raw in enumerate(kept_briefing_ids):
+            self._check_cancel()
+            self._emit_progress("kept_briefings", idx + 1, total)
+            try:
+                kept_id = int(kept_id_raw)
+                kept = db.get_kept_briefing(kept_id)
+                if not kept:
+                    logger.warning(
+                        f"ChatbookCreator._collect_kept_briefings: Kept briefing {kept_id} not found"
+                    )
+                    continue
+
+                scripts = db.list_kept_scripts(
+                    kept_id, limit=self._KEPT_SCRIPTS_EXPORT_LIMIT
+                )
+                script_payloads = [
+                    {
+                        "source_script_id": script.get("source_script_id"),
+                        "preset_name": script.get("preset_name"),
+                        "roster_snapshot_json": script.get("roster_snapshot_json"),
+                        "turns_json": script.get("turns_json"),
+                        "model_used": script.get("model_used"),
+                        "original_created_at": self._kept_datetime_to_iso(
+                            script.get("original_created_at")
+                        ),
+                        "kept_at": self._kept_datetime_to_iso(script.get("kept_at")),
+                    }
+                    for script in scripts
+                ]
+
+                kept_at_iso = self._kept_datetime_to_iso(kept.get("kept_at"))
+                original_created_at_iso = self._kept_datetime_to_iso(
+                    kept.get("original_created_at")
+                )
+                kept_data = {
+                    "source_briefing_id": kept["source_briefing_id"],
+                    "watchlist_name": kept.get("watchlist_name"),
+                    "body_markdown": kept["body_markdown"],
+                    "covers_through_item_id": kept.get("covers_through_item_id"),
+                    "covers_from_ts": self._kept_datetime_to_iso(
+                        kept.get("covers_from_ts")
+                    ),
+                    "selection_mode": kept.get("selection_mode"),
+                    "model_used": kept.get("model_used"),
+                    "item_count": kept.get("item_count", 0),
+                    "featured_count": kept.get("featured_count", 0),
+                    "overflow_count": kept.get("overflow_count", 0),
+                    "origin": kept.get("origin"),
+                    "original_created_at": original_created_at_iso,
+                    "kept_at": kept_at_iso,
+                    "scripts": script_payloads,
+                }
+
+                kept_file = kept_dir / f"kept_briefing_{kept_id}.json"
+                with open(kept_file, "w", encoding="utf-8") as f:
+                    json.dump(kept_data, f, indent=2, ensure_ascii=False)
+
+                title = kept.get("watchlist_name") or f"Kept briefing {kept_id}"
+                report_file = kept_dir / f"kept_briefing_{kept_id}.md"
+                self._write_kept_briefing_report(
+                    report_file, kept_id, title, kept_data
+                )
+
+                content.kept_briefings.append(kept_data)
+
+                manifest.content_items.append(
+                    ContentItem(
+                        id=str(kept_id),
+                        type=ContentType.KEPT_BRIEFING,
+                        title=title,
+                        description=f"{kept_data['item_count']} items, "
+                        f"{len(script_payloads)} kept script(s)",
+                        created_at=datetime.fromisoformat(original_created_at_iso)
+                        if original_created_at_iso
+                        else datetime.now(),
+                        updated_at=datetime.fromisoformat(kept_at_iso)
+                        if kept_at_iso
+                        else datetime.now(),
+                        metadata={
+                            "origin": kept_data["origin"],
+                            "script_count": len(script_payloads),
+                        },
+                        file_path=f"content/kept_briefings/{kept_file.name}",
+                    )
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Error collecting kept briefing {kept_id_raw}: {e}"
+                )
+
+    def _write_kept_briefing_report(
+        self,
+        report_file: Path,
+        kept_id: int,
+        title: str,
+        kept_data: Dict[str, Any],
+    ) -> None:
+        """Write a human-readable rendition of a kept briefing + its scripts.
+
+        Purely for human reading -- the importer reconstructs state from the
+        JSON payload written alongside this file, never from this Markdown.
+        """
+        with open(report_file, "w", encoding="utf-8") as f:
+            f.write(f"# Kept Briefing: {self._markdown_report_text(title)}\n\n")
+            f.write(f"- Kept briefing id (local): {kept_id}\n")
+            f.write(
+                f"- Source briefing id: {kept_data['source_briefing_id']}\n"
+            )
+            f.write(f"- Origin: {self._markdown_report_text(kept_data['origin'])}\n")
+            if kept_data.get("model_used"):
+                f.write(
+                    f"- Model used: {self._markdown_report_text(kept_data['model_used'])}\n"
+                )
+            f.write(
+                f"- Items covered: {kept_data['item_count']} "
+                f"(featured {kept_data['featured_count']}, "
+                f"overflow {kept_data['overflow_count']})\n"
+            )
+            if kept_data.get("original_created_at"):
+                f.write(f"- Originally created: {kept_data['original_created_at']}\n")
+            f.write(f"- Kept at: {kept_data['kept_at']}\n\n")
+            f.write("## Body\n\n")
+            f.write(kept_data["body_markdown"])
+            f.write("\n\n")
+
+            scripts = kept_data.get("scripts") or []
+            if scripts:
+                f.write(f"## Kept Scripts ({len(scripts)})\n\n")
+                for script in scripts:
+                    preset_name = self._markdown_report_text(
+                        script.get("preset_name", "unknown")
+                    )
+                    f.write(f"### {preset_name}\n\n")
+                    if script.get("source_script_id") is not None:
+                        f.write(f"- Source script id: {script['source_script_id']}\n")
+                    if script.get("model_used"):
+                        f.write(
+                            f"- Model used: {self._markdown_report_text(script['model_used'])}\n"
+                        )
+                    f.write(f"- Kept at: {script.get('kept_at')}\n\n")
+
     def _add_character_dependency(
         self,
         character_id: int,
@@ -1472,6 +1679,8 @@ class ChatbookCreator:
                 f.write(f"- **Media Items:** {manifest.total_media_items}\n")
             if manifest.total_prompts > 0:
                 f.write(f"- **Prompts:** {manifest.total_prompts}\n")
+            if manifest.total_kept_briefings > 0:
+                f.write(f"- **Kept Briefings:** {manifest.total_kept_briefings}\n")
 
             if manifest.tags:
                 f.write("\n## Tags\n\n")
@@ -1495,6 +1704,10 @@ class ChatbookCreator:
                 f.write("    │   └── metadata/   # Media metadata JSON files\n")
             if manifest.total_prompts > 0:
                 f.write("    ├── prompts/        # Prompts\n")
+            if manifest.total_kept_briefings > 0:
+                f.write(
+                    "    └── kept_briefings/ # Kept briefings (scripts nested inside)\n"
+                )
             f.write("```\n")
 
             f.write("\n## License\n\n")

@@ -285,6 +285,11 @@ class PreviewValidationStep(WizardStep):
         if type_counts.get(ContentType.PROMPT):
             root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
 
+        if type_counts.get(ContentType.KEPT_BRIEFING):
+            root.add(
+                f"📰 Kept Briefings ({type_counts[ContentType.KEPT_BRIEFING]})"
+            )
+
     def _run_validation(self) -> None:
         """Run validation checks."""
         validation_list = self.query_one("#validation-list", Container)

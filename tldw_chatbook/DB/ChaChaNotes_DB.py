@@ -13211,6 +13211,32 @@ UPDATE db_schema_version
                 f"Failed to create kept script: {exc}"
             ) from exc
 
+    def get_kept_script_by_source(
+        self, source_script_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return the kept script for a source script id, if any.
+
+        Mirrors `get_kept_briefing_by_source`. `source_script_id` is a
+        table-wide `UNIQUE` column (not scoped per `kept_briefing_id`), so a
+        non-NULL source script id identifies at most one kept row anywhere
+        in this database -- used by the chatbook importer (task-1870) to
+        classify a `ConflictError` on `create_kept_script` as either an
+        already-present-identical script or a genuine content conflict.
+
+        Args:
+            source_script_id: The originating Subscriptions_DB
+                `briefing_scripts.id`.
+
+        Returns:
+            The kept script row as a dict, or None if it was never kept.
+        """
+        cursor = self.execute_query(
+            "SELECT * FROM kept_scripts WHERE source_script_id = ?",
+            (source_script_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
     def list_kept_scripts(
         self, kept_briefing_id: int, *, limit: int = 200, offset: int = 0
     ) -> List[Dict[str, Any]]:

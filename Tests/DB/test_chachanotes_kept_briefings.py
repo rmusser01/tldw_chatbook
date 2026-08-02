@@ -459,6 +459,46 @@ def test_create_kept_script_round_trips_all_fields(tmp_path: Path) -> None:
         db.close_connection()
 
 
+def test_get_kept_script_by_source_returns_matching_row(tmp_path: Path) -> None:
+    """`get_kept_script_by_source` (task-1870) mirrors
+    `get_kept_briefing_by_source` -- used by the chatbook importer to
+    classify a `ConflictError` on `create_kept_script` as already-present
+    vs. a genuine content conflict."""
+    db = _make_db(tmp_path)
+    try:
+        kept_id = db.create_kept_briefing(
+            source_briefing_id=21,
+            watchlist_name="W",
+            body_markdown="B",
+            origin="manual",
+        )
+        db.create_kept_script(
+            kept_id,
+            source_script_id=777,
+            preset_name="duo-cast",
+            roster_snapshot_json='{"roster": ["A", "B"]}',
+            turns_json='[{"speaker": "A", "text": "Hi"}]',
+            model_used="gpt-test",
+            original_created_at="2026-07-30T11:00:00Z",
+        )
+
+        row = db.get_kept_script_by_source(777)
+        assert row is not None
+        assert row["kept_briefing_id"] == kept_id
+        assert row["preset_name"] == "duo-cast"
+        assert row["roster_snapshot_json"] == '{"roster": ["A", "B"]}'
+    finally:
+        db.close_connection()
+
+
+def test_get_kept_script_by_source_returns_none_when_absent(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    try:
+        assert db.get_kept_script_by_source(9999) is None
+    finally:
+        db.close_connection()
+
+
 def test_create_kept_script_rejects_nonexistent_kept_briefing(tmp_path: Path) -> None:
     db = _make_db(tmp_path)
     try:
