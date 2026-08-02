@@ -51,7 +51,9 @@ class LibraryNotePresentationState:
     conflict_running: bool = False
     confirming_delete: bool = False
     destructive_running: bool = False
+    discard_new_note: bool = False
     transfer_status: str = ""
+    transfer_running: bool = False
 
 
 class LibraryNotesCanvas(Vertical):
@@ -87,6 +89,8 @@ class LibraryNotesCanvas(Vertical):
             ``_library_note_pending_blank_gc_id``); it never applies to a
             note whose title happens to equal the word "Untitled" by the
             user's own choice.
+        create_running: Whether a Create request is currently in flight.
+        create_status: Visible Create completion or recovery status.
     """
 
     def __init__(
@@ -99,6 +103,8 @@ class LibraryNotesCanvas(Vertical):
         presentation_state: LibraryNotePresentationState | None = None,
         sync_state: LibraryNotesSyncState | None = None,
         title_placeholder_only: bool = False,
+        create_running: bool = False,
+        create_status: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -109,6 +115,8 @@ class LibraryNotesCanvas(Vertical):
         self.presentation_state = presentation_state
         self.sync_state = sync_state
         self.title_placeholder_only = title_placeholder_only
+        self.create_running = create_running
+        self.create_status = create_status
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -145,65 +153,28 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-database-purpose",
             markup=False,
         )
+        yield Static("Filter", id="library-notes-filter-label", markup=False)
         yield Input(
             placeholder="Filter notes… (Enter)",
             id="library-notes-filter",
             value=self.filter_value,
         )
+        if self.filter_value:
+            yield Button(
+                "Clear filter",
+                id="library-notes-filter-clear",
+                classes="library-canvas-action",
+                compact=True,
+            )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
         # rendered rows are selectable, matching the media/conversations
         # canvases' ``len(rows)`` convention.
         rendered_count = len(list_state.rows)
-        # One horizontal ds-toolbar row for sort/Sync/Import note/Export…/
-        # Select (2026-07 UAT: the previous bare stacked Buttons rendered as
-        # an overlapped vertical pile eating into the first list row). Safe
-        # here because every child is a fixed-width compact Button -- the
-        # known non-rendering failure mode for this canvas family is only
-        # a Horizontal mixing a 1fr sibling with fixed-width children,
-        # exactly the ds-toolbar shape `_compose_editor` already proves out.
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            yield Button(
-                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
-                id="library-notes-sort",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Sync",
-                id="library-notes-sync-open",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Import note",
-                id="library-notes-import",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            export_btn = Button(
-                "Export…",
-                id="library-notes-export",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            export_btn.display = not select_mode
-            yield export_btn
-            select_btn = Button(
-                "Done" if select_mode else "Select",
-                id="library-notes-select-toggle",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            # Disable only when nothing to select AND not already in select mode
-            # -- in select mode "Done" must stay pressable so the user can exit
-            # even if the rows dropped to zero (e.g. a background refresh).
-            select_btn.disabled = rendered_count == 0 and not select_mode
-            yield select_btn
         if select_mode:
-            action_row = Horizontal(classes="ds-toolbar")
+            action_row = Horizontal(
+                id="library-notes-selection-actions", classes="ds-toolbar"
+            )
             action_row.styles.height = "auto"
             with action_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
@@ -218,6 +189,12 @@ class LibraryNotesCanvas(Vertical):
                     id="library-notes-selected-count",
                     classes="library-toolbar-count",
                     markup=False,
+                )
+                yield Button(
+                    "Done",
+                    id="library-notes-select-toggle",
+                    classes="library-canvas-action",
+                    compact=True,
                 )
                 yield Button(
                     f"Select all {rendered_count} shown",
@@ -245,10 +222,71 @@ class LibraryNotesCanvas(Vertical):
                     else LIBRARY_EXPORT_SELECTED_TOOLTIP
                 )
                 yield export_selected
-        if list_state.status_copy:
             yield Static(
-                list_state.status_copy, id="library-notes-status", markup=False
+                f"{list_state.selected_count} selected",
+                id="library-notes-selection-status",
+                markup=False,
             )
+        else:
+            browse_actions = Horizontal(
+                id="library-notes-browse-actions", classes="ds-toolbar"
+            )
+            browse_actions.styles.height = "auto"
+            with browse_actions:
+                yield Button(
+                    "New",
+                    id="library-notes-new",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
+                )
+                yield Button(
+                    f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}",
+                    id="library-notes-sort",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
+                )
+                yield Button(
+                    "Select",
+                    id="library-notes-select-toggle",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=rendered_count == 0 or list_state.operation_running,
+                )
+            transfer_actions = Horizontal(
+                id="library-notes-transfer-actions", classes="ds-toolbar"
+            )
+            transfer_actions.styles.height = "auto"
+            with transfer_actions:
+                for label, button_id in (
+                    ("Sync", "library-notes-sync-open"),
+                    ("Import", "library-notes-import"),
+                    ("Export", "library-notes-export"),
+                ):
+                    yield Button(
+                        label,
+                        id=button_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
+            if list_state.sort_choices_visible:
+                sort_choices = Horizontal(
+                    id="library-notes-sort-choices", classes="ds-toolbar"
+                )
+                sort_choices.styles.height = "auto"
+                with sort_choices:
+                    for mode, label in _SORT_LABELS.items():
+                        button = Button(
+                            f"{'✓ ' if mode == self.sort_mode else ''}{label}",
+                            id=f"library-notes-sort-{mode}",
+                            classes="library-canvas-action library-notes-sort-choice",
+                            compact=True,
+                        )
+                        button.sort_mode = mode
+                        yield button
+        yield Static(list_state.status_copy, id="library-notes-status", markup=False)
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
@@ -356,6 +394,20 @@ class LibraryNotesCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+            discard_new = Button(
+                "Discard new note",
+                id="library-note-discard-new",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            discard_new.display = presentation_state.discard_new_note
+            discard_new.disabled = presentation_state.destructive_running
+            yield discard_new
+        yield Static(
+            presentation_state.transfer_status,
+            id="library-note-transfer-status",
+            markup=False,
+        )
 
         with Vertical(id="library-note-wide-utilities"):
             yield Static("Keywords", id="library-note-keywords-label", markup=False)
@@ -584,10 +636,14 @@ class LibraryNotesCanvas(Vertical):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != state.metadata_line:
                 widget.update(state.metadata_line)
-        transfer = self.query_one("#library-note-context-transfer-status", Static)
-        if self._static_text(transfer) != state.transfer_status:
-            transfer.update(state.transfer_status)
-        transfer.display = bool(state.transfer_status)
+        for selector in (
+            "#library-note-transfer-status",
+            "#library-note-context-transfer-status",
+        ):
+            transfer = self.query_one(selector, Static)
+            if self._static_text(transfer) != state.transfer_status:
+                transfer.update(state.transfer_status)
+            transfer.display = bool(state.transfer_status)
 
         self.set_class(state.compact, "library-notes-compact")
         self.set_class(state.validation, "library-note-validation")
@@ -639,6 +695,22 @@ class LibraryNotesCanvas(Vertical):
         ):
             self.query_one(selector, Button).disabled = state.destructive_running
         for selector in (
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+        ):
+            self.query_one(selector, Button).disabled = (
+                state.destructive_running or state.transfer_running
+            )
+        discard_new = self.query_one("#library-note-discard-new", Button)
+        discard_new.display = state.discard_new_note
+        discard_new.disabled = state.destructive_running
+        for selector in (
             "#library-note-conflict-overwrite",
             "#library-note-conflict-reload",
         ):
@@ -672,6 +744,13 @@ class LibraryNotesCanvas(Vertical):
         fields via ``_library_note_template_fields`` -- this widget only
         needs the key and a human label, never the raw title/content.
         """
+        yield Button(
+            "‹ Back to notes",
+            id="library-notes-create-back",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=self.create_running,
+        )
         yield Static(
             "New note",
             id="library-notes-create-header",
@@ -683,6 +762,7 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-create-blank",
             classes="library-notes-create-row",
             compact=True,
+            disabled=self.create_running,
         )
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
@@ -710,18 +790,21 @@ class LibraryNotesCanvas(Vertical):
                 compact=True,
             )
             button.template_key = row.template_key
+            button.disabled = self.create_running
             yield button
+        yield Static(
+            self.create_status,
+            id="library-notes-create-status",
+            markup=False,
+        )
 
     def _compose_sync(self) -> ComposeResult:
         """Render the notes sync panel: folder, direction, conflicts, activity.
 
-        Every control here is a plain, stacked, full-width Button/Input/
-        Static -- the render-safe shape already proven by list/editor/create
-        mode in this canvas. Notably absent: ``Select`` (the retired
-        standalone Notes screen's Direction/Conflict dropdowns) and ``Switch``
-        (its auto-sync toggle) -- neither renders reliably in this canvas,
-        so both become cycling/toggle Buttons instead, matching the
-        pattern the media type filter and notes sort control already use.
+        Direction and conflict policy use explicit compact choice groups so
+        every available value and the current selection remain visible.
+        Auto-sync stays a direct toggle button. All mutable controls are
+        disabled while a sync run is active.
         """
         sync_state = self.sync_state
         if sync_state is None:
@@ -731,6 +814,7 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-sync-back",
             classes="library-canvas-action",
             compact=True,
+            disabled=sync_state.running,
         )
         yield Static(
             "Notes sync",
@@ -754,30 +838,59 @@ class LibraryNotesCanvas(Vertical):
             value=sync_state.folder,
             placeholder="Folder to sync…",
             id="library-notes-sync-folder",
+            disabled=sync_state.running,
         )
         yield Button(
             "Browse…",
             id="library-notes-sync-browse",
             classes="library-canvas-action",
             compact=True,
+            disabled=sync_state.running,
         )
-        yield Button(
-            f"direction: {sync_direction_label(sync_state.direction)} ▸",
-            id="library-notes-sync-direction",
-            classes="library-canvas-action",
-            compact=True,
+        yield Static("Direction", id="library-notes-sync-direction-label", markup=False)
+        direction_choices = Horizontal(
+            id="library-notes-sync-direction-choices", classes="ds-toolbar"
         )
-        yield Button(
-            f"conflicts: {sync_conflict_label(sync_state.conflict)} ▸",
-            id="library-notes-sync-conflict",
-            classes="library-canvas-action",
-            compact=True,
+        direction_choices.styles.height = "auto"
+        with direction_choices:
+            for value in ("bidirectional", "disk_to_db", "db_to_disk"):
+                button = Button(
+                    f"{'✓ ' if value == sync_state.direction else ''}"
+                    f"{sync_direction_label(value)}",
+                    id=f"library-notes-sync-direction-{value}",
+                    classes=(
+                        "library-canvas-action library-notes-sync-direction-choice"
+                    ),
+                    compact=True,
+                    disabled=sync_state.running,
+                )
+                button.choice_value = value
+                yield button
+        yield Static("Conflicts", id="library-notes-sync-conflict-label", markup=False)
+        conflict_choices = Horizontal(
+            id="library-notes-sync-conflict-choices", classes="ds-toolbar"
         )
+        conflict_choices.styles.height = "auto"
+        with conflict_choices:
+            for value in ("newer_wins", "disk_wins", "db_wins"):
+                button = Button(
+                    f"{'✓ ' if value == sync_state.conflict else ''}"
+                    f"{sync_conflict_label(value)}",
+                    id=f"library-notes-sync-conflict-{value}",
+                    classes=(
+                        "library-canvas-action library-notes-sync-conflict-choice"
+                    ),
+                    compact=True,
+                    disabled=sync_state.running,
+                )
+                button.choice_value = value
+                yield button
         yield Button(
             auto_sync_label(sync_state.auto_sync),
             id="library-notes-sync-auto",
             classes="library-canvas-action",
             compact=True,
+            disabled=sync_state.running,
         )
         yield Button(
             "Syncing…" if sync_state.running else "Sync now",

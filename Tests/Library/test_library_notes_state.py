@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteSessionSnapshot,
     LibraryNotesFocusIdentity,
     LibraryNotesListRow,
+    LibraryNotesOperationState,
     NormalizedDatabaseNote,
     NoteValidationVeto,
     build_library_note_editor_state,
@@ -60,6 +61,9 @@ def test_list_state_empty_uses_quiet_copy():
     state = build_library_notes_list_state([], total_count=0, now=NOW)
     assert state.rows == ()
     assert state.empty_copy == "No notes yet. Create your first note."
+    assert state.empty_kind == "source-empty"
+    assert state.total_count == 0
+    assert state.result_count == 0
 
 
 def test_list_state_filtered_empty_does_not_claim_the_source_is_empty():
@@ -70,6 +74,9 @@ def test_list_state_filtered_empty_does_not_claim_the_source_is_empty():
     assert state.header_copy == "Notes (2)"
     assert state.status_copy == "filter: [draft] <plan> · 0 results"
     assert state.empty_copy == "No notes match “[draft] <plan>”. Clear the filter."
+    assert state.empty_kind == "filter-empty"
+    assert state.total_count == 2
+    assert state.result_count == 0
 
 
 def test_list_state_filter_note_reflects_active_filter():
@@ -77,10 +84,102 @@ def test_list_state_filter_note_reflects_active_filter():
     assert state.status_copy == "filter: retro · 1 result"
 
 
+def test_list_state_filter_status_is_one_row_cell_bounded_and_plain():
+    state = build_library_notes_list_state(
+        [],
+        filter_note="[draft]\n" + "界" * 80,
+        total_count=2,
+        now=NOW,
+    )
+
+    assert "\n" not in state.status_copy
+    assert cell_len(state.status_copy) <= 52
+    assert state.status_copy.endswith("…")
+
+
+def test_list_state_exposes_sort_chooser_and_active_operation_status():
+    state = build_library_notes_list_state(
+        [NOTE_A],
+        sort_choices_visible=True,
+        operation_status="Import note…",
+        now=NOW,
+    )
+
+    assert state.sort_choices_visible is True
+    assert state.operation_status == "Import note…"
+    assert state.status_copy == "Import note…"
+    assert state.empty_kind == "populated"
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    (
+        ("running", "Import…"),
+        ("complete", "Import complete."),
+        ("failed", "Import failed — choose another file."),
+    ),
+)
+def test_note_operation_state_formats_typed_status(phase, expected):
+    state = LibraryNotesOperationState(
+        kind="import",
+        token=7,
+        phase=phase,
+        region="navigator",
+        failure_next_action="choose another file",
+    )
+
+    assert state.status_line == expected
+    assert state.running is (phase == "running")
+
+
+def test_note_operation_state_formats_committed_recovery_status():
+    state = LibraryNotesOperationState(
+        kind="import",
+        token=8,
+        phase="complete",
+        region="navigator",
+        completion_next_action="select the new note from Notes to open",
+    )
+
+    assert (
+        state.status_line == "Import complete — select the new note from Notes to open."
+    )
+
+
 def test_list_state_tolerates_missing_fields():
     state = build_library_notes_list_state([{"id": "x"}], now=NOW)
     assert state.rows[0].title == "Untitled"
     assert state.rows[0].age_label == ""
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("title", 7),
+        ("body", {"not": "text"}),
+        ("keywords", ["valid", 7]),
+    ),
+)
+def test_database_note_validation_vetoes_non_text_field_shapes(field, value):
+    values = {
+        "title": "Valid title",
+        "body": "Valid body",
+        "keywords": "valid, keywords",
+    }
+    values[field] = value
+    draft = DatabaseNoteDraft(
+        note_id="",
+        title=values["title"],
+        body=values["body"],
+        keywords_text=values["keywords"],
+        revision=1,
+    )
+
+    outcome = validate_database_note_draft(draft)
+
+    assert isinstance(outcome, NoteValidationVeto)
+    assert outcome.field == field
+    assert "must be text" in outcome.message.lower()
 
 
 def test_sort_mode_cycles_and_wraps():

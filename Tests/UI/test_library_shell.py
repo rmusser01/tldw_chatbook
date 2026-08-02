@@ -7201,11 +7201,8 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_list_toolbar_is_one_horizontal_row():
-    """(task-184) sort/Sync/Import note/Export… share a single horizontal
-    ds-toolbar row -- the previous bare stacked Buttons rendered as an
-    overlapped vertical pile eating into the first list row (2026-07 UAT
-    capture notes-list-toolbar-stack-markup-eaten)."""
+async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
+    """Navigator actions stay grouped without overlapping the note list."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -7216,24 +7213,39 @@ async def test_library_shell_notes_list_toolbar_is_one_horizontal_row():
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
-        toolbar = screen.query_one("#library-notes-sort").parent
-        assert toolbar is not None and toolbar.has_class("ds-toolbar")
-        selectors = (
+        browse_toolbar = screen.query_one("#library-notes-browse-actions")
+        transfer_toolbar = screen.query_one("#library-notes-transfer-actions")
+        assert browse_toolbar.has_class("ds-toolbar")
+        assert transfer_toolbar.has_class("ds-toolbar")
+
+        browse_selectors = (
+            "#library-notes-new",
             "#library-notes-sort",
+            "#library-notes-select-toggle",
+        )
+        transfer_selectors = (
             "#library-notes-sync-open",
             "#library-notes-import",
             "#library-notes-export",
         )
-        for selector in selectors:
-            assert screen.query_one(selector).parent is toolbar
-        # All four occupy the same single row (real app CSS is loaded by
-        # this harness): no vertical stacking, no overlap with each other
-        # or the first list row below.
-        rows = {screen.query_one(selector).region.y for selector in selectors}
-        assert len(rows) == 1
-        toolbar_y = rows.pop()
+        for selector in browse_selectors:
+            assert screen.query_one(selector).parent is browse_toolbar
+        for selector in transfer_selectors:
+            assert screen.query_one(selector).parent is transfer_toolbar
+
+        browse_rows = {
+            screen.query_one(selector).region.y for selector in browse_selectors
+        }
+        transfer_rows = {
+            screen.query_one(selector).region.y for selector in transfer_selectors
+        }
+        assert len(browse_rows) == 1
+        assert len(transfer_rows) == 1
+        browse_y = browse_rows.pop()
+        transfer_y = transfer_rows.pop()
+        assert transfer_y > browse_y
         first_row_y = screen.query_one("#library-notes-row-0").region.y
-        assert first_row_y > toolbar_y
+        assert first_row_y > transfer_y
 
 
 @pytest.mark.asyncio
@@ -7279,7 +7291,7 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sort_button_cycles():
+async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -7290,8 +7302,116 @@ async def test_library_shell_notes_sort_button_cycles():
         await _wait_for_selector(screen, pilot, "#library-notes-sort")
         assert screen._library_notes_sort == "newest"
         screen.query_one("#library-notes-sort").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
+        assert {
+            button.id for button in screen.query("#library-notes-sort-choices Button")
+        } == {
+            "library-notes-sort-newest",
+            "library-notes-sort-oldest",
+            "library-notes-sort-title",
+        }
+        screen.query_one("#library-notes-sort-oldest").press()
         await pilot.pause()
         assert screen._library_notes_sort == "oldest"
+        assert not screen.query("#library-notes-sort-choices")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_navigator_has_named_action_groups_and_filter_label():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
+
+        assert (
+            str(screen.query_one("#library-notes-filter-label", Static).renderable)
+            == "Filter"
+        )
+        assert {
+            button.id for button in screen.query("#library-notes-browse-actions Button")
+        } == {
+            "library-notes-new",
+            "library-notes-sort",
+            "library-notes-select-toggle",
+        }
+        assert {
+            button.id
+            for button in screen.query("#library-notes-transfer-actions Button")
+        } == {
+            "library-notes-sync-open",
+            "library-notes-import",
+            "library-notes-export",
+        }
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_empty_source_keeps_new_action_visible():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        empty = await _wait_for_selector(screen, pilot, "#library-notes-empty")
+
+        assert str(empty.renderable) == "No notes yet. Create your first note."
+        assert screen.query_one("#library-notes-new", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        box = await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        box.value = "no such note"
+        box.focus()
+        await pilot.press("enter")
+        empty = await _wait_for_selector(screen, pilot, "#library-notes-empty")
+
+        assert str(empty.renderable) == (
+            "No notes match “no such note”. Clear the filter."
+        )
+        assert "No notes yet" not in _visible_text(screen)
+        screen.query_one("#library-notes-filter-clear", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        assert screen._library_notes_filter == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_multiselect_replaces_normal_action_groups():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-select-toggle")
+        screen.query_one("#library-notes-select-toggle").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
+
+        assert not screen.query("#library-notes-browse-actions")
+        assert not screen.query("#library-notes-transfer-actions")
+        assert len(list(screen.query("#library-notes-selection-actions"))) == 1
+        assert len(list(screen.query("#library-notes-selection-status"))) == 1
+        assert (
+            str(screen.query_one("#library-notes-selection-status", Static).renderable)
+            == "0 selected"
+        )
 
 
 @pytest.mark.asyncio
@@ -10341,6 +10461,21 @@ async def test_library_shell_note_export_pushes_file_save_dialog(
 
         dialog = host.screen_stack[-1]
         assert dialog._default_file == expected_file
+        assert screen._library_notes_operation is not None
+        assert screen._library_notes_operation.running is True
+        status_selector = (
+            "#library-note-context-transfer-status"
+            if "context" in action_selector
+            else "#library-note-transfer-status"
+        )
+        assert str(screen.query_one(status_selector, Static).renderable) == "Export…"
+        for selector in (
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+        ):
+            assert screen.query_one(selector, Button).disabled is True
 
         await host.pop_screen()
         await pilot.pause()
@@ -10383,6 +10518,10 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
         assert written.endswith("alpha budget line")
         app.notify.assert_called_once()
         assert "exported successfully" in app.notify.call_args.args[0]
+        assert (
+            str(screen.query_one("#library-note-transfer-status", Static).renderable)
+            == "Export complete."
+        )
 
 
 @pytest.mark.asyncio
@@ -10423,6 +10562,10 @@ async def test_library_shell_note_write_export_file_rejects_invalid_path(
         args, kwargs = app.notify.call_args
         assert "Rejected export path" in args[0]
         assert kwargs.get("severity") == "warning"
+        assert (
+            str(screen.query_one("#library-note-transfer-status", Static).renderable)
+            == "Export failed — choose another destination and try again."
+        )
 
 
 @pytest.mark.asyncio
@@ -10449,6 +10592,15 @@ async def test_library_shell_note_copy_calls_clipboard_seam(action_selector):
         screen.query_one(action_selector).press()
         await pilot.pause()
 
+        status_selector = (
+            "#library-note-context-transfer-status"
+            if "context" in action_selector
+            else "#library-note-transfer-status"
+        )
+        assert str(screen.query_one(status_selector, Static).renderable) == (
+            "Copy complete."
+        )
+
     app.copy_to_clipboard.assert_called_once()
     copied = app.copy_to_clipboard.call_args.args[0]
     assert copied.startswith("---\n")
@@ -10456,6 +10608,30 @@ async def test_library_shell_note_copy_calls_clipboard_seam(action_selector):
     assert "alpha budget line" in copied
     app.notify.assert_called_once()
     assert "copied to clipboard" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_copy_failure_stays_visible_with_recovery():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.copy_to_clipboard = Mock(side_effect=RuntimeError("clipboard unavailable"))
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-copy").press()
+        await pilot.pause()
+
+        assert (
+            str(screen.query_one("#library-note-transfer-status", Static).renderable)
+            == "Copy failed — check clipboard access and try again."
+        )
+        assert screen._library_notes_operation is not None
+        assert screen._library_notes_operation.running is False
 
 
 @pytest.mark.asyncio
@@ -10489,6 +10665,15 @@ async def test_library_shell_note_use_in_console_triggers_handoff(action_selecto
         await pilot.pause()
         await pilot.pause()
 
+        status_selector = (
+            "#library-note-context-transfer-status"
+            if "context" in action_selector
+            else "#library-note-transfer-status"
+        )
+        assert str(screen.query_one(status_selector, Static).renderable) == (
+            "Use in Console complete."
+        )
+
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
     assert payload.source == "notes"
@@ -10497,6 +10682,34 @@ async def test_library_shell_note_use_in_console_triggers_handoff(action_selecto
     assert payload.title == "Q3 retro"
     assert "alpha budget line" in payload.body
     assert payload.metadata["note_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_console_failure_stays_visible_with_recovery():
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes()[:1])
+    app.open_chat_with_handoff = Mock(side_effect=RuntimeError("Console unavailable"))
+    app.notify = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("note", "n-1", "Q3 retro"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+
+        assert (
+            str(screen.query_one("#library-note-transfer-status", Static).renderable)
+            == "Use in Console failed — check Console readiness and try again."
+        )
+        assert screen._library_notes_operation is not None
+        assert screen._library_notes_operation.running is False
 
 
 @pytest.mark.asyncio
@@ -10570,6 +10783,312 @@ async def test_library_shell_create_note_row_renders_blank_and_template_rows():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_create_back_returns_to_notes_navigator():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-new")
+        screen.query_one("#library-notes-new").press()
+        back = await _wait_for_selector(screen, pilot, "#library-notes-create-back")
+
+        back.press()
+        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+
+class _GatedCreateLibraryNotesScopeService(StaticLibraryNotesScopeService):
+    def __init__(self, notes):
+        super().__init__(notes)
+        self.create_attempts = 0
+        self.create_started = threading.Event()
+        self.create_release = threading.Event()
+
+    async def save_note(self, **kwargs):
+        if kwargs.get("note_id") is None:
+            self.create_attempts += 1
+            self.create_started.set()
+            await asyncio.to_thread(
+                self.create_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
+        return await super().save_note(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_is_single_flight_and_disables_all_choices():
+    app = _build_test_app()
+    service = _GatedCreateLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        screen.query_one("#library-notes-create-blank").press()
+        try:
+            await _wait_for_condition(
+                pilot,
+                service.create_started.is_set,
+                message="Create service never entered its gated call.",
+            )
+            assert screen._library_note_create_running is True
+            assert (
+                screen.query_one("#library-notes-create-blank", Button).disabled is True
+            )
+            assert all(
+                button.disabled
+                for button in screen.query(".library-notes-template-row")
+            )
+            screen.query_one("#library-notes-create-blank").press()
+            await pilot.pause()
+            assert service.create_attempts == 1
+        finally:
+            service.create_release.set()
+
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+
+class _FailingCreateLibraryNotesScopeService(StaticLibraryNotesScopeService):
+    async def save_note(self, **kwargs):
+        if kwargs.get("note_id") is None:
+            self.save_calls.append(dict(kwargs))
+            raise RuntimeError("database unavailable")
+        return await super().save_note(**kwargs)
+
+
+class _CreateThenFailFirstOpenLibraryNotesScopeService(StaticLibraryNotesScopeService):
+    """Persist a create, then make only its first detail load unavailable."""
+
+    def __init__(self, notes):
+        super().__init__(notes)
+        self.failed_created_load = False
+
+    async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
+        if (
+            self.save_calls
+            and str(note_id) == str(self.notes[-1].get("id"))
+            and not self.failed_created_load
+        ):
+            self.failed_created_load = True
+            self.detail_calls.append(
+                {"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs}
+            )
+            return None
+        return await super().get_note_detail(
+            scope=scope, note_id=note_id, user_id=user_id, **kwargs
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_failed_create_stays_create_with_actionable_status():
+    app = _build_test_app()
+    service = _FailingCreateLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+
+        await _wait_for_selector(screen, pilot, "#library-notes-create-status")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "failed"
+                in str(
+                    screen.query_one("#library-notes-create-status", Static).renderable
+                ).lower()
+            ),
+            message="Create failure never reached the visible status line.",
+        )
+        status = screen.query_one("#library-notes-create-status", Static)
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        assert "try again" in str(status.renderable).lower()
+        assert screen.query_one("#library-notes-create-blank", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_persisted_create_with_open_failure_recovers_from_navigator():
+    app = _build_test_app()
+    service = _CreateThenFailFirstOpenLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "Note created"
+                in str(screen.query_one("#library-notes-status", Static).renderable)
+            ),
+            message="Persisted create did not expose honest Navigator recovery.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._local_source_counts.get("notes") == 3,
+            message="Persisted create was not refreshed into Navigator.",
+        )
+
+        assert len(service.save_calls) == 1
+        created_id = str(service.notes[-1]["id"])
+        created_row = next(
+            row
+            for row in screen.query(".library-notes-row")
+            if str(getattr(row, "note_id", "")) == created_id
+        )
+        created_row.press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        assert screen._selected_note_id == created_id
+        assert len(service.save_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_transforming_template_is_vetoed_before_create_service(
+    monkeypatch,
+):
+    from tldw_chatbook.Event_Handlers import notes_events
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    monkeypatch.setitem(
+        notes_events.NOTE_TEMPLATES,
+        "invalid-transforming",
+        {
+            "name": "Invalid transforming payload",
+            "title": " padded title ",
+            "content": "raw body",
+            "keywords": "one, two",
+        },
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        invalid = next(
+            button
+            for button in screen.query(".library-notes-template-row")
+            if getattr(button, "template_key", "") == "invalid-transforming"
+        )
+        invalid.press()
+
+        await _wait_for_selector(screen, pilot, "#library-notes-create-status")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "whitespace"
+                in str(
+                    screen.query_one("#library-notes-create-status", Static).renderable
+                ).lower()
+            ),
+            message="Raw template validation veto never became visible.",
+        )
+        assert app.notes_scope_service.save_calls == []
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("template_key", "template"),
+    (
+        (
+            "missing-title",
+            {"description": "Missing title", "content": "body", "keywords": ""},
+        ),
+        (
+            "non-text-title",
+            {"title": 7, "content": "body", "keywords": ""},
+        ),
+        (
+            "missing-content",
+            {"title": "Title", "keywords": ""},
+        ),
+        (
+            "non-text-content",
+            {"title": "Title", "content": {"body": "value"}, "keywords": ""},
+        ),
+        (
+            "non-text-keywords",
+            {"title": "Title", "content": "body", "keywords": ["valid", 7]},
+        ),
+    ),
+)
+async def test_library_shell_malformed_template_shapes_never_reach_create_service(
+    monkeypatch, template_key, template
+):
+    from tldw_chatbook.Event_Handlers import notes_events
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    monkeypatch.setitem(notes_events.NOTE_TEMPLATES, template_key, template)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        malformed = next(
+            button
+            for button in screen.query(".library-notes-template-row")
+            if getattr(button, "template_key", "") == template_key
+        )
+
+        malformed.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(app.notes_scope_service.save_calls)
+                or any(
+                    "must be text" in str(status.renderable).lower()
+                    for status in screen.query("#library-notes-create-status")
+                )
+            ),
+            message="Malformed template produced neither a veto nor a service call.",
+        )
+
+        assert app.notes_scope_service.save_calls == []
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        status = screen.query_one("#library-notes-create-status", Static)
+        assert "must be text" in str(status.renderable).lower()
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_blank_note_lands_in_editor():
     """Pressing Blank note calls ``save_note`` with ``note_id=None`` and
     ``title="Untitled"`` (the row still commits immediately -- LIB-14's
@@ -10609,6 +11128,12 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         title_input = screen.query_one("#library-note-title", Input)
         assert title_input.value == ""
         assert title_input.placeholder == "Untitled"
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-note-title",
+            message="Successful Create never focused the title field.",
+        )
+        assert screen.query_one("#library-note-discard-new", Button).display is True
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -10972,6 +11497,60 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
 
 @pytest.mark.asyncio
+async def test_library_shell_discard_new_note_deletes_untouched_create():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
+        created_id = screen._selected_note_id
+
+        discard.press()
+        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
+
+        assert app.notes_scope_service.delete_calls[-1]["note_id"] == created_id
+        assert all(
+            str(note.get("id")) != created_id for note in app.notes_scope_service.notes
+        )
+        assert screen._library_note_session.snapshot is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("acknowledge", ["edit", "save"])
+async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save(
+    acknowledge,
+):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
+        assert discard.display is True
+
+        if acknowledge == "edit":
+            screen.query_one("#library-note-title", Input).value = "Kept note"
+        else:
+            screen.query_one("#library-note-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one("#library-note-discard-new", Button).display,
+            message="Discard new note remained visible after keep intent.",
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_from_template_uses_template_fields():
     """Pressing a template row creates a note using that template's title/
     content with ``{date}``/``{time}``/``{datetime}`` placeholders resolved
@@ -11085,6 +11664,10 @@ async def test_library_shell_import_note_lands_in_editor(tmp_path):
             n for n in service.notes if n["title"] == "Imported from disk"
         )
         assert screen._selected_note_id == created_note["id"]
+        assert (
+            str(screen.query_one("#library-note-transfer-status", Static).renderable)
+            == "Import complete."
+        )
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -11094,6 +11677,88 @@ async def test_library_shell_import_note_lands_in_editor(tmp_path):
             raise AssertionError(
                 "The notes snapshot/rail count never refreshed after import."
             )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_created_but_not_opened_has_persistent_recovery(
+    tmp_path,
+):
+    app = _build_test_app()
+    service = _CreateThenFailFirstOpenLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
+    host = LibraryHarness(app)
+    note_file = tmp_path / "committed.md"
+    note_file.write_text("imported body", encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        _fake_import_dialog_result(screen, note_file)
+
+        screen.query_one("#library-notes-import").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(
+                "Import complete" in str(status.renderable)
+                for status in screen.query("#library-notes-status")
+            ),
+            message="Committed import never reached persistent Navigator status.",
+        )
+
+        assert len(service.save_calls) == 1
+        assert screen._library_notes_view == "list"
+        assert (
+            str(screen.query_one("#library-notes-status", Static).renderable)
+            == "Import complete — select the new note below to open."
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_new_create_clears_stale_import_create_status(tmp_path):
+    app = _build_test_app()
+    service = _FailingCreateLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
+    host = LibraryHarness(app)
+    note_file = tmp_path / "failed.md"
+    note_file.write_text("imported body", encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        _fake_import_dialog_result(screen, note_file)
+        screen.query_one("#library-notes-import").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(
+                "Import failed" in str(status.renderable)
+                for status in screen.query("#library-notes-status")
+            ),
+            message="Import service failure never reached Navigator status.",
+        )
+        assert "Create failed" in screen._library_note_create_status
+
+        await _wait_for_selector(screen, pilot, "#library-notes-new")
+        screen.query_one("#library-notes-new").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-status")
+
+        assert (
+            str(screen.query_one("#library-notes-create-status", Static).renderable)
+            == ""
+        )
 
 
 @pytest.mark.asyncio
@@ -11128,6 +11793,14 @@ async def test_library_shell_import_note_oversize_file_rejected(tmp_path, monkey
         args, kwargs = app.notify.call_args
         assert "import" in args[0].lower()
         assert kwargs.get("severity") == "warning"
+        rendered_status = str(
+            screen.query_one("#library-notes-status", Static).renderable
+        )
+        assert rendered_status.startswith("Import failed — choose a valid UTF-8")
+        assert rendered_status.endswith("…")
+        assert screen._library_notes_operation.status_line == (
+            "Import failed — choose a valid UTF-8 note file and try again."
+        )
 
 
 @pytest.mark.asyncio
@@ -11236,6 +11909,196 @@ async def test_library_shell_import_note_cancelled_dialog_is_noop():
 
         assert not service.save_calls
         assert screen._library_notes_view != "editor"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_late_import_failure_after_navigation_releases_transfer(
+    tmp_path, monkeypatch
+):
+    """A hidden late completion cannot leave Navigator permanently gated."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    note_file = tmp_path / "unreadable.md"
+    note_file.write_text("body", encoding="utf-8")
+    read_started = threading.Event()
+    read_release = threading.Event()
+    real_read_text = Path.read_text
+
+    def _gated_failed_read(path, *args, **kwargs):
+        if path == note_file:
+            read_started.set()
+            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+            raise OSError("file disappeared")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _gated_failed_read)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        _fake_import_dialog_result(screen, note_file)
+
+        screen.query_one("#library-notes-import").press()
+        try:
+            await _wait_for_condition(
+                pilot,
+                read_started.is_set,
+                message="Import never entered its gated read.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                ),
+                message="Navigation did not leave Notes during import.",
+            )
+        finally:
+            read_release.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not (
+                    screen._library_notes_operation
+                    and screen._library_notes_operation.running
+                )
+            ),
+            message="Late import completion retained an invisible running claim.",
+        )
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        assert screen.query_one("#library-notes-import", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_late_valid_import_after_navigation_has_no_side_effect(
+    tmp_path, monkeypatch
+):
+    """Leaving the initiating region invalidates import before persistence."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    note_file = tmp_path / "slow.md"
+    note_file.write_text("valid imported body", encoding="utf-8")
+    read_started = threading.Event()
+    read_release = threading.Event()
+    real_read_text = Path.read_text
+
+    def _gated_read(path, *args, **kwargs):
+        if path == note_file:
+            read_started.set()
+            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _gated_read)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        _fake_import_dialog_result(screen, note_file)
+
+        screen.query_one("#library-notes-import").press()
+        try:
+            await _wait_for_condition(
+                pilot,
+                read_started.is_set,
+                message="Import never entered its gated read.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                ),
+                message="Navigation did not leave Notes during import.",
+            )
+        finally:
+            read_release.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not (
+                    screen._library_notes_operation
+                    and screen._library_notes_operation.running
+                )
+            ),
+            message="Late valid import did not terminalize its claim.",
+        )
+        assert app.notes_scope_service.save_calls == []
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_leave_and_return_does_not_restore_authority(
+    tmp_path, monkeypatch
+):
+    """Returning to Navigator cannot revive an import invalidated on exit."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    note_file = tmp_path / "aba.md"
+    note_file.write_text("valid imported body", encoding="utf-8")
+    read_started = threading.Event()
+    read_release = threading.Event()
+    real_read_text = Path.read_text
+
+    def _gated_read(path, *args, **kwargs):
+        if path == note_file:
+            read_started.set()
+            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _gated_read)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        _fake_import_dialog_result(screen, note_file)
+        screen.query_one("#library-notes-import").press()
+        try:
+            await _wait_for_condition(
+                pilot,
+                read_started.is_set,
+                message="Import never entered its gated read.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                ),
+                message="Navigation did not leave Notes during import.",
+            )
+            screen.query_one("#library-row-browse-notes").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-import")
+        finally:
+            read_release.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not (
+                    screen._library_notes_operation
+                    and screen._library_notes_operation.running
+                )
+            ),
+            message="Invalidated import retained a running claim.",
+        )
+        assert app.notes_scope_service.save_calls == []
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_notes_view == "list"
 
 
 @pytest.mark.asyncio
@@ -11369,7 +12232,7 @@ def _prepare_library_notes_sync_app(app, *, notes=None):
     # session-shared CLI config file (under the isolated test HOME) -- a
     # previous test in this same session may have persisted a non-default
     # value there. Reset to known starting values so every sync test's
-    # cycling assertions are deterministic regardless of run order.
+    # direct-choice assertions are deterministic regardless of run order.
     from tldw_chatbook.config import save_setting_to_cli_config
 
     save_setting_to_cli_config("notes", "sync_direction", "bidirectional")
@@ -11405,8 +12268,8 @@ async def test_library_shell_notes_sync_button_opens_sync_mode():
             "#library-notes-sync-folder-label",
             "#library-notes-sync-folder",
             "#library-notes-sync-browse",
-            "#library-notes-sync-direction",
-            "#library-notes-sync-conflict",
+            "#library-notes-sync-direction-choices",
+            "#library-notes-sync-conflict-choices",
             "#library-notes-sync-auto",
             "#library-notes-sync-run",
             "#library-notes-sync-status",
@@ -11430,7 +12293,7 @@ async def test_library_shell_notes_sync_button_opens_sync_mode():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sync_direction_cycles_and_persists():
+async def test_library_shell_notes_sync_direction_choices_are_direct_and_persist():
     app = _build_test_app()
     _prepare_library_notes_sync_app(app)
     host = LibraryHarness(app)
@@ -11441,21 +12304,22 @@ async def test_library_shell_notes_sync_direction_cycles_and_persists():
         await _open_library_notes_sync_panel(screen, pilot)
 
         assert screen._library_notes_sync_direction == "bidirectional"
-        button = screen.query_one("#library-notes-sync-direction", Button)
-        assert "Bidirectional" in str(button.label)
+        assert len(list(screen.query(".library-notes-sync-direction-choice"))) == 3
+        button = screen.query_one("#library-notes-sync-direction-bidirectional", Button)
+        assert str(button.label).startswith("✓ ")
 
-        button.press()
+        screen.query_one("#library-notes-sync-direction-disk_to_db").press()
         await pilot.pause()
         assert screen._library_notes_sync_direction == "disk_to_db"
         from tldw_chatbook.config import get_cli_setting
 
         assert get_cli_setting("notes", "sync_direction", None) == "disk_to_db"
-        button = screen.query_one("#library-notes-sync-direction", Button)
-        assert "Disk" in str(button.label)
+        button = screen.query_one("#library-notes-sync-direction-disk_to_db", Button)
+        assert str(button.label).startswith("✓ ")
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sync_conflict_cycles_and_persists():
+async def test_library_shell_notes_sync_conflict_choices_are_direct_and_persist():
     app = _build_test_app()
     _prepare_library_notes_sync_app(app)
     host = LibraryHarness(app)
@@ -11466,29 +12330,22 @@ async def test_library_shell_notes_sync_conflict_cycles_and_persists():
         await _open_library_notes_sync_panel(screen, pilot)
 
         assert screen._library_notes_sync_conflict == "newer_wins"
-        screen.query_one("#library-notes-sync-conflict").press()
+        assert len(list(screen.query(".library-notes-sync-conflict-choice"))) == 3
+        screen.query_one("#library-notes-sync-conflict-disk_wins").press()
         await pilot.pause()
         assert screen._library_notes_sync_conflict == "disk_wins"
         from tldw_chatbook.config import get_cli_setting
 
         assert get_cli_setting("notes", "sync_conflict_resolution", None) == "disk_wins"
 
-        # A1: the cycle is 3 modes long with "ask" removed entirely -- one
-        # more press reaches "Library wins" (B2's de-jargoned "db_wins"
-        # label), and a third press wraps back to "newer_wins" rather than
-        # ever landing on "ask". Each press recomposes the panel (see
-        # handle_library_notes_sync_conflict), so the Button must be
-        # re-queried after every press rather than reusing a stale
-        # reference to the pre-recompose instance.
-        screen.query_one("#library-notes-sync-conflict").press()
+        # Every supported policy is visible directly; the removed "ask"
+        # policy cannot render or be reached.
+        screen.query_one("#library-notes-sync-conflict-db_wins").press()
         await pilot.pause()
         assert screen._library_notes_sync_conflict == "db_wins"
-        button = screen.query_one("#library-notes-sync-conflict", Button)
+        button = screen.query_one("#library-notes-sync-conflict-db_wins", Button)
         assert "Library wins" in str(button.label)
-
-        screen.query_one("#library-notes-sync-conflict").press()
-        await pilot.pause()
-        assert screen._library_notes_sync_conflict == "newer_wins"
+        assert "ask" not in _visible_text(screen).lower()
 
 
 @pytest.mark.asyncio
@@ -11552,9 +12409,9 @@ async def test_library_shell_notes_sync_folder_typing_does_not_write_config(tmp_
 
         # Typed but not committed: config untouched...
         assert get_cli_setting("notes", "sync_directory", None) == "~/Documents/Notes"
-        # ...but the typed value survives a recompose (cycling any setting
+        # ...but the typed value survives a recompose (choosing any setting
         # rebuilds the canvas) instead of snapping back to the config value.
-        screen.query_one("#library-notes-sync-direction").press()
+        screen.query_one("#library-notes-sync-direction-disk_to_db").press()
         await pilot.pause()
         folder_input = screen.query_one("#library-notes-sync-folder", Input)
         assert folder_input.value == str(tmp_path)
@@ -11657,20 +12514,20 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         folder_input.focus()
         await pilot.pause()
 
-        # Cycle direction/conflict once each so the recorded call proves the
-        # *chosen* enums (not just the defaults) are threaded through. Each
+        # Choose direction/conflict explicitly so the recorded call proves the
+        # selected enums (not just the defaults) are threaded through. Each
         # press triggers a full canvas recompose (`refresh(recompose=True)`)
-        # that re-mounts these two toggle buttons -- poll for the
+        # that re-mounts these choice buttons -- poll for the
         # re-mounted button to actually show the newly-chosen enum's label
         # before the next press, instead of a fixed pause, so the second
         # press can't land mid-recompose and get lost/target a stale
         # instance.
         expected_direction_label = (
-            f"direction: {sync_direction_label(SyncDirection.DISK_TO_DB.value)} ▸"
+            f"✓ {sync_direction_label(SyncDirection.DISK_TO_DB.value)}"
         )
-        screen.query_one("#library-notes-sync-direction").press()
+        screen.query_one("#library-notes-sync-direction-disk_to_db").press()
         for _ in range(150):
-            direction_buttons = screen.query("#library-notes-sync-direction")
+            direction_buttons = screen.query("#library-notes-sync-direction-disk_to_db")
             if direction_buttons and str(direction_buttons.first().label) == (
                 expected_direction_label
             ):
@@ -11678,16 +12535,16 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
             await pilot.pause(0.02)
         else:
             raise AssertionError(
-                "Direction toggle never re-mounted with the cycled label "
+                "Direction choice never re-mounted with the selected label "
                 f"(wanted {expected_direction_label!r})."
             )
 
         expected_conflict_label = (
-            f"conflicts: {sync_conflict_label(ConflictResolution.DISK_WINS.value)} ▸"
+            f"✓ {sync_conflict_label(ConflictResolution.DISK_WINS.value)}"
         )
-        screen.query_one("#library-notes-sync-conflict").press()
+        screen.query_one("#library-notes-sync-conflict-disk_wins").press()
         for _ in range(150):
-            conflict_buttons = screen.query("#library-notes-sync-conflict")
+            conflict_buttons = screen.query("#library-notes-sync-conflict-disk_wins")
             if conflict_buttons and str(conflict_buttons.first().label) == (
                 expected_conflict_label
             ):
@@ -11695,7 +12552,7 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
             await pilot.pause(0.02)
         else:
             raise AssertionError(
-                "Conflict toggle never re-mounted with the cycled label "
+                "Conflict choice never re-mounted with the selected label "
                 f"(wanted {expected_conflict_label!r})."
             )
 
@@ -11708,8 +12565,8 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
             raise AssertionError("Sync-now never started.")
 
         # A3: the run handler flips the running flag then recomposes; the
-        # flag is set synchronously at the top of the worker coroutine, so
-        # poll until the start-of-run recompose has landed the disabled
+        # token/flag is claimed synchronously before worker dispatch, so poll
+        # until the start-of-run recompose has landed the disabled
         # "Syncing…" button (querying the instant the flag flips can race
         # the mid-recompose teardown -> NoMatches).
         for _ in range(150):
@@ -11783,6 +12640,85 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         run_button_after = screen.query_one("#library-notes-sync-run", Button)
         assert "Sync now" in str(run_button_after.label)
         assert not run_button_after.disabled
+
+
+@pytest.mark.asyncio
+async def test_library_shell_sync_running_claim_survives_rail_navigation(
+    monkeypatch, tmp_path
+):
+    """Navigation cannot clear a thread-backed sync's single-flight claim."""
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+
+    _RecordingNotesSyncService.instances.clear()
+    monkeypatch.setattr(
+        sync_service_module, "NotesSyncService", _RecordingNotesSyncService
+    )
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+        screen.query_one("#library-notes-sync-folder", Input).value = str(tmp_path)
+        await pilot.pause()
+        screen.query_one("#library-notes-sync-run").press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                _RecordingNotesSyncService.instances
+                and _RecordingNotesSyncService.instances[0].calls
+            ),
+            message="Sync never reached its gated service.",
+        )
+        service = _RecordingNotesSyncService.instances[0]
+        try:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    bool(screen.query("#library-notes-sync-back"))
+                    and screen.query("#library-notes-sync-back").first().disabled
+                ),
+                message="Sync controls never entered their disabled running state.",
+            )
+            for selector in (
+                "#library-notes-sync-back",
+                "#library-notes-sync-folder",
+                "#library-notes-sync-browse",
+                "#library-notes-sync-auto",
+                "#library-notes-sync-run",
+            ):
+                assert screen.query_one(selector).disabled is True
+
+            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                ),
+                message="Rail navigation did not leave Sync.",
+            )
+            assert screen._library_notes_sync_running is True
+
+            screen.query_one("#library-row-browse-notes").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+            screen.query_one("#library-notes-sync-open").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-sync-run")
+
+            assert screen._library_notes_sync_running is True
+            assert screen.query_one("#library-notes-sync-run", Button).disabled is True
+            assert len(_RecordingNotesSyncService.instances) == 1
+        finally:
+            service.release_event.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_sync_running,
+            message="Released sync did not relinquish its running claim.",
+        )
 
 
 @pytest.mark.asyncio
@@ -11871,8 +12807,8 @@ async def test_library_shell_notes_sync_stale_ask_conflict_coerces_to_newer_wins
         await _open_library_notes_sync_panel(screen, pilot)
 
         assert screen._library_notes_sync_conflict == "newer_wins"
-        button = screen.query_one("#library-notes-sync-conflict", Button)
-        assert "Newer wins" in str(button.label)
+        button = screen.query_one("#library-notes-sync-conflict-newer_wins", Button)
+        assert str(button.label).startswith("✓ ")
 
 
 @pytest.mark.asyncio
@@ -11892,8 +12828,8 @@ async def test_library_shell_notes_sync_stale_direction_coerces_to_bidirectional
         await _open_library_notes_sync_panel(screen, pilot)
 
         assert screen._library_notes_sync_direction == "bidirectional"
-        button = screen.query_one("#library-notes-sync-direction", Button)
-        assert "Bidirectional" in str(button.label)
+        button = screen.query_one("#library-notes-sync-direction-bidirectional", Button)
+        assert str(button.label).startswith("✓ ")
 
 
 @pytest.mark.asyncio
@@ -14430,6 +15366,33 @@ async def test_library_shell_notes_export_action_opens_notes_scope():
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
         assert screen._library_export_scope == ExportScope(kind="notes")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_selected_export_opens_exact_selection_scope():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.media_db = MediaDatabase(":memory:", client_id="notes-selected-export-media")
+    app.chachanotes_db = CharactersRAGDB(
+        ":memory:", client_id="notes-selected-export-ccn"
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-select-toggle")
+        screen.query_one("#library-notes-select-toggle").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
+        screen.query_one("#library-notes-row-0").press()
+        await pilot.pause()
+
+        screen.query_one("#library-notes-export-selected").press()
+        await _wait_for_selector(screen, pilot, "#library-export-status-line")
+
+        assert screen._library_export_scope == ExportScope(kind="notes", ids=("n-1",))
+        assert screen.query_one("#library-export-status-line", Static)
 
 
 @pytest.mark.asyncio

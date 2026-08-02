@@ -172,6 +172,12 @@ def validate_database_note_draft(
         An exact persistence payload, or a typed actionable validation veto.
     """
     title = draft.title
+    if not isinstance(title, str):
+        return _validation_veto(
+            draft,
+            "title",
+            "Title must be text — fix the template or input to save.",
+        )
     if len(title) > DATABASE_NOTE_TITLE_MAX_CHARS:
         return _validation_veto(
             draft,
@@ -200,6 +206,12 @@ def validate_database_note_draft(
         )
 
     body = draft.body
+    if not isinstance(body, str):
+        return _validation_veto(
+            draft,
+            "body",
+            "Body must be text — fix the template or input to save.",
+        )
     if len(body) > DATABASE_NOTE_BODY_MAX_CHARS:
         return _validation_veto(
             draft,
@@ -215,7 +227,14 @@ def validate_database_note_draft(
 
     keywords: list[str] = []
     seen: set[str] = set()
-    for raw_token in draft.keywords_text.split(","):
+    keywords_text = draft.keywords_text
+    if not isinstance(keywords_text, str):
+        return _validation_veto(
+            draft,
+            "keywords",
+            "Keywords must be text — fix the template or input to save.",
+        )
+    for raw_token in keywords_text.split(","):
         token = raw_token.strip()
         if not token:
             continue
@@ -311,6 +330,68 @@ class LibraryNotesListRow:
     checked: bool = False
 
 
+_NOTE_OPERATION_LABELS = {
+    "import": "Import",
+    "export": "Export",
+    "copy": "Copy",
+    "console": "Use in Console",
+}
+
+
+@dataclass(frozen=True)
+class LibraryNotesOperationState:
+    """One token-gated transfer status owned by its initiating region.
+
+    Attributes:
+        kind: External action whose status is being reported.
+        token: Monotonic operation identity used to reject stale completion.
+        phase: Current operation lifecycle phase.
+        region: Notes surface that owns and displays this status.
+        completion_next_action: Optional recovery step after committed success.
+        failure_next_action: Recovery instruction rendered after failure.
+    """
+
+    kind: Literal["import", "export", "copy", "console"]
+    token: int
+    phase: Literal["running", "complete", "failed"]
+    region: Literal["navigator", "editor", "context"]
+    completion_next_action: str = ""
+    failure_next_action: str = "try again"
+
+    @property
+    def running(self) -> bool:
+        """Return whether the external side effect is still in flight."""
+        return self.phase == "running"
+
+    @property
+    def status_line(self) -> str:
+        """Render the compact active-region status contract."""
+        action = _NOTE_OPERATION_LABELS[self.kind]
+        if self.phase == "running":
+            return f"{action}…"
+        if self.phase == "complete":
+            if self.completion_next_action:
+                next_action = self.completion_next_action.rstrip(". ")
+                return f"{action} complete — {next_action}."
+            return f"{action} complete."
+        next_action = self.failure_next_action.rstrip(". ")
+        return f"{action} failed — {next_action}."
+
+
+@dataclass(frozen=True)
+class LibraryNoteCreateOutcome:
+    """Typed boundary between persistence and opening the created note.
+
+    Attributes:
+        kind: Whether persistence failed, committed without an editor, or
+            committed and opened successfully.
+        note_id: Persisted identity when ``kind`` is not ``"failed"``.
+    """
+
+    kind: Literal["failed", "created_not_opened", "opened"]
+    note_id: str = ""
+
+
 @dataclass(frozen=True)
 class LibraryNotesListState:
     """Display state for the Library notes canvas's list view.
@@ -324,6 +405,13 @@ class LibraryNotesListState:
             ``""`` when there are rows to render.
         select_mode: Whether multi-select mode is active.
         selected_count: Number of rendered rows currently checked.
+        total_count: Total notes in the unfiltered source.
+        result_count: Number of rows rendered after filtering.
+        empty_kind: Typed distinction between populated, source-empty, and
+            filter-empty states.
+        sort_choices_visible: Whether direct sort choices are expanded.
+        operation_status: Active Navigator transfer status, if any.
+        operation_running: Whether Navigator actions must be gated.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -332,6 +420,12 @@ class LibraryNotesListState:
     empty_copy: str
     select_mode: bool = False
     selected_count: int = 0
+    total_count: int = 0
+    result_count: int = 0
+    empty_kind: Literal["populated", "source-empty", "filter-empty"] = "populated"
+    sort_choices_visible: bool = False
+    operation_status: str = ""
+    operation_running: bool = False
 
 
 @dataclass(frozen=True)
@@ -394,6 +488,9 @@ def build_library_notes_list_state(
     now: datetime | None = None,
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
+    sort_choices_visible: bool = False,
+    operation_status: str = "",
+    operation_running: bool = False,
 ) -> LibraryNotesListState:
     """Build the Library notes canvas's list-view display state.
 
@@ -425,15 +522,23 @@ def build_library_notes_list_state(
     status_copy = ""
     if filter_note:
         noun = "result" if len(rows) == 1 else "results"
-        status_copy = f"filter: {filter_note} · {len(rows)} {noun}"
+        status_copy = ellipsize_note_title_cells(
+            f"filter: {filter_note} · {len(rows)} {noun}", 52
+        )
+    if operation_status:
+        status_copy = ellipsize_note_title_cells(operation_status, 52)
     selected_count = sum(1 for r in rows if r.checked)
     source_total = len(rows) if total_count is None else max(total_count, 0)
     empty_copy = ""
+    empty_kind: Literal["populated", "source-empty", "filter-empty"] = "populated"
     if not rows:
         if source_total == 0:
             empty_copy = _EMPTY_NOTES_COPY
+            empty_kind = "source-empty"
         elif filter_note:
-            empty_copy = f"No notes match “{filter_note}”. Clear the filter."
+            filter_copy = ellipsize_note_title_cells(filter_note, 32)
+            empty_copy = f"No notes match “{filter_copy}”. Clear the filter."
+            empty_kind = "filter-empty"
     return LibraryNotesListState(
         rows=rows,
         header_copy=f"Notes ({source_total})",
@@ -441,6 +546,12 @@ def build_library_notes_list_state(
         empty_copy=empty_copy,
         select_mode=select_mode,
         selected_count=selected_count,
+        total_count=source_total,
+        result_count=len(rows),
+        empty_kind=empty_kind,
+        sort_choices_visible=sort_choices_visible,
+        operation_status=operation_status,
+        operation_running=operation_running,
     )
 
 
@@ -780,8 +891,8 @@ def build_library_note_template_rows(
     Excludes the ``blank`` template (it duplicates the dedicated Blank
     note action). Rows are sorted by key for a stable order. Malformed
     (non-mapping) template values degrade to a key-derived label with no
-    secondary line rather than being dropped -- the screen-side field
-    resolver already degrades their creation to a blank note.
+    secondary line rather than being dropped. Activating such a row lets the
+    screen's lossless validation boundary surface a typed, visible veto.
 
     Args:
         templates: The ``NOTE_TEMPLATES`` mapping (or None).
