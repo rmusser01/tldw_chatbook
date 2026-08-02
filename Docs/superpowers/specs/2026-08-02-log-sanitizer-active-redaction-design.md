@@ -1,6 +1,6 @@
 # Active Credential Redaction and Display Validation (TASK-856)
 
-**Status:** Independently reviewed; awaiting user approval
+**Status:** Revised after user-requested audit; pending independent re-review
 
 **Task:** TASK-856
 
@@ -126,49 +126,66 @@ recursive traversal. Otherwise nested dictionaries/lists follow the existing
 
 ### String redaction
 
-String redaction uses an ordered set of precompiled patterns without nested
-ambiguous quantifiers. Each pattern replaces a complete value; partial
-credential fragments must not be left behind.
+String redaction combines a deterministic assignment scanner with a small
+ordered set of precompiled standalone patterns. The scanner classifies a label
+before deciding how much value text to consume. This ordering is load-bearing:
+a regex that first consumes a non-sensitive assignment such as
+`max_tokens=42 api_key=PRIVATE_SENTINEL` could skip the later sensitive label,
+while a rule that stops every unquoted value at whitespace could expose the
+remainder of a multi-word password.
+
+The scanner records non-overlapping replacement spans and constructs the output
+once. It does not repeatedly slice and concatenate the whole input. Standalone
+patterns contain no nested ambiguous quantifiers. Label, HTTP scheme, URL
+scheme, and Bearer matching is case-insensitive. Standalone credential-family
+prefixes are case-sensitive (`sk-`, `sk-proj-`, `sk-ant-api03-`, and `AIza`)
+to avoid expanding their false-positive surface.
 
 The normative matching contract is:
 
-1. A candidate scalar assignment has an unquoted label matching
+1. A precompiled candidate-prefix pattern finds an unquoted label matching
    `[A-Za-z0-9_.-]+` or that same label surrounded by one matching pair of
    single or double quotes. Optional ASCII horizontal whitespace may surround
    a `:` or `=` separator. The label starts at the beginning of the string or
    after a character outside `[A-Za-z0-9_.-]`, so matching cannot begin halfway
    through a larger label. The label is unquoted and passed to the same private
-   log-field classifier used by `sanitize_dict()`. Non-sensitive labels leave
-   the complete match unchanged.
-2. A quoted scalar value starts with `'` or `"` and consumes through the same
-   unescaped quote. Backslash plus the following character is part of the value
-   and cannot close it. The quotes are preserved and only their contents are
-   replaced. If a sensitive label starts a quoted value without a closing
-   quote, sanitization fails closed through the first CR, LF, mapping delimiter
-   (`,`/`}`/`]`), query delimiter (`&`/`#`), or end of string.
-3. An ordinary unquoted scalar value consumes at least one character and stops
-   before ASCII whitespace, a quote, `,`, `;`, `}`, `]`, `&`, `#`, CR, LF, or
-   end of string. These terminators are preserved. This covers environment
-   assignments and URL query parameters without consuming the next field.
-4. For the exact normalized protocol labels `authorization`,
-   `proxy_authorization`, `cookie`, and `set_cookie`, an unquoted value may
-   contain horizontal whitespace and semicolons. It stops before `,`, `}`, `]`,
-   CR, LF, or end of string. This consumes a complete `Bearer value`,
-   `Basic value`, or cookie header rather than redacting only its first word.
-   Quoted mapping values still follow rule 2 and therefore do not consume an
-   adjacent mapping entry.
-5. Assignment matching is for scalar text only. Serialized nested containers
+   log-field classifier used by `sanitize_dict()`.
+2. A non-sensitive candidate consumes no value text. Scanning resumes at the
+   end of its separator, so a later sensitive assignment—including one nested
+   inside a quoted descriptive value—remains discoverable.
+3. For a sensitive candidate, a quoted scalar value starts with `'` or `"` and
+   consumes through the same unescaped quote. Backslash plus the following
+   character is part of the value and cannot close it. The quotes are preserved
+   and only their contents are replaced. If a sensitive label starts a quoted
+   value without a closing quote, sanitization fails closed through the first
+   CR, LF, or end of string.
+4. For a sensitive candidate, an unquoted scalar value consumes from the first
+   non-horizontal-whitespace character through the first CR, LF, or end of
+   string. Spaces, quotes, commas, semicolons, mapping punctuation, query
+   separators, and fragments inside that span are redacted too. This
+   deliberately prefers over-redacting the remainder of one diagnostic line to
+   leaking an unquoted multi-word or punctuation-bearing credential. Callers
+   that need adjacent fields preserved must pass structured data or quote the
+   scalar value.
+5. If a sensitive candidate has no value before CR, LF, or end of string, it is
+   left unchanged; an empty assignment contains no credential bytes to expose.
+6. Assignment matching is for scalar text only. Serialized nested containers
    are not parsed with regex; callers holding structured data use
    `sanitize_dict()`/`sanitize_list()` so a sensitive container value is
    replaced as a unit.
-6. Independent Basic and Bearer scheme matches consume the scheme plus its
-   following non-whitespace credential when those values appear without a
-   label. The scheme may be retained, but the complete credential is replaced.
-7. HTTP(S) URL userinfo matches from immediately after `://` through the last
+7. An independent Bearer match begins at the start of the string or after a
+   character outside `[A-Za-z0-9_-]`, requires one or more whitespace
+   characters after `Bearer`, and consumes the following non-whitespace
+   credential. The scheme is retained and the complete credential is replaced.
+   Matching cannot begin inside `NotBearer` or `not-bearer`. `Basic` is
+   recognized only as part of a sensitive authorization assignment/header;
+   treating the common English adjective as an independent scheme would
+   corrupt ordinary log prose.
+8. HTTP(S) URL userinfo matches from immediately after `://` through the last
    `@` before the next `/`, `?`, `#`, ASCII whitespace, CR, or LF. The userinfo
    is replaced as a unit; scheme and authority remain only when the caller is
    otherwise allowed to render the URL.
-8. Standalone recognizable tokens use these exact families, evaluated from
+9. Standalone recognizable tokens use these exact families, evaluated from
    most specific to least specific:
 
    ```text
@@ -184,13 +201,15 @@ The normative matching contract is:
    `sk-` rule is considered. This prevents partial `sk-proj`/`sk-ant` matches.
    No rule recognizes `claude-*`.
 
-For assignment rules, surrounding label syntax, separators, quotes, and the
-terminating delimiter are preserved; only the scalar value becomes
-`***REDACTED***`. Tests instantiate every sensitive provider label derived from
+For quoted assignment values, surrounding label syntax, separators, and quotes
+are preserved; only the scalar contents become `***REDACTED***`. For unquoted
+values, the label and separator are preserved and the remainder of the line is
+replaced. Tests instantiate every sensitive provider label derived from
 `CONFIG_TOML_CONTENT` and `DEFAULT_APP_TTS_CONFIG` in both a structured mapping
-and representative quoted/unquoted assignment text. Therefore the structured
-classifier and independent string parser cannot drift while still satisfying
-AC #3.
+and representative quoted/unquoted assignment text. They also place a
+non-sensitive assignment before a sensitive one on the same line. Therefore
+the structured classifier and independent string scanner cannot drift or skip
+a later secret while still satisfying AC #3.
 
 Ambiguous provider keys are guaranteed to be redacted when accompanied by a
 sensitive field name, environment-variable assignment, header, or structured
@@ -241,7 +260,7 @@ Credential-bearing renderable text follows:
 
 ```text
 caller-approved string/structure
-  -> structured log-field classification or ordered string rules
+  -> structured log-field classification or assignment scanner/standalone rules
   -> complete values replaced with ***REDACTED***
   -> current UI or caller-owned logger callback
 ```
@@ -269,8 +288,9 @@ snapshot prune result
   supported input types.
 - Sensitive structured fields fail closed by replacing the complete value,
   regardless of its type.
-- Regexes avoid nested ambiguous quantifiers and are exercised with long input
-  to guard against pathological backtracking.
+- The assignment scanner advances monotonically, builds output once, and is
+  exercised with long input; standalone regexes avoid nested ambiguous
+  quantifiers.
 - Redaction markers contain no original prefix or suffix from the secret.
 - Formatting errors never fall back to interpolating raw arguments.
 - Consumer display validation retains current invalid-result behavior rather
@@ -291,6 +311,10 @@ Focused tests will prove:
 - contextual redaction for opaque fake provider values;
 - authorization, proxy-authorization, cookie, URL-userinfo, JSON-like,
   environment-style, and URL-query cases;
+- unquoted multi-word/punctuation-bearing credentials, a non-sensitive
+  assignment before a sensitive assignment, standalone `Bearer` boundaries,
+  including hyphenated larger identifiers, and ordinary standalone `Basic`
+  prose;
 - no leakage of fixed sentinel values or credential fragments;
 - preservation of `claude-*`, `max_tokens`, `api_key_env_var`, and ordinary
   identifiers;
@@ -334,10 +358,19 @@ builder.
 
 Closeout runs the focused sanitizer, sensitive-key, LLM destination,
 subscription-pruning, and installed-distribution tests; scoped Ruff and format
-checks; the persistent-diagnostic inventory gate if the diagnostic call shape
-changes its reviewed digest; `git diff --check`; and a broader relevant suite
-selected from the final diff. Any unrelated full-suite baseline failures are
-reported separately and never represented as TASK-856 passes.
+checks; `git diff --check`; and a broader relevant suite selected from the
+final diff. Any unrelated full-suite baseline failures are reported separately
+and never represented as TASK-856 passes.
+
+The subscription diagnostic change necessarily changes the reviewed
+`monitoring_engine.py` digest in
+`Docs/security/production-diagnostic-inventory.json`. Before implementation,
+the inventory checker and its architecture test must establish the current
+baseline. After the call changes, regeneration is mandatory and the diff must
+change only `monitoring_engine.py`'s diagnostic digest: its call count, owner,
+reason, and every other inventory entry remain fixed. If the pre-change
+baseline is already stale, this task must not absorb unrelated drift under a
+blanket `--write`; that drift is reported and handled separately.
 
 ## Architecture decision record
 
