@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .prompt_artifact_codec import decode_prompt_artifact
+from .server_prompt_adapter import normalize_artifact_type
+
 
 def _to_plain_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
@@ -36,6 +39,13 @@ def _normalize_keywords(value: Any) -> list[str]:
     return normalized
 
 
+def _lane_flag(data: Mapping[str, Any], flag: str, text_field: str) -> bool:
+    advertised = data.get(flag)
+    if isinstance(advertised, bool):
+        return advertised
+    return bool(str(data.get(text_field) or "").strip())
+
+
 def normalize_prompt_record(record: Any, *, backend: str) -> dict[str, Any]:
     """Return a source-stable prompt record for UI and sync-facing callers."""
     data = _to_plain_dict(record)
@@ -65,7 +75,24 @@ def normalize_prompt_record(record: Any, *, backend: str) -> dict[str, Any]:
         "last_modified": data.get("last_modified"),
         "usage_count": int(data.get("usage_count", 0) or 0),
         "last_used_at": data.get("last_used_at"),
+        "artifact_type": normalize_artifact_type(data.get("artifact_type")),
+        "has_system_prompt": _lane_flag(
+            data, "has_system_prompt", "system_prompt"
+        ),
+        "has_user_prompt": _lane_flag(data, "has_user_prompt", "user_prompt"),
     }
+    if data.get("prompt_definition") is not None:
+        decoded = decode_prompt_artifact(data)
+        normalized["artifact_type"] = decoded.artifact_type
+        normalized["definition_state"] = decoded.state
+        normalized["prompt_definition"] = (
+            decoded.raw_definition
+            if decoded.raw_definition is not None
+            else data.get("prompt_definition")
+        )
+        normalized["compiled_system_prompt"] = decoded.compiled_system
+        normalized["compiled_user_prompt"] = decoded.compiled_user
+        normalized["compatibility_stale"] = decoded.compatibility_stale
     return normalized
 
 
@@ -98,7 +125,7 @@ def normalize_prompt_list(
 
 def normalize_prompt_version_record(record: Any, *, backend: str) -> dict[str, Any]:
     data = _to_plain_dict(record)
-    return {
+    normalized = {
         "backend": str(backend),
         "version": data.get("version"),
         "created_at": data.get("created_at"),
@@ -112,7 +139,21 @@ def normalize_prompt_version_record(record: Any, *, backend: str) -> dict[str, A
         "prompt_format": data.get("prompt_format") or "legacy",
         "prompt_schema_version": data.get("prompt_schema_version"),
         "prompt_definition": data.get("prompt_definition"),
+        "artifact_type": normalize_artifact_type(data.get("artifact_type")),
+        "has_system_prompt": _lane_flag(
+            data, "has_system_prompt", "system_prompt"
+        ),
+        "has_user_prompt": _lane_flag(data, "has_user_prompt", "user_prompt"),
     }
+    if data.get("prompt_definition") is not None:
+        decoded = decode_prompt_artifact(data)
+        normalized["definition_state"] = decoded.state
+        normalized["prompt_definition"] = (
+            decoded.raw_definition
+            if decoded.raw_definition is not None
+            else data.get("prompt_definition")
+        )
+    return normalized
 
 
 def normalize_prompt_version_list(
@@ -122,6 +163,16 @@ def normalize_prompt_version_list(
         normalize_prompt_version_record(item, backend=backend)
         for item in list(payload or [])
     ]
+
+
+def normalize_prompt_search(payload: Any, *, backend: str) -> list[dict[str, Any]]:
+    """Normalize search results without fetching per-row detail records."""
+    if isinstance(payload, (list, tuple)):
+        items = payload
+    else:
+        data = _to_plain_dict(payload)
+        items = data.get("items", [])
+    return [normalize_prompt_record(item, backend=backend) for item in items]
 
 
 def normalize_prompt_collection_record(record: Any, *, backend: str) -> dict[str, Any]:

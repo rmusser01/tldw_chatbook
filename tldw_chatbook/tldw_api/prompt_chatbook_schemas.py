@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 
 PromptFormat = Literal["legacy", "structured"]
+PromptArtifactType = Literal["prompt", "recipe"]
 ChatbookConflictResolution = Literal["skip", "rename"]
 
 
@@ -20,6 +21,7 @@ class PromptCreateRequest(BaseModel):
     system_prompt: Optional[str] = None
     user_prompt: Optional[str] = None
     keywords: Optional[List[str]] = None
+    artifact_type: PromptArtifactType = "prompt"
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
@@ -33,6 +35,7 @@ class PromptPreviewRequest(BaseModel):
     details: Optional[str] = None
     system_prompt: Optional[str] = None
     user_prompt: Optional[str] = None
+    artifact_type: PromptArtifactType = "prompt"
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
@@ -46,6 +49,7 @@ class PromptResponse(BaseModel):
     name: str
     author: Optional[str] = None
     details: Optional[str] = None
+    artifact_type: PromptArtifactType = "prompt"
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
@@ -57,6 +61,8 @@ class PromptResponse(BaseModel):
     last_used_at: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
     deleted: bool = False
+    has_system_prompt: Optional[bool] = None
+    has_user_prompt: Optional[bool] = None
 
 
 class PromptBriefResponse(BaseModel):
@@ -66,6 +72,10 @@ class PromptBriefResponse(BaseModel):
     uuid: Optional[str] = None
     name: str
     author: Optional[str] = None
+    artifact_type: PromptArtifactType = "prompt"
+    has_system_prompt: Optional[bool] = None
+    has_user_prompt: Optional[bool] = None
+    version: Optional[int] = None
     last_modified: Optional[str] = None
     usage_count: int = 0
     last_used_at: Optional[str] = None
@@ -91,10 +101,13 @@ class PromptVersionResponse(BaseModel):
     details: Optional[str] = None
     system_prompt: Optional[str] = None
     user_prompt: Optional[str] = None
+    artifact_type: PromptArtifactType = "prompt"
     prompt_uuid: Optional[str] = None
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
+    has_system_prompt: Optional[bool] = None
+    has_user_prompt: Optional[bool] = None
 
 
 class PromptCollectionCreateRequest(BaseModel):

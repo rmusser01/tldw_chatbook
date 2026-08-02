@@ -12,15 +12,25 @@ from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
 )
+from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
     from ..tldw_api import PromptCreateRequest, TLDWAPIClient
+from .prompt_artifact_codec import deserialize_definition
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
     normalize_prompt_list,
     normalize_prompt_record,
+    normalize_prompt_search,
     normalize_prompt_version_list,
+)
+from .prompt_source_capabilities import (
+    PromptCapabilityError,
+    PromptSourceCapabilities,
+    local_prompt_capabilities,
+    normalize_server_prompt_capabilities,
+    validate_console_artifact_payload,
 )
 from .server_prompt_adapter import normalize_artifact_type
 
@@ -160,6 +170,12 @@ class ServerPromptService:
         return await self._require_client().restore_prompt_version(
             prompt_identifier, version
         )
+
+    async def get_prompts_health(self) -> dict[str, Any]:
+        return await self._require_client().get_prompts_health()
+
+    async def search_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._require_client().search_prompts(**kwargs)
 
     async def create_prompt_collection(self, payload: dict[str, Any]) -> Any:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -587,6 +603,7 @@ class PromptScopeService:
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self._server_capabilities_cache: PromptSourceCapabilities | None = None
 
     def _normalize_mode(self, mode: PromptBackend | str | None) -> PromptBackend:
         if mode is None:
@@ -617,6 +634,28 @@ class PromptScopeService:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
 
+    async def get_capabilities(
+        self, *, mode: PromptBackend | str
+    ) -> PromptSourceCapabilities:
+        """Return truthful, immutable capabilities for the selected source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.LOCAL:
+            return local_prompt_capabilities()
+        if self._server_capabilities_cache is not None:
+            return self._server_capabilities_cache
+
+        try:
+            health = await self._maybe_await(
+                self.server_service.get_prompts_health()
+            )
+        except Exception:
+            # A transient health failure must not invent capabilities or poison retries.
+            return normalize_server_prompt_capabilities(None)
+        capabilities = normalize_server_prompt_capabilities(health)
+        self._server_capabilities_cache = capabilities
+        return capabilities
+
     @staticmethod
     def _source_record(record: Any) -> Mapping[str, Any]:
         if hasattr(record, "model_dump"):
@@ -631,17 +670,17 @@ class PromptScopeService:
         normalized["artifact_type"] = normalize_artifact_type(
             source.get("artifact_type")
         )
-        normalized["has_system_prompt"] = bool(
-            source.get(
-                "has_system_prompt",
-                bool(str(source.get("system_prompt") or "").strip()),
-            )
+        system_flag = source.get("has_system_prompt")
+        user_flag = source.get("has_user_prompt")
+        normalized["has_system_prompt"] = (
+            system_flag
+            if isinstance(system_flag, bool)
+            else bool(str(source.get("system_prompt") or "").strip())
         )
-        normalized["has_user_prompt"] = bool(
-            source.get(
-                "has_user_prompt",
-                bool(str(source.get("user_prompt") or "").strip()),
-            )
+        normalized["has_user_prompt"] = (
+            user_flag
+            if isinstance(user_flag, bool)
+            else bool(str(source.get("user_prompt") or "").strip())
         )
         return normalized
 
@@ -735,43 +774,41 @@ class PromptScopeService:
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Search prompts in the given backend, normalized like ``list_prompts``.
-
-        Mirrors ``NotesScopeService.search_notes``'s ``fts_match_query``
-        pass-through: forwarded to the local backend only when provided, so
-        existing local backends/test fakes without the parameter keep
-        working unchanged. Like ``count_prompts``, only the local backend is
-        supported today -- there is no server-side prompt search endpoint.
-
-        Args:
-            mode: Backend to search in; only the local backend is supported
-                today (see Raises). Defaults to ``"local"``.
-            query: Plain user query text.
-            limit: Maximum number of prompts to return.
-            include_deleted: Whether to include soft-deleted prompts.
-            fts_match_query: Optional pre-built FTS5 MATCH string (e.g.
-                Library keyword search's plural/singular-widened query)
-                overriding the MATCH clause built from ``query`` in the
-                local backend.
-
-        Returns:
-            Normalized prompt records (see ``normalize_prompt_record``);
-            each carries the local integer id under ``local_id`` (its
-            ``id`` is the composite ``"local:prompt:<id>"`` string -- use
-            ``local_id`` for any caller that needs the raw prompt id, e.g.
-            to open the prompt editor).
-
-        Raises:
-            ValueError: For the server backend, or when the resolved
-                backend is unavailable.
-        """
+        """Search one source, using paginated server listing for an empty query."""
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id(normalized_mode, "list"))
-        if normalized_mode != PromptBackend.LOCAL:
-            raise ValueError(
-                "Server prompt search is not supported; use list_prompts for a scoped page."
+        if normalized_mode == PromptBackend.SERVER and not query:
+            page = await self.list_prompts(
+                mode=normalized_mode,
+                page=1,
+                per_page=limit,
+                include_deleted=include_deleted,
             )
+            return page["items"]
+
+        try:
+            self._enforce_policy(self._action_id(normalized_mode, "list"))
+        except (PermissionError, PolicyDeniedError) as exc:
+            raise PromptCapabilityError(normalized_mode.value, "search") from exc
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.SERVER:
+            capabilities = await self.get_capabilities(mode=normalized_mode)
+            if not capabilities.search:
+                raise PromptCapabilityError(normalized_mode.value, "search")
+            try:
+                response = await self._maybe_await(
+                    service.search_prompts(
+                        search_query=query,
+                        page=1,
+                        results_per_page=limit,
+                        include_deleted=include_deleted,
+                    )
+                )
+            except (PermissionError, PolicyDeniedError) as exc:
+                raise PromptCapabilityError(normalized_mode.value, "search") from exc
+            return normalize_prompt_search(
+                response, backend=normalized_mode.value
+            )
+
         local_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
         )
@@ -836,6 +873,21 @@ class PromptScopeService:
             prompt_definition=prompt_definition,
             artifact_type=artifact_type,
         )
+        raw_definition = deserialize_definition(payload.get("prompt_definition"))
+        definition_kind = (
+            raw_definition.get("kind") if raw_definition is not None else None
+        )
+        is_console_v2_candidate = (
+            type(payload.get("prompt_schema_version")) is int
+            and payload.get("prompt_schema_version") == 2
+        ) or definition_kind in {
+            "block_prompt",
+            "block_recipe",
+            "single_text_recipe",
+        }
+        if payload.get("prompt_format") == "structured" and is_console_v2_candidate:
+            capabilities = await self.get_capabilities(mode=normalized_mode)
+            payload = validate_console_artifact_payload(payload, capabilities)
         if (
             action == "update"
             and normalized_mode == PromptBackend.LOCAL

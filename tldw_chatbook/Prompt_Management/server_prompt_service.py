@@ -99,11 +99,22 @@ class ServerPromptService:
         return f"prompts.{resource}.{action}.server"
 
     async def list_prompts(
-        self, *, include_deleted: bool = False, **_kwargs: Any
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        include_deleted: bool = False,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        **_kwargs: Any,
     ) -> Any:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_prompts(
-            include_deleted=include_deleted
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
     async def create_prompt(self, **kwargs: Any) -> dict[str, Any]:
