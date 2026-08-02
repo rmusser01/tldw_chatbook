@@ -33,7 +33,7 @@ class _PolicyInventory:
     """Immutable source-policy findings collected during one package scan."""
 
     metadata_owners: tuple[tuple[str, frozenset[Path]], ...]
-    scheme_violations: tuple[tuple[Path, int, frozenset[str]], ...]
+    scheme_violations: tuple[tuple[Path, int, tuple[str, ...]], ...]
     validator_allowed_schemes: frozenset[str] | None
     validator_duplicate_attributes: frozenset[str]
 
@@ -71,21 +71,40 @@ def _literal_collection_values(node: ast.AST) -> set[str] | None:
     return None
 
 
+def _assignment_names_and_value(
+    node: ast.stmt,
+) -> tuple[frozenset[str], ast.AST | None] | None:
+    """Return direct-name targets and value for one source assignment."""
+    if isinstance(node, ast.Assign):
+        return (
+            frozenset(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            ),
+            node.value,
+        )
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return frozenset({node.target.id}), node.value
+    return None
+
+
+def _sorted_scheme_names(schemes: set[str]) -> tuple[str, ...]:
+    """Return stable scheme names for failure diagnostics."""
+    return tuple(sorted(schemes))
+
+
 def _egress_metadata_endpoints(source_tree: ast.Module) -> frozenset[str]:
     """Return endpoint literals assigned to the egress metadata policy."""
     endpoints: set[str] = set()
     for node in source_tree.body:
-        if not isinstance(node, ast.Assign):
+        assignment = _assignment_names_and_value(node)
+        if assignment is None:
             continue
-        if not any(
-            isinstance(target, ast.Name)
-            and target.id in {"_METADATA_IPS", "METADATA_HOSTNAMES"}
-            for target in node.targets
-        ):
+        names, value = assignment
+        if not names & {"_METADATA_IPS", "METADATA_HOSTNAMES"} or value is None:
             continue
         endpoints.update(
             child.value
-            for child in ast.walk(node.value)
+            for child in ast.walk(value)
             if isinstance(child, ast.Constant) and isinstance(child.value, str)
         )
     return frozenset(endpoints)
@@ -104,20 +123,10 @@ def _subscription_validator_policy(
         if class_node.name != "SecurityValidator":
             continue
         for statement in class_node.body:
-            if isinstance(statement, ast.Assign):
-                names = {
-                    target.id
-                    for target in statement.targets
-                    if isinstance(target, ast.Name)
-                }
-                value = statement.value
-            elif isinstance(statement, ast.AnnAssign) and isinstance(
-                statement.target, ast.Name
-            ):
-                names = {statement.target.id}
-                value = statement.value
-            else:
+            assignment = _assignment_names_and_value(statement)
+            if assignment is None:
                 continue
+            names, value = assignment
 
             duplicate_attributes.update(
                 names & {"BLOCKED_SCHEMES", "METADATA_ENDPOINTS"}
@@ -176,7 +185,7 @@ def _policy_inventory() -> _PolicyInventory:
             for endpoint, paths in sorted(endpoint_paths.items())
         ),
         scheme_violations=tuple(
-            (path, line, frozenset(schemes))
+            (path, line, _sorted_scheme_names(schemes))
             for (path, line), schemes in sorted(
                 violations.items(), key=lambda item: (item[0][0].as_posix(), item[0][1])
             )
@@ -207,6 +216,15 @@ def test_literal_collection_values_handles_static_mixed_collections(
     assert _literal_collection_values(node) == expected
 
 
+def test_scheme_diagnostic_names_are_sorted() -> None:
+    """Scheme-policy failure details do not depend on hash iteration order."""
+    assert _sorted_scheme_names({"javascript", "file", "data"}) == (
+        "data",
+        "file",
+        "javascript",
+    )
+
+
 def test_egress_metadata_endpoints_include_future_assigned_literals() -> None:
     """The ownership scan follows new endpoints declared by egress policy."""
     source_tree = ast.parse(
@@ -227,6 +245,25 @@ METADATA_HOSTNAMES = frozenset(
         "169.254.169.254",
         "192.0.2.99",
         "metadata.google.internal",
+        "metadata.future.invalid",
+    }
+
+
+def test_egress_metadata_endpoints_include_annotated_assignments() -> None:
+    """Annotated endpoint collections remain part of the ownership sentinel."""
+    source_tree = ast.parse(
+        """
+_METADATA_IPS: frozenset = frozenset(
+    {ipaddress.ip_address("192.0.2.99")}
+)
+METADATA_HOSTNAMES: frozenset[str] = frozenset(
+    {"metadata.future.invalid"}
+)
+"""
+    )
+
+    assert _egress_metadata_endpoints(source_tree) == {
+        "192.0.2.99",
         "metadata.future.invalid",
     }
 
