@@ -36,6 +36,8 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import ConflictError, EvalsDB
+from ...Evals.character_probe.models import CharacterProbeConfig
+from ...Evals.character_probe.storage import save_character_bench
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
@@ -43,6 +45,7 @@ from ...Evals.word_bench.storage import _unique_name, duplicate_bench
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
+from ..Evals.character_bench_editor import CharacterBenchEditor
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
@@ -68,6 +71,16 @@ class EvalsScreen(LabScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
         self._view_model = EvalsViewModel(self._resolve_db(app_instance))
+        #: The cross-database handle for character cards (``ChaChaNotes_
+        #: DB``, a different database from the ``EvalsDB`` `_view_model`
+        #: wraps -- see ``EvalsViewModel.character_cards``'s own
+        #: docstring). Resolved ONCE here, like `_view_model`'s own
+        #: ``EvalsDB`` handle just above, not re-read on every compose --
+        #: this screen never opens it itself; `app.py`'s startup wiring
+        #: (`self.chachanotes_db = ...`) already owns that. `None` when
+        #: unavailable, degrading `EvalsViewModel.character_cards` to an
+        #: empty picker rather than crashing the character-bench editor.
+        self._chacha_db: Any = self._resolve_chacha_db(app_instance)
         self._selection = EvalsSelection()
         #: Preflight resolved once per selection, not once per pane.
         #: The frame calls compose_lab_rail/compose_lab_inspector during
@@ -172,6 +185,21 @@ class EvalsScreen(LabScreen):
         orchestrator = getattr(app_instance, "evaluation_orchestrator", None)
         return getattr(orchestrator, "db", None)
 
+    @staticmethod
+    def _resolve_chacha_db(app_instance: object) -> Any:
+        """Find the app's real ``ChaChaNotes_DB`` handle, or ``None``.
+
+        Character cards live in a different database from the one
+        ``_resolve_db`` resolves above -- ``app.py``'s startup wiring
+        assigns the real handle to ``app_instance.chachanotes_db``
+        directly (unlike ``evaluation_orchestrator.db``, there is no
+        intermediate wrapper object to unwrap here). Mirrors the exact
+        ``getattr(self.app_instance, "chachanotes_db", None)`` convention
+        already used elsewhere in this app (e.g. ``chat_screen.py``) for
+        the same handle, rather than inventing a second lookup path.
+        """
+        return getattr(app_instance, "chachanotes_db", None)
+
     def select(self, *, kind: SelectionKind, id: Optional[str] = None) -> None:  # noqa: A002
         """Set the workbench's active selection and refresh dependent panes.
 
@@ -188,8 +216,8 @@ class EvalsScreen(LabScreen):
 
         Args:
             kind: The selected object's kind (``SelectionKind`` --
-                ``"none"``, ``"bench"``, ``"classic"``, ``"dataset"``, or
-                ``"run_group"``).
+                ``"none"``, ``"bench"``, ``"classic"``, ``"character_
+                bench"``, ``"dataset"``, or ``"run_group"``).
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
@@ -303,6 +331,124 @@ class EvalsScreen(LabScreen):
         does."""
         event.stop()
         self.select(kind="bench", id=event.bench_id)
+
+    @on(CharacterBenchEditor.Saved)
+    def _on_character_bench_editor_saved(
+        self, event: CharacterBenchEditor.Saved
+    ) -> None:
+        """Mirrors ``_on_bench_editor_saved`` exactly, for the character-
+        bench editor's own ``Saved`` message: re-selecting reloads the
+        form from what ``save_character_bench`` actually persisted and
+        refreshes the rail row and inspector alongside it, the same way
+        any other selection change does."""
+        event.stop()
+        self.select(kind="character_bench", id=event.bench_id)
+
+    @on(LibraryRail.NewCharacterBenchRequested)
+    def _on_new_character_bench_requested(
+        self, event: LibraryRail.NewCharacterBenchRequested
+    ) -> None:
+        """Creates a draft character-probe bench bound to the newest probe
+        set and selects it -- the character-bench mirror of
+        ``LibraryRail._create_new_bench``. Handled here rather than
+        in-widget in ``library_rail.py`` (see ``NewCharacterBenchRequested``'s
+        own docstring): a plain DB write, exactly like ``_create_new_bench``
+        -- no network call, so no worker.
+
+        **Why a target is resolved here, unlike a draft WORD bench (whose
+        ``target_ids`` starts empty and is filled in later via
+        ``BenchEditor``'s Add-target picker).** The character-bench editor
+        (task-1691 phase 2, Task 4) carries its target list through
+        verbatim with no Add/Remove control of its own -- bench creation is
+        the ONLY place ``target_ids`` is ever populated for this bench
+        type. Leaving it empty here would ship a bench with no path to
+        ever becoming runnable, so ``sample_bench.resolve_sample_target``
+        (the SAME resolution the one-click sample bench already uses) is
+        called with ``create=True``: reuse an existing ``llama_cpp``
+        ``eval_models`` row if one exists, else mint one from the
+        configured endpoint if ``app_config`` names one -- still a plain
+        DB write, no network call (``resolve_sample_target`` never dials
+        out; it only ever reads config and writes a row naming an
+        endpoint). If NEITHER is available, ``target_ids`` stays empty and
+        the created bench genuinely cannot be made runnable through this
+        UI alone -- ``config.py`` ships a default ``llama_cpp`` API URL, so
+        this is the near-universal case in practice (mirrors
+        ``resolve_sample_target``'s own "near-universal" note), but it is
+        a real, reachable gap this task cannot close: this editor offers
+        no way to add a target after the fact. The toast below names that
+        state explicitly rather than claiming an unconditional success.
+
+        ``character_ids`` starts empty (a draft has no characters picked
+        yet -- that is the editor's job) and ``strict=False`` is required
+        to construct a ``CharacterProbeConfig`` with it: the strict
+        (default) path raises "needs at least one character" at
+        construction, exactly the validation a genuine Save should keep
+        (see ``CharacterProbeConfig``'s own docstring) but that a bare
+        DRAFT must not be blocked by.
+        """
+        event.stop()
+        db = self._view_model.db
+        if db is None:
+            self.app_instance.notify(
+                "The evaluation service is unavailable.", severity="error"
+            )
+            return
+        probe_sets = self._view_model.probe_sets()
+        if not probe_sets:
+            # Defensive only: `library_rail.py`'s own button is disabled
+            # whenever this is true (see `_new_bench_actions`).
+            self.app_instance.notify(
+                "Import or create a probe set first.", severity="warning"
+            )
+            return
+        # `probe_sets()` is `datasets()`'s own newest-first order (see
+        # `EvalsViewModel.datasets`/`_create_new_bench`'s identical note),
+        # filtered -- so the first entry IS "the newest probe set" with no
+        # extra sort needed.
+        probe_set = probe_sets[0]
+        app_config = self._current_app_config()
+        target = sample_bench.resolve_sample_target(
+            self._view_model, app_config, create=True
+        )
+        target_ids = (target["id"],) if target is not None else ()
+        config = CharacterProbeConfig(
+            name=_unique_name("Untitled character bench"),
+            probe_set_id=str(probe_set.get("id")),
+            character_ids=(),
+            target_ids=target_ids,
+            strict=False,
+        )
+        try:
+            bench_id = save_character_bench(db, config)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create character bench.")
+            # markup=False: `exc` can carry a name collision naming the
+            # bench itself, the same free-text hazard `_create_new_bench`'s
+            # own `_notify` call already guards against for word benches.
+            self.app_instance.notify(
+                f"Could not create character bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+            return
+        probe_set_name = str(probe_set.get("name") or "Untitled probe set")
+        if target_ids:
+            self.app_instance.notify(
+                f"Character bench created against {probe_set_name}.",
+                severity="information",
+                markup=False,
+            )
+        else:
+            # See this handler's own docstring on why this is a real,
+            # reachable state and not merely defensive copy.
+            self.app_instance.notify(
+                "Character bench created, but no llama.cpp target is "
+                "configured; configure one in Settings, then create a new "
+                "character bench to make this one runnable.",
+                severity="warning",
+                markup=False,
+            )
+        self.select(kind="character_bench", id=bench_id)
 
     @on(BenchEditor.CreateTargetRequested)
     async def _on_bench_create_target_requested(
@@ -1095,6 +1241,32 @@ class EvalsScreen(LabScreen):
             )
             return
 
+        if selection.kind == "character_bench":
+            bench = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if bench is None:
+                yield Static(
+                    "This bench could not be found; it may have been deleted.",
+                    id="evals-detail-missing",
+                )
+                return
+            # A genuinely SEPARATE widget from `BenchEditor` above -- word
+            # benches and character-probe benches never share a detail
+            # surface (see `character_bench_editor.py`'s own module
+            # docstring). `self._chacha_db` (resolved once in `__init__`)
+            # is threaded through here rather than this widget opening
+            # `ChaChaNotes_DB` itself -- see that field's own comment.
+            yield CharacterBenchEditor(
+                self._view_model,
+                selection.id,
+                self._view_model.character_cards(self._chacha_db),
+                id="evals-character-bench-editor",
+            )
+            return
+
         if selection.kind == "classic":
             task = (
                 self._view_model.classic_task_by_id(selection.id)
@@ -1417,6 +1589,82 @@ class EvalsScreen(LabScreen):
                 f"Run {name}",
                 False,
                 f"Runs {name} against its configured targets.",
+            )
+
+        if selection.kind == "character_bench":
+            # A SEPARATE branch from "bench" above, never folded into it:
+            # `bench_by_id` only ever resolves WORD benches (see its own
+            # docstring), so a character-bench selection id would never
+            # match there. `_compose_inspector_pane` composes no
+            # `EvalsInspector` for this kind (see that method -- neither
+            # of its `if` branches matches `"character_bench"`, so it
+            # falls straight through to this function with no readiness
+            # panel above it) -- deliberately: that panel's whole
+            # vocabulary (top-K, logprobs, canary) belongs to the
+            # word-bench world and would be a lie about what a character
+            # probe measures.
+            bench = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if bench is None:
+                return (
+                    "Run Bench",
+                    True,
+                    "The selected bench no longer exists; choose another "
+                    "bench to run.",
+                )
+            name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            config_data = bench.get("config_data") or {}
+            character_ids = config_data.get("character_ids") or []
+            if not character_ids:
+                # Reachable for every draft this program's own "+ New
+                # character bench" creates (task-1691 phase 2, Task 5):
+                # character_ids starts empty on purpose, since picking
+                # characters is the editor's job, not the creation
+                # button's. "card" (not just "character"): the editor's
+                # own picker and section heading both use "character
+                # card"/"Characters" -- matching that vocabulary here.
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no characters yet; pick at least one "
+                    "character card in the editor.",
+                )
+            target_ids = config_data.get("target_ids") or []
+            if not target_ids:
+                # Deliberately NOT the word-bench branch's "add one in the
+                # bench editor and Save" wording: the character-bench
+                # editor (Task 4) has no Add-target control at all --
+                # target_ids is set ONLY at creation time (see
+                # `_on_new_character_bench_requested`'s own docstring).
+                # Telling a user to do something this editor cannot do
+                # would be a dead-end instruction dressed up as help; the
+                # honest remedy is to recreate the bench once a target is
+                # resolvable.
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no targets yet; configure a local "
+                    "llama.cpp provider in Settings, then create a new "
+                    "character bench.",
+                )
+            # Deliberately still DISABLED even once characters and targets
+            # are both present: running a character bench (cost preview,
+            # the actual grid run) is Task 6's own deliverable, not this
+            # one's -- `_on_primary_action_pressed` below only ever
+            # dispatches a worker for `selection.kind == "bench"` (a WORD
+            # bench). Returning `disabled=False` here today would ship a
+            # button that looks ready and does nothing on press, the exact
+            # silent no-op this file's every other branch works to avoid
+            # (see `_on_primary_action_pressed`'s own defensive-return
+            # comment). Task 6 replaces this with the real ready state.
+            return (
+                f"Run {name}",
+                True,
+                "Running a character bench isn't available yet in this "
+                "build.",
             )
 
         # No "classic" branch: `_compose_inspector_pane` never calls this

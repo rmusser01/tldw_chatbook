@@ -18,7 +18,9 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
-SelectionKind = Literal["none", "bench", "classic", "dataset", "run_group"]
+SelectionKind = Literal[
+    "none", "bench", "classic", "character_bench", "dataset", "run_group"
+]
 
 #: EvalsDB.list_tasks/list_datasets/list_runs all page; the Evals workbench
 #: has no pagination UI yet, so each read pulls a generous single page
@@ -342,6 +344,20 @@ class EvalsViewModel:
         for task in self.classic_tasks():
             if task.get("id") == task_id:
                 return task
+        return None
+
+    def character_bench_by_id(self, bench_id: str) -> Optional[dict[str, Any]]:
+        """The character-probe bench row named ``bench_id``, or ``None``.
+
+        Mirrors ``bench_by_id``/``classic_task_by_id`` exactly, just scoped
+        to ``character_benches()`` -- the selection-kind-specific lookup
+        ``EvalsScreen`` uses for a ``"character_bench"`` selection (see
+        ``library_rail.py``'s own routing of a character-probe row to that
+        kind, distinct from a genuinely classic task's ``"classic"``).
+        """
+        for bench in self.character_benches():
+            if bench.get("id") == bench_id:
+                return bench
         return None
 
     def dataset_by_id(self, dataset_id: str) -> Optional[dict[str, Any]]:

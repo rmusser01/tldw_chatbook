@@ -295,6 +295,25 @@ class LibraryRail(NotifyMixin, Vertical):
         message rather than a direct call too.
         """
 
+    class NewCharacterBenchRequested(Message, namespace="library_rail"):
+        """Posted when "+ New character bench" is pressed.
+
+        Unlike ``_create_new_bench``'s plain in-widget DB write (a draft
+        word bench needs nothing beyond a dataset id), creating a draft
+        character bench also resolves a target via ``sample_bench.
+        resolve_sample_target`` -- the SAME function ``EvalsScreen``'s own
+        sample-bench flow already calls, and reusing it (rather than
+        reimplementing target resolution here) is why this posts a message
+        for ``EvalsScreen`` to handle instead of doing the write here, the
+        way ``_create_new_bench`` does. See
+        ``EvalsScreen._on_new_character_bench_requested`` for why a target
+        must be resolved at CREATE time at all: the character-bench editor
+        (task-1691 phase 2, Task 4) has no Add-target control of its own,
+        so bench creation is the only place ``target_ids`` is ever
+        populated -- leaving it empty here would ship a bench with no path
+        to ever becoming runnable.
+        """
+
     def __init__(
         self,
         view_model: EvalsViewModel,
@@ -440,11 +459,19 @@ class LibraryRail(NotifyMixin, Vertical):
         )
 
     def _new_bench_actions(self) -> ComposeResult:
-        """"+ New bench": create a draft bench bound to a dataset, in-widget
-        (no worker -- a draft bench is a plain DB write, exactly like
-        ``_create_new_dataset``). Shared by both branches of
-        ``_benches_section_body`` (task-1482), in a ``Horizontal`` row
-        mirroring ``_dataset_actions``'s own shape.
+        """"+ New bench" / "+ New character bench": create a draft bench,
+        in-widget for the word-bench case (no worker -- a draft bench is a
+        plain DB write, exactly like ``_create_new_dataset``), routed
+        through ``EvalsScreen`` for the character-bench case (see
+        ``NewCharacterBenchRequested``'s own docstring for why). Shared by
+        both branches of ``_benches_section_body`` (task-1482 / task-1691
+        phase 2), in one ``Horizontal`` row mirroring ``_dataset_actions``'s
+        own shape -- ``#lab-rail .evals-rail-empty-actions`` (``_lab.tcss``)
+        stacks this row vertically at the rail's narrow width regardless of
+        the Python-level ``Horizontal``, the same fix already proven for
+        ``_dataset_actions``'s three buttons, so a second button here does
+        not reopen the side-by-side clipping ``_lab.tcss``'s own comment
+        documents.
 
         Deliberately NOT gated on ``sample_bench.provider_is_configured``:
         creating a bench writes only ``eval_tasks``/``eval_datasets`` rows,
@@ -455,11 +482,15 @@ class LibraryRail(NotifyMixin, Vertical):
         gate used to render no bench-creation affordance at all (see
         ``_benches_section_body``'s own updated comment on this).
 
-        Disabled -- with an explanatory tooltip AND an adjacent one-line
-        hint, never a silent no-op (the fix-batch convention) -- when
-        there is no dataset yet to bind the new bench to.
+        Both buttons are disabled -- with an explanatory tooltip AND an
+        adjacent one-line hint, never a silent no-op (the fix-batch
+        convention) -- when there is nothing yet to bind the new bench to:
+        a dataset for "+ New bench", a probe set (``EvalsViewModel.
+        probe_sets()``) for "+ New character bench" -- a character bench
+        with no probe set has no probes to ever run.
         """
         has_dataset = bool(self.view_model.datasets())
+        has_probe_set = bool(self.view_model.probe_sets())
         yield Horizontal(
             Button(
                 "+ New bench",
@@ -471,6 +502,18 @@ class LibraryRail(NotifyMixin, Vertical):
                     if not has_dataset
                     else "Creates a draft bench bound to the selected "
                     "dataset (or the newest one, if none is selected)."
+                ),
+            ),
+            Button(
+                "+ New character bench",
+                id="evals-rail-new-character-bench",
+                compact=True,
+                disabled=not has_probe_set,
+                tooltip=(
+                    "Import or create a probe set first."
+                    if not has_probe_set
+                    else "Creates a draft character-probe bench bound to "
+                    "the newest probe set."
                 ),
             ),
             classes="evals-rail-empty-actions",
@@ -488,6 +531,19 @@ class LibraryRail(NotifyMixin, Vertical):
             yield Static(
                 "Create or import a dataset first.",
                 id="evals-rail-new-bench-hint",
+                classes="evals-rail-new-bench-hint",
+                markup=False,
+            )
+        if not has_probe_set:
+            # A dedicated id (distinct from `#evals-rail-new-bench-hint`)
+            # sharing the SAME visual class -- both hints are one-line,
+            # muted "why this button is disabled" copy, and nothing here
+            # scopes a query on the shared class alone (see the comment
+            # just above for the one place that matters, which is id-
+            # scoped already).
+            yield Static(
+                "Import or create a probe set first.",
+                id="evals-rail-new-character-bench-hint",
                 classes="evals-rail-new-bench-hint",
                 markup=False,
             )
@@ -748,7 +804,16 @@ class LibraryRail(NotifyMixin, Vertical):
                 children.append(
                     self._row_button(
                         button_id=button_id,
-                        kind="classic",
+                        # A character-probe bench renders in this same
+                        # subgroup (marked with CHARACTER_PROBE_MARKER --
+                        # see _classic_row_label), but selecting one must
+                        # route to its OWN detail surface, never
+                        # ClassicTaskDetail's read-only one -- see
+                        # EvalsScreen._compose_detail_pane's
+                        # "character_bench" branch (task-1691 phase 2,
+                        # Task 5). A genuinely classic (pre-word-bench)
+                        # task keeps kind="classic".
+                        kind="character_bench" if is_character_bench(row) else "classic",
                         row_id=row.get("id"),
                         label=_classic_row_label(row),
                     )
@@ -805,6 +870,10 @@ class LibraryRail(NotifyMixin, Vertical):
         if button_id == "evals-rail-new-bench":
             event.stop()
             self._create_new_bench()
+            return
+        if button_id == "evals-rail-new-character-bench":
+            event.stop()
+            self.post_message(self.NewCharacterBenchRequested())
             return
         if button_id == "evals-rail-new-dataset":
             event.stop()

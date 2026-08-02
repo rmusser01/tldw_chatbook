@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Optional
 
 
@@ -73,13 +73,37 @@ class CharacterProbeConfig:
       stand-in for "unset" (the same distinction ``storage``'s stored-field
       readers enforce).
 
+    ``strict`` (default ``True``) gates only the two "at least one"
+    checks below (task-1691 phase 2, Task 5) -- an ``InitVar``, accepted by
+    ``__init__`` but not stored as a field, so it never appears in
+    equality, ``repr``, or ``dataclasses.asdict`` (mirrors ``word_bench.
+    models.BenchConfig``'s own ``strict`` field, byte-for-byte the same
+    convention). Every WRITE call site that represents a user's deliberate
+    "this bench is ready" action (``CharacterBenchEditor``'s own Save)
+    must go through ``strict=True`` construction -- the default, nothing
+    needs to opt in -- so a bench with no characters or no targets can
+    never be saved as if it were runnable.
+
+    ``storage.load_character_bench`` is the one exception, constructing
+    with ``strict=False``: it rebuilds a ``CharacterProbeConfig`` from
+    whatever is already sitting in ``eval_tasks.config_data``, including a
+    freshly created DRAFT bench (the rail's "+ New character bench",
+    which deliberately starts with no characters picked yet -- there is no
+    other way to reach the editor that lets a user pick them). Rejecting
+    on READ would make that draft permanently unopenable instead of merely
+    unrunnable.
+
     Raises:
         ValueError: If ``samples_per_cell`` or ``concurrency`` is less than
-            1, or if ``character_ids``/``target_ids`` is empty -- a bench
-            with no characters or no targets can never produce a cell.
+            1, or (when ``strict``) if ``character_ids``/``target_ids`` is
+            empty -- a bench with no characters or no targets can never
+            produce a cell.
         ValueError: If any element of ``character_ids`` is not an ``int``
             (``bool`` included, since it is an ``int`` subclass but never a
-            real card id) -- see the type-fidelity note above.
+            real card id) -- see the type-fidelity note above. Unlike the
+            two "at least one" checks, this runs unconditionally: it must
+            catch genuinely malformed data even on a lenient ``strict=False``
+            read.
     """
 
     name: str
@@ -93,15 +117,16 @@ class CharacterProbeConfig:
     temperature: float = 0.8
     max_tokens: int = 512
     extra_tags: tuple[dict, ...] = ()
+    strict: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, strict: bool) -> None:
         if self.samples_per_cell < 1:
             raise ValueError("samples_per_cell must be 1 or more.")
         if self.concurrency < 1:
             raise ValueError("concurrency must be 1 or more.")
-        if not self.character_ids:
+        if strict and not self.character_ids:
             raise ValueError("A character probe bench needs at least one character.")
-        if not self.target_ids:
+        if strict and not self.target_ids:
             raise ValueError("A character probe bench needs at least one target.")
         for cid in self.character_ids:
             if not isinstance(cid, int) or isinstance(cid, bool):

@@ -13,14 +13,16 @@ be a straight-up lie about what this eval type measures.
 
 Task 5 (task-1691 phase 2) wires ``EvalsScreen``'s selection routing to
 mount this widget for a character-probe selection (a new ``"character_
-bench"`` ``SelectionKind``) and adds the "create a bench" flow from the
-rail. Until then this widget is fully functional on its own -- constructed
-directly with an already-loaded ``EvalsViewModel`` and an already-fetched
-``cards`` sequence (see ``__init__``) -- and this module's own test suite
-(``Tests/UI/test_evals_character_bench_editor.py``) exercises it that way,
-mounted into a real ``EvalsScreen``'s ``#evals-detail-pane`` rather than
-through ``EvalsScreen.select()``'s kind-routing, which does not know about
-this bench type yet.
+bench"`` ``SelectionKind``) and adds the "+ New character bench" flow from
+the rail (``EvalsScreen._compose_detail_pane``'s ``"character_bench"``
+branch and ``_on_new_character_bench_requested``, in
+``UI/Screens/evals_screen.py``). This widget's own test suite
+(``Tests/UI/test_evals_character_bench_editor.py``) still exercises it by
+mounting it directly into a real ``EvalsScreen``'s ``#evals-detail-pane``
+(bypassing ``EvalsScreen.select()``'s kind-routing) -- that convention
+predates Task 5 and stays valid; ``Tests/UI/test_evals_screen.py`` is where
+the real end-to-end routing seam (a rail click, or ``select(kind=
+"character_bench", ...)``) gets its own coverage.
 
 **Editable in this task:** name, description, character selection (via
 ``card_picker.CardPicker``), and the four sampler fields (samples per cell,

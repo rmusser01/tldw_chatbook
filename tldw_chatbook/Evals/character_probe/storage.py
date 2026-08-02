@@ -439,6 +439,15 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
     Returns:
         CharacterProbeConfig: The stored bench.
 
+    Constructs with ``strict=False`` (see ``CharacterProbeConfig``'s own
+    docstring) -- this is the read path, not the write path
+    ``CharacterProbeConfig`` guards by default. A freshly created DRAFT
+    bench (task-1691 phase 2, Task 5's "+ New character bench") starts
+    with no characters picked yet, and the only way a user reaches the
+    editor that lets them pick some is by this function successfully
+    loading it first; rejecting here would make the draft permanently
+    unopenable instead of merely unrunnable.
+
     Raises:
         ValueError: If the task does not exist or is not a character probe
             bench -- loading a word bench here would otherwise produce a
@@ -448,7 +457,8 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
             ``max_tokens``, from ``_stored_seed``/``_stored_temperature``
             for a corrupt ``seed``/``temperature``, and from
             ``CharacterProbeConfig.__post_init__`` for a stored
-            ``concurrency``/``samples_per_cell`` below its ``>= 1`` floor.
+            ``concurrency``/``samples_per_cell`` below its ``>= 1`` floor,
+            or a non-``int`` element of ``character_ids``.
     """
     row = db.get_task(task_id)
     if row is None:
@@ -468,6 +478,7 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         temperature=_stored_temperature(data, task_id, 0.8),
         max_tokens=_stored_int_field(data, "max_tokens", 512, task_id),
         extra_tags=tuple(data.get("extra_tags") or ()),
+        strict=False,
     )
 
 

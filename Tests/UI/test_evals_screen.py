@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from loguru import logger as loguru_logger
@@ -67,13 +68,25 @@ class _FakeAppInstance:
     populate.
     """
 
-    def __init__(self, db: EvalsDB, app_config: dict | None = None) -> None:
+    def __init__(
+        self,
+        db: EvalsDB,
+        app_config: dict | None = None,
+        chachanotes_db: Any = None,
+    ) -> None:
         self.evaluation_orchestrator = _FakeOrchestrator(db)
         self.notifications: list[tuple[str, str]] = []
         #: Read by EvalsScreen._current_app_config for
         #: sample_bench.provider_is_configured's gate -- see
         #: test_evals_empty_states.py for scenarios that set this.
         self.app_config: dict = app_config or {}
+        #: Read by EvalsScreen._resolve_chacha_db for the character-bench
+        #: editor's card picker (task-1691 phase 2, Task 5) -- mirrors the
+        #: real `TldwCli.chachanotes_db` attribute. `None` (the default)
+        #: for every existing test that never selects a character bench:
+        #: `EvalsViewModel.character_cards(None)` degrades to `[]` rather
+        #: than needing every caller to supply a real one.
+        self.chachanotes_db: Any = chachanotes_db
 
     def notify(
         self, message: str, *, severity: str = "information", markup: bool = True,
@@ -161,6 +174,72 @@ def seeded_bench(evals_db: EvalsDB) -> str:
         probes=(" Sure", " I"),
     )
     return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def probe_set_id(evals_db: EvalsDB) -> str:
+    """One real probe set (task-1691 phase 2) -- the character-bench
+    counterpart of ``seeded_bench``'s dataset."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    return save_probe_set(
+        evals_db,
+        "villain probe set",
+        ProbeSet(probes=(Probe(turns=("Hello there.",)),)),
+    )
+
+
+@pytest.fixture
+def chachanotes_db():
+    """A real, in-memory ``CharactersRAGDB`` -- character cards live in a
+    different database from ``evals_db`` (see ``EvalsViewModel.
+    character_cards``'s own docstring), so a routing test that needs the
+    picker to show a REAL, selectable card needs a real handle here, not a
+    bare dict."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    return CharactersRAGDB(":memory:", "test-client")
+
+
+@pytest.fixture
+def character_card_id(chachanotes_db) -> int:
+    return chachanotes_db.add_character_card({"name": "Vex"})
+
+
+@pytest.fixture
+def character_bench_id(
+    evals_db: EvalsDB, probe_set_id: str, character_card_id: int
+) -> str:
+    """One real, fully-configured (runnable-once-wired) character bench --
+    the character-bench counterpart of ``seeded_bench``."""
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    target_id = evals_db.create_model(
+        name="cb-target", provider="llama_cpp", model_id="m"
+    )
+    config = CharacterProbeConfig(
+        name="villain bench",
+        probe_set_id=probe_set_id,
+        character_ids=(character_card_id,),
+        target_ids=(target_id,),
+    )
+    return save_character_bench(evals_db, config)
+
+
+@pytest.fixture
+def character_bench_app(
+    evals_db: EvalsDB, chachanotes_db
+) -> EvalsHarness:
+    """Mirrors ``evals_app``, plus a real ``chachanotes_db`` wired the same
+    way the real app's ``TldwCli.chachanotes_db`` is -- needed by any test
+    that must see a real character card rendered inside the routed
+    ``CharacterBenchEditor`` (e.g. a real Save, which reads the mounted
+    ``CardPicker``'s selection -- see ``card_picker.py``'s own
+    ``selected_ids()``: it only ever returns ids that are BOTH pre-selected
+    AND present in the supplied ``cards`` sequence)."""
+    return EvalsHarness(_FakeAppInstance(evals_db, chachanotes_db=chachanotes_db))
 
 
 @pytest.mark.asyncio
@@ -2733,4 +2812,317 @@ async def test_readiness_rows_with_several_continuations_paint_inside_the_inspec
         assert lab_inspector.region.contains_region(estimate_calls.region), (
             f"estimate {estimate_calls.region} escapes the inspector's "
             f"own visible viewport {lab_inspector.region}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (task-1691 phase 2): routing a character-probe bench selection to
+# its own editor, and creating one from the rail.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_character_bench_renders_its_own_editor(
+    evals_app, character_bench_id
+):
+    """The real routing seam a character-probe bench reaches is `kind=
+    "character_bench"` -- NOT `kind="bench"` (that kind's own lookup,
+    `EvalsViewModel.bench_by_id`, only ever resolves WORD benches; see its
+    own docstring and `character_benches()`'s "mutually exclusive by
+    construction" note)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        assert pilot.app.screen.query("#evals-character-bench-editor")
+        assert not pilot.app.screen.query("#evals-bench-editor")
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_word_bench_still_renders_the_word_editor(
+    evals_app, seeded_bench
+):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+        assert pilot.app.screen.query("#evals-bench-editor")
+        assert not pilot.app.screen.query("#evals-character-bench-editor")
+
+
+@pytest.mark.asyncio
+async def test_a_real_rail_click_on_a_character_bench_row_routes_to_its_editor(
+    evals_app, character_bench_id
+):
+    """Real widget interaction, not a direct `select()` call -- per this
+    phase's own 'real widgets, not `.value=`' rule for behavioural UI
+    coverage: a `pilot.click` on the actual rail row is what proves
+    `library_rail.py`'s own marker-to-kind routing (`_benches_section_
+    body`'s `"character_bench" if is_character_bench(row) else "classic"`)
+    actually fires, not merely that `select()` accepts the new kind."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-row-benches-classic-0")
+        await pilot.pause()
+        screen = pilot.app.screen
+        assert screen._selection.kind == "character_bench"
+        assert screen._selection.id == character_bench_id
+        assert screen.query("#evals-character-bench-editor")
+
+
+@pytest.mark.asyncio
+async def test_a_classic_task_row_still_routes_to_the_read_only_classic_detail(
+    evals_app, evals_db
+):
+    """The classic subgroup mixes both kinds -- a genuinely classic
+    (pre-word-bench) task must keep `kind="classic"` and its existing,
+    unrelated read-only detail pane, never the character-bench editor."""
+    task_id = evals_db.create_task(
+        name="legacy task",
+        description="",
+        task_type="logprob",
+        config_format="custom",
+        config_data={},
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-row-benches-classic-0")
+        await pilot.pause()
+        screen = pilot.app.screen
+        assert screen._selection.kind == "classic"
+        assert screen._selection.id == task_id
+        assert screen.query("#evals-classic-detail")
+        assert not screen.query("#evals-character-bench-editor")
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_button_disabled_without_a_probe_set(evals_app):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = pilot.app.screen.query_one("#evals-rail-new-character-bench", Button)
+        assert button.disabled
+        assert "probe set" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_creates_and_selects_a_runnable_draft(
+    evals_app, evals_db, probe_set_id
+):
+    """A resolvable llama.cpp target already exists, so the created draft
+    is reachable to a runnable state (once characters are picked) -- see
+    `EvalsScreen._on_new_character_bench_requested`'s own docstring on why
+    this is the ONLY point `target_ids` can ever be populated for this
+    bench type."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    evals_db.create_model(name="cb-target", provider="llama_cpp", model_id="m")
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        screen = pilot.app.screen
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        bench = benches[0]
+        assert bench["config_data"]["probe_set_id"] == probe_set_id
+        assert bench["config_data"]["character_ids"] == []
+        assert len(bench["config_data"]["target_ids"]) == 1
+        assert screen._selection.kind == "character_bench"
+        assert screen._selection.id == bench["id"]
+        assert screen.query("#evals-character-bench-editor")
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_without_a_resolvable_target_still_creates_a_draft(
+    evals_app, evals_db, probe_set_id
+):
+    """No `llama_cpp` `eval_models` row exists and no endpoint is
+    configured in `app_config` -- `resolve_sample_target` can mint
+    nothing, so the created draft's `target_ids` is genuinely empty. This
+    is the one residual dead end `_on_new_character_bench_requested`'s own
+    docstring names explicitly: the character-bench editor has no
+    Add-target control, so this specific bench can never become runnable
+    without being recreated after a target is configured. Pinned here so
+    a future change silently "fixing" this by raising instead doesn't
+    regress past a real, reachable state without a test noticing."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        assert benches[0]["config_data"]["target_ids"] == []
+        assert any(
+            "no llama.cpp target is configured" in message
+            for message, _severity in pilot.app.screen.app_instance.notifications
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_button_is_not_provider_gated(evals_db, probe_set_id):
+    """Mirrors `test_new_bench_button_is_not_provider_gated` exactly for
+    the character-bench affordance: creating a DRAFT writes only
+    `eval_tasks` rows (target resolution reuses/mints an `eval_models` row,
+    still no network call -- see `resolve_sample_target`'s own docstring),
+    so it must render enabled even with zero providers configured."""
+    app = EvalsHarness(_FakeAppInstance(evals_db, app_config={}))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = pilot.app.screen.query_one("#evals-rail-new-character-bench", Button)
+        assert not button.disabled
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_with_no_characters_cannot_be_run(
+    evals_app, evals_db, probe_set_id
+):
+    """A character bench needs at least one character picked before it can
+    run -- constructed with `strict=False` (mirrors the draft-creation
+    path) since `character_ids=()` would otherwise raise at construction."""
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    target_id = evals_db.create_model(name="t", provider="llama_cpp", model_id="m")
+    config = CharacterProbeConfig(
+        name="no-characters bench",
+        probe_set_id=probe_set_id,
+        character_ids=(),
+        target_ids=(target_id,),
+        strict=False,
+    )
+    bench_id = save_character_bench(evals_db, config)
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=bench_id)
+        await pilot.pause()
+        action = pilot.app.screen.query_one("#evals-primary-action", Button)
+        assert action.disabled
+        assert "card" in str(action.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_with_no_targets_cannot_be_run(
+    evals_app, evals_db, probe_set_id, character_card_id
+):
+    """The residual dead-end case: a bench with characters but no targets
+    (only reachable if it was created while no llama.cpp target was
+    resolvable) must stay blocked, with an honest reason -- this editor
+    has no way to add one after the fact."""
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    config = CharacterProbeConfig(
+        name="no-targets bench",
+        probe_set_id=probe_set_id,
+        character_ids=(character_card_id,),
+        target_ids=(),
+        strict=False,
+    )
+    bench_id = save_character_bench(evals_db, config)
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=bench_id)
+        await pilot.pause()
+        action = pilot.app.screen.query_one("#evals-primary-action", Button)
+        assert action.disabled
+        assert "target" in str(action.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_a_fully_configured_character_bench_still_blocks_the_primary_action(
+    evals_app, character_bench_id
+):
+    """Task 5 wires the DISABLED-reason messaging only; actually running a
+    character bench (cost preview, the real grid run) is Task 6's own
+    deliverable. `character_bench_id` has both characters and targets, so
+    if this ever flips to enabled with no run worker behind it, pressing
+    it would silently no-op -- pinned here so that can't happen by
+    accident before Task 6 lands the real run path."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        action = pilot.app.screen.query_one("#evals-primary-action", Button)
+        assert action.disabled
+        assert "isn't available yet" in str(action.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_saving_a_character_bench_through_the_real_selection_reselects_it(
+    character_bench_app, evals_db, character_bench_id, character_card_id
+):
+    """End-to-end through the real seam: select -> the routed editor mounts
+    -> a real typed edit -> a real Save click -> `CharacterBenchEditor.
+    Saved` -> the screen re-selects the same bench -> the recompose reloads
+    the form from what was actually persisted. Also proves `self._chacha_
+    db` threads a REAL card through to the mounted `CardPicker` (Save reads
+    `character_ids` back off it; an empty picker would silently drop the
+    bench's own character selection and fail this same assertion via a
+    ValueError -- see `card_picker.py`'s own `selected_ids()` docstring)."""
+    from tldw_chatbook.Evals.character_probe.storage import load_character_bench
+
+    async with character_bench_app.run_test(size=(160, 45)) as pilot:
+        pilot.app.screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        screen = pilot.app.screen
+
+        name = screen.query_one("#evals-cb-name", Input)
+        name.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-cb-name")
+        name.value = ""  # setup: clear before typing the real edit
+        await pilot.press(*"renamed-through-screen")
+
+        save_button = screen.query_one("#evals-cb-save", Button)
+        save_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-cb-save")
+        await pilot.pause()
+
+        assert screen._selection.kind == "character_bench"
+        assert screen._selection.id == character_bench_id
+        assert screen.query_one("#evals-cb-name", Input).value == (
+            "renamed-through-screen"
+        )
+        stored = load_character_bench(evals_db, character_bench_id)
+        assert stored.name == "renamed-through-screen"
+        # The pre-existing character selection round-tripped through the
+        # REAL CardPicker rather than being silently dropped.
+        assert stored.character_ids == (character_card_id,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 45), (235, 52)], ids=["160x45", "235x52"])
+async def test_new_character_bench_button_and_its_neighbours_stay_hit_testable(
+    evals_app, seeded_bench, character_bench_id, size
+):
+    """Global constraint (task-1764): this task adds a control
+    (`#evals-rail-new-character-bench`) to the rail's Benches section.
+    That pane has pushed a control out of reach three times before --
+    painted geometry is the arbiter, not the stylesheet's intent. Checks
+    the new button itself, its neighbour in the same row ("+ New bench"),
+    AND a row further down the section (the word-bench row) that the new
+    button must not have pushed out of reach."""
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        for button_id in ("evals-rail-new-bench", "evals-rail-new-character-bench"):
+            control = screen.query_one(f"#{button_id}", Button)
+            assert control.region.width > 0 and control.region.height > 0, (
+                f"#{button_id} has an empty region at {size[0]}x{size[1]}"
+            )
+            center = control.region.center
+            hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
+            assert hit is control, (
+                f"#{button_id} at {control.region} is not hit-testable at "
+                f"{size[0]}x{size[1]} -- resolved to {hit!r} instead"
+            )
+
+        row = screen.query_one("#evals-rail-row-benches-0", Button)
+        assert row.region.width > 0 and row.region.height > 0, (
+            f"the word-bench row has an empty region at {size[0]}x{size[1]}"
+        )
+        center = row.region.center
+        hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
+        assert hit is row, (
+            f"the word-bench row at {row.region} is not hit-testable at "
+            f"{size[0]}x{size[1]} -- resolved to {hit!r} instead, pushed "
+            "out of reach by the new button above it"
         )
