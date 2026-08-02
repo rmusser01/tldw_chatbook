@@ -1299,15 +1299,16 @@ def chat_with_anthropic(
                 next_tool_position = 0
 
                 usage_accumulator: dict = {}
+                output_captured = False
 
-                def _usage_sse_chunk() -> str:
+                def _usage_sse_chunk(usage: dict | None = None) -> str:
                     sse_chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
                         "created": created_ts,
                         "model": current_model,
                         "choices": [],
-                        "usage": dict(usage_accumulator),
+                        "usage": dict(usage if usage is not None else usage_accumulator),
                     }
                     return f"data: {json.dumps(sse_chunk)}\n\n"
 
@@ -1331,12 +1332,26 @@ def chat_with_anthropic(
                                 tool_calls_delta = None  # For future tool streaming
 
                                 if anthropic_event.get("type") == "message_start":
+                                    message_obj = anthropic_event.get("message")
                                     start_usage = (
-                                        anthropic_event.get("message") or {}
-                                    ).get("usage")
+                                        message_obj.get("usage")
+                                        if isinstance(message_obj, dict)
+                                        else None
+                                    )
                                     if isinstance(start_usage, dict) and start_usage:
                                         usage_accumulator.update(start_usage)
-                                        yield _usage_sse_chunk()
+                                        # message_start's usage always carries a
+                                        # small placeholder output_tokens value
+                                        # (Anthropic bills it before generation
+                                        # starts) -- never surface it as if it
+                                        # were authoritative output usage.
+                                        input_usage = {
+                                            k: v
+                                            for k, v in start_usage.items()
+                                            if k != "output_tokens"
+                                        }
+                                        if input_usage:
+                                            yield _usage_sse_chunk(input_usage)
                                     continue
 
                                 if anthropic_event.get("type") == "content_block_start":
@@ -1387,6 +1402,8 @@ def chat_with_anthropic(
                                     delta_usage = anthropic_event.get("usage")
                                     if isinstance(delta_usage, dict):
                                         usage_accumulator.update(delta_usage)
+                                        if "output_tokens" in delta_usage:
+                                            output_captured = True
                                     if finish_reason_anth:
                                         finish_reason_map = {
                                             "end_turn": "stop",
@@ -1438,7 +1455,7 @@ def chat_with_anthropic(
                                     f"Anthropic Stream: Could not decode JSON: {event_data_str}"
                                 )
 
-                    if "output_tokens" in usage_accumulator:
+                    if output_captured:
                         yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
