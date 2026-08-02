@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import struct
 import unicodedata
+from dataclasses import replace
 
 import pytest
 
@@ -31,6 +32,14 @@ from Tests.Model_Artifacts.gguf_test_helpers import (
     make_raw_gguf,
 )
 from tldw_chatbook.Model_Artifacts import gguf_import as gguf
+from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactDescriptor,
+    ArtifactFile,
+    ArtifactFormat,
+    ArtifactRef,
+    ArtifactRole,
+    ProvenanceClass,
+)
 
 
 def _gguf_header(*, tensors: int = 0, metadata: int = 0) -> bytes:
@@ -548,7 +557,7 @@ def test_parser_rejects_noncanonical_architecture(architecture: str):
 
 @pytest.mark.parametrize(
     "architecture",
-    ["a", "whisper", "qwen3", "123", "granite_speech"],
+    ["canary", "whisper", "qwen3_asr", "granite_speech"],
 )
 def test_parser_retains_canonical_architecture_unchanged(architecture: str):
     payload = make_gguf(architecture=architecture)
@@ -767,3 +776,406 @@ def test_inspect_gguf_never_reads_tensor_payload():
 
     assert metadata.data_offset == data_offset
     assert handle.tell() == data_offset
+
+
+_TRANSCRIBE_CPP_ARCHITECTURES = frozenset(
+    {
+        "canary",
+        "canary_qwen",
+        "cohere_asr",
+        "funasr_nano",
+        "gigaam",
+        "granite_speech",
+        "granite_speech_nar",
+        "medasr",
+        "moonshine",
+        "moonshine_streaming",
+        "parakeet",
+        "qwen3_asr",
+        "sensevoice",
+        "voxtral",
+        "voxtral_realtime",
+        "whisper",
+    }
+)
+
+
+def test_transcribe_cpp_architecture_declaration_is_exact():
+    assert gguf.TRANSCRIBE_CPP_ARCHITECTURES == _TRANSCRIBE_CPP_ARCHITECTURES
+
+
+@pytest.mark.parametrize("architecture", sorted(_TRANSCRIBE_CPP_ARCHITECTURES))
+def test_inspect_gguf_accepts_pinned_transcribe_cpp_architecture(
+    architecture: str,
+):
+    payload = make_gguf(architecture=architecture)
+
+    metadata = gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+    assert metadata.architecture == architecture
+
+
+@pytest.mark.parametrize("architecture", ["cohere", "granite", "qwen3-asr", "llama"])
+def test_inspect_gguf_rejects_near_miss_architecture_with_typed_error(
+    architecture: str,
+):
+    payload = make_gguf(architecture=architecture)
+
+    with pytest.raises(gguf.GGUFArchitectureError, match="transcribe.cpp 0.1.3"):
+        gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+
+def test_transcribe_cpp_wheel_target_declaration_is_exact():
+    assert gguf.TRANSCRIBE_CPP_WHEEL_TARGETS == frozenset(
+        {
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+            ("windows", "x86_64"),
+            ("darwin", "arm64"),
+            ("darwin", "x86_64"),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "expected"),
+    [
+        ("Linux", "x86_64", ("linux", "x86_64")),
+        ("linux", "AMD64", ("linux", "x86_64")),
+        ("LINUX", "arm64", ("linux", "aarch64")),
+        ("Linux", "aarch64", ("linux", "aarch64")),
+        ("Windows", "AMD64", ("windows", "x86_64")),
+        ("Darwin", "arm64", ("darwin", "arm64")),
+        ("Darwin", "aarch64", ("darwin", "arm64")),
+        ("Darwin", "x86_64", ("darwin", "x86_64")),
+    ],
+)
+def test_normalize_platform_target_accepts_real_spellings_and_aliases(
+    system: str,
+    machine: str,
+    expected: tuple[str, str],
+):
+    assert gguf.normalize_platform_target(system, machine) == expected
+
+
+@pytest.mark.parametrize(
+    ("system", "machine"),
+    [
+        ("Windows", "ARM64"),
+        ("Linux", "riscv64"),
+        ("Windows", "x86"),
+        ("Plan9", "x86_64"),
+        ("", ""),
+    ],
+)
+def test_normalize_platform_target_rejects_unsupported_pair(
+    system: str,
+    machine: str,
+):
+    with pytest.raises(gguf.GGUFPlatformError, match="unavailable"):
+        gguf.normalize_platform_target(system, machine)
+
+
+_LOCAL_DIGEST = "a" * 64
+_LOCAL_SIZE = 1_024
+
+
+def _curated_descriptor(
+    *,
+    constraint: str = "==0.1.3",
+) -> ArtifactDescriptor:
+    reference = ArtifactRef("curated-whisper", "curated-v1", "q4")
+    return ArtifactDescriptor(
+        reference=reference,
+        model_id="Curated Whisper",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.GGUF,
+        consumer="transcribe-cpp",
+        model_family="whisper",
+        upstream_repository="trusted/whisper",
+        upstream_revision="reviewed-v1",
+        source_url="https://models.example.test/whisper.gguf",
+        precision=reference.variant,
+        expected_installed_bytes=_LOCAL_SIZE,
+        license_id="mit",
+        license_url="https://licenses.example.test/mit",
+        usage_notice="Trusted curated model.",
+        runtime_name="transcribe-cpp",
+        runtime_version_constraint=constraint,
+        supported_os=("darwin", "linux", "windows"),
+        supported_architectures=("aarch64", "arm64", "x86_64"),
+        provenance=(
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.INTEGRITY_VERIFIED,
+        ),
+        files=(ArtifactFile("trusted-whisper.gguf", _LOCAL_SIZE, _LOCAL_DIGEST),),
+        dependencies=(),
+    )
+
+
+def _select_descriptor(
+    *,
+    metadata: gguf.GGUFMetadata | None = None,
+    sha256: str = _LOCAL_DIGEST,
+    size_bytes: int = _LOCAL_SIZE,
+    curated_descriptors: tuple[ArtifactDescriptor, ...] = (),
+    system: str = "Linux",
+    machine: str = "x86_64",
+) -> ArtifactDescriptor:
+    return gguf.select_gguf_descriptor(
+        metadata
+        or gguf.GGUFMetadata(
+            architecture="whisper",
+            variant="ignored-variant",
+            model_name="Local Whisper",
+            file_type=7,
+            data_offset=32,
+        ),
+        sha256=sha256,
+        size_bytes=size_bytes,
+        curated_descriptors=curated_descriptors,
+        system=system,
+        machine=machine,
+    )
+
+
+def test_select_descriptor_returns_exact_eligible_curated_descriptor_unchanged():
+    curated = _curated_descriptor()
+
+    selected = _select_descriptor(curated_descriptors=(curated,))
+
+    assert selected is curated
+
+
+@pytest.mark.parametrize("constraint", ["==0.1.3", ">=0.1,<0.2"])
+def test_select_descriptor_accepts_curated_runtime_constraints(
+    constraint: str,
+):
+    curated = _curated_descriptor(constraint=constraint)
+
+    assert _select_descriptor(curated_descriptors=(curated,)) is curated
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "==0.1.4",
+        "!=0.1.3",
+        ">=0.2",
+        "~=0.2",
+        ">=0.1,",
+        ",>=0.1",
+        "=>0.1.3",
+        "0.1.3",
+        "==0.1.beta",
+        "==0.1.3.0",
+        ">= 0.1",
+    ],
+)
+def test_incompatible_or_malformed_curated_constraint_falls_back_to_local(
+    constraint: str,
+):
+    curated = _curated_descriptor(constraint=constraint)
+
+    selected = _select_descriptor(curated_descriptors=(curated,))
+
+    assert selected is not curated
+    assert selected.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "",
+        ",",
+        ">=0.1,",
+        ",>=0.1",
+        "=>0.1.3",
+        "0.1.3",
+        "==0.1.beta",
+        "==0.1.3.0",
+        "==",
+        ">= 0.1",
+    ],
+)
+def test_malformed_runtime_constraints_are_ineligible_without_raising(
+    constraint: str,
+):
+    assert not gguf.runtime_constraint_admits_pinned_version(constraint)
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "==0.1.3",
+        ">=0.1,<0.2",
+        "~=0.1",
+        "~=0.1.0",
+        "!=0.1.2,>0.1.2,<=0.1.3",
+    ],
+)
+def test_runtime_constraint_grammar_admits_pinned_version(constraint: str):
+    assert gguf.runtime_constraint_admits_pinned_version(constraint)
+
+
+def test_oversized_runtime_constraint_component_is_ineligible_without_raising():
+    constraint = f"=={'9' * 5_000}"
+
+    assert not gguf.runtime_constraint_admits_pinned_version(constraint)
+
+
+def _make_ineligible_curated(boundary: str) -> ArtifactDescriptor:
+    curated = _curated_descriptor()
+    other_file = ArtifactFile("other.gguf", 1, "b" * 64)
+    changes: dict[str, object]
+    if boundary == "role":
+        changes = {"role": ArtifactRole.DEPENDENCY}
+    elif boundary == "format":
+        changes = {"format": ArtifactFormat.ONNX}
+    elif boundary == "consumer":
+        changes = {"consumer": "other-consumer"}
+    elif boundary == "runtime_name":
+        changes = {"runtime_name": "other-runtime"}
+    elif boundary == "one_file":
+        changes = {
+            "files": (*curated.files, other_file),
+            "expected_installed_bytes": _LOCAL_SIZE + 1,
+        }
+    elif boundary == "dependencies":
+        changes = {"dependencies": (ArtifactRef("dependency", "v1", "default"),)}
+    elif boundary == "size":
+        changes = {
+            "files": (ArtifactFile("trusted-whisper.gguf", 1, _LOCAL_DIGEST),),
+            "expected_installed_bytes": 1,
+        }
+    elif boundary == "sha256":
+        changes = {
+            "files": (ArtifactFile("trusted-whisper.gguf", _LOCAL_SIZE, "b" * 64),)
+        }
+    elif boundary == "os":
+        changes = {"supported_os": ("windows",)}
+    elif boundary == "architecture":
+        changes = {"supported_architectures": ("aarch64",)}
+    elif boundary == "provenance":
+        changes = {"provenance": (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)}
+    elif boundary == "constraint":
+        changes = {"runtime_version_constraint": ">=0.2"}
+    else:  # pragma: no cover - the test parameter list is the closed set
+        raise AssertionError(f"unknown eligibility boundary: {boundary}")
+    return replace(curated, **changes)
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "role",
+        "format",
+        "consumer",
+        "runtime_name",
+        "one_file",
+        "dependencies",
+        "size",
+        "sha256",
+        "os",
+        "architecture",
+        "provenance",
+        "constraint",
+    ],
+)
+def test_digest_match_outside_curated_eligibility_falls_back_to_local(
+    boundary: str,
+):
+    curated = _make_ineligible_curated(boundary)
+
+    selected = _select_descriptor(curated_descriptors=(curated,))
+
+    assert selected.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+    assert selected.reference.artifact_id.startswith("local-gguf-")
+
+
+def test_multiple_eligible_curated_descriptors_raise_typed_error():
+    first = _curated_descriptor()
+    second_reference = ArtifactRef("another-curated-whisper", "v2", "q5")
+    second = replace(
+        first,
+        reference=second_reference,
+        precision=second_reference.variant,
+    )
+
+    with pytest.raises(gguf.GGUFAmbiguousCuratedMatchError, match="multiple"):
+        _select_descriptor(curated_descriptors=(first, second))
+
+
+def test_local_descriptor_is_deterministic_and_has_exact_content_identity():
+    digest = ("ABCDEF" * 10) + "ABCD"
+    metadata = gguf.GGUFMetadata(
+        architecture="whisper",
+        variant="untrusted-original-name.gguf-/private/tmp/secret",
+        model_name="\x00  My Local Model  \n",
+        file_type=7,
+        data_offset=64,
+    )
+
+    first = _select_descriptor(metadata=metadata, sha256=digest, size_bytes=9_001)
+    second = _select_descriptor(metadata=metadata, sha256=digest, size_bytes=9_001)
+    normalized_digest = digest.lower()
+
+    assert first == second
+    assert first.reference == ArtifactRef(
+        f"local-gguf-whisper-{normalized_digest[:16]}",
+        normalized_digest,
+        "filetype-7",
+    )
+    assert first.model_id == "My Local Model"
+    assert first.model_family == "whisper"
+    assert first.role is ArtifactRole.ROOT
+    assert first.format is ArtifactFormat.GGUF
+    assert first.consumer == "transcribe-cpp"
+    assert first.runtime_name == "transcribe-cpp"
+    assert first.runtime_version_constraint == "==0.1.3"
+    assert first.precision == "filetype-7"
+    assert first.expected_installed_bytes == 9_001
+    assert first.files == (ArtifactFile("model.gguf", 9_001, normalized_digest),)
+    assert first.dependencies == ()
+    assert first.supported_os == ("linux",)
+    assert first.supported_architectures == ("x86_64",)
+    assert first.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+    assert first.source_url == "https://local.invalid/gguf-import"
+    assert first.license_url == "https://local.invalid/noassertion"
+    assert first.license_id == "NOASSERTION"
+    assert first.upstream_repository == "local-import"
+    assert first.upstream_revision == normalized_digest
+    assert "untrusted-original-name" not in repr(first.to_dict())
+    assert "/private/tmp/secret" not in repr(first.to_dict())
+
+
+def test_local_descriptor_uses_unknown_precision_without_numeric_file_type():
+    metadata = gguf.GGUFMetadata("whisper", "q4", "Whisper", None, 32)
+
+    selected = _select_descriptor(metadata=metadata)
+
+    assert selected.reference.variant == "unknown"
+    assert selected.precision == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        (None, "whisper local GGUF"),
+        ("\x00\n\t ", "whisper local GGUF"),
+        ("x" * 300, "x" * 256),
+        ("\x00  Display Name  \n", "Display Name"),
+    ],
+)
+def test_local_descriptor_sanitizes_caps_and_falls_back_model_label(
+    model_name: str | None,
+    expected: str,
+):
+    metadata = gguf.GGUFMetadata("whisper", None, model_name, 7, 32)
+
+    assert _select_descriptor(metadata=metadata).model_id == expected
+
+
+def test_descriptor_selection_rejects_unsupported_platform_before_building():
+    with pytest.raises(gguf.GGUFPlatformError, match="unavailable"):
+        _select_descriptor(system="Windows", machine="ARM64")
