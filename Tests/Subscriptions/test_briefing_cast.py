@@ -43,6 +43,7 @@ from tldw_chatbook.Subscriptions.briefing_cast import (
     ScriptCastError,
     STATUS_COMPLETE,
     STATUS_FAILED,
+    active_cast_claim_row_ids,
     active_cast_claims,
     active_kept_cast_claims,
     build_cast_prompt,
@@ -52,6 +53,7 @@ from tldw_chatbook.Subscriptions.briefing_cast import (
     generate_script_from_text,
     load_roster,
     parse_script_turns,
+    pending_cast_claim_briefing_ids,
     validate_roster,
 )
 from tldw_chatbook.Subscriptions.briefing_keep import keep_briefing
@@ -735,21 +737,37 @@ def test_active_cast_claims_is_an_empty_snapshot_by_default():
     assert active_cast_claims() == frozenset()
 
 
-def test_fail_interrupted_scripts_spares_a_claimed_briefing_both_directions(tmp_path):
-    """Survey finding (a)'s cast-scoped sibling."""
+def test_fail_interrupted_scripts_spares_an_excluded_row_both_directions(tmp_path):
+    """Survey finding (a)'s cast-scoped sibling, updated for task-1890
+    (mirroring task-1812): `exclude` now names the script ROW to spare, not
+    its briefing -- a row survives the sweep when its id is passed via
+    `exclude`, and is swept once it is not.
+
+    A padding row is inserted (and finished) first so the row under test's
+    own id is NOT the same integer as the briefing's id -- proving
+    `exclude={live_row}` protects because of the ROW id, not a
+    coincidental match with the briefing id (see `test_briefing_service.
+    py`'s identical fixture reasoning).
+    """
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
-    zombie = db.insert_briefing_script(
+    padding = db.insert_briefing_script(
         briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
     )
+    db.update_briefing_script(padding, status="complete", turns_json="[]")
+    live_row = db.insert_briefing_script(  # stands in for a live claim's own row
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+    assert live_row != briefing_id, "the fixture must not coincidentally align the ids"
 
-    assert fail_interrupted_scripts(db, exclude={briefing_id}) == 0
-    assert db.get_briefing_script(zombie)["status"] == "generating"
+    assert fail_interrupted_scripts(db, exclude={live_row}) == 0
+    assert db.get_briefing_script(live_row)["status"] == "generating"
 
+    assert fail_interrupted_scripts(db, exclude={live_row}) == 0
     assert fail_interrupted_scripts(db) == 1
-    assert db.get_briefing_script(zombie)["status"] == "failed"
-    assert db.get_briefing_script(zombie)["error"] == "interrupted"
+    assert db.get_briefing_script(live_row)["status"] == "failed"
+    assert db.get_briefing_script(live_row)["error"] == "interrupted"
 
 
 @pytest.mark.asyncio
@@ -852,6 +870,228 @@ async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
     row = await first
     assert row["status"] == STATUS_COMPLETE
     assert briefing_id not in active_cast_claims()
+
+
+# --- Row-scoped sweep exclusion (task-1890, generalizing task-1812) ---------
+#
+# `fail_interrupted_scripts`'s `exclude` used to be briefing-granular: ANY
+# `generating` script row for a briefing named in `exclude` survived, on the
+# reasoning that such a row is "a LIVE, in-process cast" -- true only if a
+# briefing can have at most one `generating` script at a time. It cannot: a
+# crash-zombie row left by a PRIOR process (that process's own claim died
+# with it) can coexist with a freshly-claimed live row for the SAME
+# briefing, and briefing-scoped exclusion incidentally shielded the zombie
+# too. `active_cast_claim_row_ids()` names the live ROW instead, so a
+# same-briefing zombie is swept exactly as if nothing were claimed at all.
+
+
+def test_active_cast_claim_row_ids_is_an_empty_snapshot_by_default():
+    """With no cast claims taken, the row-id snapshot is an empty frozenset."""
+    assert active_cast_claim_row_ids() == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_the_live_row(
+    tmp_path,
+):
+    """The coexistence case the docstring used to over-claim protection
+    for: a crash-zombie script row and a genuinely live claim, both
+    `generating`, both cast from the SAME briefing, in the same sweep.
+    Row-scoped `exclude` must fail the zombie and leave the live row alone
+    -- briefing-scoped `exclude` (the pre-task-1890 shape) cannot tell them
+    apart and would spare both.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    # Stands in for a row a PRIOR process left behind mid-cast: its own
+    # claim died with that process, so nothing in THIS process's
+    # `_ACTIVE_CAST_CLAIM_ROW_IDS` will ever name it.
+    zombie_id = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_chat(**kwargs):
+        entered.set()
+        await release.wait()
+        return json.dumps(CANNED_TURNS)
+
+    first = asyncio.ensure_future(
+        generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
+    )
+    await entered.wait()
+
+    # The live claim now protects its OWN row, not merely its briefing.
+    live_ids = active_cast_claim_row_ids()
+    assert live_ids, "a live claim's row must be recorded by the time chat runs"
+    assert zombie_id not in live_ids, (
+        "the zombie's id must never be recorded by a claim it did not make"
+    )
+
+    swept = fail_interrupted_scripts(db, exclude=live_ids)
+
+    assert swept == 1
+    assert db.get_briefing_script(zombie_id)["status"] == "failed"
+    assert db.get_briefing_script(zombie_id)["error"] == "interrupted"
+    live_id = next(iter(live_ids))
+    assert db.get_briefing_script(live_id)["status"] == "generating", (
+        "row-scoped exclude must not falsify the row a live claim is "
+        "actually writing"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+
+
+# --- The unrecorded-claim sweep window (task-1890, generalizing the ---------
+# whole-branch review fix in chore/briefings-residuals-1810-1812) -----------
+#
+# `generate_script` records `_ACTIVE_CAST_CLAIM_ROW_IDS[briefing_id]` only
+# after the ENTIRE `_start_script` `to_thread` hop returns, but that hop's
+# `INSERT` is its LAST statement -- for the rest of the hop (briefing
+# lookup, preset lookup, roster validation, the roster snapshot) the
+# briefing is claimed but no script row exists yet to protect, and once the
+# `INSERT` itself has run, the row exists, reads `generating`, and `active_
+# cast_claim_row_ids()` alone names nothing that protects it. A sweep at
+# that exact instant used to falsify the row. `pending_cast_claim_
+# briefing_ids()` closes the window: `_claim_cast(briefing_id)` with no
+# `script_id` reproduces the registry state mid-window directly, with no
+# need to block inside `_start_script` itself.
+
+
+def test_pending_cast_claim_briefing_ids_is_an_empty_snapshot_by_default():
+    """With no cast claims taken, the pending (unrecorded) set is empty."""
+    assert pending_cast_claim_briefing_ids() == frozenset()
+
+
+def test_a_cast_claim_with_no_recorded_row_id_yet_is_named_pending(tmp_path):
+    """Direct pin of the accessor: a claim taken via `_claim_cast` without a
+    `script_id` (exactly the registry state for the span inside `_start_
+    script`'s `to_thread` hop, before `generate_script` resumes to record
+    one) must appear in `pending_cast_claim_briefing_ids()`, and must
+    disappear the instant a row id IS recorded.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+
+    with briefing_cast._claim_cast(briefing_id):
+        assert active_cast_claim_row_ids() == frozenset(), (
+            "no row id has been recorded yet -- this is the window itself"
+        )
+        assert briefing_id in pending_cast_claim_briefing_ids()
+
+    assert briefing_id not in pending_cast_claim_briefing_ids(), (
+        "the claim released -- nothing should still read as pending"
+    )
+
+    live_row = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+    with briefing_cast._claim_cast(briefing_id, script_id=live_row):
+        assert briefing_id not in pending_cast_claim_briefing_ids(), (
+            "a claim whose row id IS recorded is no longer pending"
+        )
+
+
+def test_a_cast_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
+    tmp_path,
+):
+    """The window itself, closed: a `generating` script row for a briefing
+    whose claim exists but whose row id is not yet recorded (mid-`_start_
+    script`, before `generate_script` resumes to record it) must survive a
+    sweep run at that exact instant -- reproducing the same regression
+    `test_briefing_service.py`'s own analogous test pins for briefings.
+
+    Without `exclude_briefings`, `active_cast_claim_row_ids()` alone is
+    empty here (nothing recorded yet) and the row would be swept as a false
+    zombie -- exactly the regression this pins.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    # Stands in for the row `_start_script`'s `INSERT` just wrote, before
+    # `generate_script` resumes on the event loop to record its id.
+    live_row = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+
+    with briefing_cast._claim_cast(briefing_id):
+        row_ids = active_cast_claim_row_ids()
+        pending = pending_cast_claim_briefing_ids()
+        assert row_ids == frozenset(), "the row id is not recorded in this window"
+        assert briefing_id in pending
+
+        swept = fail_interrupted_scripts(
+            db, exclude=row_ids, exclude_briefings=pending
+        )
+
+    assert swept == 0
+    assert db.get_briefing_script(live_row)["status"] == "generating", (
+        "a claim whose row id has not been recorded yet must still spare "
+        "its own row from a concurrent sweep"
+    )
+
+
+@pytest.mark.asyncio
+async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_id_lands(
+    tmp_path,
+):
+    """The task-1890 coexistence fix, re-asserted alongside the new guard:
+    once a claim's row id IS recorded, `pending_cast_claim_briefing_ids()`
+    no longer names its briefing, so `exclude_briefings` goes back to being
+    a no-op for it and row-scoped `exclude` alone decides -- a
+    same-briefing crash zombie is still swept even though the briefing
+    itself has a live claim.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    zombie_id = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Duo", roster_snapshot_json="[]"
+    )
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_chat(**kwargs):
+        entered.set()
+        await release.wait()
+        return json.dumps(CANNED_TURNS)
+
+    first = asyncio.ensure_future(
+        generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
+    )
+    await entered.wait()
+
+    row_ids = active_cast_claim_row_ids()
+    pending = pending_cast_claim_briefing_ids()
+    assert row_ids, "the live claim's row id must be recorded by the time chat runs"
+    assert briefing_id not in pending, (
+        "once the row id lands, the briefing is no longer 'pending'"
+    )
+
+    swept = fail_interrupted_scripts(db, exclude=row_ids, exclude_briefings=pending)
+
+    assert swept == 1
+    assert db.get_briefing_script(zombie_id)["status"] == "failed"
+    live_id = next(iter(row_ids))
+    assert db.get_briefing_script(live_id)["status"] == "generating", (
+        "the live row must survive even with exclude_briefings passed "
+        "alongside row-scoped exclude"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
 
 
 # --- generate_script_from_text (task-1780, Task 4) ---------------------------

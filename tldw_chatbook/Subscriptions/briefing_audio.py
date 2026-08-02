@@ -1121,19 +1121,105 @@ def audio_file_path_is_safe(file_path: str | Path) -> bool:
 
 _ACTIVE_AUDIO_CLAIMS: set[int] = set()
 
+# Task-1890 (generalizing task-1812's briefings-side fix): `script_id ->
+# briefing_audio.id` for the SAME live claim above, but scoped to the actual
+# ROW a live render is writing rather than merely the script it belongs to.
+# `_ACTIVE_AUDIO_CLAIMS` alone cannot tell a fresh live audio row apart from
+# a crash-zombie row left by a PRIOR process for the SAME script (the crash
+# predates the claim) -- both read `generating` and share one `script_id`,
+# so a script-scoped `exclude` incidentally shields the zombie too. An entry
+# here is added only once the row actually exists (`generate_script_audio`
+# records it right after `db.create_briefing_audio`'s own `to_thread` call
+# returns), and popped in `_claim_audio`'s `finally`, alongside the
+# script-level claim itself, so it never outlives the claim it belongs to.
+# `fail_interrupted_audio`'s `exclude` (via `active_audio_claim_row_ids`
+# below) reads from THIS registry, not `_ACTIVE_AUDIO_CLAIMS`.
+_ACTIVE_AUDIO_CLAIM_ROW_IDS: dict[int, int] = {}
+
 
 def active_audio_claims() -> frozenset[int]:
     """Snapshot of script ids a live `generate_script_audio` call currently holds.
 
     See `briefing_service.active_briefing_claims` for the snapshot
-    reasoning; this is its audio-scoped sibling, passed as
-    `fail_interrupted_audio`'s `exclude`.
+    reasoning; this is its audio-scoped sibling.
+
+    NOT what `fail_interrupted_audio`'s `exclude` wants any more
+    (task-1890, generalizing task-1812): a script-scoped snapshot cannot
+    tell a fresh live audio row apart from a crash-zombie row a PRIOR
+    process left behind for the SAME script, so passing this here would
+    incidentally shield the zombie too. Callers of the sweep want
+    `active_audio_claim_row_ids()` instead.
     """
     return frozenset(_ACTIVE_AUDIO_CLAIMS)
 
 
+def active_audio_claim_row_ids() -> frozenset[int]:
+    """Snapshot of `briefing_audio.id`s a live `generate_script_audio` call
+    has actually inserted (task-1890, mirroring `briefing_service.active_
+    briefing_claim_row_ids` exactly, scoped to a script id instead of a
+    watchlist id).
+
+    A plain, already-copied `frozenset` -- safe to read from any thread,
+    unlike `_ACTIVE_AUDIO_CLAIM_ROW_IDS` itself. Callers take this snapshot
+    on the event loop, before handing control to a thread, and pass it as
+    `fail_interrupted_audio`'s `exclude`: that function is sync and runs
+    under `asyncio.to_thread`, while the registry is mutated only on the
+    event loop, so a cross-thread read of the live registry would be racy
+    in a way a snapshot taken beforehand never is.
+
+    Row-scoped, not script-scoped -- see `active_audio_claims`'s own
+    docstring for why that distinction is the whole point: a genuine crash
+    zombie and a fresh live claim can coexist for one script, and only
+    naming the live row itself, rather than its whole script, lets a sweep
+    tell them apart.
+
+    A script whose claim has been taken but whose row has not been
+    recorded yet -- the window between `db.create_briefing_audio`'s own
+    `asyncio.to_thread` call returning and `generate_script_audio`'s
+    coroutine resuming on the event loop to record the id -- is not
+    represented here: there is no id for it to report until `generate_
+    script_audio` records one. `pending_audio_claim_script_ids()` below
+    names exactly those scripts, and `fail_interrupted_audio`'s `exclude_
+    scripts` closes the gap this function's row-scoping alone cannot.
+    """
+    return frozenset(_ACTIVE_AUDIO_CLAIM_ROW_IDS.values())
+
+
+def pending_audio_claim_script_ids() -> frozenset[int]:
+    """Snapshot of script ids with a live claim whose row id is not yet
+    recorded (task-1890, mirroring `briefing_service.pending_briefing_
+    claim_watchlist_ids` exactly, scoped to a script id).
+
+    `_claim_audio` adds `script_id` to `_ACTIVE_AUDIO_CLAIMS` before
+    `generate_script_audio` ever calls `db.create_briefing_audio`, but
+    `generate_script_audio` only records the row id (`_ACTIVE_AUDIO_CLAIM_
+    ROW_IDS[script_id] = audio_id`) once that call's `to_thread` hop
+    returns. For that whole span the script is claimed, but its audio row
+    either does not exist yet or exists with no id recorded to protect it:
+    `active_audio_claim_row_ids()` is empty (no id recorded yet), and
+    `active_audio_claims()` is script-scoped -- passing it as `fail_
+    interrupted_audio`'s row-scoped `exclude` does not even type-check, and
+    passing it as `exclude_scripts` unconditionally would resurrect the
+    exact over-protection this task removes (shielding a genuine
+    same-script crash zombie alongside the live row).
+
+    This is the set difference: claimed, but not yet recorded. Callers pass
+    it as `fail_interrupted_audio`'s `exclude_scripts`, ALONGSIDE
+    `exclude=active_audio_claim_row_ids()`, never instead of it -- the
+    moment a script's row id lands, it drops out of this set and the
+    row-scoped `exclude` alone protects it, which is exactly what keeps the
+    coexistence fix (a zombie and a live claim on the SAME script, swept
+    and spared respectively) intact.
+
+    A plain, already-copied `frozenset`, computed with no `await` between
+    reading the two registries -- safe only when called from the event
+    loop, same as the other two accessors in this section.
+    """
+    return frozenset(_ACTIVE_AUDIO_CLAIMS) - frozenset(_ACTIVE_AUDIO_CLAIM_ROW_IDS)
+
+
 @contextmanager
-def _claim_audio(script_id: int) -> Iterator[None]:
+def _claim_audio(script_id: int, *, audio_id: int | None = None) -> Iterator[None]:
     """Claim `script_id` for the duration of one synthesis attempt.
 
     See `briefing_service._claim_briefing` for the full reasoning (no
@@ -1142,8 +1228,21 @@ def _claim_audio(script_id: int) -> Iterator[None]:
     usable directly by tests that need to simulate another in-process
     caller already holding a script.
 
+    Task-1890: this context manager's `finally` is also where `_ACTIVE_
+    AUDIO_CLAIM_ROW_IDS`' entry for `script_id` is cleared, on every exit
+    path, alongside the script-level claim itself -- so the row-id
+    registry can never outlive the claim it belongs to. `.pop(..., None)`
+    is a safe no-op whenever no id was ever recorded.
+
     Args:
         script_id: The script whose audio is about to be synthesized.
+        audio_id: The `briefing_audio.id` this claim protects, if already
+            known at entry. `generate_script_audio` itself never passes
+            this -- its own row does not exist until AFTER this context
+            manager is entered, so it records the id into `_ACTIVE_AUDIO_
+            CLAIM_ROW_IDS` itself, mid-block, once `db.create_briefing_
+            audio` returns. This parameter exists for tests simulating
+            another in-process claim against a row that already exists.
 
     Raises:
         GenerationInFlightError: If `script_id` is already claimed.
@@ -1153,10 +1252,13 @@ def _claim_audio(script_id: int) -> Iterator[None]:
             f"audio is already being synthesized for script {script_id}"
         )
     _ACTIVE_AUDIO_CLAIMS.add(script_id)
+    if audio_id is not None:
+        _ACTIVE_AUDIO_CLAIM_ROW_IDS[script_id] = audio_id
     try:
         yield
     finally:
         _ACTIVE_AUDIO_CLAIMS.discard(script_id)
+        _ACTIVE_AUDIO_CLAIM_ROW_IDS.pop(script_id, None)
 
 
 async def generate_script_audio(
@@ -1239,6 +1341,25 @@ async def generate_script_audio(
             script_id,
             voice_snapshot_json=dump_voice_snapshot(selections),
         )
+        # Task-1890: record the row THIS claim is now writing, as the very
+        # next statement after the `to_thread` call above returns (no
+        # `await` in between) -- so nothing else on this event loop can
+        # observe the claim without the row it now protects. From here
+        # until `_claim_audio`'s `finally` pops it back out, `fail_
+        # interrupted_audio`'s row-scoped `exclude` (`active_audio_claim_
+        # row_ids`) can tell this row apart from any OTHER `generating` row
+        # on the same script -- in particular a crash-zombie left by a
+        # prior process, which does not belong here and must still be
+        # swept.
+        #
+        # For the whole `to_thread` call above, this script's id sits in
+        # `_ACTIVE_AUDIO_CLAIMS` with no corresponding entry here yet, so
+        # `active_audio_claim_row_ids()` alone cannot protect the row this
+        # exact call is about to insert. That window is what `pending_
+        # audio_claim_script_ids()` names and `fail_interrupted_audio`'s
+        # `exclude_scripts` closes -- every screen call site passes it
+        # alongside `exclude=active_audio_claim_row_ids()`.
+        _ACTIVE_AUDIO_CLAIM_ROW_IDS[script_id] = audio_id
 
         by_speaker: dict[str, VoiceSelection] = {
             selection.speaker: selection for selection in selections
@@ -1303,7 +1424,11 @@ async def generate_script_audio(
 
 
 def fail_interrupted_audio(
-    db: Any, script_id: int | None = None, *, exclude: Collection[int] = ()
+    db: Any,
+    script_id: int | None = None,
+    *,
+    exclude: Collection[int] = (),
+    exclude_scripts: Collection[int] = (),
 ) -> int:
     """Fail every `generating` audio row as `interrupted`; return the count.
 
@@ -1318,12 +1443,43 @@ def fail_interrupted_audio(
         script_id: Scope the sweep to one script's audio rows. `None`
             sweeps every script's audio, which is what a startup pass
             wants.
-        exclude: Script ids to spare even though their audio row reads
-            `generating` -- phase 4's claim-aware sweep. A `generating`
-            row whose script is in this collection is a LIVE, in-process
-            render, not a crash zombie. Callers snapshot
-            `active_audio_claims()` on the event loop and pass the result
-            here. Defaults to `()`, so every pre-phase-4 caller is
+        exclude: `briefing_audio.id`s to spare even though their row reads
+            `generating` -- phase 4's claim-aware sweep, row-scoped since
+            task-1890 (generalizing task-1812). A `generating` row whose
+            OWN id is in this collection is a LIVE, in-process render, not
+            a crash zombie, and must survive unconditionally, in every
+            scope. Callers snapshot `active_audio_claim_row_ids()` on the
+            event loop and pass the result here; this function is sync and
+            runs under `asyncio.to_thread`, so it never reads the live
+            claim registry itself. Defaults to `()`, so every pre-task-1890
+            caller is unchanged.
+
+            Prior to task-1890 this was script-scoped (`active_audio_
+            claims()`), which over-protected: a genuine crash-zombie row
+            left by an earlier process can coexist with a freshly-claimed
+            live row for the SAME script (the crash predates the claim),
+            and a script-scoped `exclude` shielded both rows, not just the
+            live one. Scoping to the row's own id fixes that: only the
+            actual live row survives, and a same-script zombie is swept
+            exactly as if no claim existed at all. This is what closes the
+            gap task-1811 made user-visible: `WatchlistsCollectionsScreen`'s
+            Synthesize refusal toast no longer names a crash-zombie row
+            shielded by an unrelated live claim on the same script (except
+            during that claim's own pre-recording window below, where the
+            whole script is deliberately spared).
+        exclude_scripts: Script ids to spare even though a row reads
+            `generating`, regardless of that row's own id (task-1890,
+            mirroring `fail_interrupted_briefings`'s `exclude_watchlists`).
+            Closes a window row-scoped `exclude` alone cannot: between a
+            claim being taken and its row's id being recorded, `generate_
+            script_audio`'s `to_thread` call has not yet resumed on the
+            event loop to record it -- for that whole span the row (once
+            inserted) reads `generating` and is named by no row id at all.
+            Callers pass `pending_audio_claim_script_ids()` here,
+            snapshotted on the event loop exactly like `exclude` -- NEVER
+            `active_audio_claims()` itself, which would resurrect the
+            pre-task-1890 over-protection `exclude` was narrowed away from.
+            Defaults to `()`, so every caller that predates this fix is
             unchanged.
 
     Returns:
@@ -1339,8 +1495,12 @@ def fail_interrupted_audio(
         params.append(script_id)
     if exclude:
         placeholders = ",".join("?" for _ in exclude)
-        sql += f" AND script_id NOT IN ({placeholders})"
+        sql += f" AND id NOT IN ({placeholders})"
         params.extend(exclude)
+    if exclude_scripts:
+        placeholders = ",".join("?" for _ in exclude_scripts)
+        sql += f" AND script_id NOT IN ({placeholders})"
+        params.extend(exclude_scripts)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

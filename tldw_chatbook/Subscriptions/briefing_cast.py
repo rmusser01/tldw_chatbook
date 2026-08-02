@@ -596,19 +596,107 @@ def _finish_script_failure(db: Any, script_id: int, message: str) -> dict[str, A
 
 _ACTIVE_CAST_CLAIMS: set[int] = set()
 
+# Task-1890 (generalizing task-1812's briefings-side fix): `briefing_id ->
+# briefing_scripts.id` for the SAME live claim above, but scoped to the
+# actual ROW a live cast is writing rather than merely the briefing it
+# belongs to. `_ACTIVE_CAST_CLAIMS` alone cannot tell a fresh live script row
+# apart from a crash-zombie row left by a PRIOR process for the SAME
+# briefing (the crash predates the claim) -- both read `generating` and
+# share one `briefing_id`, so a briefing-scoped `exclude` incidentally
+# shields the zombie too. An entry here is added only once the row actually
+# exists (`generate_script` records it right after `_start_script`'s
+# `INSERT` returns), and popped in `_claim_cast`'s `finally`, alongside the
+# briefing-level claim itself, so it never outlives the claim it belongs to.
+# `fail_interrupted_scripts`'s `exclude` (via `active_cast_claim_row_ids`
+# below) reads from THIS registry, not `_ACTIVE_CAST_CLAIMS`.
+_ACTIVE_CAST_CLAIM_ROW_IDS: dict[int, int] = {}
+
 
 def active_cast_claims() -> frozenset[int]:
     """Snapshot of briefing ids a live `generate_script` call currently holds.
 
     See `briefing_service.active_briefing_claims` for the snapshot
-    reasoning; this is its cast-scoped sibling, passed as
-    `fail_interrupted_scripts`'s `exclude`.
+    reasoning; this is its cast-scoped sibling.
+
+    NOT what `fail_interrupted_scripts`'s `exclude` wants any more
+    (task-1890, generalizing task-1812): a briefing-scoped snapshot cannot
+    tell a fresh live script row apart from a crash-zombie row a PRIOR
+    process left behind for the SAME briefing, so passing this here would
+    incidentally shield the zombie too. Callers of the sweep want
+    `active_cast_claim_row_ids()` instead.
     """
     return frozenset(_ACTIVE_CAST_CLAIMS)
 
 
+def active_cast_claim_row_ids() -> frozenset[int]:
+    """Snapshot of `briefing_scripts.id`s a live `generate_script` call has
+    actually inserted (task-1890, mirroring `briefing_service.active_
+    briefing_claim_row_ids` exactly, scoped to a briefing id instead of a
+    watchlist id).
+
+    A plain, already-copied `frozenset` -- safe to read from any thread,
+    unlike `_ACTIVE_CAST_CLAIM_ROW_IDS` itself. Callers take this snapshot
+    on the event loop, before handing control to a thread, and pass it as
+    `fail_interrupted_scripts`'s `exclude`: that function is sync and runs
+    under `asyncio.to_thread`, while the registry is mutated only on the
+    event loop, so a cross-thread read of the live registry would be racy
+    in a way a snapshot taken beforehand never is.
+
+    Row-scoped, not briefing-scoped -- see `active_cast_claims`'s own
+    docstring for why that distinction is the whole point: a genuine crash
+    zombie and a fresh live claim can coexist for one briefing, and only
+    naming the live row itself, rather than its whole briefing, lets a
+    sweep tell them apart.
+
+    A briefing whose claim has been taken but whose row has not been
+    recorded yet -- the window inside `_start_script`'s own `asyncio.
+    to_thread` hop, from the moment its `INSERT` runs until `generate_
+    script`'s coroutine resumes on the event loop to record the id -- is
+    not represented here: there is no id for it to report until `generate_
+    script` records one. `pending_cast_claim_briefing_ids()` below names
+    exactly those briefings, and `fail_interrupted_scripts`'s `exclude_
+    briefings` closes the gap this function's row-scoping alone cannot.
+    """
+    return frozenset(_ACTIVE_CAST_CLAIM_ROW_IDS.values())
+
+
+def pending_cast_claim_briefing_ids() -> frozenset[int]:
+    """Snapshot of briefing ids with a live claim whose row id is not yet
+    recorded (task-1890, mirroring `briefing_service.pending_briefing_
+    claim_watchlist_ids` exactly, scoped to a briefing id).
+
+    `_claim_cast` adds `briefing_id` to `_ACTIVE_CAST_CLAIMS` before
+    `generate_script` ever calls `_start_script`, but `generate_script`
+    only records the row id (`_ACTIVE_CAST_CLAIM_ROW_IDS[briefing_id] =
+    script_id`) once that call's WHOLE `asyncio.to_thread` hop returns --
+    and `_start_script`'s `INSERT` is its LAST statement, after the
+    briefing/preset/roster validation and the roster snapshot. For that
+    whole span the briefing is claimed and its row exists (once the
+    `INSERT` itself has run) and reads `generating`, but is named by
+    nothing: `active_cast_claim_row_ids()` is empty (no id recorded yet),
+    and `active_cast_claims()` is briefing-scoped -- passing it as `fail_
+    interrupted_scripts`'s row-scoped `exclude` does not even type-check,
+    and passing it as `exclude_briefings` unconditionally would resurrect
+    the exact over-protection this task removes (shielding a genuine
+    same-briefing crash zombie alongside the live row).
+
+    This is the set difference: claimed, but not yet recorded. Callers pass
+    it as `fail_interrupted_scripts`'s `exclude_briefings`, ALONGSIDE
+    `exclude=active_cast_claim_row_ids()`, never instead of it -- the
+    moment a briefing's row id lands, it drops out of this set and the
+    row-scoped `exclude` alone protects it, which is exactly what keeps the
+    coexistence fix (a zombie and a live claim on the SAME briefing, swept
+    and spared respectively) intact.
+
+    A plain, already-copied `frozenset`, computed with no `await` between
+    reading the two registries -- safe only when called from the event
+    loop, same as the other two accessors in this section.
+    """
+    return frozenset(_ACTIVE_CAST_CLAIMS) - frozenset(_ACTIVE_CAST_CLAIM_ROW_IDS)
+
+
 @contextmanager
-def _claim_cast(briefing_id: int) -> Iterator[None]:
+def _claim_cast(briefing_id: int, *, script_id: int | None = None) -> Iterator[None]:
     """Claim `briefing_id` for the duration of one cast attempt.
 
     See `briefing_service._claim_briefing` for the full reasoning (no
@@ -617,8 +705,21 @@ def _claim_cast(briefing_id: int) -> Iterator[None]:
     of a watchlist id. Also usable directly by tests that need to simulate
     another in-process caller already holding a briefing.
 
+    Task-1890: this context manager's `finally` is also where `_ACTIVE_
+    CAST_CLAIM_ROW_IDS`' entry for `briefing_id` is cleared, on every exit
+    path, alongside the briefing-level claim itself -- so the row-id
+    registry can never outlive the claim it belongs to. `.pop(..., None)`
+    is a safe no-op whenever no id was ever recorded.
+
     Args:
         briefing_id: The briefing about to be cast.
+        script_id: The `briefing_scripts.id` this claim protects, if
+            already known at entry. `generate_script` itself never passes
+            this -- its own row does not exist until AFTER this context
+            manager is entered, so it records the id into `_ACTIVE_CAST_
+            CLAIM_ROW_IDS` itself, mid-block, once `_start_script` returns.
+            This parameter exists for tests simulating another in-process
+            claim against a row that already exists.
 
     Raises:
         GenerationInFlightError: If `briefing_id` is already claimed.
@@ -628,10 +729,13 @@ def _claim_cast(briefing_id: int) -> Iterator[None]:
             f"a script is already being cast for briefing {briefing_id}"
         )
     _ACTIVE_CAST_CLAIMS.add(briefing_id)
+    if script_id is not None:
+        _ACTIVE_CAST_CLAIM_ROW_IDS[briefing_id] = script_id
     try:
         yield
     finally:
         _ACTIVE_CAST_CLAIMS.discard(briefing_id)
+        _ACTIVE_CAST_CLAIM_ROW_IDS.pop(briefing_id, None)
 
 
 async def generate_script(
@@ -689,6 +793,26 @@ async def generate_script(
         script_id, briefing, preset, roster, roster_names = await asyncio.to_thread(
             _start_script, db, briefing_id, preset_id, load_character
         )
+        # Task-1890: record the row THIS claim is now writing, as the very
+        # next statement after the `to_thread` hop above returns (no
+        # `await` in between) -- so nothing else on this event loop can
+        # observe the claim without the row it now protects. From here
+        # until `_claim_cast`'s `finally` pops it back out, `fail_
+        # interrupted_scripts`'s row-scoped `exclude` (`active_cast_claim_
+        # row_ids`) can tell this row apart from any OTHER `generating` row
+        # on the same briefing -- in particular a crash-zombie left by a
+        # prior process, which does not belong here and must still be
+        # swept.
+        #
+        # For the ENTIRE `to_thread` hop above, this briefing's id sits in
+        # `_ACTIVE_CAST_CLAIMS` with no corresponding entry here yet, so
+        # `active_cast_claim_row_ids()` alone cannot protect the row this
+        # exact call is about to insert (`_start_script`'s `INSERT` is its
+        # LAST statement). That window is what `pending_cast_claim_
+        # briefing_ids()` names and `fail_interrupted_scripts`'s `exclude_
+        # briefings` closes -- every screen call site passes it alongside
+        # `exclude=active_cast_claim_row_ids()`.
+        _ACTIVE_CAST_CLAIM_ROW_IDS[briefing_id] = script_id
 
         endpoint = provider or preset.get("provider") or _default_provider()
         resolved_model = model or preset.get("model")
@@ -720,7 +844,11 @@ async def generate_script(
 
 
 def fail_interrupted_scripts(
-    db: Any, briefing_id: int | None = None, *, exclude: Collection[int] = ()
+    db: Any,
+    briefing_id: int | None = None,
+    *,
+    exclude: Collection[int] = (),
+    exclude_briefings: Collection[int] = (),
 ) -> int:
     """Fail every `generating` script as `interrupted`; return the count.
 
@@ -735,13 +863,38 @@ def fail_interrupted_scripts(
         briefing_id: Scope the sweep to one briefing's scripts. `None`
             sweeps every briefing's scripts, which is what a startup pass
             wants.
-        exclude: Briefing ids to spare even though their script row reads
-            `generating` -- phase 4's claim-aware sweep. A `generating`
-            script whose briefing is in this collection is a LIVE,
-            in-process cast, not a crash zombie. Callers snapshot
-            `active_cast_claims()` on the event loop and pass the result
-            here. Defaults to `()`, so every pre-phase-4 caller is
-            unchanged.
+        exclude: `briefing_scripts.id`s to spare even though their row
+            reads `generating` -- phase 4's claim-aware sweep, row-scoped
+            since task-1890 (generalizing task-1812). A `generating` row
+            whose OWN id is in this collection is a LIVE, in-process cast,
+            not a crash zombie, and must survive unconditionally, in every
+            scope. Callers snapshot `active_cast_claim_row_ids()` on the
+            event loop and pass the result here; this function is sync and
+            runs under `asyncio.to_thread`, so it never reads the live
+            claim registry itself. Defaults to `()`, so every pre-task-1890
+            caller is unchanged.
+
+            Prior to task-1890 this was briefing-scoped (`active_cast_
+            claims()`), which over-protected: a genuine crash-zombie row
+            left by an earlier process can coexist with a freshly-claimed
+            live row for the SAME briefing (the crash predates the claim),
+            and a briefing-scoped `exclude` shielded both rows, not just
+            the live one. Scoping to the row's own id fixes that: only the
+            actual live row survives, and a same-briefing zombie is swept
+            exactly as if no claim existed at all.
+        exclude_briefings: Briefing ids to spare even though a row reads
+            `generating`, regardless of that row's own id (task-1890,
+            mirroring `fail_interrupted_briefings`'s `exclude_watchlists`).
+            Closes a window row-scoped `exclude` alone cannot: between a
+            claim being taken and its row's id being recorded, `generate_
+            script`'s `to_thread` hop has not yet resumed on the event loop
+            to record it -- for that whole span the row (once inserted)
+            reads `generating` and is named by no row id at all. Callers
+            pass `pending_cast_claim_briefing_ids()` here, snapshotted on
+            the event loop exactly like `exclude` -- NEVER `active_cast_
+            claims()` itself, which would resurrect the pre-task-1890
+            over-protection `exclude` was narrowed away from. Defaults to
+            `()`, so every caller that predates this fix is unchanged.
 
     Returns:
         How many rows were failed.
@@ -756,8 +909,12 @@ def fail_interrupted_scripts(
         params.append(briefing_id)
     if exclude:
         placeholders = ",".join("?" for _ in exclude)
-        sql += f" AND briefing_id NOT IN ({placeholders})"
+        sql += f" AND id NOT IN ({placeholders})"
         params.extend(exclude)
+    if exclude_briefings:
+        placeholders = ",".join("?" for _ in exclude_briefings)
+        sql += f" AND briefing_id NOT IN ({placeholders})"
+        params.extend(exclude_briefings)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount
