@@ -584,12 +584,12 @@ def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
                     "Selected local GGUF identity could not be verified"
                 ) from None
             opened_identity = _source_identity(opened_info)
-            if not stat.S_ISREG(opened_identity.mode):
-                raise GGUFPathError("Selected local GGUF is not a regular file")
             if initial_identity != opened_identity:
                 raise GGUFSourceChangedError(
                     "Selected local GGUF changed during validation"
                 )
+            if not stat.S_ISREG(opened_identity.mode):
+                raise GGUFPathError("Selected local GGUF is not a regular file")
 
             try:
                 named_info = os.lstat(selected_path)

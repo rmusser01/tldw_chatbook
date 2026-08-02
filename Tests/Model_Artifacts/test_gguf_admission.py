@@ -1174,8 +1174,10 @@ def test_validate_local_gguf_rejects_fifo_before_open(
 
     monkeypatch.setattr(gguf.os, "open", unexpected_open)
 
-    with pytest.raises(gguf.GGUFPathError):
+    with pytest.raises(gguf.GGUFPathError) as raised:
         gguf.validate_local_gguf(selected)
+
+    assert type(raised.value) is gguf.GGUFPathError
 
 
 def test_validate_local_gguf_accepts_case_insensitive_extension(
@@ -1238,6 +1240,40 @@ def test_validate_local_gguf_rejects_replacement_between_lstat_and_open(
     opened: list[int] = []
 
     def replace_then_open(path: str | Path, flags: int) -> int:
+        replacement.replace(selected)
+        descriptor = real_open(path, flags)
+        opened.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(gguf.os, "open", replace_then_open)
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        gguf.validate_local_gguf(selected)
+
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"),
+    reason="nonblocking FIFO replacement is unavailable",
+)
+def test_validate_local_gguf_classifies_regular_to_irregular_replacement_as_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    replacement = tmp_path / "replacement.gguf"
+    selected.write_bytes(make_gguf())
+    os.mkfifo(replacement)
+    real_open = gguf.os.open
+    opened: list[int] = []
+
+    def replace_then_open(path: str | Path, flags: int) -> int:
+        assert flags & os.O_NONBLOCK
+        selected.unlink()
         replacement.replace(selected)
         descriptor = real_open(path, flags)
         opened.append(descriptor)
