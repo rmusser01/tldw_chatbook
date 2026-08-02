@@ -18,11 +18,23 @@ class ConsolePromptImprovementContext:
 
     session_id: str
     composer_snapshot: ComposerDraftSnapshot = field(repr=False)
-    current_user_projection: ComposerModelProjection = field(repr=False)
+    current_user_projection: ComposerModelProjection | None = field(repr=False)
     current_system_prompt: str = field(repr=False)
     current_system_fingerprint: str | None = field(repr=False)
     provider_label: str
     model_label: str
+    endpoint_label: str = ""
+    model_unavailable_reason: str = ""
+    pinned_resolution: object | None = field(default=None, repr=False)
+
+
+def improvement_provider_summary(context: object) -> str:
+    """Return the exact pinned provider target shown beside model actions."""
+
+    provider = str(getattr(context, "provider_label", "") or "Not configured")
+    model = str(getattr(context, "model_label", "") or "Not configured")
+    endpoint = str(getattr(context, "endpoint_label", "") or "Provider default")
+    return f"Provider: {provider} · Model: {model} · Endpoint: {endpoint}"
 
 
 class ConsolePromptImproveView(Widget):
@@ -65,6 +77,12 @@ class ConsolePromptImproveView(Widget):
         self.model_unavailable_reason = model_unavailable_reason.strip()
 
     def compose(self) -> ComposeResult:
+        projection = self.context.current_user_projection
+        preview = (
+            projection.text
+            if projection is not None
+            else "Preview unavailable. Remove reserved protected-placeholder text from the draft to use model improvement."
+        )
         with VerticalScroll(id="console-prompts-improve-scroll"):
             yield Static(
                 "Current System prompt", classes="console-prompts-context-heading"
@@ -79,13 +97,13 @@ class ConsolePromptImproveView(Widget):
                 "Current unsent message", classes="console-prompts-context-heading"
             )
             yield TextArea(
-                self.context.current_user_projection.text,
+                preview,
                 read_only=True,
                 id="console-prompts-current-user",
                 classes="console-prompts-context-preview",
             )
             yield Static(
-                f"Provider: {self.context.provider_label} · Model: {self.context.model_label}",
+                improvement_provider_summary(self.context),
                 id="console-prompts-provider-summary",
                 markup=False,
             )
@@ -117,4 +135,8 @@ class ConsolePromptImproveView(Widget):
                 yield Button("Retry save", id="console-prompts-persistence-retry")
 
 
-__all__ = ["ConsolePromptImprovementContext", "ConsolePromptImproveView"]
+__all__ = [
+    "ConsolePromptImprovementContext",
+    "ConsolePromptImproveView",
+    "improvement_provider_summary",
+]

@@ -99,17 +99,6 @@ def build_composer_menu_entries(
             "Prompts",
             "Browse, improve, or build reusable prompts",
         ),
-        *(
-            (
-                ComposerMenuEntry(
-                    ACTION_UNDO_PROMPT_IMPROVEMENT,
-                    "Undo prompt improvement",
-                    "Restore the draft captured before the latest prompt improvement",
-                ),
-            )
-            if improvement_undo_available
-            else ()
-        ),
         ComposerMenuEntry(
             ACTION_ATTACH_CONTEXT,
             "Attach",
@@ -120,6 +109,17 @@ def build_composer_menu_entries(
             "Save Chatbook",
             chatbook_reason,
             enabled=chatbook_blocked is None and can_save_chatbook,
+        ),
+        *(
+            (
+                ComposerMenuEntry(
+                    ACTION_UNDO_PROMPT_IMPROVEMENT,
+                    "Undo prompt improvement",
+                    "Restore the draft captured before the latest prompt improvement",
+                ),
+            )
+            if improvement_undo_available
+            else ()
         ),
         ComposerMenuEntry(
             ACTION_GENERATE_IMAGE,

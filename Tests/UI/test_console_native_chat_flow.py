@@ -249,7 +249,9 @@ class _PromptImprovementGateway:
         return ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
-            model=selection.explicit_model or selection.configured_model or "local-model",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "local-model",
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
@@ -262,9 +264,7 @@ class _PromptImprovementGateway:
         return AuxiliaryCompletionResult(
             provider=request.resolution.provider,
             model=str(request.resolution.model),
-            text=json.dumps(
-                {"kind": "prompt_rewrite", "rewritten_prompt": rewritten}
-            ),
+            text=json.dumps({"kind": "prompt_rewrite", "rewritten_prompt": rewritten}),
         )
 
     async def stream_chat(self, *_args, **_kwargs):
@@ -282,6 +282,29 @@ class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
         self.started.set()
         await self.release.wait()
         return await super().complete_auxiliary(request)
+
+
+class _MutableResolutionPromptGateway(_PromptImprovementGateway):
+    """Expose config-only endpoint drift without changing the selection."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.endpoint = "http://127.0.0.1:9099"
+        self.resolve_calls: list[ConsoleProviderResolution] = []
+
+    async def resolve_for_send(self, selection):
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=self.endpoint,
+            model=(
+                selection.explicit_model or selection.configured_model or "local-model"
+            ),
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        )
+        self.resolve_calls.append(resolution)
+        return resolution
 
 
 def _native_prompt_record(
@@ -415,7 +438,10 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         assert composer.improvement_undo_available
         assert gateway.auxiliary_calls == 1
         assert gateway.stream_calls == 0
-        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
         assert store.pending_attachment(store.active_session_id) is attachment
         assert vars(attachment) == attachment_state
         assert composer._pending_attachment_label == attachment.label
@@ -427,6 +453,172 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         assert store.pending_attachment(store.active_session_id) is attachment
         assert vars(attachment) == attachment_state
         assert composer._pending_attachment_label == attachment.label
+
+
+@pytest.mark.asyncio
+async def test_prompt_library_projection_collision_keeps_manual_recipe_available() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft [[TLDW_PROTECTED:literal-collision]] ")
+        composer.insert_file_segment("PRIVATE INLINE BYTES", "secret.txt · 20 B")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        assert modal.state.mode == "browse"
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+
+        assert modal.query_one("#console-prompts-auto-improve", Button).disabled
+        assert modal.query_one("#console-prompts-review-improve", Button).disabled
+        assert not modal.query_one(
+            "#console-prompts-structured-recipe", Button
+        ).disabled
+        recovery = str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        ) or str(modal.query_one("#console-prompts-auto-improve", Button).tooltip)
+        assert "protected" in recovery.lower()
+        modal_text = _visible_text(modal)
+        assert "PRIVATE INLINE BYTES" not in modal_text
+        assert "secret.txt" not in modal_text
+
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-blank", Button).press()
+        await pilot.pause()
+        assert modal.query_one(PromptBlockEditor)
+        assert gateway.auxiliary_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["selection", "config_endpoint"])
+async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocked(
+    drift: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        summary = str(
+            modal.query_one("#console-prompts-provider-summary", Static).renderable
+        )
+        assert "llama_cpp" in summary
+        assert "local-model" in summary
+        assert "http://127.0.0.1:9099" in summary
+        assert len(gateway.resolve_calls) == 1
+
+        if drift == "selection":
+            settings = store.switch_session(session_id).settings
+            assert settings is not None
+            store.replace_session_settings(
+                session_id,
+                replace(settings, model="changed-model"),
+            )
+        else:
+            gateway.endpoint = "http://127.0.0.1:9191"
+
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert gateway.auxiliary_calls == 0
+        assert host.screen_stack[-1] is modal
+        assert (
+            "changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
+    artifact_type: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    identifier = f"{artifact_type}-1"
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type=artifact_type, identifier=identifier)
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        before = composer.capture_draft_snapshot()
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        if artifact_type == "recipe":
+            modal.query_one("#console-prompts-improve", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-structured-recipe", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-recipe-saved", Button).press()
+            await pilot.pause()
+        modal.query_one(f"#console-prompts-result-{identifier}", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(gateway.resolve_calls) == 1
+
+        gateway.endpoint = "http://127.0.0.1:9191"
+        modal.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert composer.capture_draft_snapshot() == before
+        assert gateway.auxiliary_calls == 0
+        assert len(gateway.resolve_calls) == 2
+        assert (
+            "endpoint changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
+        assert service.usage_calls == []
 
 
 @pytest.mark.asyncio
@@ -475,7 +667,9 @@ async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_app
                 ),
             )
         expected_draft = composer.capture_draft_snapshot()
-        expected_system = store.switch_session(original_session_id).settings.system_prompt
+        expected_system = store.switch_session(
+            original_session_id
+        ).settings.system_prompt
         if drift == "session":
             store.create_session(settings=original_settings)
         gateway.release.set()
@@ -488,8 +682,13 @@ async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_app
         candidate = modal.query_one("#console-prompts-review-user", TextArea)
         assert "Improved answer" in candidate.text
         assert composer.capture_draft_snapshot() == expected_draft
-        assert store.switch_session(original_session_id).settings.system_prompt == expected_system
-        assert tuple(store.messages_for_session(original_session_id)) == transcript_before
+        assert (
+            store.switch_session(original_session_id).settings.system_prompt
+            == expected_system
+        )
+        assert (
+            tuple(store.messages_for_session(original_session_id)) == transcript_before
+        )
         assert gateway.stream_calls == 0
 
 
@@ -544,11 +743,19 @@ async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift:
 
         assert host.screen_stack[-1] is modal
         assert composer.capture_draft_snapshot() == before
-        assert "changed" in str(
-            modal.query_one("#console-prompts-improvement-status", Static).renderable
-        ).lower()
+        assert (
+            "changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
         assert service.usage_calls == []
-        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
         assert gateway.stream_calls == 0
 
 
@@ -570,7 +777,9 @@ async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_u
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("Draft answer")
         store = console._ensure_console_chat_store()
-        original_system = store.switch_session(store.active_session_id).settings.system_prompt
+        original_system = store.switch_session(
+            store.active_session_id
+        ).settings.system_prompt
         transcript_before = tuple(store.messages_for_session(store.active_session_id))
 
         console._open_console_prompts_modal()
@@ -591,9 +800,15 @@ async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_u
                 break
 
         assert composer.draft_text() == "Answer the question."
-        assert store.switch_session(store.active_session_id).settings.system_prompt == original_system
+        assert (
+            store.switch_session(store.active_session_id).settings.system_prompt
+            == original_system
+        )
         assert service.usage_calls == []
-        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
         assert gateway.stream_calls == 0
 
 
@@ -637,7 +852,10 @@ async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_fa
 
         assert composer.draft_text() == "Answer the question."
         assert service.usage_calls == [("local", "prompt-1")]
-        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
         assert gateway.stream_calls == 0
 
 
@@ -777,11 +995,18 @@ async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_save
         await pilot.pause()
 
         assert host.screen_stack[-1] is modal
-        assert str(
-            modal.query_one("#console-prompts-improvement-status", Static).renderable
-        ) == "Applied to this session, but could not save to the conversation."
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Applied to this session, but could not save to the conversation."
+        )
         assert composer.capture_draft_snapshot() == before
-        applied_system = store.switch_session(store.active_session_id).settings.system_prompt
+        applied_system = store.switch_session(
+            store.active_session_id
+        ).settings.system_prompt
         assert "Be precise." in str(applied_system)
         assert persistence.calls == 1
 
@@ -790,7 +1015,10 @@ async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_save
         await pilot.pause()
 
         assert persistence.calls == 2
-        assert store.switch_session(store.active_session_id).settings.system_prompt == applied_system
+        assert (
+            store.switch_session(store.active_session_id).settings.system_prompt
+            == applied_system
+        )
         assert composer.capture_draft_snapshot() == before
 
 
@@ -3591,9 +3819,14 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.
-        assert "not configured" in _static_plain_text(
-            console.query_one("#console-workspace-server-features-collapsed", Static)
-        ).lower()
+        assert (
+            "not configured"
+            in _static_plain_text(
+                console.query_one(
+                    "#console-workspace-server-features-collapsed", Static
+                )
+            ).lower()
+        )
 
 
 class _CharacterHandoffStore:
@@ -3652,9 +3885,7 @@ def _character_start_handoff(
             "selected_kind": selected_kind,
             "selected_record_id": character_id,
             "selected_name": "Elara",
-            "selected_target_id": (
-                f"{runtime_backend}:{selected_kind}:{character_id}"
-            ),
+            "selected_target_id": (f"{runtime_backend}:{selected_kind}:{character_id}"),
             "backend": runtime_backend,
         },
     )
@@ -3790,9 +4021,7 @@ def test_character_start_handoff_requires_exact_coherent_envelope(
     payload = _character_start_handoff()
     setattr(payload, field, value)
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3811,9 +4040,7 @@ def test_character_start_handoff_requires_exact_coherent_metadata(
     payload = _character_start_handoff()
     payload.metadata[metadata_key] = value
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3837,9 +4064,7 @@ def test_character_start_handoff_requires_canonical_positive_numeric_wire_id(
 ):
     payload = _character_start_handoff(character_id=character_id)
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3858,9 +4083,7 @@ def test_character_start_handoff_requires_matching_record_and_target_ids(
     payload.metadata["selected_record_id"] = record_id
     payload.metadata["selected_target_id"] = target_id
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.asyncio
@@ -3962,9 +4185,7 @@ async def test_character_handoff_requires_exact_returned_card_identity(
         card.pop("id")
     else:
         card["id"] = returned_character_id
-    active_server_id = (
-        "configured-target-7" if runtime_backend == "server" else None
-    )
+    active_server_id = "configured-target-7" if runtime_backend == "server" else None
     runtime = _character_handoff_runtime(
         active_server_id=active_server_id,
         card=card,
@@ -4047,13 +4268,11 @@ async def test_server_character_handoff_scopes_exact_target_without_local_projec
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is True
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     runtime.db.get_local_authority_id.assert_not_called()
     runtime.db.get_character_card_by_id.assert_not_called()
@@ -4088,13 +4307,11 @@ async def test_server_identity_failure_still_seeds_unscoped_character_session(
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is True
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     assert store.session is not None
     assert store.session.runtime_backend == "server"
@@ -4174,7 +4391,7 @@ async def test_server_target_mismatch_before_resolver_fetches_nothing(monkeypatc
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id="configured-target-7",
-        )
+        ),
     )
 
     assert started is False
@@ -4202,13 +4419,11 @@ async def test_server_target_switch_during_resolver_discards_authority(monkeypat
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is False
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_not_awaited()
     assert store.session is None
 
@@ -4232,13 +4447,11 @@ async def test_server_target_switch_during_card_fetch_discards_card(monkeypatch)
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is False
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     assert store.session is None
 
@@ -4372,7 +4585,7 @@ async def test_persona_start_chat_does_not_create_character_session(monkeypatch)
             selected_kind="persona",
             active_server_profile_id="configured-target-7",
             character_id="p-7",
-        )
+        ),
     )
 
     assert started is False
@@ -5125,7 +5338,9 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
         destinations = screen._console_save_as_destinations(assistant)
 
     reasons = {d.label: d.reason for d in destinations}
-    assert all(reason == "Not available in a temporary chat." for reason in reasons.values())
+    assert all(
+        reason == "Not available in a temporary chat." for reason in reasons.values()
+    )
     assert all("None" not in reason for reason in reasons.values())
 
 
@@ -7860,9 +8075,14 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.
-        assert "not configured" in _static_plain_text(
-            console.query_one("#console-workspace-server-features-collapsed", Static)
-        ).lower()
+        assert (
+            "not configured"
+            in _static_plain_text(
+                console.query_one(
+                    "#console-workspace-server-features-collapsed", Static
+                )
+            ).lower()
+        )
         visible_text = _visible_text(console)
         assert (
             "Workspace conversation creation lands in a later slice" not in visible_text
@@ -8660,8 +8880,7 @@ async def test_console_workspace_conversation_resume_hydrates_generation_metadat
             # kept variant (seed 2) first, matching the DB's post-keep order.
             assert len(reloaded_generation_msg.generation_metadata) == 2
             assert [
-                variant.seed
-                for variant in reloaded_generation_msg.generation_metadata
+                variant.seed for variant in reloaded_generation_msg.generation_metadata
             ] == [2, 1]
             # Position-0/canonical bytes are still the kept variant's.
             assert reloaded_generation_msg.image_data == b"variant-b-bytes"
@@ -10238,9 +10457,9 @@ async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
                 if console.query(f"#console-image-{message.id}"):
                     break
                 await pilot.pause(0.05)
-            assert console.query(
-                f"#console-image-{message.id}"
-            ), "image row never appeared"
+            assert console.query(f"#console-image-{message.id}"), (
+                "image row never appeared"
+            )
             message_widget = console.query_one(f"#console-message-{message.id}")
             message_widget.scroll_visible(animate=False)
             await pilot.pause(0.2)
@@ -11124,14 +11343,20 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     assert screen._console_session_from_state(payload).ephemeral is True
 
     normal = ConsoleChatSession(title="Normal chat")
-    assert screen._console_session_from_state(
-        screen._console_session_to_state(normal)
-    ).ephemeral is False
+    assert (
+        screen._console_session_from_state(
+            screen._console_session_to_state(normal)
+        ).ephemeral
+        is False
+    )
 
     # Legacy payloads predate the key entirely.
-    assert screen._console_session_from_state(
-        {"id": normal.id, "title": normal.title}
-    ).ephemeral is False, "a payload with no key must default to saved"
+    assert (
+        screen._console_session_from_state(
+            {"id": normal.id, "title": normal.title}
+        ).ephemeral
+        is False
+    ), "a payload with no key must default to saved"
 
 
 def test_temporary_tab_marker_is_presentation_only():
@@ -11162,6 +11387,9 @@ def test_temporary_tab_marker_is_presentation_only():
 
     tooltip = _session_tab_tooltip(session, active=False)
     assert "not saved" in tooltip.lower()
-    assert "not saved" not in _session_tab_tooltip(
-        ConsoleChatSession(title="Normal"), active=False
-    ).lower()
+    assert (
+        "not saved"
+        not in _session_tab_tooltip(
+            ConsoleChatSession(title="Normal"), active=False
+        ).lower()
+    )

@@ -97,16 +97,28 @@ def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
     idle = build_composer_menu_entries(improvement_undo_available=False)
     actionable = build_composer_menu_entries(improvement_undo_available=True)
 
-    assert action_undo not in {
-        entry.action_id for entry in idle
-    }
-    assert [entry.action_id for entry in actionable[:2]] == [
+    assert action_undo not in {entry.action_id for entry in idle}
+    assert [entry.action_id for entry in actionable[:4]] == [
         "prompts",
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
         action_undo,
     ]
-    undo = actionable[1]
+    undo = actionable[3]
     assert undo.label == "Undo prompt improvement"
     assert undo.enabled is True
+
+    temporary = build_composer_menu_entries(
+        ephemeral=True,
+        improvement_undo_available=True,
+    )
+    assert [entry.action_id for entry in temporary[:5]] == [
+        ACTION_SAVE_CHAT,
+        "prompts",
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
+        action_undo,
+    ]
 
 
 @pytest.mark.unit
@@ -135,20 +147,18 @@ def test_attach_and_save_chatbook_left_the_action_row_for_the_menu():
 @pytest.mark.unit
 def test_save_chatbook_row_states_why_it_is_unavailable():
     """Disabled-with-a-reason, carried over from the button it replaced."""
+
     def row(**kwargs):
-        return {
-            e.action_id: e for e in build_composer_menu_entries(**kwargs)
-        }[ACTION_SAVE_CHATBOOK]
+        return {e.action_id: e for e in build_composer_menu_entries(**kwargs)}[
+            ACTION_SAVE_CHATBOOK
+        ]
 
     ready = row(can_save_chatbook=True)
     assert ready.enabled is True
 
     no_artifact = row(can_save_chatbook=False)
     assert no_artifact.enabled is False
-    assert (
-        no_artifact.description
-        == "No Chatbook artifact is available to save yet"
-    )
+    assert no_artifact.description == "No Chatbook artifact is available to save yet"
 
     # The temporary-chat block wins over artifact availability: the write
     # itself is the problem, so readiness is moot.
@@ -167,6 +177,7 @@ def test_caption_entry_requires_an_IMAGE_attachment():
     The entry is disabled rather than hidden in both blocked cases, so an
     unavailable action still explains itself.
     """
+
     def caption(kind):
         return {
             e.action_id: e for e in build_composer_menu_entries(attachment_kind=kind)
@@ -422,8 +433,13 @@ def _fake_controller_with(messages):
     class _Store:
         def messages_for_session(self, session_id):
             return [
-                _Msg(ConsoleMessageRole.USER if r == "user" else
-                     ConsoleMessageRole.ASSISTANT, c, s)
+                _Msg(
+                    ConsoleMessageRole.USER
+                    if r == "user"
+                    else ConsoleMessageRole.ASSISTANT,
+                    c,
+                    s,
+                )
                 for r, c, s in messages
             ]
 
@@ -448,10 +464,10 @@ async def test_impersonate_payload_obeys_the_provider_contract():
 
     controller = _fake_controller_with(
         [
-            ("assistant", "Greetings, traveller.", "ok"),   # seeded greeting
+            ("assistant", "Greetings, traveller.", "ok"),  # seeded greeting
             ("user", "hello", "ok"),
-            ("assistant", "broken reply", "failed"),        # failed row
-            ("assistant", "a real reply", "ok"),            # ends assistant
+            ("assistant", "broken reply", "failed"),  # failed row
+            ("assistant", "a real reply", "ok"),  # ends assistant
         ]
     )
 
@@ -524,13 +540,17 @@ def test_temporary_tab_has_no_chord_but_keeps_the_palette_entry():
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 
     keys = [b.key for b in ChatScreen.BINDINGS]
-    assert "alt+t" not in keys, "alt+t never reaches a focused composer -- do not re-add it"
+    assert "alt+t" not in keys, (
+        "alt+t never reaches a focused composer -- do not re-add it"
+    )
     assert callable(ChatScreen.action_new_temporary_console_tab)
 
     commands = ConsoleCommandProvider._commands(None, ChatScreen)
     entry = next(c for c in commands if c[0] == "Console: New temporary chat")
     assert entry[1] is ChatScreen.action_new_temporary_console_tab
-    assert "Alt+T" not in entry[2], "help text must not advertise a chord that doesn't work"
+    assert "Alt+T" not in entry[2], (
+        "help text must not advertise a chord that doesn't work"
+    )
 
 
 @pytest.mark.unit
@@ -629,8 +649,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         await pilot.pause()
         assert store.active_session_id == normal.id
         assert chip.display is False, (
-            "switching to a saved session's workspace must clear a stale "
-            "Temporary chip"
+            "switching to a saved session's workspace must clear a stale Temporary chip"
         )
 
         # Same branch, opposite direction.
@@ -934,8 +953,8 @@ def test_promote_console_temporary_session_saves_and_refreshes_the_chip():
             return "conv-123"
 
     store = _Store()
-    screen, chip_calls, invalidated, dispatched, notifications = (
-        _bare_promote_screen(store)
+    screen, chip_calls, invalidated, dispatched, notifications = _bare_promote_screen(
+        store
     )
 
     asyncio.run(screen._promote_console_temporary_session())
@@ -968,8 +987,8 @@ def test_promote_console_temporary_session_restores_temporary_state_on_failure()
             raise RuntimeError("db exploded")
 
     store = _Store()
-    screen, chip_calls, invalidated, dispatched, notifications = (
-        _bare_promote_screen(store)
+    screen, chip_calls, invalidated, dispatched, notifications = _bare_promote_screen(
+        store
     )
 
     asyncio.run(screen._promote_console_temporary_session())
@@ -1012,8 +1031,8 @@ def test_promote_console_temporary_session_notifies_when_already_saved():
             return None
 
     store = _Store()
-    screen, chip_calls, invalidated, dispatched, notifications = (
-        _bare_promote_screen(store)
+    screen, chip_calls, invalidated, dispatched, notifications = _bare_promote_screen(
+        store
     )
 
     asyncio.run(screen._promote_console_temporary_session())
@@ -1048,8 +1067,8 @@ def test_promote_console_temporary_session_notifies_when_it_cannot_save():
             return None
 
     store = _Store()
-    screen, chip_calls, invalidated, dispatched, notifications = (
-        _bare_promote_screen(store)
+    screen, chip_calls, invalidated, dispatched, notifications = _bare_promote_screen(
+        store
     )
 
     asyncio.run(screen._promote_console_temporary_session())
@@ -1114,7 +1133,9 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
 
     screen.on_console_temporary_chip_save(event)
 
-    assert stopped == [True], "the chip's own click/activation handling must not also fire"
+    assert stopped == [True], (
+        "the chip's own click/activation handling must not also fire"
+    )
     assert calls == [True]
 
 
@@ -1151,10 +1172,7 @@ def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
     """
     from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
-    menu = {
-        e.action_id: e
-        for e in build_composer_menu_entries(ephemeral=True)
-    }
+    menu = {e.action_id: e for e in build_composer_menu_entries(ephemeral=True)}
     image = menu[ACTION_GENERATE_IMAGE]
     assert image.enabled is False
     assert image.description == blocked_reason("generate-image", ephemeral=True)

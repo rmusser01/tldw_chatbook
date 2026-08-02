@@ -163,7 +163,10 @@ from ...Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     normalize_llamacpp_base_url,
 )
-from ...Chat.console_provider_endpoints import first_configured_endpoint
+from ...Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    safe_endpoint_display,
+)
 
 # Import-safe at module scope: `console_voice_input` reaches the optional
 # speech stack only through `importlib.util.find_spec` and a function-body
@@ -5754,10 +5757,6 @@ class ChatScreen(BaseAppScreen):
         if session_id is None:
             return
         composer_snapshot = composer.capture_draft_snapshot()
-        preview_projection = composer.project_snapshot_for_model(
-            composer_snapshot,
-            request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
-        )
         current_system = str(settings.system_prompt or "")
         current_system_fingerprint = fingerprint_text(current_system)
         provider_display, model_display, _settings = (
@@ -5766,14 +5765,20 @@ class ChatScreen(BaseAppScreen):
         opening_selection = self._build_console_provider_selection()
         gateway = self._ensure_console_provider_gateway()
         improvement_service = PromptImprovementService(gateway=gateway)
+        pinned_improvement_resolution: Any | None = None
         improvement_context = ConsolePromptImprovementContext(
             session_id=session_id,
             composer_snapshot=composer_snapshot,
-            current_user_projection=preview_projection,
+            current_user_projection=None,
             current_system_prompt=current_system,
             current_system_fingerprint=current_system_fingerprint,
             provider_label=str(provider_display or "Not configured"),
             model_label=str(model_display or "Not configured"),
+            endpoint_label=(
+                safe_endpoint_display(opening_selection.base_url)
+                or "Resolve on Improve"
+            ),
+            model_unavailable_reason=self._console_provider_blocker_copy(),
         )
 
         async def capabilities(source: str) -> Any:
@@ -5825,13 +5830,74 @@ class ChatScreen(BaseAppScreen):
                 str(getattr(resolution, "execution_key", "")),
             )
 
-        def _selection_identity(selection: Any) -> tuple[str, str, str, str]:
-            return (
-                str(getattr(selection, "provider", "")),
-                str(getattr(selection, "explicit_model", "")),
-                str(getattr(selection, "configured_model", "")),
-                str(getattr(selection, "base_url", "")),
+        async def activate_improvement_context() -> Any:
+            """Pin and disclose the exact target before any model path can run."""
+
+            nonlocal pinned_improvement_resolution
+            if store.active_session_id != session_id:
+                raise ValueError("The active Console session changed.")
+            if _active_system_fingerprint() != current_system_fingerprint:
+                raise ValueError("The Console System prompt changed.")
+            projection = None
+            projection_blocker = ""
+            try:
+                projection = composer.project_snapshot_for_model(
+                    composer_snapshot,
+                    request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
+                )
+            except ValueError:
+                projection_blocker = (
+                    "Model improvement is unavailable because the draft contains "
+                    "reserved protected-placeholder text. Remove or rename that "
+                    "literal token, then reopen Improve."
+                )
+            try:
+                resolution = await gateway.resolve_for_send(
+                    self._build_console_provider_selection()
+                )
+            except Exception:
+                pinned_improvement_resolution = None
+                return replace(
+                    improvement_context,
+                    current_user_projection=projection,
+                    endpoint_label="Unavailable",
+                    model_unavailable_reason=(
+                        projection_blocker
+                        or "Prompt improvement could not resolve the current provider "
+                        "target. Review Console provider settings and reopen Improve."
+                    ),
+                )
+            pinned_improvement_resolution = resolution
+            blocker = projection_blocker
+            if not blocker and (
+                not resolution.ready or not str(resolution.model or "").strip()
+            ):
+                blocker = str(
+                    resolution.visible_copy
+                    or "Choose a ready provider and model, then reopen Improve."
+                )
+            return replace(
+                improvement_context,
+                current_user_projection=projection,
+                provider_label=str(resolution.provider or "Not configured"),
+                model_label=str(resolution.model or "Not configured"),
+                endpoint_label=(
+                    safe_endpoint_display(resolution.base_url)
+                    or "Provider default"
+                ),
+                model_unavailable_reason=blocker,
+                pinned_resolution=resolution,
             )
+
+        async def capture_manual_resolution() -> Any:
+            """Capture the effective target once for a later model-free Apply."""
+
+            nonlocal pinned_improvement_resolution
+            if pinned_improvement_resolution is None:
+                pinned_improvement_resolution = await gateway.resolve_for_send(
+                    self._build_console_provider_selection()
+                )
+            return pinned_improvement_resolution
 
         async def build_improvement_snapshot(**values: Any) -> Any:
             if store.active_session_id != session_id:
@@ -5844,11 +5910,26 @@ class ChatScreen(BaseAppScreen):
                 request_nonce=request_id,
             )
             composer.validate_improvement(composer_snapshot, projection.text)
-            resolution = await gateway.resolve_for_send(
+            pinned_resolution = pinned_improvement_resolution
+            if pinned_resolution is None:
+                raise ValueError(
+                    "The provider target is no longer pinned. Reopen Improve to refresh disclosure."
+                )
+            live_resolution = await gateway.resolve_for_send(
                 self._build_console_provider_selection()
             )
-            if not resolution.ready or not str(resolution.model or "").strip():
-                raise ValueError(resolution.visible_copy or "Provider is unavailable.")
+            if _resolution_identity(live_resolution) != _resolution_identity(
+                pinned_resolution
+            ):
+                raise ValueError(
+                    "The provider, model, or endpoint changed. Reopen Improve to refresh disclosure."
+                )
+            if not pinned_resolution.ready or not str(
+                pinned_resolution.model or ""
+            ).strip():
+                raise ValueError(
+                    pinned_resolution.visible_copy or "Provider is unavailable."
+                )
             include_system = bool(values.get("include_system"))
             recipe_definition = values.get("recipe_definition")
             return PromptImprovementRequestSnapshot(
@@ -5861,9 +5942,9 @@ class ChatScreen(BaseAppScreen):
                 system_fingerprint=(
                     current_system_fingerprint if include_system else None
                 ),
-                resolution=resolution,
-                provider_label=resolution.provider,
-                model_label=str(resolution.model),
+                resolution=pinned_resolution,
+                provider_label=pinned_resolution.provider,
+                model_label=str(pinned_resolution.model),
                 recipe_source_id=values.get("recipe_source_id"),
                 recipe_version=values.get("recipe_version"),
                 recipe_definition=recipe_definition,
@@ -5965,9 +6046,18 @@ class ChatScreen(BaseAppScreen):
             elif isinstance(
                 captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
             ):
-                if _selection_identity(
+                captured_resolution = captured.provider_resolution
+                if captured_resolution is None:
+                    return ConsolePromptsApplyOutcome(
+                        "stale",
+                        "The provider target was not captured. Reopen the Prompt and retry.",
+                    )
+                live_resolution = await gateway.resolve_for_send(
                     self._build_console_provider_selection()
-                ) != _selection_identity(opening_selection):
+                )
+                if _resolution_identity(live_resolution) != _resolution_identity(
+                    captured_resolution
+                ):
                     return ConsolePromptsApplyOutcome(
                         "stale", "The provider, model, or endpoint changed."
                     )
@@ -6042,6 +6132,8 @@ class ChatScreen(BaseAppScreen):
                 improve_unavailable_reason=self._console_provider_blocker_copy(),
                 configure_provider=self._open_console_provider_recovery,
                 improvement_context=improvement_context,
+                activate_improvement_context=activate_improvement_context,
+                capture_manual_resolution=capture_manual_resolution,
                 build_improvement_snapshot=build_improvement_snapshot,
                 improve=improvement_service.improve,
                 validate_improvement=validate_improvement,
