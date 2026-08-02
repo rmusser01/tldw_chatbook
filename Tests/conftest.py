@@ -428,6 +428,39 @@ def fd_leak_sentinel() -> Iterator[None]:
         print(f"[fd_leak_sentinel] {message}", file=sys.stderr)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test opens real audio hardware unless it explicitly opts in.
+
+    Task-4 streaming-pcm-sink review, merge-gate finding: `_generate_tts`
+    (`Event_Handlers/TTS_Events/tts_events.py`) can construct a real
+    `StreamingPcmSink` for an eligible pcm/wav response and, if nothing
+    patches `StreamingPcmSink`/`sink_available`, `open()` lazily imports
+    the real `sounddevice` and starts a real `OutputStream` against actual
+    hardware -- reproduced: an unguarded eligible-wav test opened one and
+    still PASSED, so this failure mode is silent to CI, review, and the
+    suite itself. Neutralizes the single chokepoint every production
+    device open passes through (`open()` can only build a stream via
+    `_import_sounddevice()`); returning `None` drives the already-tested
+    `_fail("audio output unavailable ...")` terminal path, so an
+    accidental hazard degrades to the legacy path instead of hardware.
+    Deliberately leaves `sink_available()` (the `find_spec` probe) alone,
+    so no test's LOGICAL coverage changes, only its hardware access --
+    measured: the full `Tests/TTS`/`Tests/TTS_Events`/`Tests/Audio` run is
+    identical with and without this fixture. A test that genuinely needs a
+    real device marks itself `@pytest.mark.real_audio_device` to opt out.
+    This is the backstop; file-local guards (e.g.
+    `Tests/TTS/test_console_audio_cpp_native.py`'s own
+    `_sink_unavailable_by_default`) still document intent at their point
+    of use and are not replaced by this.
+    """
+    if request.node.get_closest_marker("real_audio_device"):
+        return
+    import tldw_chatbook.Audio.streaming_sink as streaming_sink
+
+    monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
+
+
 # ========== Async Cleanup Fixtures ==========
 
 

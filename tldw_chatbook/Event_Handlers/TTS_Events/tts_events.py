@@ -1658,7 +1658,7 @@ class TTSEventHandler:
             # message-scoped legacy-file-stop logic below. A no-op when
             # nothing is currently live.
             stop_live_sink()
-            if event.message_id is None:
+            if not event.message_id:
                 # Fix-round F4: the bare/global stop -- e.g.
                 # `chat_screen.py`'s dictation-start, unconditionally
                 # posted before opening the mic, specifically to protect
@@ -1674,22 +1674,36 @@ class TTSEventHandler:
                 # own more careful message-id-matched logic below,
                 # unchanged (task-559 unit 2) -- stopping message A must
                 # never silence a different, still-playing message B.
+                # `not event.message_id` (fix-round N3), not `is None`:
+                # `message_id=""` is falsy too, and the message-scoped
+                # branch below already requires a TRUTHY `message_id`
+                # (`event.action == "stop" and event.message_id`) -- an
+                # `is None` check here left an empty string falling
+                # between both branches, silencing neither the sink's
+                # OWN legacy-clip guard nor anything else.
                 await self._stop_prior_legacy_clip()
 
         if event.action == "play" and event.message_id:
-            # Fix-round F1: symmetric with `_stop_prior_legacy_clip` (which
-            # silences a legacy clip before a NEW streaming utterance
-            # starts) -- a legacy play request must silence a currently
-            # LIVE sink first, or the two independent audio-output paths
-            # (the sink's own `sounddevice.OutputStream` vs. the legacy
-            # `SimpleAudioPlayer`) would overlap into a double voice. A
-            # no-op when nothing is currently live.
-            stop_live_sink()
             # Get audio file with lock
             async with self._audio_files_lock:
                 audio_file = self._audio_files.get(event.message_id)
 
             if audio_file and audio_file.exists():
+                # Fix-round F1/N1: symmetric with `_stop_prior_legacy_clip`
+                # (which silences a legacy clip before a NEW streaming
+                # utterance starts) -- a legacy play request must silence a
+                # currently LIVE sink first, or the two independent
+                # audio-output paths (the sink's own `sounddevice.
+                # OutputStream` vs. the legacy `SimpleAudioPlayer`) would
+                # overlap into a double voice. Deliberately placed AFTER
+                # the file-exists check (N1 fix-round): this branch is the
+                # only one that will actually replace whatever is
+                # currently playing -- stopping a live sink for a `play`
+                # whose cached artifact has already been cleaned up (the
+                # 5s cache cleanup below) would silence real audio and
+                # play nothing back, a strictly worse outcome than leaving
+                # it alone. A no-op when nothing is currently live.
+                stop_live_sink()
                 # Play the audio file
                 play_audio_file(audio_file)
                 # Record what the player now has loaded, independent of
