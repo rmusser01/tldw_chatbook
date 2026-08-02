@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 21:51'
-updated_date: '2026-08-02 02:50'
+updated_date: '2026-08-02 02:57'
 labels:
   - stt
   - artifacts
@@ -72,6 +72,10 @@ ADR required: no. ADR-025 remains authoritative for managed acquisition, provena
 Post-closeout rebase: rebased the 20-commit branch cleanly onto `origin/dev` at `6792b3390`, after TASK-1822/PR #1189 restored the shared diagnostic baseline. Regenerated and reviewed exactly three branch-specific inventory deltas: digest-only line movement in `LLM_Management_Window.py` and `model_installed_view.py`, plus the new `model_remote_view.py` owner with two fixed artifact-identity error diagnostics. The persistent sink topology remains four files; the inventory now records 436 owners, 1,073 TASK-492 calls, and 6,702 TASK-494 calls.
 
 Fresh post-rebase verification: the complete affected matrix passed 576/576 with the required loopback permission; the diagnostic inventory, sentinel matrix, and persistent-boundary gate passed 18/18; JSON validation, py_compile, and both diff checks passed. The first sandboxed affected run passed 522 tests and produced 54 identical loopback-bind denials, all of which disappeared on the exact permitted rerun. Ruff passed every branch-edited Python file except the pre-existing `fetch.py:17` unused Loguru import, verified unchanged on `origin/dev`; excluding that baseline file, all checks passed. No new ADR is required; ADR-025 and ADR-029 remain authoritative.
+
+Latest-dev superseding rebase: while PR #1190 was opening, `dev` advanced to `333ab264a` via Briefings phase 4 (PR #1187). The 21-commit branch rebased cleanly again. That upstream merge contributed nine reviewed inventory deltas: one new four-call briefing-handler owner, one additional fixed watchlist warning, seven digest-only source shifts, and two unchanged `app.py` sink calls moving by 16 lines. TASK-596.1 still contributes only its prior three Model Browser deltas. The combined current inventory records 437 owners, 1,073 TASK-492 calls, 6,707 TASK-494 calls, and the same four sink files with identical sink digests. Ordinary Briefings diagnostics remain excluded by the persistent metadata filter.
+
+Fresh verification on `333ab264a`: 576/576 affected tests passed with loopback fixture permission and the 18/18 diagnostic/privacy matrix passed; no code fix was required by the rebase.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -80,4 +84,6 @@ Fresh post-rebase verification: the complete affected matrix passed 576/576 with
 Users can explicitly discover and securely download pinned Hugging Face GGUF artifacts through the managed model browser without automatic activation or unsupported runtime-compatibility claims.
 
 Rebased cleanly onto dev after the reviewed shared inventory repair. The branch-specific inventory is current, all 576 affected tests and 18 diagnostic/privacy tests pass, and no new Critical or Important review issue remains.
+
+Final PR head is rebased onto `333ab264a`; its reviewed inventory includes the intervening Briefings drift while preserving the unchanged four-file sink topology. The affected and diagnostic gates remain green.
 <!-- SECTION:FINAL_SUMMARY:END -->
