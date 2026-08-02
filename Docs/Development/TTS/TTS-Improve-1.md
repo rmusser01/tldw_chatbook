@@ -1,5 +1,12 @@
 # TTS/Dictation Improvements Plan
 
+> **Superseded history design (2026-08-01):** TASK-1331 determined
+> transcription history is not a product feature. The proposed history store
+> and viewer described below (`transcription_history.py` and
+> `transcription_history_viewer.py`) were never shipped and were removed by
+> TASK-865. `Dictation_Window.py` is likewise retired; only
+> `Dictation_Window_Improved.py` remains as the production dictation UI.
+
 ## Overview
 This document outlines the planned improvements for the TTS (Text-to-Speech) and Dictation (Speech-to-Text) features in tldw_chatbook, based on architectural review conducted on 2025-07-30.
 
@@ -33,8 +40,7 @@ This document outlines the planned improvements for the TTS (Text-to-Speech) and
    - No adaptive quality settings
 
 6. **Security/Privacy**
-   - Transcription history saved unencrypted
-   - No option to disable history
+   - Historical proposal for persisted transcription history (retired)
    - Unclear audio data cleanup timing
 
 ## Recommended Improvements
@@ -58,8 +64,8 @@ This document outlines the planned improvements for the TTS (Text-to-Speech) and
 - [ ] Support custom voice command definitions
 
 ### 4. Privacy & Security
-- [ ] Add option to disable transcription history
-- [ ] Implement optional encryption for saved transcriptions
+- [ ] Retired: do not add persisted transcription history
+- [ ] Retired: do not add encryption for saved transcriptions
 - [ ] Clear audio buffers immediately after processing
 - [ ] Add privacy mode (local processing only)
 
@@ -86,7 +92,7 @@ This document outlines the planned improvements for the TTS (Text-to-Speech) and
 ### Phase 1: Critical Fixes (High Priority)
 1. Fix architectural confusion (separate tabs/clear naming)
 2. Improve error handling and user feedback
-3. Add privacy options for history
+3. Preserve the no-history privacy boundary
 
 ### Phase 2: Core Improvements (Medium Priority)
 1. Optimize resource management
@@ -123,12 +129,11 @@ This document outlines the planned improvements for the TTS (Text-to-Speech) and
 ### ADR-003: Privacy-First Transcription History
 **Date**: 2025-07-30
 **Status**: Proposed
-**Context**: Transcription history is always saved, unencrypted.
-**Decision**: Make history opt-in with encryption option.
+**Context**: Historical proposal: transcription history would be saved, unencrypted.
+**Decision**: Superseded by TASK-1331: transcription history is not a product feature.
 **Consequences**:
-- Better privacy for users
-- Additional complexity in settings
-- Potential loss of convenience features
+- Removes plaintext and encrypted transcription persistence risk
+- No history settings or convenience history feature
 
 ## Technical Notes
 
@@ -138,7 +143,7 @@ STTS_Window
 ├── TTSPlaygroundWidget
 ├── TTSSettingsWidget
 ├── AudioBookGenerationWidget
-└── DictationWindow (misplaced?)
+└── Retired DictationWindow (historical)
 ```
 
 ### Proposed Architecture
@@ -149,14 +154,13 @@ SpeechServicesTab
 │   ├── TTSSettingsWidget
 │   └── AudioBookGenerationWidget
 └── Dictation Tab
-    ├── DictationWindow
-    ├── TranscriptionHistory
+    ├── ImprovedDictationWindow
     └── VoiceCommandSettings
 ```
 
 ### Key Files to Modify
 - `/tldw_chatbook/UI/STTS_Window.py` - Split or rename
-- `/tldw_chatbook/UI/Dictation_Window.py` - Enhance and relocate
+- `/tldw_chatbook/UI/Dictation_Window.py` - Retired; retained UI is `Dictation_Window_Improved.py`
 - `/tldw_chatbook/Audio/dictation_service.py` - Optimize resource usage
 - `/tldw_chatbook/Constants.py` - Add new tab constants
 
@@ -215,7 +219,7 @@ SpeechServicesTab
 
 #### Implemented Privacy Settings (Dictation_Window_Improved.py)
 - Privacy-first defaults (local processing, no history)
-- Toggle for saving transcription history
+- No persisted transcription history
 - Option for local-only processing (no cloud services)
 - Auto-clear audio buffers for privacy
 - Visual indicators for privacy status
@@ -235,7 +239,7 @@ SpeechServicesTab
 
 3. **Privacy Controls**:
    - Local-only mode restricts to on-device providers
-   - Optional history with encryption capability
+   - No transcription-history persistence
    - Immediate audio buffer clearing
    - Clear privacy status indicators
 
@@ -243,11 +247,11 @@ SpeechServicesTab
 **Date**: 2025-07-30
 **Status**: Implemented
 **Context**: Users need control over their voice data and transcriptions.
-**Decision**: Implement privacy-first defaults with opt-in for features that store data.
+**Decision**: Use privacy-first defaults and do not persist transcription history.
 **Consequences**:
 - Better user trust
 - Compliance with privacy expectations
-- Some convenience features require explicit opt-in
+- History convenience features are not part of the product
 
 ### Next Steps:
 1. Update app.py to use new improved components
@@ -264,7 +268,7 @@ SpeechServicesTab
 - ✅ Integration points for voice input across app
 - ✅ Audio device troubleshooting UI
 - ✅ Expanded voice command system
-- ✅ Encrypted transcription history
+- ↩ Retired transcription-history store and viewer
 - ✅ Performance monitoring and metrics
 
 ## Complete Implementation Summary
@@ -279,14 +283,14 @@ SpeechServicesTab
 #### Core Services
 1. **dictation_service_lazy.py** - Lazy-loading dictation service
 2. **voice_commands.py** - Expanded voice command system
-3. **transcription_history.py** - Encrypted history management
+3. **transcription_history.py** - Retired history implementation
 4. **dictation_metrics.py** - Performance monitoring
 
 #### Widgets
 1. **voice_input_button.py** - Reusable voice input for any text field
 2. **audio_troubleshooting_dialog.py** - Device diagnostics and testing
 3. **voice_command_dialog.py** - Command configuration UI
-4. **transcription_history_viewer.py** - History browser with search
+4. **transcription_history_viewer.py** - Retired with the history implementation
 5. **dictation_performance_widget.py** - Performance dashboard
 
 #### Events
@@ -305,7 +309,7 @@ SpeechServicesTab
 
 2. **Privacy & Security**
    - Privacy-first defaults
-   - Optional encrypted history
+   - No transcription-history persistence
    - Local-only processing mode
    - Automatic audio buffer clearing
 
@@ -364,7 +368,7 @@ command = VoiceCommand(
 
 2. **Privacy Testing**
    - Verify local-only mode restrictions
-   - Test history encryption
+   - Verify transcription history is not persisted
    - Check buffer clearing
 
 3. **Performance Testing**
@@ -379,5 +383,5 @@ command = VoiceCommand(
 
 ---
 **Document Created**: 2025-07-30
-**Last Updated**: 2025-07-30
+**Last Updated**: 2026-08-01
 **Author**: Claude (AI Assistant)

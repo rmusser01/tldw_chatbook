@@ -18,7 +18,6 @@ from textual.widgets import (
     Static,
     Switch,
     Collapsible,
-    ListView,
 )
 from textual.widget import Widget
 from textual.reactive import reactive
@@ -26,11 +25,20 @@ from textual.binding import Binding
 from loguru import logger
 
 # Local imports
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import get_cli_setting, get_user_data_dir, save_setting_to_cli_config
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
 from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
+
+
+def dictation_export_directory() -> Path:
+    """Return the active user's directory for requested Dictation exports.
+
+    Returns:
+        The profile-owned Dictation export directory.
+    """
+    return get_user_data_dir() / "exports" / "dictation"
 
 
 class ImprovedDictationWindow(Widget):
@@ -344,7 +352,6 @@ class ImprovedDictationWindow(Widget):
                         yield Button("💾 Save as Text", id="save-text-button")
                         yield Button("📝 Save as Markdown", id="save-md-button")
 
-
     def on_mount(self):
         """Initialize on mount."""
         # Textual posts `Changed` when a Switch or Input is created with a
@@ -358,7 +365,6 @@ class ImprovedDictationWindow(Widget):
 
         # Update UI based on settings
         self._update_privacy_ui()
-
 
     def _get_privacy_status_text(self) -> str:
         """Get privacy status description."""
@@ -713,7 +719,7 @@ Voice Commands (when enabled):
 
 Privacy Settings:
 • Local Only: All processing on your device
-• Save History: Keep transcripts between sessions
+• Transcript Storage: Transcripts are not automatically saved unless explicitly exported.
 • Auto-clear Buffer: Remove audio data after processing
 
 Performance Tips:
@@ -845,9 +851,7 @@ Performance Tips:
 
         try:
             # Create exports directory
-            export_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
-            )
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename
@@ -871,9 +875,7 @@ Performance Tips:
 
         try:
             # Create exports directory
-            export_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
-            )
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename
@@ -903,9 +905,6 @@ Performance Tips:
         except Exception as e:
             logger.error(f"Error exporting transcript: {e}")
             self.app.notify("Failed to export transcript", severity="error")
-
-
-
 
     def _show_troubleshooting(self):
         """Show audio troubleshooting dialog."""

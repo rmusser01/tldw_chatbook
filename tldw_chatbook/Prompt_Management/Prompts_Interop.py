@@ -67,6 +67,7 @@ from tldw_chatbook.DB.Prompts_DB import (
     export_prompts_formatted as db_export_prompts_formatted,
 )
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.config import get_cli_config_path
 from .server_prompt_adapter import (
     local_prompt_to_preview_payload,
     local_prompt_to_server_payload,
@@ -80,6 +81,12 @@ from .server_prompt_adapter import (
 _db_instance: Optional[PromptsDatabase] = None
 _db_path_global: Optional[Union[str, Path]] = None
 _client_id_global: Optional[str] = None
+
+
+def _default_prompt_import_directory() -> Path:
+    """Return the active profile's default directory for prompt imports."""
+    return get_cli_config_path().parent / "prompts"
+
 
 # --- Initialization and Management ---
 
@@ -786,7 +793,7 @@ def import_prompts_from_files(
 
     # Set default base directory for prompt files
     if base_directory is None:
-        base_directory = os.path.expanduser("~/.config/tldw_cli/prompts/")
+        base_directory = _default_prompt_import_directory()
 
     results: List[Dict[str, Any]] = []
     parser_map: Dict[str, Callable[[str], List[Dict[str, Any]]]] = {

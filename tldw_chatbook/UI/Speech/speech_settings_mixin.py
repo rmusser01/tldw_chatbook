@@ -43,6 +43,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from tldw_chatbook.TTS import TTSPreferencesSnapshot, get_tts_service
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.voice_blend_paths import (
+    kokoro_ui_blend_file,
+    write_kokoro_ui_blends,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -514,9 +518,7 @@ class SpeechSettingsMixin:
             ]
 
             # Add saved voice blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
+            blend_file = kokoro_ui_blend_file()
             if blend_file.exists():
                 try:
                     import json
@@ -1146,9 +1148,7 @@ class SpeechSettingsMixin:
             blend_list = self.query_one("#kokoro-voice-blends-list", Static)
 
             # Load blends from config file
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
+            blend_file = kokoro_ui_blend_file()
             if blend_file.exists():
                 with open(blend_file, "r") as f:
                     blends = json.load(f)
@@ -1200,9 +1200,7 @@ class SpeechSettingsMixin:
         """Export voice blends to file"""
         try:
             # Load existing blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
+            blend_file = kokoro_ui_blend_file()
 
             if not blend_file.exists():
                 self.app.notify("No voice blends to export", severity="warning")
@@ -1433,10 +1431,7 @@ class SpeechSettingsMixin:
                 imported_blends = json.load(f)
 
             # Load existing blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
-            blend_file.parent.mkdir(parents=True, exist_ok=True)
+            blend_file = kokoro_ui_blend_file()
 
             if blend_file.exists():
                 with open(blend_file, "r") as f:
@@ -1448,8 +1443,7 @@ class SpeechSettingsMixin:
             existing_blends.update(imported_blends)
 
             # Save merged blends
-            with open(blend_file, "w") as f:
-                json.dump(existing_blends, f, indent=2)
+            write_kokoro_ui_blends(existing_blends)
 
             # Refresh display
             self._load_kokoro_voice_blends()
@@ -1488,10 +1482,7 @@ class SpeechSettingsMixin:
 
             if result:
                 # Save the blend
-                blend_file = (
-                    Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-                )
-                blend_file.parent.mkdir(parents=True, exist_ok=True)
+                blend_file = kokoro_ui_blend_file()
 
                 # Load existing blends
                 if blend_file.exists():
@@ -1504,8 +1495,7 @@ class SpeechSettingsMixin:
                 blends[result["name"]] = result
 
                 # Save back
-                with open(blend_file, "w") as f:
-                    json.dump(blends, f, indent=2)
+                write_kokoro_ui_blends(blends)
 
                 # Refresh display
                 self._load_kokoro_voice_blends()

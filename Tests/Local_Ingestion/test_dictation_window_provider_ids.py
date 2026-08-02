@@ -1,13 +1,12 @@
-"""Legacy Dictation Window provider dropdowns must offer real dispatch ids.
+"""Improved Dictation Window provider dropdowns must offer real dispatch ids.
 
-task-1282: `Dictation_Window_Improved.py` (both of `_get_provider_options()`'s
-branches) and `Dictation_Window.py`'s `"provider-select"` all offered
+task-1282: `Dictation_Window_Improved.py` once offered
 `("Lightning Whisper", "lightning-whisper")` -- a value nothing in
 `transcription_service.py`'s dispatch chain, or `Utils/local_stt_providers.py`'s
 `LOCAL_PROVIDER_MODULES`, recognizes. The real id is `"lightning-whisper-mlx"`.
 `console_voice_input.py`'s privacy allowlist had the identical typo previously
-(see `Utils/local_stt_providers.py`'s module docstring) and was fixed there;
-this pins the two legacy windows so the same typo cannot silently return.
+(see `Utils/local_stt_providers.py`'s module docstring) and was fixed there.
+This pins the retained production window so the same typo cannot silently return.
 
 Deliberately excluded from the "must be a real dispatch id" check below:
 
@@ -26,15 +25,9 @@ Deliberately excluded from the "must be a real dispatch id" check below:
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-from typing import Optional
-
 import pytest
 
 pytestmark = pytest.mark.unit
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The ids `Local_Ingestion/transcription_service.py` actually branches on in
 # its provider dispatch chains (`transcribe`, `transcribe_buffer`,
@@ -58,42 +51,6 @@ DISPATCHABLE_PROVIDER_IDS = frozenset(
 NON_DISPATCH_EXCEPTIONS = frozenset({"auto", "openai-whisper", "google-speech"})
 
 
-def _callee_name(func: ast.expr) -> Optional[str]:
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return None
-
-
-def _select_option_ids(source: str, select_id: str) -> list[str]:
-    """Ids from a `Select(options=[(label, id), ...], id=select_id)` literal.
-
-    Parses the real module source rather than importing+instantiating the
-    widget, so this test does not depend on Textual's widget lifecycle at
-    all -- it only needs the literal the production code actually ships.
-    """
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _callee_name(node.func) == "Select"):
-            continue
-        keywords = {kw.arg: kw.value for kw in node.keywords}
-        id_node = keywords.get("id")
-        if not (isinstance(id_node, ast.Constant) and id_node.value == select_id):
-            continue
-        options_node = keywords.get("options")
-        assert isinstance(options_node, ast.List), (
-            f"Select(id={select_id!r}) options is not a literal list; "
-            "this test needs updating to match"
-        )
-        return [
-            elt.elts[1].value
-            for elt in options_node.elts
-            if isinstance(elt, ast.Tuple)
-        ]
-    raise AssertionError(f"no Select(id={select_id!r}) call found in source")
-
-
 def _assert_all_ids_are_real(provider_ids: list[str]) -> None:
     assert provider_ids, "no provider ids found -- test needs updating"
     for provider_id in provider_ids:
@@ -101,14 +58,6 @@ def _assert_all_ids_are_real(provider_ids: list[str]) -> None:
             provider_id in NON_DISPATCH_EXCEPTIONS
             or provider_id in DISPATCHABLE_PROVIDER_IDS
         ), f"{provider_id!r} is not a real transcription_service dispatch id"
-
-
-def test_dictation_window_provider_select_ids_are_real() -> None:
-    """`DictationWindow`'s `"provider-select"` options must all be real
-    `transcription_service` dispatch ids (or a documented exception)."""
-    source = (REPO_ROOT / "tldw_chatbook" / "UI" / "Dictation_Window.py").read_text()
-
-    _assert_all_ids_are_real(_select_option_ids(source, "provider-select"))
 
 
 def test_dictation_window_improved_provider_option_ids_are_real() -> None:
@@ -146,17 +95,10 @@ def test_no_dropdown_offers_the_bare_misspelled_lightning_whisper_id() -> None:
     window.settings = {"privacy": {"local_only": False}}
     all_ids = [option_id for _label, option_id in window._get_provider_options()]
 
-    dictation_window_source = (
-        REPO_ROOT / "tldw_chatbook" / "UI" / "Dictation_Window.py"
-    ).read_text()
-    plain_window_ids = _select_option_ids(dictation_window_source, "provider-select")
-
     assert "lightning-whisper" not in privacy_ids
     assert "lightning-whisper" not in all_ids
-    assert "lightning-whisper" not in plain_window_ids
     assert "lightning-whisper-mlx" in privacy_ids
     assert "lightning-whisper-mlx" in all_ids
-    assert "lightning-whisper-mlx" in plain_window_ids
 
 
 # -- task-1282 follow-up: normalize an already-persisted legacy provider id --
@@ -166,7 +108,7 @@ def _fake_get_cli_setting_legacy_provider(section, key=None, default=None):
     """Stand-in for `config.get_cli_setting` with an empty config file,
     except `dictation.provider`, which answers as if a user's saved config
     still holds the pre-task-1282 misspelling. Every other setting mirrors
-    an unset config: both windows call `get_cli_setting("section.key",
+    an unset config: the production window calls `get_cli_setting("section.key",
     default)` (the dotted two-positional-arg form), so echoing `key` back
     (it carries the caller's default in that form) reproduces "key absent,
     default applies" for everything that isn't the provider.
@@ -179,40 +121,29 @@ def _fake_get_cli_setting_legacy_provider(section, key=None, default=None):
 def test_load_settings_normalizes_legacy_provider_id(monkeypatch) -> None:
     """A `dictation.provider` config value saved under the pre-task-1282
     dropdown (`"lightning-whisper"`) must resolve to the real dispatch id
-    (`"lightning-whisper-mlx"`) when either window loads its settings.
+    (`"lightning-whisper-mlx"`) when the production window loads its settings.
     Correcting the dropdown's own options (tested above) does nothing for a
     config file a user already saved with the old, broken value -- this is
     what actually unbreaks that user without them touching Settings again.
     Read-side only: `_load_settings()` must not write the normalized value
     back to config as a side effect of merely loading it.
     """
-    import tldw_chatbook.UI.Dictation_Window as dw
     import tldw_chatbook.UI.Dictation_Window_Improved as dwi
 
-    monkeypatch.setattr(dw, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
     monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
-    save_calls = []
-    monkeypatch.setattr(
-        dw,
-        "save_setting_to_cli_config",
-        lambda *args, **kwargs: save_calls.append((args, kwargs)),
-    )
+    save_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(
         dwi,
         "save_setting_to_cli_config",
         lambda *args, **kwargs: save_calls.append((args, kwargs)),
     )
 
-    plain_settings = dw.DictationWindow.__new__(dw.DictationWindow)._load_settings()
-    improved_settings = dwi.ImprovedDictationWindow.__new__(
+    settings = dwi.ImprovedDictationWindow.__new__(
         dwi.ImprovedDictationWindow
     )._load_settings()
 
-    assert plain_settings["provider"] == "lightning-whisper-mlx"
-    assert improved_settings["provider"] == "lightning-whisper-mlx"
-    assert not save_calls, (
-        "_load_settings() must not write the normalized value back to config"
-    )
+    assert settings["provider"] == "lightning-whisper-mlx"
+    assert save_calls == []
 
 
 def test_initialize_service_constructs_with_normalized_legacy_provider_id(
@@ -268,8 +199,8 @@ def test_provider_select_accepts_the_normalized_legacy_value() -> None:
     `Select.value` raises `InvalidSelectValueError` when set (at mount, via
     `_init_selected_option`) to something absent from its own options --
     exactly what would happen if the raw legacy `"lightning-whisper"` config
-    value reached `Select(value=...)` unnormalized, since neither window's
-    option list has offered that id since task-1282. Calls
+    value reached `Select(value=...)` unnormalized, since the production
+    window's option list has not offered that id since task-1282. Calls
     `_init_selected_option` directly (the real method `_on_mount` uses) so
     this exercises actual `Select` validation without needing a running app.
     """

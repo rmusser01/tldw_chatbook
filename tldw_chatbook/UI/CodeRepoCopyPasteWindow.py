@@ -34,11 +34,17 @@ from textual.css.query import NoMatches
 # Local imports
 from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from ..Utils.github_api_client import GitHubAPIClient, GitHubAPIError
+from ..config import get_cli_config_path
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
 logger = logger.bind(module="CodeRepoCopyPasteWindow")
+
+
+def _github_config_guidance_path() -> Path:
+    """Return the active config file shown in GitHub token guidance."""
+    return get_cli_config_path()
 
 
 class FileSelected(Message):
@@ -554,7 +560,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # In a real implementation, we'd create a proper modal dialog
 
         # Simplified approach: Direct the user to update config
-        config_path = "~/.config/tldw_cli/config.toml"
+        config_path = _github_config_guidance_path()
         if has_token:
             self.notify(
                 f"To update your GitHub token, edit:\n{config_path}\n\nLook for [github] section, api_token field",

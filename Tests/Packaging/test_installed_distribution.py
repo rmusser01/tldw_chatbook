@@ -62,6 +62,7 @@ from pathlib import Path
 import ast
 import asyncio
 from collections import Counter
+import importlib.util
 import json
 import math
 import os
@@ -134,6 +135,18 @@ for entry in sys.path:
     )
 
 import tldw_chatbook
+for retired_module in (
+    "tldw_chatbook.Audio.transcription_history",
+    "tldw_chatbook.Widgets.transcription_history_viewer",
+    "tldw_chatbook.UI.Dictation_Window",
+):
+    assert importlib.util.find_spec(retired_module) is None
+
+from tldw_chatbook.config import get_cli_config_path, get_user_data_dir
+
+assert get_cli_config_path().is_relative_to(Path(os.environ["HOME"]))
+assert get_user_data_dir().is_relative_to(Path(os.environ["HOME"]))
+
 from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
@@ -955,6 +968,14 @@ def test_built_artifacts_match_distribution_contract(
     } | RUNTIME_MIGRATION_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
+
+    retired_modules = {
+        "tldw_chatbook/Audio/transcription_history.py",
+        "tldw_chatbook/Widgets/transcription_history_viewer.py",
+        "tldw_chatbook/UI/Dictation_Window.py",
+    }
+    assert retired_modules.isdisjoint(sdist_members)
+    assert retired_modules.isdisjoint(wheel_members)
 
     wheel_templates = {
         Path(name).stem

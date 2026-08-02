@@ -60,6 +60,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_VOICES,
     LEGACY_VOICE_OPTIONS,
 )
+from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -890,9 +891,7 @@ class AudioBookGenerationWidget(Widget):
             ]
 
             # Add saved voice blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
+            blend_file = kokoro_ui_blend_file()
             if blend_file.exists():
                 try:
                     import json
@@ -2622,7 +2621,7 @@ class TTSPlaygroundWidget(Widget):
 
     @staticmethod
     def _kokoro_blend_choices() -> list[tuple[str, str]]:
-        blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+        blend_file = kokoro_ui_blend_file()
         if not blend_file.is_file():
             return []
         try:

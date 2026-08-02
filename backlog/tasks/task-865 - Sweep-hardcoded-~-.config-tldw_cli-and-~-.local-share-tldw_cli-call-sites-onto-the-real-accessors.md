@@ -3,11 +3,11 @@ id: TASK-865
 title: >-
   Sweep hardcoded ~/.config/tldw_cli and ~/.local/share/tldw_cli call sites onto
   the real accessors
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-27 04:35'
-updated_date: '2026-07-27 16:29'
+updated_date: '2026-08-02 03:12'
 labels:
   - security
   - config
@@ -24,29 +24,55 @@ The data-dir group (~18 sites, including Chatbooks/chatbook_importer.py:77-79, C
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every listed config-dir call site derives its parent directory from _get_effective_config_path().parent instead of a Path.home()/'.config'/'tldw_cli' literal
-- [ ] #2 Every listed data-dir call site derives its path from get_user_data_dir() instead of a Path.home()/'.local'/'share'/'tldw_cli' literal that omits the user folder segment
+- [x] #1 Every swept hardcoded profile-owned config-dir occurrence in ADR-040's normative inventory derives its parent directory from get_cli_config_path().parent instead of a Path.home()/'.config'/'tldw_cli' literal
+- [x] #2 Every swept hardcoded active-user data-dir occurrence in ADR-040's normative inventory derives its path from get_user_data_dir() instead of a Path.home()/'.local'/'share'/'tldw_cli' literal that omits the user folder segment
 - [x] #3 The chatbook importer's extraction root matches the chatbook creator's temp root (both under get_user_data_dir()/temp/...) with a test asserting the two derive to the same parent
 - [x] #4 A test with TLDW_CONFIG_PATH pointed at a profile confirms at least one swept config-dir site (e.g. ui_state.toml) writes under that profile's directory, not the real ~/.config/tldw_cli
+- [x] #5 Every remaining executable literal is classified by an exact sentinel exception as inert configuration data, a canonical resolver/default seed, a compatibility constant, a shared artifact, or a read-only legacy probe
+- [x] #6 The rejected transcription-history store/viewer, unmounted legacy Dictation window, and unused legacy user-database path helper are retired rather than allowlisted
+- [x] #7 No existing global file is copied, moved, imported, or deleted by the completion tranche
+- [x] #8 Regression tests use production functions or the full TldwCli application; no reduced test application is introduced
+- [x] #9 Swept profile-owned state writers use ADR-029 private atomic replacement and preserve the previous file when serialization or replacement fails
+- [x] #10 Generated diagnostics/SQLite inventories, affected legacy-window tests/source censuses, stale feature documentation, release notes, and installed-wheel coverage agree with the retired modules and symbols
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Enumerate every explicitly named config-dir and data-dir call site from the task description and fix each.
-2. Fix the chatbook importer (highest-value, live-diverged) to match the chatbook creator's sibling temp-root convention; add a parity test.
-3. Add a TLDW_CONFIG_PATH-retargeting test proving at least one swept config-dir site (ui_state.toml) honors the active profile.
-4. Best-effort sweep additional lower-value sites found by a broader grep, time permitting; catalog whatever remains unfixed rather than claim full coverage.
+1. Use ADR-040 to classify every remaining executable literal as profile-owned config state, active-user data, shared artifact, inert default, read-only legacy probe, or unreachable code.
+2. Write failing function/full-application path-isolation tests and an executable-token/source sentinel that detects embedded, multiline, indirect-join, duplicate, and stale cases with exact counted exceptions.
+3. Retire every rejected transcript-history implementation, including the unmounted legacy Dictation window, plus the unused legacy user-database path helper; reconcile every importing test/source census, generated/curated inventory, compatibility comment, current architecture document, and release note without rewriting historical Backlog records.
+4. Apply the design's normative disposition inventory: move each swept profile-owned config/data occurrence onto get_cli_config_path().parent or get_user_data_dir() at the call boundary without migrating existing files, preserve classified exceptions, and route swept private state writers through ADR-029 atomic replacement.
+5. Run targeted ownership/privacy/inventory/installed-wheel suites, the full suite, and static checks; then reconcile the acceptance criteria, implementation notes, and task status.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Completed, with tests, every site the task named with an explicit file:line reference: config-dir group -- UI/Screens/chat_screen.py (both ui_state.toml sites), Event_Handlers/notes_events.py and note_ingest_events.py (note_templates.json), Subscriptions/website_monitor.py (feed_cache/); data-dir group -- Chatbooks/chatbook_importer.py (the highest-value fix: temp_dir now derives get_user_data_dir()/'temp'/'imports', matching chatbook_creator.py's sibling get_user_data_dir()/'temp'/'chatbooks'), Chatbooks/local_chatbook_service.py's _default_registry_path() fallback, Character_Chat/Character_Chat_Lib.py (all 3 base_directory sites), Event_Handlers/conv_char_events.py (all 3 export_dir sites). All now derive from _get_effective_config_path().parent or get_user_data_dir() via local imports, matching the codebase's established per-call-site import convention.
+Implemented the complete [ADR-040](../decisions/040-profile-owned-state-and-shared-asset-paths.md) ownership inventory under the [TASK-865 completion design](../../Docs/superpowers/specs/2026-08-01-profile-owned-path-completion-design.md). Swept effective-config state now resolves lazily through `get_cli_config_path().parent`; active-user state and Dictation exports resolve through `get_user_data_dir()`. Chatbook import and creation share the active user's `temp` parent. The count-sensitive executable-source sentinel classifies every retained literal as a persisted default, resolver seed, compatibility constant, shared artifact, or read-only legacy probe.
 
-As a best-effort addition beyond the explicitly named sites, also fixed: Widgets/emoji_picker.py (converted the eager RECENT_EMOJIS_FILE module constant to a lazy _recent_emojis_path() -- an eager get_user_data_dir()-based constant would itself go stale across a profile switch within one process, the same latent-staleness class TASK-855 closed for the MCP stores), Widgets/settings_theme_editor.py (custom_themes_path), Notes/sync_service.py (sync_profiles.json default), Config_Files/create_custom_template.py (a standalone, non-imported dev helper script), RAG_Search/pipeline_loader.py and pipeline_builder_simple.py (rag_pipelines.toml user-override lookup).
+Retired the rejected transcription-history store/viewer, unmounted legacy Dictation window, and unused legacy user-database helper/constants without touching existing user files. Current TTS documentation, release notes, source censuses, the SQLite owner ledger, generated diagnostic inventory, and sdist/wheel absence checks agree with those removals. No Notes/Sync path changed and the locked-base audit found no user-data migration, fallback import, copy, move, or delete behavior.
 
-NOT checking AC #1/#2 as fully satisfied: the task also references '~25 lower-value' config-dir sites and '~18' data-dir sites only in aggregate, without file:line references, and a full sweep was not completed given the size of that remainder. A broader grep during this task surfaced a SEPARATE, adjacent, and larger finding worth its own follow-up task: UI/ChatbookCreationWindow.py, UI/ChatbookExportManagementWindow.py, UI/Wizards/ChatbookCreationWizard.py and UI/Wizards/ChatbookImportWizard.py each build their OWN ad-hoc db_paths dict straight from self.app.config_data.get('database', {}) with hardcoded, WRONG, non-user-folder fallback literals (e.g. '~/.local/share/tldw_cli/tldw_prompts_db.db') instead of calling get_prompts_db_path()/get_media_db_path() -- these do NOT go through the get_*_db_path() accessors at all, unlike everything reconciled in TASK-858/899. Deliberately left out of this task's scope (a distinct defect class, not a Path.home()-literal sweep site) and recommend filing separately. Also deliberately left OUT as a scope decision, not an oversight: TTS/UI model-weight and voice-cache paths under ~/.config/tldw_cli/models/... and .../*_voices (STTS_Window.py, Dictation_Window.py, TTS/backends/kokoro.py, TTS/kokoro_pytorch.py, TTS/utils/download_models.py) -- these are large, shared binary caches/exports, not per-profile config/state; making them profile-relative would force re-downloading multi-hundred-MB models on every profile switch, which is very unlikely to be the intended behavior and is exactly the kind of live-file-relocation this task's hard constraints told me to stop and report on rather than silently do.
+Kokoro UI blends and backend blend state follow the effective profile and use ADR-029 private atomic replacement; serialization or replacement failures preserve both the prior file and the in-memory mapping. Explicit backend directories remain explicit. Backend managers intentionally belong to one immutable application/config session, while reusable models, voices, and tokenizer artifacts remain shared to avoid duplicate downloads. Existing global state is not silently adopted by a newly selected profile.
 
-AC #3 (chatbook importer/creator parity) and AC #4 (a profile-retargeted config-dir site) are both satisfied with concrete tests: Tests/Chatbooks/test_chatbook_importer.py (temp_dir == get_user_data_dir()/'temp'/'imports', and shares a parent with ChatbookCreator's temp_dir), Tests/UI/test_chat_screen_ui_state_path.py (TLDW_CONFIG_PATH retargeted to a scratch profile -> _save_sidebar_state() writes ui_state.toml under THAT profile's directory, two different profiles do not collide). Files: tldw_chatbook/UI/Screens/chat_screen.py, Event_Handlers/{notes_events,note_ingest_events,conv_char_events}.py, Subscriptions/website_monitor.py, Chatbooks/{chatbook_importer,local_chatbook_service}.py, Character_Chat/Character_Chat_Lib.py, Widgets/{emoji_picker,settings_theme_editor}.py, Notes/sync_service.py, Config_Files/create_custom_template.py, RAG_Search/{pipeline_loader,pipeline_builder_simple}.py; new tests in Tests/Chatbooks/test_chatbook_importer.py and Tests/UI/test_chat_screen_ui_state_path.py.
+Regression coverage calls real production functions/methods or mounts the full installed `TldwCli`; no reduced Textual application was introduced. The focused help regression directly invokes the real `ImprovedDictationWindow.action_show_help()` on a real Widget with only its one-call notification collaborator supplied, which is within the production-method contract. The original final-review corrections were preserved by the latest-dev rebase as `a09681ebb`. PR review then identified two connected configured-Kokoro-directory defects: the explicit path bypassed the shared validator, and `mkdir()` under a permissive umask created a directory the private writer rejected. Commit `51c3af8a3` validates configured paths, creates missing directories through the private no-follow boundary, rejects unsafe existing directories before loading, preserves safe explicit-directory modes, adds the requested Google-style helper documentation and PascalCase scanner types, and covers each behavior with production-backend/function tests.
+
+Latest post-review verification is based on `origin/dev` `f68e6b00a`. The exact 16-path Task 8 matrix, including full installed-distribution coverage, passed **214 tests with 7 known warnings in 216.07s**. Both ownership inventories pass at **434 owners / 1073 TASK-492 calls / 6684 TASK-494 calls / 4 sink files**; focused Ruff lint/format, `compileall`, and `git diff --check` pass. The no-Sync/no-migration audit remains empty except for the plan's own example command and ordinary string/datetime `replace()` calls. The earlier repository-wide run completed with **26045 passed, 217 skipped, 65 failed, 2 errors, and 120 warnings**; representative failures reproduced on clean development as sandbox loopback denial and repository UI/static baselines, not TASK-865 regressions. Branch-wide Ruff/format remain documented upstream baselines, while TASK-owned/final-fix files are no worse than their locked base or green. These baseline-attributed gates are the only verification exceptions permitted by the plan.
 <!-- SECTION:NOTES:END -->
+
+## ADR Check
+
+ADR required: yes
+
+ADR path: [ADR-040: Profile-Owned State and Shared Asset Paths](../decisions/040-profile-owned-state-and-shared-asset-paths.md)
+
+Reason: The completion tranche classifies persistent data ownership, profile
+isolation, shared artifacts, legacy probes, and migration behavior across
+multiple modules.
+
+Design: [TASK-865 Profile-Owned Path Completion Design](../../Docs/superpowers/specs/2026-08-01-profile-owned-path-completion-design.md)
+
+Completion-scope note: existing consumers of `_get_effective_config_path()`
+already resolve the active config correctly and are not part of this
+hardcoded-literal sweep. New or changed consumers use the public
+`get_cli_config_path()` wrapper. This tranche does not modify Notes Sync.
