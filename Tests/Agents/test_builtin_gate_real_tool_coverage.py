@@ -46,7 +46,9 @@ class _RealToolProvider:
 
 
 @pytest.mark.unit
-def test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence():
+def test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence(
+    tmp_path, monkeypatch
+):
     """AC#1: enabling `read_file` produces a PROMPT, not a silent execution.
 
     Drives the real `ReadFileTool` (risk_tags `("reads",)`) through the real
@@ -58,7 +60,21 @@ def test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence():
     the floor consulting them) kept the suite green while `read_file` ran
     without asking.
     """
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
     from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    # Hermetic (review finding): the hook's path precheck would otherwise
+    # touch the real sandbox root and workspace-registry DB from a unit
+    # test. Same seams the sibling precheck test patches.
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    def _no_registry():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _no_registry)
 
     tool = ReadFileTool()
     assert "reads" in tool.risk_tags, "precondition: the real tag set"
@@ -95,14 +111,22 @@ def test_create_note_persists_through_a_real_db_on_a_worker_thread(
     """AC#2: the design-spec claim the nominal test never proved.
 
     `Tests/Agents/test_builtin_gate_live_tools.py` monkeypatches
-    `NotesInteropService` away, proving only that `asyncio.run` works off the
-    main thread. The spec's actual question: does `CharactersRAGDB` -- built
-    for cross-thread use via `threading.local` connections and
-    `check_same_thread=False` -- really work on the agent's worker thread?
-    This runs the REAL `CreateNoteTool.execute` on a real non-main thread
-    against a real `CharactersRAGDB` at a temp path, then reads the row back
-    on the MAIN thread through the same instance -- both directions of the
-    cross-thread contract.
+    `NotesInteropService` away, proving only that `asyncio.run` works off
+    the main thread. This runs the REAL `CreateNoteTool.execute` on a real
+    non-main thread against a real `CharactersRAGDB` file, twice over:
+
+    * the PRODUCTION write path -- `_get_db` constructs its own
+      `CharactersRAGDB` (same file, `client_id=user_id`) ON the worker
+      thread, exactly as a live agent run does, and the row must be durable
+      to a main-thread reader of the same file; and
+    * the SINGLE-INSTANCE seam the spec named -- `threading.local`
+      connections + `check_same_thread=False` -- by reading through THIS
+      test's own instance from BOTH threads.
+
+    A review finding caught the first version claiming the second while
+    exercising only the first: `_get_db` does not reuse `global_db_to_use`,
+    it re-instantiates against its path -- so "same instance across
+    threads" must be asserted on an instance this test actually holds.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Tools import note_management_tools as nmt
@@ -126,6 +150,13 @@ def test_create_note_persists_through_a_real_db_on_a_worker_thread(
                     )
                 )
             )
+            # The single-instance cross-thread seam: THIS test's instance,
+            # used on the worker thread. `threading.local` must mint this
+            # thread its own connection rather than raise or return the
+            # main thread's.
+            note_id = result.get("note_id")
+            if note_id:
+                result["worker_read"] = db.get_note_by_id(str(note_id))
         except BaseException as exc:  # noqa: BLE001 -- surfaced below
             error.append(exc)
 
@@ -138,7 +169,14 @@ def test_create_note_persists_through_a_real_db_on_a_worker_thread(
     note_id = result.get("note_id")
     assert note_id, result
 
-    # Main thread, same instance: the row must be durable and readable.
+    worker_row = result.get("worker_read")
+    assert worker_row is not None, (
+        "the shared instance could not read on the worker thread -- the "
+        "threading.local seam the spec flagged"
+    )
+    assert worker_row["title"] == "worker-thread note"
+
+    # Main thread, same instance again: durable and readable both sides.
     row = db.get_note_by_id(str(note_id))
     assert row is not None, "the note vanished across threads"
     assert row["title"] == "worker-thread note"
