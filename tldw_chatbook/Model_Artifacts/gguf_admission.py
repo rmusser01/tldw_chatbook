@@ -403,7 +403,14 @@ def _validate_architecture(value: str) -> None:
 
 
 def require_transcribe_cpp_architecture(architecture: str) -> None:
-    """Reject architecture names outside the pinned transcribe.cpp registry."""
+    """Reject architecture names outside the pinned transcribe.cpp registry.
+
+    Args:
+        architecture: GGUF architecture identifier to validate.
+
+    Raises:
+        GGUFArchitectureError: If the identifier is malformed or unsupported.
+    """
     _validate_architecture(architecture)
     if architecture not in TRANSCRIBE_CPP_ARCHITECTURES:
         raise GGUFArchitectureError(
@@ -412,7 +419,18 @@ def require_transcribe_cpp_architecture(architecture: str) -> None:
 
 
 def normalize_platform_target(system: str, machine: str) -> tuple[str, str]:
-    """Normalize and admit a platform pair supported by pinned runtime wheels."""
+    """Normalize and admit a platform pair supported by pinned runtime wheels.
+
+    Args:
+        system: Operating-system name, such as ``Linux`` or ``Darwin``.
+        machine: Machine architecture, such as ``x86_64`` or ``arm64``.
+
+    Returns:
+        The normalized operating-system and machine pair.
+
+    Raises:
+        GGUFPlatformError: If the pair has no supported transcribe.cpp wheel.
+    """
     if not isinstance(system, str) or not isinstance(machine, str):
         raise GGUFPlatformError("transcribe.cpp is unavailable for this platform")
 
@@ -434,6 +452,19 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
 
     The seekable handle must be positioned at byte zero. On success it remains
     positioned at the start of tensor data so the payload is never inspected.
+
+    Args:
+        handle: Seekable binary GGUF handle positioned at byte zero.
+        file_size: Total file size in bytes.
+
+    Returns:
+        Bounded metadata retained from the GGUF header.
+
+    Raises:
+        GGUFParseError: If the GGUF structure is malformed or truncated.
+        GGUFVersionError: If the file does not use GGUF version 3.
+        GGUFBoundsError: If the header exceeds an inspection budget.
+        GGUFArchitectureError: If the declared architecture is unsupported.
     """
     if handle.tell() != 0:
         raise GGUFParseError("GGUF handle must be positioned at byte zero")
@@ -542,7 +573,20 @@ def _read_only_no_follow_flags() -> int:
 
 
 def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
-    """Safely inspect one explicit local GGUF through a single descriptor."""
+    """Safely inspect one explicit local GGUF through a single descriptor.
+
+    Args:
+        path: Explicit local path selected by the user.
+
+    Returns:
+        The validated path, metadata, source identity, and platform target.
+
+    Raises:
+        GGUFPathError: If the path cannot be validated, opened, or inspected.
+        GGUFSourceChangedError: If the file changes during validation.
+        GGUFParseError: If the GGUF header is malformed or unsupported.
+        GGUFPlatformError: If no runtime wheel supports the current platform.
+    """
     try:
         validated_path = validate_path_simple(
             path,
