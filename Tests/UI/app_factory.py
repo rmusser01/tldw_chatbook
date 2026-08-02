@@ -30,6 +30,13 @@ from tldw_chatbook.runtime_policy import RuntimeSourceState
 # root conftest's autouse cleanup after each test.
 _created_dirs: list[Path] = []
 
+# Every still-running `get_subscriptions_db_path` patch started by
+# `_build_test_app` (task-1631); stopped by the root conftest's autouse
+# cleanup after each test. See `_build_test_app`'s own comment for why this
+# one patch cannot simply live inside the function's `ExitStack` like the
+# others.
+_active_service_patches: list = []
+
 
 def drain_created_dirs() -> int:
     """Remove every user-data dir created since the last drain.
@@ -47,6 +54,25 @@ def drain_created_dirs() -> int:
     while _created_dirs:
         path = _created_dirs.pop()
         shutil.rmtree(path, ignore_errors=True)
+        drained += 1
+    return drained
+
+
+def drain_active_service_patches() -> int:
+    """Stop every still-running service patch started by `_build_test_app`.
+
+    Called by the root conftest's autouse cleanup fixture after each test
+    (mirroring `drain_created_dirs`), so a patch that must outlive
+    `_build_test_app`'s own call (task-1631: `get_subscriptions_db_path`)
+    never leaks into the next test.
+
+    Returns:
+        The number of patches stopped.
+    """
+    drained = 0
+    while _active_service_patches:
+        patcher = _active_service_patches.pop()
+        patcher.stop()
         drained += 1
     return drained
 
@@ -77,7 +103,9 @@ def _build_test_app(
 
     Returns:
         A freshly constructed ``TldwCli`` whose config, DB paths, and service
-        initialisers were all patched for the duration of ``__init__``.
+        initialisers were all patched for the duration of ``__init__`` --
+        except ``get_subscriptions_db_path``, which stays patched for the
+        rest of the test (see the comment where it is started, below).
     """
     user_data_dir = Path(
         tempfile.mkdtemp(prefix="tldw-chatbook-test-")
@@ -88,6 +116,25 @@ def _build_test_app(
         # `PrivatePathError: link_or_non_regular` before its first assertion.
     ).resolve(strict=True)
     _created_dirs.append(user_data_dir)
+
+    # task-1631: started (not entered via the `with ExitStack()` below) and
+    # left running -- `LocalWatchlistsService.db_factory` (wired inside
+    # `TldwCli._wire_watchlists_and_notifications_services`) is a lambda that
+    # re-resolves `get_subscriptions_db_path()` fresh on every call, not once
+    # at construction, so any call made after this function returns -- i.e.
+    # every call the running screen makes -- must still see this same patch,
+    # not the real, unpatched fallback. The eager, init-time consumers
+    # (`subscriptions_db` / `WatchlistProjection` / `watchlist_bundle_service`,
+    # all built while this patch is live either way) and the lazy
+    # `db_factory` therefore now agree on one on-disk file for the app's
+    # whole life. `drain_active_service_patches` (called by the root
+    # conftest's autouse teardown) stops it once the test ends.
+    subscriptions_patcher = patch(
+        "tldw_chatbook.app.get_subscriptions_db_path",
+        return_value=user_data_dir / "subscriptions.sqlite",
+    )
+    subscriptions_patcher.start()
+    _active_service_patches.append(subscriptions_patcher)
 
     def fake_runtime_policy(app):
         context = SimpleNamespace(
@@ -154,10 +201,6 @@ def _build_test_app(
             patch(
                 "tldw_chatbook.app.get_notifications_db_path",
                 return_value=":memory:",
-            ),
-            patch(
-                "tldw_chatbook.app.get_subscriptions_db_path",
-                return_value=user_data_dir / "subscriptions.sqlite",
             ),
             patch(
                 "tldw_chatbook.app.get_research_db_path",

@@ -2799,25 +2799,9 @@ async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app, items=2)
     db = app.watchlist_bundle_service.db
-    # `_build_test_app`'s `patch("tldw_chatbook.app.get_subscriptions_db_path",
-    # ...)` is only active while `TldwCli()` itself is constructing (see its
-    # nested `with` blocks) -- long enough for the EAGERLY-built
-    # `watchlist_bundle_service.db` to see it, but `LocalWatchlistsService`'s
-    # own `db_factory` is a lambda that re-resolves `get_subscriptions_db_
-    # path()` LAZILY, on its first real call, which happens well after that
-    # patch has already been undone -- so, in this harness only,
-    # `app.local_watchlists_service._db()` falls through to the real,
-    # unpatched path instead of this test's isolated one (confirmed directly:
-    # a debug probe printed the two `db_path`s and they differ). That is the
-    # SAME database `_mark_item_read_on_open`'s write actually reaches
-    # (`_controller` -> `WatchlistScopeService` -> `LocalWatchlistsService.
-    # update_item` -> `self._db()`), so without this redirect the write
-    # would target a database this test's seeded item was never in. This is
-    # a test-harness-only artifact (in the real app both resolve to the same
-    # configured path), not something Task 6 introduces, so it is patched
-    # here rather than in the shared `_build_test_app`/`_seed_watchlist`
-    # helpers, which every other test in this file already relies on as-is.
-    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    # `_build_test_app` unifies `local_watchlists_service.db_factory()` with
+    # `watchlist_bundle_service.db` onto the same on-disk file (task-1631),
+    # so no `db_factory` redirect is needed here anymore.
     cited = _seeded_item_rows(app)[0]
     assert db.get_item_status(cited["id"]) == "new", "fixture precondition"
     _use_fake_chat(
@@ -2950,12 +2934,9 @@ async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app, items=2)
     db = app.watchlist_bundle_service.db
-    # See the identical redirect + comment in
-    # `test_activating_an_available_citation_opens_it_in_the_reader_and_
-    # marks_it_read` above: `local_watchlists_service`'s lazy `db_factory`
-    # resolves the real, unpatched db path in this harness, which is a
-    # different database than the one this test seeds and asserts against.
-    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    # `_build_test_app` unifies `local_watchlists_service.db_factory()` with
+    # `watchlist_bundle_service.db` onto the same on-disk file (task-1631),
+    # so no `db_factory` redirect is needed here anymore.
     cited = _seeded_item_rows(app)[0]
     _use_fake_chat(
         monkeypatch,
