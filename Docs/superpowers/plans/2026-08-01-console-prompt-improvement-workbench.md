@@ -712,6 +712,13 @@ Use exact in-process/fallback limits: `compiled_lane_limit=20_000` characters,
 A modern server's smaller advertised limit wins. These limits are validation
 errors, never truncation targets.
 
+Definition and request byte limits use the server-advertised
+`canonical_json_utf8_v1` measurement: serialize the decoded JSON value with
+sorted keys, `ensure_ascii=false`, compact separators `(",", ":")`, encode as
+UTF-8, then count bytes. Definition bytes measure the final normalized mapping
+sent to persistence; request bytes measure the decoded outgoing request mapping
+before server-side default expansion. This is not raw HTTP wire-body length.
+
 - [ ] **Step 1: Add failing normalization tests**
 
 Assert local known capabilities, modern server response, older health without capabilities, malformed health, and a server advertising only `single_text_recipe`. Older servers remain browsable, normalize missing artifact type as Prompt, and disable block-v2 Save/search as appropriate.
