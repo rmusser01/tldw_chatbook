@@ -4,17 +4,20 @@ title: Add bounded local GGUF artifact import
 status: To Do
 assignee: []
 created_date: '2026-07-24 01:03'
+updated_date: '2026-08-02 04:26'
 labels:
   - stt
   - artifacts
   - import
 dependencies:
   - TASK-594
-  - TASK-596
+  - TASK-595
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+  - Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md
+parent_task_id: TASK-596
 priority: high
 ---
 
