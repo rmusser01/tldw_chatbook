@@ -1,6 +1,6 @@
 # Screen Decomposition — Design
 
-**Status:** approved 2026-08-02
+**Status:** draft for review — 2026-08-02, revision 2
 **Scope:** `chat_screen.py`, `settings_screen.py`, `library_screen.py`
 
 ## Purpose
@@ -66,14 +66,35 @@ kinds already exist in this codebase — `Widgets/Console/` holds 58 classes, 38
 define their own `compose()` and 32 of which handle their own `on_*` events. This design
 applies an established pattern at a larger grain; it does not introduce architecture.
 
+**The existence proof is the Evals screen.** `evals_screen.py` is 2,513 lines — the one
+healthy screen among the five largest — precisely because its regions live in
+`UI/Evals/` as widgets (`library_rail.py`, `inspector.py`, the editors) and its
+read-side state lives in a view model (`evals_state.py`). Its screen keeps layout,
+routing, and cross-region coordination, and nothing else. This design is "make the
+other three screens shaped like the Evals screen", stated as rules.
+
+### Where the code lives
+
+Each screen gets a package mirroring `UI/Evals/` and the existing `UI/*_Modules/`
+convention: `UI/Console_Modules/`, `UI/Settings_Modules/`, `UI/Library_Modules/`.
+Region widgets and controllers both live there — one home per screen, so a reader finds
+a screen's collaborators in one place. Existing leaf widgets in `Widgets/Console/` stay
+where they are: they are reusable parts, and a region is a one-place-only composition
+of them. The screen module itself keeps its current path — imports across the repo
+reference it, and moving it is churn with no decoupling value.
+
 ### Region widgets
 
 A region widget is a compound `Widget` that:
 
 - composes its own subtree, so `compose_content` becomes a layout skeleton that yields
   regions rather than 681 lines of inline construction;
-- handles its own events with `@on(...)`, so `on_button_pressed`'s 368-line dispatch
-  mostly evaporates rather than being relocated;
+- handles its own events with `@on(...)`, so the within-region share of
+  `on_button_pressed`'s 368-line dispatch evaporates rather than being relocated; what
+  cannot evaporate — a press whose effect crosses regions — becomes a typed message the
+  screen handles, visible in the type system instead of buried in an if-chain;
+- adopts `RecomposeCaptureGuard` if it ever recomposes — the house convention (seven
+  existing subclasses) for not orphaning mouse capture across its own teardown;
 - posts messages upward for anything the screen must coordinate, rather than being
   called downward;
 - owns the CSS for its own subtree in `css/features/`.
@@ -86,6 +107,17 @@ A controller is a plain object that owns state and behaviour with no region of i
 It holds the state it is responsible for, takes a screen handle for the framework
 services it genuinely needs (`query_one`, `run_worker`, `call_after_refresh`), and is
 constructed once in `__init__`.
+
+`self.app_instance` is `ChatScreen`'s single most-referenced name — 317 references,
+for database handles, config, and notifications. Collaborators do not traverse to it:
+whatever a controller needs from the app is passed at construction, named, so a
+controller's dependencies are its signature. A region widget receives data and posts
+messages; where it genuinely needs an app service, the screen passes that service in,
+never `app_instance` wholesale.
+
+Workers a controller starts run under a group named for that controller, so
+`exclusive=True` scopes to its own work rather than to whichever collaborator last
+used the screen's node.
 
 A controller that finds itself calling `query_one` for more than a handful of well-known
 ids is a region widget wearing the wrong hat. That is the review signal.
@@ -104,6 +136,17 @@ visible coupling is better than concealed coupling.
 Non-visual orchestration — session lifecycle, workspace context, agent run bookkeeping —
 would have to become widgets owning no DOM. That is a worse fit than a plain object, and
 it would put state behind a mount lifecycle that does not need one.
+
+### Bindings and focus
+
+Screen-level `BINDINGS` keep working throughout, because ids and action methods stay on
+the screen until the behaviour they trigger moves. When a region takes ownership of a
+behaviour, its binding moves onto the region widget, where Textual resolves it while
+focus is inside the region; a chord that must work regardless of focus stays on the
+screen and delegates. Nothing here waits on config-driven keybindings (task-1952) — but
+every binding that moves lands in one obvious place, the region, so task-1952 has named
+homes to bind into and jump mode (task-1951) can treat "the regions of the current
+screen" as its target list.
 
 ## Decomposition targets
 
@@ -131,12 +174,22 @@ of their own. That is the gap.
 | character | 708 / 14 | controller + a region widget for its rail section |
 | image / attachment | 1,031 / 27 | controller |
 
+The `sync` cluster — 1,347 lines across 31 methods, the largest verb group in the class
+— splits along the same rule: a sync that repaints one region becomes that region's own
+refresh; a sync that coordinates several regions stays on the screen. That residue is
+why the success criterion below is ownership rather than a line count: the screen
+legitimately keeps cross-region coordination, and it will not end up small.
+
 ### `settings_screen.py`
 
 Bloat is concentrated in per-category detail rendering. Each category's detail pane
-becomes a region widget; the screen keeps category selection and the save path.
-`action_settings_save_category` (517) is the one large non-rendering method and becomes a
-controller.
+becomes a region widget; the screen keeps category selection. The save path is the
+interface that decides whether this screen fits the pattern: today
+`action_settings_save_category` (517 lines) reads every field back out of the rendered
+pane by id. After decomposition each pane owns "collect what I am showing" — returning
+its edited values as one mapping — and a save controller owns validation and
+persistence. A pane that cannot say what it holds without the screen reaching into it
+is drawn at the wrong boundary; that is the review signal for this screen.
 
 ### `library_screen.py`
 
@@ -176,9 +229,13 @@ Rules, all non-negotiable:
 
 ## Testing
 
-- Existing screen tests must pass unchanged. They are the regression net; a test that
-  needs editing to accommodate an extraction is a signal the extraction changed
-  behaviour.
+- Existing tests that drive the screen through the DOM — `pilot` clicks, key presses,
+  id queries — must pass unchanged. They are the regression net; one that needs editing
+  is a signal the extraction changed behaviour.
+- Existing tests that reach into private methods will break when the method moves. That
+  is mechanical, not behavioural: retarget the call and keep the assertion
+  byte-for-byte. An assertion that has to *change* is a finding about the extraction,
+  never a test to accommodate.
 - Each new region widget gets its own test file, mounting it in a minimal host app and
   driving it through `pilot` — real clicks and keypresses, asserting persisted results
   rather than widget state.
