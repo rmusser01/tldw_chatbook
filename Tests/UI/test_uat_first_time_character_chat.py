@@ -88,6 +88,22 @@ UAT_CARD_ENV_VAR = "TLDW_UAT_CARD_PATH"
 UAT_USER_MESSAGE = "Hello! Who are you?"
 UAT_CANNED_REPLY = "I'm Ann, your test character. Lovely to meet you!"
 
+# WARNING (task-4 streaming-pcm-sink fix-round, F7): this WAV body declares
+# a ZERO-length `data` chunk, which `tldw_chatbook.TTS.pcm_stream.sink_plan`
+# structurally rejects (`sink_plan("wav", None, UAT_COMPLETE_WAV) is None`,
+# confirmed) -- so this response never reaches `_generate_tts`'s streaming
+# branch today and this file never mocks `StreamingPcmSink`/`sink_available`.
+# DO NOT "fix" this to a validator-accepted body (e.g. by giving it real
+# `data` bytes) without ALSO adding a guard: `Tests/TTS/
+# test_console_audio_cpp_native.py` had the exact same shape until this
+# fix-round, and correcting ONLY the fixture there -- without also forcing
+# `sink_available()` False by default -- made a previously-invalid WAV
+# become sink-eligible and caused `_generate_tts` to construct a REAL
+# `StreamingPcmSink` with no `stream_factory` override, which lazily
+# imported the real `sounddevice` and opened a REAL `OutputStream` against
+# actual audio hardware during an automated test run (confirmed via a live
+# PortAudio callback firing). See that file's `_sink_unavailable_by_default`
+# autouse fixture for the pattern to copy if this body is ever corrected.
 UAT_COMPLETE_WAV = (
     b"RIFF"
     b"\x24\x00\x00\x00WAVEfmt "

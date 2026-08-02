@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import struct
 import threading
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -44,13 +45,52 @@ from tldw_chatbook.TTS.profile_types import (
 )
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
+from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
+
 _WAIT_SECONDS = 1.0
+# Fix-round F7 (task-4 review): the original fixture declared a `data`
+# chunk of size 0 -- structurally invalid (`validate_pcm16_wav` rejects it,
+# confirmed: `sink_plan("wav", None, b"".join(_WAV_CHUNKS))` returned
+# `None`), so no test using it ever reached the task-4 streaming branch at
+# all, silently leaving the one live production path (`audio_cpp` is
+# wav-locked) uncovered by this file. Same 4-chunk split as before (several
+# tests slice `_WAV_CHUNKS[:1]` to simulate a header-only/early-EOF
+# response), same declared sample_rate=44100/channels=1/16-bit, but now
+# carries 64 bytes of real (if arbitrary) PCM16 data so the body is
+# validator-accepted and sink-eligible.
 _WAV_CHUNKS = (
     b"RIFF",
-    b"\x24\x00\x00\x00WAVEfmt ",
+    b"\x64\x00\x00\x00WAVEfmt ",
     b"\x10\x00\x00\x00\x01\x00\x01\x00",
-    b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00",
+    b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x40\x00\x00\x00"
+    + bytes((i * 7 + 3) % 256 for i in range(64)),
 )
+
+
+def _valid_wav_body(
+    data_size: int, *, sample_rate: int = 44100, channels: int = 1
+) -> bytes:
+    """Build a structurally-valid canonical PCM16 RIFF/WAVE body of a given
+    `data` chunk size -- used by the F4 (sink-upgrade-cap) test below to
+    prove that a WAV *big enough to trip the cap but otherwise perfectly
+    sink-eligible* still falls back to the legacy path, as opposed to
+    `_WAV_CHUNKS` extended with raw padding, which would also fail
+    `validate_pcm16_wav`'s RIFF-size check on its own -- a false-positive
+    that would pass even without the cap fix.
+    """
+    bits_per_sample = 16
+    block_align = channels * (bits_per_sample // 8)
+    byte_rate = sample_rate * block_align
+    fmt_payload = struct.pack(
+        "<HHIIHH", 1, channels, sample_rate, byte_rate, block_align, bits_per_sample
+    )
+    data_bytes = bytes((i * 7 + 3) % 256 for i in range(data_size))
+    riff_payload = (
+        b"WAVE"
+        + b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload
+        + b"data" + struct.pack("<I", data_size) + data_bytes
+    )
+    return b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
 
 
 class _RecordingStream:
@@ -391,6 +431,36 @@ def _assigned_profile(character_ref: CharacterRef) -> LoadedCharacterTTSAssignme
             profile=profile,
         ),
     )
+
+
+@pytest.fixture(autouse=True)
+def _sink_unavailable_by_default(monkeypatch):
+    """Keep every test in this file on the legacy-only path by default.
+
+    Fix-round F7 (task-4 review): `_WAV_CHUNKS` used to be a structurally
+    INVALID wav body (`data_size=0`), so `sink_plan` always returned `None`
+    and no test here ever reached `_generate_tts`'s task-4 streaming
+    branch -- which is exactly why the artifact-contract change went
+    uncovered. Fixing the fixture to a validator-accepted, sink-eligible
+    WAV (see `_WAV_CHUNKS`'s own comment) exposed a SEPARATE, more urgent
+    problem discovered while making that fix: `StreamingPcmSink()` is
+    constructed here with no `stream_factory` override (unlike
+    `Tests/TTS_Events/test_spoken_feedback_streaming.py`, which always
+    monkeypatches the class), so a now-eligible response made `open()`
+    lazily import the REAL `sounddevice` and start a REAL
+    `OutputStream` against actual audio hardware during an automated test
+    run (confirmed: a real PortAudio callback fired, visible as a
+    `sounddevice.py` DeprecationWarning in this file's own test output).
+    Forcing `sink_available()` False by default keeps every EXISTING test
+    here scoped to exactly what it was already testing (legacy
+    generation/cancellation/write-loop mechanics, unrelated to task-4) and
+    -- just as importantly -- off real hardware entirely. The dedicated
+    streaming-path tests below explicitly re-enable `sink_available()` AND
+    patch `StreamingPcmSink` with a fake, the same way the task-4 consumer
+    test file does, so they exercise the new branch without ever
+    constructing a real `OutputStream` either.
+    """
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: False)
 
 
 @pytest.mark.asyncio
@@ -737,6 +807,188 @@ async def test_non_console_tts_request_event_keeps_global_default_path(
         assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)
         assert response.close_calls == 1
         assert response.byte_stream.close_calls == 1
+    finally:
+        await handler.cleanup_tts_resources()
+
+    assert artifact is not None
+    assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_sink_eligible_wav_response_streams_live_and_deletes_its_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix-round F7 (task-4 review): closes the coverage gap the previously
+    structurally-INVALID `_WAV_CHUNKS` fixture left -- no test in this file
+    ever reached `_generate_tts`'s task-4 streaming branch, so the artifact-
+    contract change went unpinned on the one provider (`audio_cpp`, wav-
+    locked by `TTSPreferencesSnapshot.__post_init__`) that reaches it in
+    production. Every OTHER test in this file keeps `sink_available()`
+    False by default (see `_sink_unavailable_by_default` above) and so
+    never leaves the pre-task-4 contract; THIS test explicitly re-enables
+    it and patches `StreamingPcmSink` with the same `_RecordingSink` fake
+    `Tests/TTS_Events/test_spoken_feedback_streaming.py` uses (never a real
+    `sounddevice.OutputStream`), then documents and pins the new contract
+    for an eligible wav response: the legacy write loop still runs
+    unmodified (an artifact IS created and fully written -- see
+    `_generate_tts`'s own comment above `_create_tts_artifact` for why),
+    but once played live through the sink it is DELETED rather than
+    exposed -- `_audio_files` stays empty and `TTSCompleteEvent.audio_file`
+    is `None`, unlike every legacy-path completion elsewhere in this file.
+    """
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+    sink_holder: dict[str, _RecordingSink] = {}
+
+    class _Sink(_RecordingSink):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            sink_holder["sink"] = self
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _Sink)
+
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS, timeline))
+    service = _DefaultService(response)
+    handler = _Handler()
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    created_paths: list[Path] = []
+    original_create_artifact = handler._create_tts_artifact
+
+    def _spy_create_artifact(audio_format: str) -> Path:
+        path = original_create_artifact(audio_format)
+        created_paths.append(path)
+        return path
+
+    handler._create_tts_artifact = _spy_create_artifact  # type: ignore[method-assign]
+
+    try:
+        await handler.handle_tts_request(
+            TTSRequestEvent(
+                text="Spoken feedback",
+                message_id="native-streamed-1",
+                voice=None,
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+
+        assert completion.error is None
+        assert completion.audio_file is None, (
+            "a sink-eligible wav response must not expose a playable file "
+            "-- it was already played live"
+        )
+        assert handler._audio_files == {}
+
+        # Exactly one artifact was created by the unmodified legacy write
+        # loop, fully written with the whole response body, BEFORE the
+        # streaming decision ran.
+        assert len(created_paths) == 1
+
+        wav_body = b"".join(_WAV_CHUNKS)
+        expected_audio = wav_body[44:]  # skip_bytes=44, the rest is `data`
+        sink = sink_holder["sink"]
+        assert sink.opened_with is not None
+        assert b"".join(sink.fed) == expected_audio
+    finally:
+        # Deletion of the now-redundant artifact runs through the same
+        # retry-tracked, thread-offloaded cleanup as a failed/cancelled
+        # generation's (`_discard_tts_artifact` -> `_run_blocking_tts_io`)
+        # -- not yet guaranteed complete the instant `TTSCompleteEvent` was
+        # posted (which happens BEFORE the delete, inside
+        # `_stream_response_via_sink`). `cleanup_tts_resources` awaits
+        # `_drain_retained_tts_artifact_work`, which bounds a wait for
+        # exactly that -- matching the pattern every other test in this
+        # file already uses to check artifact non-existence AFTER, not
+        # during, the `try` block.
+        await handler.cleanup_tts_resources()
+
+    assert not created_paths[0].exists(), (
+        "the now-redundant artifact must be deleted once played live"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_wav_response_over_the_sink_upgrade_cap_skips_the_sink_entirely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4 fix-round: a WAV response too large for the in-memory sink-upgrade
+    attempt (`tts_events._MAX_WAV_SINK_UPGRADE_BYTES`) must abandon that
+    attempt -- never even constructing a `StreamingPcmSink` -- and fall
+    through to the already-complete, disk-backed legacy path, the same way
+    every OTHER wav response does when no sink is available at all. Shrinks
+    the cap via monkeypatch (rather than actually streaming >16MiB) to keep
+    the fixture small and the test fast.
+
+    Uses `_valid_wav_body()`, a STRUCTURALLY VALID (and thus, absent the
+    cap, sink-eligible) wav -- not `_WAV_CHUNKS` plus raw padding, which
+    would also fail `validate_pcm16_wav`'s RIFF-size check on its own and
+    so would reach the legacy path regardless of whether the cap fix
+    exists at all, a false-positive that was caught while writing this
+    test (mutation-checked: with the cap enforcement itself removed, THIS
+    version of the test fails -- the raw-padding version did not).
+    """
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+    monkeypatch.setattr(tts_events_module, "_MAX_WAV_SINK_UPGRADE_BYTES", 64)
+
+    sink_holder: dict[str, _RecordingSink] = {}
+
+    class _Sink(_RecordingSink):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            sink_holder["sink"] = self
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _Sink)
+
+    # data_size=200 -> body is well over the 64-byte cap above, but the wav
+    # itself remains fully valid (and would be sink-eligible without the cap).
+    oversized_chunks = (_valid_wav_body(200),)
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(oversized_chunks, timeline))
+    service = _DefaultService(response)
+    handler = _Handler()
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    artifact: Path | None = None
+
+    try:
+        await handler.handle_tts_request(
+            TTSRequestEvent(
+                text="Oversized wav response",
+                message_id="oversized-wav-1",
+                voice=None,
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert artifact is not None, (
+            "over the cap: the legacy path must still expose the fully "
+            "written artifact, exactly as if no sink were available"
+        )
+        assert artifact.read_bytes() == b"".join(oversized_chunks)
+        assert sink_holder == {}, (
+            "no StreamingPcmSink should ever be constructed once the "
+            "in-memory upgrade attempt exceeds its cap"
+        )
     finally:
         await handler.cleanup_tts_resources()
 
