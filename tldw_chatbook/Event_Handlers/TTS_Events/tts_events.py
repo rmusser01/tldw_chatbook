@@ -1687,7 +1687,15 @@ class TTSEventHandler:
 
             from tldw_chatbook.TTS.audio_player import get_audio_player
 
-            get_audio_player().stop()
+            # Task 5 (D7, carried from task-4-review.md): `SimpleAudioPlayer.
+            # stop()` takes `_lock` and can hold it for up to ~2.5s waiting
+            # out an unresponsive player process (see `stop()`'s own
+            # terminate/kill/wait sequence) -- calling it synchronously here
+            # would block the WHOLE event loop for that long, matching the
+            # `await asyncio.to_thread(player.stop)` idiom this same file
+            # already uses 3 lines away in `_play_utterance_legacy_artifact`
+            # for the identical call.
+            await asyncio.to_thread(get_audio_player().stop)
             async with self._audio_files_lock:
                 self._last_played = None
             return
@@ -1816,7 +1824,12 @@ class TTSEventHandler:
                 stop_requested.set()
                 self._retained_tts_io_tasks.add(worker)
                 worker.add_done_callback(self._retained_tts_io_tasks.discard)
-                if player.get_current_file() in (None, audio_file):
+                # Task 5 (D7): `get_current_file()` takes the SAME `_lock`
+                # `stop()` can hold for up to ~2.5s -- calling it
+                # synchronously here would block the event loop for that
+                # long too, same as the bare-stop branch above.
+                current_file = await asyncio.to_thread(player.get_current_file)
+                if current_file in (None, audio_file):
                     await asyncio.to_thread(player.stop)
                 raise
             except Exception:
