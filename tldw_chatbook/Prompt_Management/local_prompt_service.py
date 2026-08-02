@@ -67,6 +67,7 @@ class LocalPromptService:
                 "prompt_format": payload.get("prompt_format"),
                 "prompt_schema_version": payload.get("prompt_schema_version"),
                 "prompt_definition": payload.get("prompt_definition"),
+                "artifact_type": payload.get("artifact_type", "prompt"),
             }
 
         return sorted(
@@ -86,6 +87,7 @@ class LocalPromptService:
             "prompt_format",
             "prompt_schema_version",
             "prompt_definition",
+            "artifact_type",
         )
         return {field: snapshot.get(field) for field in fields if field in snapshot}
 
@@ -139,6 +141,7 @@ class LocalPromptService:
         prompt_format: str | None = "legacy",
         prompt_schema_version: int | None = None,
         prompt_definition: Any = None,
+        artifact_type: str | None = None,
     ) -> dict[str, Any]:
         prompt_id, prompt_uuid, message = self.interop.add_prompt(
             name=name,
@@ -151,6 +154,7 @@ class LocalPromptService:
             prompt_format=prompt_format,
             prompt_schema_version=prompt_schema_version,
             prompt_definition=prompt_definition,
+            artifact_type=artifact_type,
         )
         created = (
             self._resolve_prompt(prompt_uuid or prompt_id, include_deleted=True)
@@ -174,6 +178,7 @@ class LocalPromptService:
             "prompt_format": kwargs.get("prompt_format") or "legacy",
             "prompt_schema_version": kwargs.get("prompt_schema_version"),
             "prompt_definition": kwargs.get("prompt_definition"),
+            "artifact_type": kwargs.get("artifact_type", "prompt"),
         }
 
     async def update_prompt(
@@ -184,8 +189,11 @@ class LocalPromptService:
             raise ValueError(f"Prompt '{prompt_id}' not found.")
 
         update_payload = dict(kwargs)
+        expected_version = update_payload.pop("expected_version", None)
         db = self.interop.get_db_instance()
-        prompt_uuid, message = db.update_prompt_by_id(existing["id"], update_payload)
+        prompt_uuid, message = db.update_prompt_by_id(
+            existing["id"], update_payload, expected_version=expected_version
+        )
         updated = self._resolve_prompt(
             prompt_uuid or existing["id"], include_deleted=True
         )

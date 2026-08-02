@@ -102,7 +102,7 @@ class ConflictError(DatabaseError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -600,6 +600,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v1_to_v2",
             "description": "Add structured prompt metadata columns",
         },
+        2: {
+            "to_version": 3,
+            "function": "_apply_migration_v2_to_v3",
+            "description": "Add prompt artifact type",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -712,6 +717,43 @@ class PromptsDatabase:
             )
             raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
 
+    def _apply_migration_v2_to_v3(self, conn: sqlite3.Connection):
+        """Add the first-class Prompt/Recipe discriminator atomically."""
+        logging.info(
+            f"Applying prompts migration from version 2 to 3 for DB: {self.db_path_str}..."
+        )
+        try:
+            with self.transaction():
+                conn.execute(
+                    """
+                    ALTER TABLE Prompts
+                    ADD COLUMN artifact_type TEXT NOT NULL DEFAULT 'prompt'
+                    CHECK(artifact_type IN ('prompt', 'recipe'))
+                    """
+                )
+                conn.execute(
+                    "UPDATE schema_version SET version = 3 WHERE version = 2"
+                )
+                columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(Prompts)")
+                }
+                if "artifact_type" not in columns:
+                    raise SchemaError(
+                        "Validation Error: Prompts table missing artifact_type column."
+                    )
+                version_in_tx = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                ).fetchone()
+                if not version_in_tx or version_in_tx["version"] != 3:
+                    raise SchemaError(
+                        "Schema version update to 3 did not take effect within transaction."
+                    )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"[Migration v2->v3] Failed during migration: {e}"
+            )
+            raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -797,6 +839,25 @@ class PromptsDatabase:
         if prompt_format not in {"legacy", "structured"}:
             raise InputError("Prompt format must be either 'legacy' or 'structured'.")
         return prompt_format
+
+    def _normalize_artifact_type(self, artifact_type: Optional[str]) -> str:
+        """Validate the durable Prompt/Recipe discriminator at the DB boundary."""
+        if artifact_type is None:
+            return "prompt"
+        if not isinstance(artifact_type, str) or artifact_type not in {
+            "prompt",
+            "recipe",
+        }:
+            raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+        return artifact_type
+
+    @staticmethod
+    def _normalize_expected_version(expected_version: Optional[int]) -> Optional[int]:
+        if expected_version is None:
+            return None
+        if type(expected_version) is not int or expected_version < 1:
+            raise InputError("expected_version must be a positive integer or None.")
+        return expected_version
 
     def _serialize_prompt_definition(self, prompt_definition: Any) -> Optional[str]:
         if prompt_definition is None:
@@ -1116,6 +1177,7 @@ class PromptsDatabase:
         prompt_format: Optional[str] = None,
         prompt_schema_version: Optional[int] = None,
         prompt_definition: Optional[Any] = None,
+        artifact_type: Optional[str] = None,
     ) -> Tuple[Optional[int], Optional[str], str]:
         start_time = time.time()
 
@@ -1135,13 +1197,15 @@ class PromptsDatabase:
             if prompt_format is not None
             else None
         )
+        normalized_artifact_type = self._normalize_artifact_type(artifact_type)
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version, prompt_definition
+                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version,
+                           prompt_definition, artifact_type
                     FROM Prompts
                     WHERE name = ?
                     """,
@@ -1192,6 +1256,11 @@ class PromptsDatabase:
                         if prompt_definition is not None
                         else existing["prompt_definition"]
                     )
+                    resolved_artifact_type = (
+                        normalized_artifact_type
+                        if artifact_type is not None
+                        else existing["artifact_type"]
+                    )
                     update_data = {
                         "name": name,
                         "author": author,
@@ -1201,6 +1270,7 @@ class PromptsDatabase:
                         "prompt_format": resolved_prompt_format,
                         "prompt_schema_version": resolved_prompt_schema_version,
                         "prompt_definition": resolved_prompt_definition,
+                        "artifact_type": resolved_artifact_type,
                         "last_modified": current_time,
                         "version": new_version,
                         "client_id": client_id,
@@ -1216,6 +1286,7 @@ class PromptsDatabase:
                                           prompt_format=?,
                                           prompt_schema_version=?,
                                           prompt_definition=?,
+                                          artifact_type=?,
                                           last_modified=?,
                                           version=?,
                                           client_id=?,
@@ -1230,6 +1301,7 @@ class PromptsDatabase:
                             resolved_prompt_format,
                             resolved_prompt_schema_version,
                             resolved_prompt_definition,
+                            resolved_artifact_type,
                             current_time,
                             new_version,
                             client_id,
@@ -1290,6 +1362,7 @@ class PromptsDatabase:
                         "prompt_format": resolved_prompt_format,
                         "prompt_schema_version": prompt_schema_version,
                         "prompt_definition": normalized_prompt_definition,
+                        "artifact_type": normalized_artifact_type,
                         "uuid": prompt_uuid,
                         "last_modified": current_time,
                         "version": new_version,
@@ -1306,13 +1379,14 @@ class PromptsDatabase:
                                                 prompt_format,
                                                 prompt_schema_version,
                                                 prompt_definition,
+                                                artifact_type,
                                                 uuid,
                                                 last_modified,
                                                 version,
                                                 client_id,
                                                 deleted
                                             )
-                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
                         (
                             name,
                             author,
@@ -1322,6 +1396,7 @@ class PromptsDatabase:
                             resolved_prompt_format,
                             prompt_schema_version,
                             normalized_prompt_definition,
+                            normalized_artifact_type,
                             prompt_uuid,
                             current_time,
                             new_version,
@@ -1537,7 +1612,10 @@ class PromptsDatabase:
                 ) from e
 
     def update_prompt_by_id(
-        self, prompt_id: int, update_data: Dict[str, Any]
+        self,
+        prompt_id: int,
+        update_data: Dict[str, Any],
+        expected_version: Optional[int] = None,
     ) -> Tuple[Optional[str], str]:
         """
         Updates an existing prompt identified by its ID.
@@ -1547,6 +1625,8 @@ class PromptsDatabase:
             prompt_id: The ID of the prompt to update.
             update_data: A dictionary containing fields to update (name, author, details, system_prompt, user_prompt).
                          Keywords are handled separately by `update_keywords_for_prompt`.
+            expected_version: The version captured by the caller, when updating an
+                existing working copy. The comparison occurs in this transaction.
 
         Returns:
             A tuple (updated_prompt_uuid, message_string).
@@ -1562,6 +1642,12 @@ class PromptsDatabase:
             not update_data["name"] or not update_data["name"].strip()
         ):
             raise InputError("Prompt name cannot be empty if provided for update.")
+        expected_version = self._normalize_expected_version(expected_version)
+        normalized_artifact_type = None
+        if "artifact_type" in update_data:
+            normalized_artifact_type = self._normalize_artifact_type(
+                update_data.get("artifact_type")
+            )
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
@@ -1591,6 +1677,14 @@ class PromptsDatabase:
                 original_name = existing_prompt_state["name"]
                 current_version = existing_prompt_state["version"]
                 is_deleted = existing_prompt_state["deleted"]
+
+                if (
+                    expected_version is not None
+                    and expected_version != int(current_version)
+                ):
+                    raise ConflictError(
+                        "Prompt changed after it was opened.", "Prompts", prompt_id
+                    )
 
                 if is_deleted:  # Optional: decide if updating a soft-deleted prompt should undelete it.
                     # For now, let's assume we are updating an active prompt or an explicitly fetched soft-deleted one.
@@ -1646,6 +1740,9 @@ class PromptsDatabase:
                 if "prompt_definition" in update_data:
                     set_clauses.append("prompt_definition = ?")
                     params.append(normalized_prompt_definition)
+                if "artifact_type" in update_data:
+                    set_clauses.append("artifact_type = ?")
+                    params.append(normalized_artifact_type)
 
                 # Always update these
                 set_clauses.extend(
@@ -2185,7 +2282,13 @@ class PromptsDatabase:
                     # without an N+1 per-row `fetch_keywords_for_prompt`-
                     # style fetch for a whole page -- this is a single extra
                     # TEXT column on the same query, not a second query.
-                    query = f"""SELECT id, name, uuid, author, details, last_modified FROM Prompts
+                    query = f"""SELECT id, name, uuid, author, details, last_modified,
+                                artifact_type,
+                                CASE WHEN length(trim(coalesce(system_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                                    AS has_system_prompt,
+                                CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                                    AS has_user_prompt
+                                FROM Prompts
                                 {where_clause} ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
                     cursor.execute(query, (per_page, offset))
@@ -2350,7 +2453,11 @@ class PromptsDatabase:
 
         offset = (page - 1) * results_per_page
 
-        base_select = "SELECT p.*"
+        base_select = """SELECT p.*,
+            CASE WHEN length(trim(coalesce(p.system_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                AS has_system_prompt,
+            CASE WHEN length(trim(coalesce(p.user_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                AS has_user_prompt"""
         count_select = "SELECT COUNT(p.id)"
         from_clause = "FROM Prompts p"
         conditions = []

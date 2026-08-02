@@ -47,6 +47,28 @@ def test_server_prompt_to_local_update_preserves_structured_fields():
     assert update["prompt_definition"]["schema_version"] == 1
 
 
+def test_server_adapter_round_trips_artifact_type_without_definition_inference():
+    local_prompt = {
+        "name": "Recipe",
+        "artifact_type": "recipe",
+        "prompt_format": "legacy",
+        "system_prompt": "",
+        "user_prompt": "compiled recipe text",
+    }
+
+    payload = local_prompt_to_server_payload(local_prompt)
+    update = server_prompt_to_local_update(payload)
+
+    assert payload["artifact_type"] == "recipe"
+    assert update["artifact_type"] == "recipe"
+
+
+@pytest.mark.parametrize("artifact_type", ["invalid", 3])
+def test_server_adapter_rejects_invalid_artifact_type(artifact_type):
+    with pytest.raises(ValueError, match="artifact_type"):
+        local_prompt_to_server_payload({"name": "Bad", "artifact_type": artifact_type})
+
+
 def test_local_prompt_to_server_payload_keeps_legacy_snapshot():
     local_prompt = {
         "name": "Legacy Prompt",
@@ -89,6 +111,7 @@ def test_import_and_export_prompt_payload_round_trip_structured_fields():
             "keywords": ["sync", "structured"],
             "prompt_format": "structured",
             "prompt_schema_version": 1,
+            "artifact_type": "recipe",
             "prompt_definition": {
                 "schema_version": 1,
                 "messages": [{"role": "user", "content": "imported"}],
@@ -98,10 +121,12 @@ def test_import_and_export_prompt_payload_round_trip_structured_fields():
 
     prompt = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
     assert prompt["prompt_format"] == "structured"
+    assert prompt["artifact_type"] == "recipe"
     assert json.loads(prompt["prompt_definition"])["schema_version"] == 1
 
     exported = export_prompt_to_server_payload(result["prompt_uuid"])
     assert exported["prompt_format"] == "structured"
+    assert exported["artifact_type"] == "recipe"
     assert exported["prompt_definition"]["messages"][0]["content"] == "imported"
     assert exported["keywords"] == ["structured", "sync"]
 

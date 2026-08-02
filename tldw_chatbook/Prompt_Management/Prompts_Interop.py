@@ -205,6 +205,7 @@ def add_prompt(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """Adds or updates a prompt. See PromptsDatabase.add_prompt for details."""
     db = get_db_instance()
@@ -219,6 +220,7 @@ def add_prompt(
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
 
@@ -315,6 +317,7 @@ def import_prompt_from_server_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         prompt_format=local_update.get("prompt_format"),
         prompt_schema_version=local_update.get("prompt_schema_version"),
         prompt_definition=local_update.get("prompt_definition"),
+        artifact_type=local_update.get("artifact_type"),
     )
     return {"prompt_id": prompt_id, "prompt_uuid": prompt_uuid, "message": message}
 

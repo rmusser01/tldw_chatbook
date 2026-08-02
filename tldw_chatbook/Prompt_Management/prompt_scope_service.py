@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -21,6 +22,7 @@ from .prompt_normalizers import (
     normalize_prompt_record,
     normalize_prompt_version_list,
 )
+from .server_prompt_adapter import normalize_artifact_type
 
 
 class PromptBackend(str, Enum):
@@ -39,6 +41,7 @@ def _payload_from_fields(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[dict[str, Any]] = None,
+    artifact_type: Optional[str] = None,
 ) -> dict[str, Any]:
     payload = {
         "name": name,
@@ -50,6 +53,11 @@ def _payload_from_fields(
         "prompt_format": prompt_format,
         "prompt_schema_version": prompt_schema_version,
         "prompt_definition": prompt_definition,
+        "artifact_type": (
+            normalize_artifact_type(artifact_type)
+            if artifact_type is not None
+            else None
+        ),
     }
     return {key: value for key, value in payload.items() if value is not None}
 
@@ -405,6 +413,7 @@ class LocalPromptService:
             prompt_format=payload.get("prompt_format"),
             prompt_schema_version=payload.get("prompt_schema_version"),
             prompt_definition=payload.get("prompt_definition"),
+            artifact_type=payload.get("artifact_type"),
         )
         identifier = prompt_uuid or prompt_id
         return self.get_prompt(identifier, include_deleted=True)
@@ -417,8 +426,12 @@ class LocalPromptService:
             raise ValueError(f"Prompt '{prompt_identifier}' not found.")
 
         if hasattr(self.prompt_db, "update_prompt_by_id"):
+            expected_version = payload.get("expected_version")
+            update_payload = {
+                key: value for key, value in payload.items() if key != "expected_version"
+            }
             prompt_uuid, _message = self.prompt_db.update_prompt_by_id(
-                existing["id"], payload
+                existing["id"], update_payload, expected_version=expected_version
             )
             return self.get_prompt(prompt_uuid or existing["id"], include_deleted=True)
 
@@ -437,6 +450,7 @@ class LocalPromptService:
             prompt_definition=payload.get(
                 "prompt_definition", existing.get("prompt_definition")
             ),
+            artifact_type=payload.get("artifact_type", existing.get("artifact_type")),
         )
         return self.get_prompt(prompt_uuid or prompt_id, include_deleted=True)
 
@@ -604,6 +618,51 @@ class PromptScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
+    def _source_record(record: Any) -> Mapping[str, Any]:
+        if hasattr(record, "model_dump"):
+            return record.model_dump(mode="json")
+        return record if isinstance(record, Mapping) else {}
+
+    @classmethod
+    def _normalize_prompt_record(cls, record: Any, *, backend: str) -> dict[str, Any]:
+        """Keep new artifact fields while retaining the established normalizer shape."""
+        normalized = normalize_prompt_record(record, backend=backend)
+        source = cls._source_record(record)
+        normalized["artifact_type"] = normalize_artifact_type(
+            source.get("artifact_type")
+        )
+        normalized["has_system_prompt"] = bool(
+            source.get(
+                "has_system_prompt",
+                bool(str(source.get("system_prompt") or "").strip()),
+            )
+        )
+        normalized["has_user_prompt"] = bool(
+            source.get(
+                "has_user_prompt",
+                bool(str(source.get("user_prompt") or "").strip()),
+            )
+        )
+        return normalized
+
+    @classmethod
+    def _normalize_prompt_list(
+        cls, response: Any, *, backend: str, page: int, per_page: int
+    ) -> dict[str, Any]:
+        normalized = normalize_prompt_list(
+            response, backend=backend, page=page, per_page=per_page
+        )
+        if isinstance(response, tuple) and len(response) == 4:
+            source_items = response[0]
+        else:
+            source_items = cls._source_record(response).get("items", [])
+        normalized["items"] = [
+            cls._normalize_prompt_record(item, backend=backend)
+            for item in source_items
+        ]
+        return normalized
+
+    @staticmethod
     def _action_id(mode: PromptBackend, action: str) -> str:
         return f"prompts.{action}.{mode.value}"
 
@@ -633,7 +692,7 @@ class PromptScopeService:
                 sort_order=sort_order,
             )
         )
-        return normalize_prompt_list(
+        return self._normalize_prompt_list(
             response, backend=normalized_mode.value, page=page, per_page=per_page
         )
 
@@ -725,7 +784,7 @@ class PromptScopeService:
             )
         )
         return [
-            normalize_prompt_record(item, backend=normalized_mode.value)
+            self._normalize_prompt_record(item, backend=normalized_mode.value)
             for item in response or ()
         ]
 
@@ -742,7 +801,7 @@ class PromptScopeService:
         response = await self._maybe_await(
             service.get_prompt(prompt_identifier, include_deleted=include_deleted)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def save_prompt(
         self,
@@ -758,6 +817,8 @@ class PromptScopeService:
         prompt_format: Optional[str] = None,
         prompt_schema_version: Optional[int] = None,
         prompt_definition: Optional[dict[str, Any]] = None,
+        artifact_type: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         action = "update" if prompt_identifier not in (None, "") else "create"
@@ -773,14 +834,21 @@ class PromptScopeService:
             prompt_format=prompt_format,
             prompt_schema_version=prompt_schema_version,
             prompt_definition=prompt_definition,
+            artifact_type=artifact_type,
         )
+        if (
+            action == "update"
+            and normalized_mode == PromptBackend.LOCAL
+            and expected_version is not None
+        ):
+            payload["expected_version"] = expected_version
         if action == "create":
             response = await self._maybe_await(service.create_prompt(payload))
         else:
             response = await self._maybe_await(
                 service.update_prompt(prompt_identifier, payload)
             )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def delete_prompt(
         self,
@@ -808,7 +876,7 @@ class PromptScopeService:
         response = await self._maybe_await(
             service.record_prompt_usage(prompt_identifier)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def list_prompt_versions(
         self,
@@ -841,7 +909,7 @@ class PromptScopeService:
         response = await self._maybe_await(
             service.restore_prompt_version(prompt_identifier, version)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def create_prompt_collection(
         self,

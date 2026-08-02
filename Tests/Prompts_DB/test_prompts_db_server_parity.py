@@ -1,7 +1,73 @@
 import json
 import sqlite3
 
+import pytest
+
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
+
+def seed_v2_prompt_database(database_path, *, name, user_prompt):
+    """Create a real schema-v2 file with indexed structured metadata."""
+    conn = sqlite3.connect(database_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.executescript(
+            f"""
+            {PromptsDatabase._TABLES_SQL_V1}
+            {PromptsDatabase._INDICES_SQL_V1}
+            {PromptsDatabase._TRIGGERS_SQL_V1}
+            ALTER TABLE Prompts ADD COLUMN prompt_format TEXT NOT NULL DEFAULT 'legacy';
+            ALTER TABLE Prompts ADD COLUMN prompt_schema_version INTEGER;
+            ALTER TABLE Prompts ADD COLUMN prompt_definition TEXT;
+            UPDATE schema_version SET version = 2;
+            {PromptsDatabase._FTS_TABLES_SQL}
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO Prompts (
+                name, author, details, system_prompt, user_prompt, uuid,
+                last_modified, version, client_id, deleted, prompt_format,
+                prompt_schema_version, prompt_definition
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                name,
+                "Legacy Author",
+                "structured metadata must survive",
+                "legacy system",
+                user_prompt,
+                "00000000-0000-4000-8000-000000000002",
+                "2026-08-01T00:00:00.000Z",
+                1,
+                "legacy-client",
+                0,
+                "structured",
+                1,
+                json.dumps({"schema_version": 1, "messages": []}),
+            ),
+        )
+        prompt_id = conn.execute(
+            "SELECT id FROM Prompts WHERE name = ?", (name,)
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO prompts_fts (
+                rowid, name, author, details, system_prompt, user_prompt
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                prompt_id,
+                name,
+                "Legacy Author",
+                "structured metadata must survive",
+                "legacy system",
+                user_prompt,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_prompt_db_persists_structured_prompt_metadata():
@@ -151,3 +217,49 @@ def test_prompt_db_migrates_v1_database_for_structured_fields(tmp_path):
         assert prompt["prompt_definition"] is None
     finally:
         db.close_connection()
+
+
+def test_v2_migration_defaults_existing_rows_to_prompt_and_preserves_sync_and_fts(
+    tmp_path,
+):
+    database_path = tmp_path / "prompts_v2.db"
+    seed_v2_prompt_database(
+        database_path, name="Existing", user_prompt="alpha searchable"
+    )
+
+    database = PromptsDatabase(database_path, client_id="migration-test")
+    try:
+        detail = database.fetch_prompt_details("Existing")
+        assert database._get_db_version(database.get_connection()) == 3
+        assert detail["artifact_type"] == "prompt"
+        assert detail["prompt_format"] == "structured"
+        assert detail["prompt_schema_version"] == 1
+        assert json.loads(detail["prompt_definition"]) == {
+            "schema_version": 1,
+            "messages": [],
+        }
+
+        searched, total = database.search_prompts("searchable")
+        assert total == 1
+        assert searched[0]["name"] == "Existing"
+
+        with pytest.raises(sqlite3.IntegrityError, match="Version must increment"):
+            database.get_connection().execute(
+                "UPDATE Prompts SET details = ? WHERE id = ?",
+                ("illegal update", detail["id"]),
+            )
+    finally:
+        database.close_connection()
+
+
+def test_fresh_v3_database_has_prompt_artifact_default():
+    database = PromptsDatabase(":memory:", client_id="fresh-schema")
+    try:
+        columns = {
+            row["name"]: row
+            for row in database.get_connection().execute("PRAGMA table_info(Prompts)")
+        }
+        assert columns["artifact_type"]["notnull"] == 1
+        assert columns["artifact_type"]["dflt_value"] == "'prompt'"
+    finally:
+        database.close_connection()

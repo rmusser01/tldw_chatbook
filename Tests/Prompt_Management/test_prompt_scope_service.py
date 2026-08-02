@@ -78,6 +78,7 @@ class FakeLocalPromptService:
             "user_prompt": "Local user",
             "keywords": ["draft"],
             "prompt_format": "legacy",
+            "artifact_type": "prompt",
             "version": 3,
             "deleted": False,
         }
@@ -287,6 +288,7 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
 
     assert local_result["items"][0]["id"] == "local:prompt:local-uuid-7"
     assert local_result["items"][0]["backend"] == "local"
+    assert local_result["items"][0]["artifact_type"] == "prompt"
     assert server_result["items"][0]["id"] == "server:prompt:server-uuid-9"
     assert server_result["items"][0]["backend"] == "server"
     assert server_result["current_page"] == 2
@@ -310,6 +312,14 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         system_prompt="System",
         user_prompt="User",
         keywords=["local"],
+        artifact_type="recipe",
+    )
+    local_updated = await service.save_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        details="Locally updated",
+        artifact_type="prompt",
+        expected_version=3,
     )
     updated = await service.save_prompt(
         mode="server",
@@ -318,19 +328,36 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         prompt_format="structured",
         prompt_schema_version=1,
         prompt_definition={"schema_version": 1, "messages": []},
+        artifact_type="recipe",
+        expected_version=5,
     )
     deleted = await service.delete_prompt(
         mode="server", prompt_identifier="server-uuid-9"
     )
 
     assert created["id"] == "local:prompt:local-uuid-8"
+    assert created["artifact_type"] == "recipe"
     assert local.calls[0][0] == "create_prompt"
+    assert local.calls[0][1]["artifact_type"] == "recipe"
+    assert local_updated["details"] == "Locally updated"
+    assert local.calls[1] == (
+        "update_prompt",
+        "local-uuid-7",
+        {
+            "details": "Locally updated",
+            "artifact_type": "prompt",
+            "expected_version": 3,
+        },
+    )
     assert updated["id"] == "server:prompt:server-uuid-9"
     assert updated["name"] == "Updated Server"
     assert server.calls[-2][0] == "update_prompt"
+    assert server.calls[-2][2]["artifact_type"] == "recipe"
+    assert "expected_version" not in server.calls[-2][2]
     assert deleted is True
     assert policy.actions == [
         "prompts.create.local",
+        "prompts.update.local",
         "prompts.update.server",
         "prompts.delete.server",
     ]
