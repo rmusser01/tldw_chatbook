@@ -14,6 +14,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
+    delete_block,
     update_block,
 )
 
@@ -188,6 +189,71 @@ async def test_clearing_xml_tag_keeps_editor_open_with_recovery_issue() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cleared_xml_tag_can_be_duplicated_without_losing_draft() -> None:
+    state = update_block(_state(), "goal", syntax="xml", xml_tag="goal")
+    app = BlockEditorHarness(state)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.query_one("#prompt-block-xml-tag-goal", Input).value = ""
+        await pilot.pause()
+        app.query_one("#prompt-block-duplicate-goal", Button).press()
+        await pilot.pause()
+
+        editor = app.query_one("#editor", PromptBlockEditor)
+        source, copy, _context = editor.state.definition.lanes[1].blocks
+        assert source.xml_tag == copy.xml_tag == ""
+        assert source.content == copy.content == "Explain the result."
+        assert app.query_one("#prompt-block-content-goal-copy", TextArea).text == (
+            "Explain the result."
+        )
+        assert "Invalid" in str(
+            app.query_one("#prompt-block-issue-goal-copy", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+async def test_adding_to_empty_lane_updates_count_expands_and_reveals_card(
+    size: tuple[int, int],
+) -> None:
+    app = BlockEditorHarness(delete_block(_state(), "role"))
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        system = app.query_one("#prompt-lane-system", Collapsible)
+        assert system.collapsed is True
+        assert str(system.title) == "System · 0 blocks"
+
+        app.query_one("#prompt-lane-add-system", Button).press()
+        await pilot.pause()
+
+        card = app.query_one("#prompt-block-block")
+        assert str(system.title) == "System · 1 blocks"
+        assert system.collapsed is False
+        assert card.display is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_expand_an_intentionally_collapsed_nonempty_lane() -> (
+    None
+):
+    app = BlockEditorHarness(_state())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        user = app.query_one("#prompt-lane-user", Collapsible)
+        user.collapsed = True
+        await pilot.pause()
+
+        app.query_one("#prompt-lane-add-system", Button).press()
+        await pilot.pause()
+
+        assert user.collapsed is True
+        assert str(user.title) == "User · 2 blocks"
+
+
+@pytest.mark.asyncio
 async def test_validation_is_visible_beside_block_and_action_focuses_first_error() -> (
     None
 ):
@@ -206,6 +272,37 @@ async def test_validation_is_visible_beside_block_and_action_focuses_first_error
         editor.action_apply()
         await pilot.pause()
         assert app.focused is app.query_one("#prompt-block-xml-tag-goal", Input)
+
+
+@pytest.mark.asyncio
+async def test_update_original_validation_reason_explains_recovery() -> None:
+    invalid = update_block(_state(), "goal", syntax="xml", xml_tag="bad tag")
+    app = BlockEditorHarness(invalid, can_update_original=True)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        reason = str(
+            app.query_one("#prompt-editor-update-reason", Static).renderable
+        ).lower()
+        assert "resolve" in reason
+        assert "block" in reason
+
+
+@pytest.mark.asyncio
+async def test_update_original_source_unavailable_reason_is_preserved() -> None:
+    app = BlockEditorHarness(_state(), can_update_original=False)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        reason = str(
+            app.query_one("#prompt-editor-update-reason", Static).renderable
+        ).lower()
+        assert "no guarded version update" in reason
+        assert "save as new" in reason
 
 
 @pytest.mark.asyncio

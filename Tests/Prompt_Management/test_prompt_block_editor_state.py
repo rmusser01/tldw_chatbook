@@ -147,6 +147,23 @@ def test_duplicate_avoids_existing_copy_id_collisions() -> None:
     assert _ids(twice, 1) == ["goal", "goal-copy-2", "goal-copy", "context"]
 
 
+def test_duplicate_keeps_an_empty_xml_tag_draft_repairable() -> None:
+    state = update_block(_state(), "goal", syntax="xml", xml_tag="goal")
+    state = update_block(state, "goal", xml_tag="")
+
+    duplicated = duplicate_block(state, "goal")
+
+    source, copy, _context = duplicated.definition.lanes[1].blocks
+    assert (source.xml_tag, copy.xml_tag) == ("", "")
+    assert copy.content == source.content == "Explain the result."
+    assert copy.title == "Goal copy"
+    assert copy.id == "goal-copy"
+    assert [(issue.block_id, issue.code) for issue in duplicated.issues] == [
+        ("goal", "invalid_xml_name"),
+        ("goal-copy", "invalid_xml_name"),
+    ]
+
+
 def test_delete_removes_only_the_target_and_records_the_dirty_id() -> None:
     state = delete_block(_state(), "goal")
 
@@ -213,6 +230,25 @@ def test_editing_one_legacy_lane_keeps_the_other_origin_byte_exact() -> None:
     assert state.compiled_system == "SYSTEM BYTES\n"
     assert state.compiled_user == "Rewritten\n\nUse the supplied evidence."
     assert state.dirty_block_ids == frozenset({"goal"})
+
+
+def test_identical_update_returns_same_state_without_invalidating_origins() -> None:
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=_definition(),
+        dirty_block_ids=frozenset({"context"}),
+        system_origin=_origin("SYSTEM BYTES\n"),
+        user_origin=_origin("USER BYTES\n\n"),
+    )
+
+    unchanged = update_block(state, "goal", content="Explain the result.")
+
+    assert unchanged is state
+    assert unchanged.system_origin is state.system_origin
+    assert unchanged.user_origin is state.user_origin
+    assert unchanged.compiled_system == "SYSTEM BYTES\n"
+    assert unchanged.compiled_user == "USER BYTES\n\n"
+    assert unchanged.dirty_block_ids == frozenset({"context"})
 
 
 def test_artifact_type_change_keeps_definition_and_kind_in_lockstep() -> None:

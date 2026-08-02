@@ -152,6 +152,8 @@ def update_block(
         normalized["xml_tag"] = None
 
     updated = _replace_editor_block(block, normalized)
+    if updated == block:
+        return state
     lanes = list(state.definition.lanes)
     blocks = list(lanes[lane_index].blocks)
     blocks[block_index] = updated
@@ -242,7 +244,10 @@ def duplicate_block(
     """Insert a content-preserving copy after its source with a fresh ID."""
     lane_index, block_index, block = _locate_block(state.definition, block_id)
     new_id = _next_id(f"{block.id}-copy", _block_ids(state.definition))
-    duplicate = replace(block, id=new_id, title=f"{block.title} copy")
+    duplicate = _replace_editor_block(
+        block,
+        {"id": new_id, "title": f"{block.title} copy"},
+    )
     lane = state.definition.lanes[lane_index]
     blocks = list(lane.blocks)
     blocks.insert(block_index + 1, duplicate)

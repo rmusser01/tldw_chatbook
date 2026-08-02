@@ -567,11 +567,15 @@ class PromptBlockEditor(Vertical):
         )
         old_system_nonempty = bool(self._state.compiled_system)
         old_user_nonempty = bool(self._state.compiled_user)
+        old_lane_counts = {lane.id: len(lane.blocks) for lane in old_definition.lanes}
         self._state = state
 
         if old_shapes != new_shapes:
             for lane in state.definition.lanes:
-                await self._reconcile_lane(lane.id)
+                await self._reconcile_lane(
+                    lane.id,
+                    previous_count=old_lane_counts[lane.id],
+                )
         else:
             located = self._find_block(block_id)
             if located is not None:
@@ -594,7 +598,7 @@ class PromptBlockEditor(Vertical):
         )
         self._sync_footer()
 
-    async def _reconcile_lane(self, lane_id: LaneId) -> None:
+    async def _reconcile_lane(self, lane_id: LaneId, *, previous_count: int) -> None:
         lane = self._state.definition.lanes[0 if lane_id == "system" else 1]
         desired_ids = [block.id for block in lane.blocks]
         desired_set = set(desired_ids)
@@ -635,6 +639,10 @@ class PromptBlockEditor(Vertical):
         self.query_one(
             f"#prompt-lane-{lane_id}-empty", Static
         ).display = not lane.blocks
+        collapsible = self.query_one(f"#prompt-lane-{lane_id}", Collapsible)
+        collapsible.title = f"{lane.id.title()} · {len(lane.blocks)} blocks"
+        if previous_count == 0 and lane.blocks:
+            collapsible.collapsed = False
 
     def _sync_card(self, block: PromptBlock, *, is_first: bool, is_last: bool) -> None:
         self._block_widgets[block.id].sync(
@@ -705,14 +713,16 @@ class PromptBlockEditor(Vertical):
             issue_count or no_selected_content
         )
         update_reason = self.query_one("#prompt-editor-update-reason", Static)
-        update_reason.update(
-            ""
-            if self._can_update_original
-            else (
+        if issue_count:
+            update_copy = "Update unavailable — resolve the block errors above."
+        elif self._can_update_original:
+            update_copy = ""
+        else:
+            update_copy = (
                 "Update unavailable — this source has no guarded version update; "
                 "save as new."
             )
-        )
+        update_reason.update(update_copy)
 
     def _issues_for(self, block_id: str) -> tuple[PromptBlockValidationIssue, ...]:
         return tuple(
