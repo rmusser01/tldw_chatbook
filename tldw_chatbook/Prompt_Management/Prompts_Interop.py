@@ -73,6 +73,7 @@ from .server_prompt_adapter import (
     local_prompt_to_server_payload,
     server_prompt_to_local_update,
 )
+from .prompt_artifact_codec import decode_prompt_artifact
 #
 #######################################################################################################################
 #
@@ -635,6 +636,50 @@ def parse_yaml_prompts_from_content(content: str) -> List[Dict[str, Any]]:
 _MD_SECTION_HEADER_LINE_RE = r"[ \t]*###[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*###[ \t]*"
 
 
+def _parse_fenced_structure(section_text: Any) -> Optional[Dict[str, Any]]:
+    """Decode exactly one JSON fence from a STRUCTURE section."""
+    if not isinstance(section_text, str):
+        return None
+    match = re.fullmatch(r"```json\r?\n(.*)\r?\n```", section_text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        definition = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return definition if isinstance(definition, dict) else None
+
+
+def _restore_structured_markdown_prompt(parsed_data: Dict[str, Any]) -> None:
+    """Restore only known Console v2 structure through the shared codec."""
+    artifact_type = parsed_data.pop("artifact_type_raw", None)
+    structure_text = parsed_data.pop("structure_raw", None)
+    definition = _parse_fenced_structure(structure_text)
+    if definition is None or not isinstance(artifact_type, str):
+        return
+
+    record = {
+        **parsed_data,
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": definition.get("schema_version"),
+        "prompt_definition": definition,
+    }
+    try:
+        decoded = decode_prompt_artifact(record)
+    except ValueError:
+        return
+    if decoded.state != "supported_v2":
+        return
+
+    parsed_data.update(
+        artifact_type=decoded.artifact_type,
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=decoded.raw_definition,
+    )
+
+
 def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     """
     Parses Markdown content with custom '### SECTION_NAME ###' headers
@@ -655,6 +700,8 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         "SYSTEM": "system_prompt",
         "USER": "user_prompt",
         "KEYWORDS": "keywords_str",
+        "ARTIFACT_TYPE": "artifact_type_raw",
+        "STRUCTURE": "structure_raw",
     }
 
     # Attempt to parse TITLE and DETAILS block first
@@ -732,6 +779,8 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         ]
     if "keywords_str" in parsed_data:  # Clean up temporary key
         del parsed_data["keywords_str"]
+
+    _restore_structured_markdown_prompt(parsed_data)
 
     prompts_data.append(_normalize_prompt_data(parsed_data))
     logger.debug(f"Parsed custom MD/TXT prompt: {parsed_data.get('name')}")

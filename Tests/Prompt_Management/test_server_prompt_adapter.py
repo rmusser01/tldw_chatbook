@@ -202,3 +202,26 @@ def test_json_yaml_import_normalization_and_overwrite_keep_recipe_type(tmp_path)
             details=None,
             artifact_type="invalid",
         )
+
+
+def test_markdown_import_persists_future_structure_as_new_legacy_prompt(tmp_path):
+    """Unsupported Markdown structure must not persist its foreign metadata."""
+    import_path = tmp_path / "future-prompt.md"
+    import_path.write_text(
+        "### TITLE ###\nFuture Prompt\n### AUTHOR ###\nImporter\n"
+        "### SYSTEM ###\ncompiled system\n### USER ###\ncompiled user\n"
+        "### ARTIFACT_TYPE ###\nrecipe\n### STRUCTURE ###\n```json\n"
+        '{"kind":"future_recipe","schema_version":3}\n```\n',
+        encoding="utf-8",
+    )
+
+    [result] = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    prompt = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
+
+    assert result["status"] == "success"
+    assert prompt["artifact_type"] == "prompt"
+    assert prompt["prompt_format"] == "legacy"
+    assert prompt["prompt_schema_version"] is None
+    assert prompt["prompt_definition"] is None
+    assert prompt["system_prompt"] == "compiled system"
+    assert prompt["user_prompt"] == "compiled user"
