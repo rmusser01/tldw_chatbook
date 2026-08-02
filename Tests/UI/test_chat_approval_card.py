@@ -181,3 +181,50 @@ def test_needs_decision_state_is_text_labelled_not_colour_only():
     )
     plain = _format_row_header({"llm_name": "write_file", "server": "Built-in"})
     assert NEEDS_DECISION_PREFIX not in plain
+
+
+@pytest.mark.unit
+def test_the_approval_deadline_is_rendered_not_silently_dropped():
+    """TASK-1844: a clock that decides for the user must be visible.
+
+    `set_batch` takes `timeout_seconds` and its docstring says the value is
+    "surfaced on the card" -- it was accepted and never read. The controller
+    arms a 120s deadline that auto-denies, so a countdown the user cannot see
+    was making the decision.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_deadline,
+    )
+
+    assert format_approval_deadline(120) == "Auto-denies in 2:00"
+    assert format_approval_deadline(95) == "Auto-denies in 1:35"
+    assert format_approval_deadline(9) == "Auto-denies in 0:09"
+    # No deadline armed -> say nothing rather than invent a number.
+    assert format_approval_deadline(0) == ""
+    assert format_approval_deadline(None) == ""
+
+
+@pytest.mark.unit
+def test_a_timed_out_approval_produces_its_own_marker():
+    """TASK-1844: the user must be able to tell a timeout from their own deny.
+
+    `format_agent_step_marker` had no timeout branch, so an expired approval
+    just made the card vanish -- indistinguishable from "I denied it" or "it
+    never ran". Tools are the egress boundary; a silent auto-deny is a
+    decision the system made and never reported.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        STEP_APPROVAL_TIMEOUT,
+        format_agent_step_marker,
+    )
+
+    marker = format_agent_step_marker(
+        STEP_APPROVAL_TIMEOUT, tool_name="write_file", summary="120"
+    )
+    assert marker, "a timeout must produce a transcript marker"
+    assert "write_file" in marker
+    low = marker.lower()
+    assert "timed out" in low or "timeout" in low
+    assert "not run" in low or "auto-denied" in low, (
+        f"the marker must say the call did NOT run: {marker!r}"
+    )

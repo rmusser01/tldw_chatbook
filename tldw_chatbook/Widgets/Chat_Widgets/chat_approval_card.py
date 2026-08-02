@@ -119,6 +119,31 @@ _ARGS_SUMMARY_LIMIT = 80
 NEEDS_DECISION_PREFIX = "needs decision · "
 
 
+def format_approval_deadline(timeout_seconds: float | None) -> str:
+    """Return the countdown copy for an armed approval deadline.
+
+    TASK-1844: `set_batch` accepted `timeout_seconds` and never read it,
+    while its own docstring claimed the value was "surfaced on the card".
+    The controller arms a 120s auto-deny, so a clock the user could not see
+    was making the decision for them.
+
+    Args:
+        timeout_seconds: The round's approval timeout, or None/0 when no
+            deadline is armed.
+
+    Returns:
+        "Auto-denies in M:SS", or "" when nothing is armed -- say nothing
+        rather than invent a number.
+    """
+    try:
+        total = int(timeout_seconds or 0)
+    except (TypeError, ValueError):
+        return ""
+    if total <= 0:
+        return ""
+    return f"Auto-denies in {total // 60}:{total % 60:02d}"
+
+
 def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Collapse ``calls`` to one entry per unique ``llm_name``, first-seen order.
 
@@ -310,6 +335,11 @@ class ChatApprovalCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
+        # TASK-1844: the countdown lives beside the title, not buried in a
+        # row -- it applies to the whole batch and it decides for the user.
+        deadline = Static("", id="approval-deadline", markup=False)
+        deadline.display = False
+        yield deadline
         with Container(id="approval-batch-body"):
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
@@ -380,6 +410,14 @@ class ChatApprovalCard(Container):
                 is delivered.
         """
         self._batch_round_id = round_id
+        # TASK-1844: actually surface the deadline the docstring promised.
+        try:
+            deadline = self.query_one("#approval-deadline", Static)
+            text = format_approval_deadline(timeout_seconds)
+            deadline.update(text)
+            deadline.display = bool(text)
+        except NoMatches:
+            pass
         if not calls:
             self.display = False
             self.query_one("#approval-batch-body").display = False
