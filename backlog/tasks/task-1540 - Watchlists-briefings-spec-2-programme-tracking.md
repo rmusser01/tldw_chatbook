@@ -1,10 +1,10 @@
 ---
 id: TASK-1540
 title: 'Watchlists briefings (spec #2) programme tracking'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-30 15:53'
-updated_date: '2026-08-01 20:03'
+updated_date: '2026-08-02 01:21'
 labels:
   - watchlists
   - briefings
@@ -38,5 +38,9 @@ land; do not fold phase implementation into it.
   - [x] Citations: phase 1 renders `[item N]` markers as plain text (`hyperlinks=False` by constraint) -- add links-into-reader and pruned-item degradation, incl. the named `citation-to-pruned-item-degrades` invariant test. Deferred from phase 1, confirmed by the project owner 2026-07-30.
   - Phase 2a (presets, casting, pickers, citations) shipped text-only on branch `feat/briefings-phase-2`. Phase 2b (audio synthesis, stitching, playback; task-1630) shipped 2026-07-31 on `feat/briefings-phase-2b` -- phase 2 is complete.
 - [x] #3 Phase 3: markdown/audio exports and the podcast feed directory
-- [ ] #4 Phase 4: scheduled briefing generation via the TASK-1383 scheduler seam
+- [x] #4 Phase 4: scheduled briefing generation via the TASK-1383 scheduler seam
 <!-- AC:END -->
+
+All four phases shipped: PR #1115 (phase 1), #1145 (phase 2a), #1164 (phase 2b), #1177 (phase 3),
+and phase 4 on branch `feat/briefings-phase-4` (this close-out) -- spec #2 (Watchlists Briefings &
+Podcasts) is complete.

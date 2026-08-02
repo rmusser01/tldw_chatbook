@@ -41,13 +41,14 @@ import asyncio
 import inspect
 import json
 import re
-from typing import Any, Callable, Mapping, Optional
+from contextlib import contextmanager
+from typing import Any, Callable, Collection, Iterator, Mapping, Optional
 
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_STATUS_COMPLETE
-from .briefing_service import _default_provider
+from .briefing_service import GenerationInFlightError, _default_provider
 
 #: Statuses a `briefing_scripts` row can hold. Unlike `briefings`, a script
 #: has no `empty` status -- there is no "empty roster" outcome, since
@@ -563,6 +564,66 @@ def _finish_script_failure(db: Any, script_id: int, message: str) -> dict[str, A
     return db.get_briefing_script(script_id)
 
 
+# --- In-process cast claims (spec #2 phase 4) ------------------------------
+#
+# Mirrors `briefing_service`'s own claim set exactly -- see that module's
+# "In-process generation claims" section comment for the full reasoning (no
+# lock needed because the check-then-add pair never awaits). Scoped to
+# `briefing_id` here rather than a watchlist: a cast's collision unit is
+# "this briefing is already being cast", not "this watchlist is already
+# being briefed" -- `briefing_scripts` has no one-row-per-briefing
+# invariant the way `briefings` has one per watchlist, but two casts of the
+# SAME briefing running at once would still make two concurrent chat calls
+# and write two concurrent `generating` rows for no reason.
+#
+# `GenerationInFlightError` is REUSED from `briefing_service`, not mirrored:
+# unlike `_error_text`/`_invoke_chat` above (private helpers this module
+# deliberately copies rather than imports, so each module's own contract
+# reads independently), a caller that wants to catch "something is already
+# generating" uniformly across briefings/scripts/audio needs ONE type to
+# catch, not three near-identical ones with no shared base beyond
+# `RuntimeError`.
+
+_ACTIVE_CAST_CLAIMS: set[int] = set()
+
+
+def active_cast_claims() -> frozenset[int]:
+    """Snapshot of briefing ids a live `generate_script` call currently holds.
+
+    See `briefing_service.active_briefing_claims` for the snapshot
+    reasoning; this is its cast-scoped sibling, passed as
+    `fail_interrupted_scripts`'s `exclude`.
+    """
+    return frozenset(_ACTIVE_CAST_CLAIMS)
+
+
+@contextmanager
+def _claim_cast(briefing_id: int) -> Iterator[None]:
+    """Claim `briefing_id` for the duration of one cast attempt.
+
+    See `briefing_service._claim_briefing` for the full reasoning (no
+    `await` between the membership check and the `.add()`, so no lock is
+    needed); this is the identical shape, scoped to a briefing id instead
+    of a watchlist id. Also usable directly by tests that need to simulate
+    another in-process caller already holding a briefing.
+
+    Args:
+        briefing_id: The briefing about to be cast.
+
+    Raises:
+        GenerationInFlightError: If `briefing_id` is already claimed.
+    """
+    if briefing_id in _ACTIVE_CAST_CLAIMS:
+        raise GenerationInFlightError(
+            f"a script is already being cast for briefing {briefing_id}"
+        )
+    _ACTIVE_CAST_CLAIMS.add(briefing_id)
+    try:
+        yield
+    finally:
+        _ACTIVE_CAST_CLAIMS.discard(briefing_id)
+
+
 async def generate_script(
     db: Any,
     briefing_id: int,
@@ -607,41 +668,50 @@ async def generate_script(
         ScriptCastError: If the briefing does not exist or is not
             `complete`, or the preset does not exist. No row is written in
             either case.
+        GenerationInFlightError: If another in-process caller already
+            holds `briefing_id`'s cast claim (phase 4's `_claim_cast`).
+            Raised before `_start_script` ever runs, so no
+            `briefing_scripts` row is written for the refused attempt
+            either -- the identical no-orphan-row shape `ScriptCastError`
+            already has.
     """
-    script_id, briefing, preset, roster, roster_names = await asyncio.to_thread(
-        _start_script, db, briefing_id, preset_id, load_character
-    )
-
-    endpoint = provider or preset.get("provider") or _default_provider()
-    resolved_model = model or preset.get("model")
-    model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
-
-    try:
-        character_texts = await _resolve_character_texts(roster, load_character)
-        system, user = build_cast_prompt(
-            briefing.get("body_markdown") or "",
-            roster,
-            preset.get("style_notes"),
-            character_texts,
+    with _claim_cast(briefing_id):
+        script_id, briefing, preset, roster, roster_names = await asyncio.to_thread(
+            _start_script, db, briefing_id, preset_id, load_character
         )
-        raw = await _invoke_chat(
-            chat, endpoint=endpoint, model=resolved_model, system=system, user=user
-        )
-        turns = parse_script_turns(extract_response_content(raw), roster_names)
-    except Exception as exc:  # noqa: BLE001 - every cast failure is a row
-        # No traceback: see the module docstring's egress note -- the frame
-        # here holds the prompt, so only the exception's type is logged.
-        logger.warning(f"script {script_id}: cast failed: {type(exc).__name__}")
+
+        endpoint = provider or preset.get("provider") or _default_provider()
+        resolved_model = model or preset.get("model")
+        model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
+
+        try:
+            character_texts = await _resolve_character_texts(roster, load_character)
+            system, user = build_cast_prompt(
+                briefing.get("body_markdown") or "",
+                roster,
+                preset.get("style_notes"),
+                character_texts,
+            )
+            raw = await _invoke_chat(
+                chat, endpoint=endpoint, model=resolved_model, system=system, user=user
+            )
+            turns = parse_script_turns(extract_response_content(raw), roster_names)
+        except Exception as exc:  # noqa: BLE001 - every cast failure is a row
+            # No traceback: see the module docstring's egress note -- the frame
+            # here holds the prompt, so only the exception's type is logged.
+            logger.warning(f"script {script_id}: cast failed: {type(exc).__name__}")
+            return await asyncio.to_thread(
+                _finish_script_failure, db, script_id, _error_text(exc)
+            )
+
         return await asyncio.to_thread(
-            _finish_script_failure, db, script_id, _error_text(exc)
+            _finish_script_success, db, script_id, json.dumps(turns), model_used
         )
 
-    return await asyncio.to_thread(
-        _finish_script_success, db, script_id, json.dumps(turns), model_used
-    )
 
-
-def fail_interrupted_scripts(db: Any, briefing_id: int | None = None) -> int:
+def fail_interrupted_scripts(
+    db: Any, briefing_id: int | None = None, *, exclude: Collection[int] = ()
+) -> int:
     """Fail every `generating` script as `interrupted`; return the count.
 
     Mirrors `briefing_service.fail_interrupted_briefings` exactly: a worker
@@ -655,6 +725,13 @@ def fail_interrupted_scripts(db: Any, briefing_id: int | None = None) -> int:
         briefing_id: Scope the sweep to one briefing's scripts. `None`
             sweeps every briefing's scripts, which is what a startup pass
             wants.
+        exclude: Briefing ids to spare even though their script row reads
+            `generating` -- phase 4's claim-aware sweep. A `generating`
+            script whose briefing is in this collection is a LIVE,
+            in-process cast, not a crash zombie. Callers snapshot
+            `active_cast_claims()` on the event loop and pass the result
+            here. Defaults to `()`, so every pre-phase-4 caller is
+            unchanged.
 
     Returns:
         How many rows were failed.
@@ -667,6 +744,10 @@ def fail_interrupted_scripts(db: Any, briefing_id: int | None = None) -> int:
     if briefing_id is not None:
         sql += " AND briefing_id = ?"
         params.append(briefing_id)
+    if exclude:
+        placeholders = ",".join("?" for _ in exclude)
+        sql += f" AND briefing_id NOT IN ({placeholders})"
+        params.extend(exclude)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

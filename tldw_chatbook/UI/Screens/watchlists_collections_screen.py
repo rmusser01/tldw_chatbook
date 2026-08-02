@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,11 +36,13 @@ from ...Constants import (
 from ...runtime_policy.types import PolicyDeniedError
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
+    active_audio_claims,
     fail_interrupted_audio,
     generate_script_audio,
 )
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
+    active_cast_claims,
     fail_interrupted_scripts,
     generate_script,
 )
@@ -52,8 +54,10 @@ from ...Subscriptions.briefing_export import (
 )
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
+    GenerationInFlightError,
     STATUS_COMPLETE,
     STATUS_GENERATING,
+    active_briefing_claims,
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
@@ -85,6 +89,7 @@ from ..Watchlists_Modules.inspector_pane import (
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingCadenceChanged,
     BriefingDefaultPresetChanged,
     BriefingModeChanged,
     BriefingSelected,
@@ -100,6 +105,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     StopAudioRequested,
     SynthesizeAudioRequested,
     audio_file_path_is_safe,
+    cadence_scope_phrase,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -377,6 +383,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # actually use.
         self._briefing_selection_mode: str = MODE_AUTO_FEATURED
         self._briefing_default_preset_id: int | None = None
+        # Spec #2 phase 4, Task 4: the current watchlist's stored
+        # `briefing_cadence_seconds`, mirrored here for the identical
+        # rebuild-survival reason as the two fields above -- `_build_
+        # detail_pane` seeds a freshly built `ArtifactsPane` from this on
+        # every region rebuild. `None` (never scheduled) matches the
+        # column's own default and `ArtifactsPane.briefing_cadence_
+        # seconds`'s own fallback.
+        self._briefing_cadence_seconds: int | None = None
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -1429,6 +1443,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selection_mode = self._briefing_selection_mode
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
+            artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
             artifacts_pane.script_audio = self._loaded_script_audio
@@ -3229,12 +3244,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "a briefing covers one watchlist."
             )
         name = self._watchlist_display_name(watchlist_id)
+        # Spec #2 phase 4, Task 4: this used to always say "written on this
+        # device, on request" -- true in phase 1, when nothing could write
+        # `briefing_cadence_seconds`, but a lie the moment Task 2 gave that
+        # column a writer. `cadence_scope_phrase` answers `None` (never
+        # scheduled) with `None`, so "on request" stays the honest default;
+        # anything else names the actual cadence, "while the app is open"
+        # and all -- see that function's own docstring for why the phrase
+        # is worded that way.
+        cadence_phrase = cadence_scope_phrase(self._briefing_cadence_seconds)
+        provenance = (
+            f"written on this device — {cadence_phrase}"
+            if cadence_phrase is not None
+            else "written on this device, on request"
+        )
         # RAW, deliberately: the pane wraps this in a `rich.text.Text`, which
         # is never markup-parsed, so escaping here would put visible
         # backslashes in front of every bracket a real name contains. See
         # `ArtifactsPane.compose` for why that wrapper is load-bearing --
         # a bare `str` in a `Static` IS parsed as markup.
-        return f"Briefings for {name} · written on this device, on request"
+        return f"Briefings for {name} · {provenance}"
 
     async def _load_briefings(
         self, *, select_briefing_id: int | None = None
@@ -3261,6 +3290,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._selected_briefing = None
             self._briefing_selection_mode = MODE_AUTO_FEATURED
             self._briefing_default_preset_id = None
+            self._briefing_cadence_seconds = None
             self._loaded_scripts = []
             self._selected_script = None
             self._loaded_script_audio = None
@@ -3573,6 +3603,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_default_preset_id = settings_row.get(
                 "default_briefing_preset_id"
             )
+            self._briefing_cadence_seconds = settings_row.get(
+                "briefing_cadence_seconds"
+            )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
         if not self.is_mounted:
@@ -3588,6 +3621,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selection_mode = self._briefing_selection_mode
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
+        pane.briefing_cadence_seconds = self._briefing_cadence_seconds
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
         pane.script_audio = self._loaded_script_audio
@@ -3598,20 +3632,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
         """The watchlist's stored `briefing_selection_mode`/
-        `default_briefing_preset_id`, as a plain dict.
+        `default_briefing_preset_id`/`briefing_cadence_seconds`, as a plain
+        dict.
 
-        Raw SQL against `db.conn`, matching `briefing_service._selection_
-        mode`'s own read of the same column -- `WatchlistBundleService.
-        list_watchlists`/`_get` deliberately select a narrower column list
-        that predates these two (Task 1), so there is no existing
-        service-layer getter for them to reuse. Always called through
+        Matches `briefing_service._selection_mode`'s own read of the same
+        column -- `WatchlistBundleService.list_watchlists`/`_get`
+        deliberately select a narrower column list that predates these two
+        (Task 1), so there is no existing service-layer getter for them to
+        reuse. `briefing_cadence_seconds` (spec #2 phase 4, Task 4) rides
+        in the same read: one more column on an already-narrow `WHERE id =
+        ?` lookup, not a second query. Reads run inside `with
+        db.transaction() as conn:`, not a bare `db.conn.execute` (Qodo
+        rule 1011851: every accessor this stream has shipped goes through
+        `transaction()`, reads included, so rollback-on-exception is
+        consistently wired even for read paths). Always called through
         `asyncio.to_thread`; never call this directly from the UI thread.
         """
-        row = db.conn.execute(
-            "SELECT briefing_selection_mode, default_briefing_preset_id "
-            "FROM watchlists WHERE id = ?",
-            (watchlist_id,),
-        ).fetchone()
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT briefing_selection_mode, default_briefing_preset_id, "
+                "briefing_cadence_seconds FROM watchlists WHERE id = ?",
+                (watchlist_id,),
+            ).fetchone()
         return dict(row) if row is not None else {}
 
     @staticmethod
@@ -4344,20 +4386,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         finally:
             self._feed_export_in_flight = False
 
-    # --- Briefing selection-mode and default-preset pickers (Task 4) -------
+    # --- Briefing selection-mode, default-preset, and cadence pickers -------
+    # (Task 4, phase 2a; cadence added by Task 4, phase 4)
     #
     # Same write-first-patch-after shape as `handle_toggle_briefing_queue_
     # requested` -> `_toggle_briefing_queue`: the handler answers the
     # no-database case from memory and dispatches a worker; the worker does
     # the write off the UI thread (`asyncio.to_thread`), then on success
-    # patches `_briefing_selection_mode`/`_briefing_default_preset_id` and
-    # the mounted pane's matching reactive DIRECTLY -- never `_load_
-    # briefings()`, which would re-query the database for a value this
-    # write already knows. No `exclusive=True`: each picker's own writes
-    # target a single row with `UPDATE ... WHERE id = ?`, so two overlapping
-    # presses are safe to interleave (last write wins), and cancelling one
-    # mid-write would leave `_briefing_selection_mode`/`_briefing_default_
-    # preset_id` disagreeing with what actually landed in the database.
+    # patches `_briefing_selection_mode`/`_briefing_default_preset_id`/
+    # `_briefing_cadence_seconds` and the mounted pane's matching reactive
+    # DIRECTLY -- never `_load_briefings()`, which would re-query the
+    # database for a value this write already knows. No `exclusive=True`:
+    # each picker's own writes target a single row with `UPDATE ... WHERE
+    # id = ?`, so two overlapping presses are safe to interleave (last write
+    # wins), and cancelling one mid-write would leave `_briefing_selection_
+    # mode`/`_briefing_default_preset_id`/`_briefing_cadence_seconds`
+    # disagreeing with what actually landed in the database.
 
     @on(BriefingModeChanged)
     def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
@@ -4478,6 +4522,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
         pane.default_preset_id = preset_id
+
+    @on(BriefingCadenceChanged)
+    def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
+        """Spec #2 phase 4, Task 4: same shape as `handle_briefing_mode_
+        changed`/`handle_briefing_default_preset_changed` above -- the
+        no-database case is answered from memory, the real write dispatches
+        a worker in the same `wl-briefing-settings-write` group (so an
+        overlapping mode/preset/cadence write for the same watchlist is
+        safe to interleave, last write wins, exactly like its two siblings).
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_cadence(db, watchlist_id, event.seconds),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_cadence(
+        self, db: Any, watchlist_id: int, seconds: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                briefing_cadence_seconds=seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the briefing schedule for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the schedule. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode`/`_write_briefing_default_
+        # preset` above -- the DB write is correctly keyed to `watchlist_id`
+        # and needs no change, but this patch must not land if Artifacts
+        # has since moved to a different watchlist.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_cadence_seconds = seconds
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.briefing_cadence_seconds = seconds
+        # Unlike mode/preset, the scope label's TEXT depends on cadence
+        # (`_briefing_scope_label` -> `cadence_scope_phrase`) -- without
+        # this, the honesty fix this task exists to ship would only take
+        # effect on the NEXT full `_load_briefings()` reload, not the
+        # instant the user picks a cadence, leaving the toolbar Select and
+        # the scope note disagreeing until then.
+        pane.scope_label = self._briefing_scope_label()
 
     # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
     #
@@ -4691,20 +4801,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _zombie_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_briefings` may run right now.
 
-        `fail_interrupted_briefings` fails EVERY `generating` row for a
-        watchlist unconditionally -- it cannot itself tell a crashed
-        worker's row from a live one, both read `generating`. The Generate
-        path (`_sweep_and_guard`) never needs this guard: it always runs at
-        the very front of `_generate_briefing`, before that worker's own
-        row is inserted, so there is nothing of "its own" yet to protect.
-        The Artifacts-load path (`_load_briefings`) has no such ordering
-        guarantee -- it can run at any time, including while a generation
-        THIS screen started is still mid-flight and genuinely owns a
-        `generating` row -- so it consults the same signal
-        `handle_generate_briefing_requested` already trusts before ever
-        dispatching a worker, rather than inventing a second, possibly
-        weaker way to tell a zombie from a live row (whole-branch review
-        fix 3).
+        `fail_interrupted_briefings`'s own `exclude` (phase 4) now spares any
+        watchlist a LIVE in-process claim holds -- this screen's own, or a
+        future scheduled run's -- so it no longer fails EVERY `generating`
+        row unconditionally the way it did before claims existed. This flag
+        is a narrower, purely local check on top of that: it answers "is
+        THIS screen instance mid-generation", which the Generate path
+        (`_sweep_and_guard`) never needs -- it always runs at the very front
+        of `_generate_briefing`, before that worker's own row is inserted,
+        so there is nothing of "its own" yet to protect. The Artifacts-load
+        path (`_load_briefings`) has no such ordering guarantee -- it can
+        run at any time, including while a generation THIS screen started is
+        still mid-flight -- so it consults this flag too, on top of the
+        claim-aware `exclude`, rather than relying on the claim alone
+        (whole-branch review fix 3).
         """
         return not self._briefing_in_flight
 
@@ -4718,13 +4828,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         path was wired (`_sweep_and_guard`). Gated by
         `_zombie_sweep_is_safe` so a load racing a live generation this
         screen started cannot clobber that generation's own row.
+
+        `active_briefing_claims()` is snapshotted HERE, on the UI thread,
+        before the sweep is dispatched to a worker thread (Locked decision
+        2): the claim set is mutated only on the event loop, so a live read
+        of it from the executor thread `asyncio.to_thread` uses would be
+        racy in a way this snapshot never is. Passed through as `exclude`
+        so a genuinely live claim -- e.g. a scheduled run once phase 4's
+        scheduler exists -- survives an Artifacts open instead of being
+        falsified as interrupted (survey finding (a)).
         """
         if not self._zombie_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_briefings, db, watchlist_id)
+        claims = active_briefing_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_briefings, db, watchlist_id, exclude=claims
+        )
 
     def _sweep_and_guard(
-        self, db: Any, watchlist_id: int
+        self, db: Any, watchlist_id: int, exclude: Collection[int]
     ) -> tuple[list[str], list[str]]:
         """Zombie sweep, then the generating-check. Runs off the UI thread.
 
@@ -4733,6 +4855,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the thing guarded and the guard -- so the caller sweeps FIRST, and
         only then asks whether anything is still generating. A row orphaned
         by a crashed worker can therefore never wedge the guard shut.
+
+        `exclude` -- the caller's `active_briefing_claims()` snapshot,
+        taken before this whole method was dispatched to a worker thread --
+        is passed straight to `fail_interrupted_briefings`. This screen's
+        own claim for THIS watchlist has not been taken yet at this point
+        (`generate_briefing` takes it, later, inside the same worker), so
+        the only thing `exclude` can protect here is ANOTHER in-process
+        caller's live claim on the same watchlist. A row that survives the
+        sweep for that reason is not a crash zombie -- it is a live
+        generation this screen must not duplicate -- and it correctly ends
+        up in `blocking`, triggering the existing refusal toast rather than
+        letting Generate proceed over the top of it (survey finding (b)).
 
         Returns:
             `(recovered, blocking)` -- labels for the rows this sweep failed
@@ -4745,7 +4879,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for row in db.list_briefings(watchlist_id)
             if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
         ]
-        fail_interrupted_briefings(db, watchlist_id)
+        fail_interrupted_briefings(db, watchlist_id, exclude=exclude)
         blocking = [
             self._briefing_row_label(row)
             for row in db.list_briefings(watchlist_id)
@@ -4786,7 +4920,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             try:
                 recovered, blocking = await asyncio.to_thread(
-                    self._sweep_and_guard, db, watchlist_id
+                    self._sweep_and_guard, db, watchlist_id, active_briefing_claims()
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
@@ -4828,6 +4962,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             try:
                 row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
+            except GenerationInFlightError as exc:
+                # The race `_sweep_and_guard` cannot close: another
+                # in-process caller claimed this watchlist AFTER the sweep
+                # read the database (finding no `generating` row, so
+                # `blocking` stayed empty) but BEFORE its own row landed --
+                # this attempt then reached `generate_briefing`'s own claim
+                # check instead. `str(exc)` already names the watchlist and
+                # is user-safe (the class's own contract, mirroring
+                # `ScriptCastError`'s) -- the bare `except Exception` below
+                # must not swallow it as a generic database failure.
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
             except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
                 logger.warning(
                     f"Briefing generation failed for watchlist {watchlist_id}: "
@@ -4854,18 +4999,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # `handle_generate_briefing_requested`'s docstring gives -- a check made
     # inside the worker body leaves a window where two presses both pass.
     #
-    # One real difference from Generate: `briefing_scripts` has no
-    # one-generating-row-per-briefing invariant the way `briefings` has one
+    # One real difference from Generate remains: `briefing_scripts` has no
+    # one-COMPLETE-row-per-briefing invariant the way `briefings` has one
     # per watchlist (a briefing can be cast many times, with different
     # rosters, and `briefing_cast.py`'s own module docstring says so
-    # explicitly). So there is no `_sweep_and_guard`-style `blocking` check
-    # here -- recovering a zombie script does not itself refuse THIS cast
-    # attempt the way recovering a zombie briefing refuses THIS generation
-    # attempt. The zombie sweep still runs, in TWO separate seams, pinned
-    # separately by this task's own tests: `_load_briefings` sweeps whenever
-    # Artifacts loads (gated on `_cast_sweep_is_safe`, the `_zombie_sweep_
-    # is_safe` sibling), and `_cast_script` below sweeps again at the front
-    # of every cast, exactly where `_sweep_and_guard` runs for Generate.
+    # explicitly) -- recovering a genuine zombie script does not itself
+    # refuse a FRESH cast attempt the way recovering a zombie briefing
+    # refuses a fresh generation. What phase 4 Task 1 adds is narrower: a
+    # `_sweep_and_guard`-style `blocking` check for the one case that IS a
+    # real problem -- a cast for THIS SAME briefing that is already
+    # genuinely in flight (this screen's own, or another in-process
+    # caller's, once phase 4's scheduler exists) must refuse rather than run
+    # a second, concurrent cast over the top of it (survey finding (c):
+    # before this, there was no such refusal at all). The zombie sweep still
+    # runs in the same TWO seams it always has: `_load_briefings` whenever
+    # Artifacts loads (gated on `_cast_sweep_is_safe`), and `_cast_script`
+    # below at the front of every cast -- both now claim-aware via
+    # `active_cast_claims()`, exactly like Generate's own sweeps.
 
     def _cast_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_scripts` may run right now.
@@ -4883,10 +5033,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Zombie recovery for the Artifacts-load path's scripts, off the
         UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
         to one briefing's scripts rather than one watchlist's briefings.
+
+        `active_cast_claims()` is snapshotted HERE, on the UI thread, before
+        the sweep is dispatched -- see that method's own docstring for why
+        a snapshot, not a live read, is required.
         """
         if not self._cast_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+        claims = active_cast_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_scripts, db, briefing_id, exclude=claims
+        )
+
+    @staticmethod
+    def _script_row_label(row: Mapping[str, Any]) -> str:
+        """Name one script the way a toast has to: which row, and when.
+
+        Sibling of `_briefing_row_label`, for the identical reason.
+        """
+        return (
+            f"script {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard_cast(
+        self, db: Any, briefing_id: int, exclude: Collection[int]
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check, for a cast. Runs off the
+        UI thread. Sibling of `_sweep_and_guard` -- see that method's own
+        docstring for the full reasoning; this is the identical shape,
+        scoped to one briefing's scripts instead of one watchlist's
+        briefings (phase 4 Task 1, survey finding (c)).
+
+        Returns:
+            `(recovered, blocking)`, exactly like `_sweep_and_guard`.
+        """
+        stuck = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_scripts(db, briefing_id, exclude=exclude)
+        blocking = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
 
     def _cast_load_character(self, character_id: int) -> dict[str, Any] | None:
         """`generate_script`'s `load_character` seam: a plain, idempotent
@@ -5032,6 +5225,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `complete`, or the preset does not exist) -- a message safe to show
         verbatim (see that exception's own docstring), not a database
         failure to hide behind a generic toast.
+
+        Phase 4 Task 1 (survey finding (c)): the sweep is now followed by a
+        `blocking` check, mirroring `_generate_briefing`'s own -- a row that
+        SURVIVES `_sweep_and_guard_cast`'s sweep because it is claimed by a
+        live in-process cast refuses THIS attempt instead of starting a
+        second, concurrent one over the top of it. Deliberately NOT
+        mirroring `_generate_briefing`'s `recovered` branch too: unlike a
+        briefing, `briefing_scripts` has no one-COMPLETE-row-per-briefing
+        invariant (a briefing may be cast many times), so a zombie this
+        sweep actually recovers (i.e. NOT `blocking` -- nothing claims it)
+        must not itself refuse a fresh cast the way a recovered zombie
+        briefing refuses a fresh generation; the same press both recovers
+        the zombie AND casts a real script, exactly as it always has
+        (`test_casting_recovers_a_zombie_script_via_its_own_sweep`).
         """
         chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
         load_character = (
@@ -5039,7 +5246,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         try:
             try:
-                await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+                _recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard_cast, db, briefing_id, active_cast_claims()
+                )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
                     f"Script guard failed for briefing {briefing_id}: "
@@ -5049,6 +5258,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Failed to check this briefing's scripts. Nothing was "
                     "started.",
                     severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep because a live in-process claim holds
+                # it -- not ours to duplicate. Mirrors `_generate_briefing`'s
+                # own `blocking` refusal; see this method's own docstring for
+                # why there is no `recovered`-branch sibling here.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already being cast for this "
+                    "briefing. Nothing else was started.",
+                    severity="warning",
                     markup=False,
                 )
                 return
@@ -5098,7 +5319,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # script`'s own comment names: `_load_briefings` sweeps whenever
     # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
     # audio` below sweeps again at its own front, exactly where `_cast_
-    # script` sweeps for Cast.
+    # script` sweeps for Cast. Both are now claim-aware via
+    # `active_audio_claims()` (phase 4 Task 1), so a live in-process render
+    # -- this screen's own, or another in-process caller's -- survives
+    # either sweep unconditionally.
+    #
+    # Phase 4 Task 1 investigated whether Synthesize needs the SAME
+    # `blocking` refusal Cast just gained (survey finding (c)'s sibling
+    # question): structurally, yes -- `_synthesize_audio` has no `blocking`
+    # check either, so two presses could in principle start two concurrent
+    # renders for the same script. It is left AS-IS here: the task's own
+    # scope named Cast specifically, or "sweep gains `exclude`" everywhere,
+    # not a second new blocking check; adding one is a natural, small
+    # follow-up with the identical shape as `_sweep_and_guard_cast`.
 
     def _audio_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_audio` may run right now.
@@ -5114,10 +5347,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Zombie recovery for the Artifacts-load path's audio, off the UI
         thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
         one script's audio renders rather than one briefing's scripts.
+
+        `active_audio_claims()` is snapshotted HERE, on the UI thread,
+        before the sweep is dispatched -- see `_fail_interrupted_briefings_
+        if_safe`'s own docstring for why a snapshot, not a live read, is
+        required.
         """
         if not self._audio_sweep_is_safe():
             return 0
-        return await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+        claims = active_audio_claims()
+        return await asyncio.to_thread(
+            fail_interrupted_audio, db, script_id, exclude=claims
+        )
 
     @on(SynthesizeAudioRequested)
     def handle_synthesize_audio_requested(
@@ -5189,10 +5430,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         parsed) -- a message safe to show verbatim (see that exception's
         own docstring), not a database failure to hide behind a generic
         toast.
+
+        The sweep is claim-aware (`active_audio_claims()`), like every
+        other sweep call site (phase 4 Task 1) -- but, unlike `_cast_
+        script`, there is no `blocking` check after it; see this class's
+        own comment above `_audio_sweep_is_safe` for what was found and why
+        that is left for a follow-up.
         """
         try:
             try:
-                await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+                claims = active_audio_claims()
+                await asyncio.to_thread(
+                    fail_interrupted_audio, db, script_id, exclude=claims
+                )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
                     f"Audio guard failed for script {script_id}: "

@@ -1,7 +1,7 @@
 # Watchlists Briefings & Podcasts — design (spec #2)
 
 **Date:** 2026-07-30
-**Status:** phases 1-3 implemented (2026-08-01); phase 4 pending
+**Status:** all four phases implemented (2026-08-01) -- spec #2 is complete.
 
 **Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both confirmed by
 the project owner (2026-07-30):
@@ -151,6 +151,82 @@ original text:
   unmarked test is collected and run either way. What actually matters now is `--strict-markers`:
   an unregistered `@pytest.mark.*` name is a collection **error**, not a silent no-op, so the
   bar is "use a registered marker (or none)," not "must be `unit`."
+
+**Phase 4 delivery notes (2026-08-01):** scheduled generation (Tasks 1-4) shipped on
+`feat/briefings-phase-4`. This design's own "Scheduling (phase 4)" section above turned out to
+contain two false premises, corrected by a survey at plan time and verified again at close-out:
+
+- **`automation_definitions` is dead; cadence lives on `watchlists` instead.** The section above
+  says "Cadence per watchlist via `automation_definitions`." That table exists
+  (`Scheduling/db/migrations/v0_to_v1.py`) but lives in the *scheduler's own* DB file, has zero
+  production readers, and its `family` column is constrained to two values that are not briefings.
+  Cadence instead ships as a plain additive column, `watchlists.briefing_cadence_seconds`
+  (`DB/Subscriptions_DB.py`, `NULL` = never scheduled), written through
+  `set_watchlist_briefing_settings`'s existing `_UNSET`-sentinel pattern and read by
+  `list_briefing_schedules`.
+- **The `briefings` table IS the run record; `local_watchlist_runs` cannot hold one.** The section
+  above promised "real run records" without naming where. `local_watchlist_runs` was the obvious
+  candidate and is structurally unfit: its `source_id` column is `NOT NULL` with an FK (a briefing
+  run has no single source), and it has no `empty` status -- briefings' own status column
+  (`generating`/`complete`/`empty`/`failed`) is already richer than that table's. No second run-record
+  table was introduced; a scheduled briefing's `briefings` row *is* the run record, identical in
+  shape to a manually-triggered one.
+- **The "fires while the app is open" copy did not exist anywhere before this phase -- it was
+  written here, not mirrored from an existing string.** The section above states the constraint as
+  settled fact ("same constraint as checks, stated in the UI copy"), but no such UI copy existed
+  yet for briefings. It now lives in two places: `cadence_scope_phrase`
+  (`UI/Watchlists_Modules/artifacts_pane.py`), which turns a watchlist's stored cadence into the
+  scope label's honest text ("scheduled `<cadence>` while the app is open" vs. the old blanket
+  "written on this device, on request"), and a new "Scheduled briefings" section in
+  `Docs/User_Guide/watchlists.md` stating the same constraint plus "a failed run never advances the
+  schedule."
+- **`[subscriptions.briefings] morning_digest_time` (`config.py:3627`) is a dead config key --
+  do not reuse it.** It is a template default with no reader anywhere in the codebase. Phase 4's
+  cadence is per-watchlist and DB-stored, not a single global digest time, so this key was left
+  alone rather than wired up or repurposed.
+
+**In-process claims, and why they suffice here.** Task 1 added a claim registry
+(`Subscriptions/briefing_service.py`'s `_ACTIVE_BRIEFING_CLAIMS`/`active_briefing_claims()`/
+`GenerationInFlightError`, mirrored for casts and audio) so a scheduled run and a manual "Generate"
+press can't stomp on each other or have the zombie-recovery sweeps falsify a live scheduled run's
+row mid-flight. The registry is a bare in-process `set[int]`, mutated only on the event loop, with
+no schema and no cross-process protocol -- and that is enough: a claim dies with the process that
+held it, so a crash still leaves an ordinary `generating` zombie row for the existing
+`fail_interrupted_*` sweeps to recover, exactly as before this phase. The one limitation this
+does NOT change is phase 1's own: two separate app instances sharing one `Subscriptions_DB` file
+can still race each other, because the claim set is per-process. Nothing in phase 4 widens or
+narrows that.
+
+**The fire-and-forget handler.** `BriefingJobHandler.handle` (`Scheduling/scheduler/handlers/
+briefing_handler.py`) never awaits generation. `SchedulerLoop.tick` awaits every registered
+handler serially and inline (`Scheduling/scheduler/loop.py`); a watchlist check is one quick HTTP
+fetch, but a briefing generation is a multi-minute LLM call, and awaiting it here would stall
+every other due task -- reminders, checks, and every other watchlist's briefing -- behind whichever
+provider is slowest. `handle` therefore does only synchronous, in-memory work (the claim snapshot
+check), then spawns generation as an `asyncio.Task` held in an instance-level set purely so it
+can't be garbage-collected mid-flight, and returns before that task has run at all. Scheduled runs
+honour the watchlist's stored `default_briefing_preset_id` -- read off the event loop, inside the
+spawned task, since `SubscriptionsDB` sets no `busy_timeout` and this same handler's own generation
+writes to the same connection from `to_thread` workers.
+
+**Failures never advance the schedule.** `list_briefing_schedules`'s `last_completed_at` and
+`latest_completed_watermark`'s coverage watermark both compute over the exact same
+`status IN ('complete', 'empty')` allowlist (`DB/Subscriptions_DB.py`) -- a `failed` briefing
+advances neither. Each docstring names the other as its pact partner and says to change both or
+neither, the same two-sided-pact convention this phase's cadence work (`docs(briefings): make the
+schedule/watermark allowlist pact two-sided`) established for exactly this reason: a one-sided
+comment is not a guard, and this stream has been burned by that before.
+
+**Governance observation, not fixed here:** the ADR-029 amendment admits exactly six
+`persist_event` event names (`persistent_sink_installed`, `app_started`, `app_stopping`,
+`unhandled_exception`, `worker_failed`, `scheduler_configured`). Two more are already live in the
+codebase today under `component="dictation"` -- `speech_stack_available` (`app.py`) and
+`dictation_failed` (`UI/Screens/chat_screen.py`), both from the voice-dictation stream -- bringing
+the real count to eight against an admitted six. Phase 4 introduces zero new `persist_event` names (its own
+observability is `log_counter`/`log_histogram` plus the `briefings` row's own status, matching
+`watchlist_check_handler.py`'s existing shape), so this drift is pre-existing and not this phase's
+doing. Flagged here for the ADR-029 owner's attention; deliberately not fixed as part of this
+close-out.
 
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled

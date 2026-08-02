@@ -501,9 +501,9 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_fail = screen_module.fail_interrupted_briefings
 
-        def _recording_fail(db, watchlist_id=None):
+        def _recording_fail(db, watchlist_id=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._briefing_in_flight))
-            return real_fail(db, watchlist_id)
+            return real_fail(db, watchlist_id, exclude=exclude)
 
         monkeypatch.setattr(
             screen_module, "fail_interrupted_briefings", _recording_fail
@@ -611,6 +611,129 @@ async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
 
         assert db.get_briefing(live_id)["status"] == "generating", (
             "a row the guard says is live must survive a concurrent load"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_watchlist_survives_an_artifacts_open():
+    """Phase 4 Task 1, survey finding (a): the sibling of the test above,
+    but for a LIVE claim this screen instance did NOT take -- standing in
+    for a scheduled run once phase 4's scheduler exists. Claimed directly
+    via the service (`briefing_service._claim_briefing`), not through
+    `_briefing_in_flight`: that flag is this screen's own dispatch-time UX
+    guard and is deliberately untouched by this scenario, since nothing on
+    screen is dispatching anything.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        live_id = db.insert_briefing(watchlist_id)
+        assert not screen._briefing_in_flight, (
+            "this scenario is a claim with no screen dispatch behind it"
+        )
+        with briefing_service._claim_briefing(watchlist_id):
+            await screen._load_briefings()
+            assert db.get_briefing(live_id)["status"] == "generating", (
+                "a claimed watchlist must survive an Artifacts open"
+            )
+
+        # Once the claim releases, a plain load recovers it normally --
+        # the claim never outlives the process (Locked decision 1).
+        await screen._load_briefings()
+        assert db.get_briefing(live_id)["status"] == "failed"
+        assert db.get_briefing(live_id)["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_the_row(
+    monkeypatch,
+):
+    """Phase 4 Task 1, survey finding (b): pressing Generate while another
+    in-process caller holds this watchlist's claim must hit the EXISTING
+    `blocking` refusal -- not silently mark the live row interrupted and
+    start a second generation over the top of it.
+
+    Asserts the SPECIFIC `blocking` toast (`severity="warning"`, "already
+    in progress"), not merely "some refusal happened": `generate_briefing`
+    itself also refuses a claimed watchlist (`GenerationInFlightError`), so
+    a looser assertion would still pass with the screen's OWN `blocking`
+    check deleted entirely, as long as the worker went on to call
+    `generate_briefing` and hit ITS claim collision instead -- a different,
+    generic-error-toast path this test must tell apart from the one it
+    names.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        live_id = db.insert_briefing(watchlist_id)
+        with briefing_service._claim_briefing(watchlist_id):
+            await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert chat.calls == [], "nothing may be generated while claimed elsewhere"
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already in progress" in message
+        assert db.get_briefing(live_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_in_flight_race_toasts_the_specific_message_not_a_db_error(
+    monkeypatch,
+):
+    """Whole-branch review FIX 2: `_sweep_and_guard` only sees a claim once
+    its row lands in the database. If another in-process caller claims the
+    watchlist AFTER the sweep reads (finding no `generating` row yet, so
+    `blocking` stays empty) but BEFORE it inserts, this attempt proceeds
+    into `generate_briefing`'s own claim check and raises
+    `GenerationInFlightError` -- a specific, contracted, user-safe message
+    (`str(exc)` names the watchlist, per the class's own docstring). The
+    bare `except Exception` used to swallow this as "the watchlist
+    database could not be reached", which is both untrue (nothing is
+    unreachable -- a race was lost) and unhelpful (it tells the user
+    nothing about what to do, whereas the real message says a generation
+    is already running).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    async def _raise_in_flight(db_arg, watchlist_id_arg, **kwargs):
+        raise briefing_service.GenerationInFlightError(
+            f"a briefing is already being generated for watchlist {watchlist_id_arg}"
+        )
+
+    monkeypatch.setattr(screen_module, "generate_briefing", _raise_in_flight)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        rows_before = len(db.list_briefings(watchlist_id))
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert host.is_running, "the lost race must not exit the application"
+        assert app.notify.called, "the race must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already being generated" in message
+        assert "could not be reached" not in message, (
+            "must not fall through to the generic database-unreachable toast"
+        )
+        assert len(db.list_briefings(watchlist_id)) == rows_before, (
+            "GenerationInFlightError fires before any row insert (the "
+            "phase-1 no-orphan-row contract) -- no failed-row side effect"
         )
 
 
@@ -1094,10 +1217,15 @@ async def _press_generate_button_and_wait_for_a_call(
 
 @pytest.mark.asyncio
 async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
-    """The mode/preset `Select`s and the `Presets…` `Button` have nothing to
-    act on without a single watchlist in scope, so -- unlike Generate/
-    Refresh, which stay visible to explain themselves -- they do not render
-    at all when `can_generate` is False.
+    """The mode/preset/cadence `Select`s and the `Presets…` `Button` have
+    nothing to act on without a single watchlist in scope, so -- unlike
+    Generate/Refresh, which stay visible to explain themselves -- they do
+    not render at all when `can_generate` is False.
+
+    Also pins the cadence picker's default: a fresh watchlist has never had
+    `briefing_cadence_seconds` written, so the Select must show "Off"
+    (`None`) -- the same fallback `ArtifactsPane.briefing_cadence_seconds`
+    itself defaults to.
     """
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
@@ -1107,6 +1235,8 @@ async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
         assert pane.can_generate is True
         assert pane.query_one("#artifacts-mode-select", Select)
         assert pane.query_one("#artifacts-preset-select", Select)
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        assert cadence_select.value is None, "a fresh watchlist defaults to Off"
         assert pane.query_one("#artifacts-presets-button", Button)
 
         screen.tree_scope = TreeScope(kind="all")
@@ -1118,6 +1248,7 @@ async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
         assert pane.can_generate is False
         assert not pane.query("#artifacts-mode-select")
         assert not pane.query("#artifacts-preset-select")
+        assert not pane.query("#artifacts-cadence-select")
         assert not pane.query("#artifacts-presets-button")
         # Generate/Refresh, unlike the pickers, still explain themselves.
         assert pane.query_one("#artifacts-generate-button", Button)
@@ -1441,6 +1572,205 @@ async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobb
     assert row["default_briefing_preset_id"] == preset_a
 
 
+# --- 6b. Scheduled-briefing cadence picker (spec #2 phase 4, Task 4) --------
+#
+# Tasks 1-3 of phase 4 built the in-process claims, the `briefing_cadence_
+# seconds` column/writer, and the scheduler seam that reads it back through
+# `list_briefing_schedules`; none of it had a way in from this screen, and
+# the scope note above the toolbar still said "on request" unconditionally
+# -- a lie the moment a cadence could be stored at all. This section is what
+# retires both gaps: the third picker mirrors the mode/preset pickers'
+# established shape (`_briefing_picker_mount_absorbed` instance-keyed
+# absorption, `asyncio.to_thread` write, in-place pane patch, no screen
+# recompose) exactly, and the scope label test pins the honesty fix.
+
+
+@pytest.mark.asyncio
+async def test_cadence_select_shows_the_watchlists_stored_cadence_on_load():
+    """The read-path pin: Task 2's writer sets a cadence before Artifacts
+    ever opens, and the cadence Select must reflect it on the very first
+    render -- not merely hold it in some screen-private field.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=43_200)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        assert select.value == 43_200
+
+
+@pytest.mark.asyncio
+async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen():
+    """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
+    the instance-survival assertion: a picker change must patch the pane in
+    place, never rebuild it via `self.refresh(recompose=True)`. Mirrors
+    `test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen`
+    exactly, and -- like that test -- drives the REAL mounted `Select`'s
+    `value` setter (not a hand-set `pane.briefing_cadence_seconds`), so the
+    real `Select.Changed` -> `BriefingCadenceChanged` -> screen-handler
+    chain is what is actually under test.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_set = db.set_watchlist_briefing_settings
+
+    def _spy(watchlist_id_arg, **kwargs):
+        write_thread_ids.append(threading.get_ident())
+        return real_set(watchlist_id_arg, **kwargs)
+
+    db.set_watchlist_briefing_settings = _spy
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane_before.query_one("#artifacts-cadence-select", Select)
+        # The fresh-watchlist default, confirmed by the read path above --
+        # this is a genuine change, not a same-value mount-time no-op.
+        assert select.value is None
+
+        select.value = 86_400  # "Daily"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert write_thread_ids, "set_watchlist_briefing_settings must have run"
+        assert all(tid != loop_thread_id for tid in write_thread_ids), (
+            "the write must run off the event-loop thread (asyncio.to_thread)"
+        )
+
+        row = db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] == 86_400
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_cadence_seconds == 86_400
+        assert pane.briefing_cadence_seconds == 86_400
+
+
+@pytest.mark.asyncio
+async def test_choosing_off_clears_the_stored_cadence():
+    """`Off` maps to `None`, and picking it must clear `briefing_cadence_
+    seconds` back to NULL -- the DB column's own "never scheduled" state
+    (`set_watchlist_briefing_settings`'s `_UNSET`-sentinel shape: passing
+    `None` explicitly clears, distinct from not passing the kwarg at all).
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=604_800)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        assert select.value == 604_800, "the seeded weekly cadence must load first"
+
+        select.value = None  # "Off"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] is None
+        assert screen._briefing_cadence_seconds is None
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.briefing_cadence_seconds is None
+
+
+@pytest.mark.asyncio
+async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly():
+    """The honesty fix this task exists to ship: `_briefing_scope_label`
+    used to always say "on request", which stopped being true the moment a
+    cadence could be stored at all. Both directions, against the SAME
+    watchlist, driven through a real picker change (not a hand-set reactive
+    or a direct call to the private label method) -- and the label updates
+    in place, without waiting for another full `_load_briefings` reload.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert "on request" in pane.scope_label
+        assert "scheduled" not in pane.scope_label
+
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        select.value = 43_200  # "Every 12h"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "on request" not in pane.scope_label
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_catalog_cadence_gets_a_synthetic_select_option_and_an_honest_scope_label():
+    """Review round 1, Important #1: the out-of-catalog fallbacks are
+    DB-reachable TODAY, not theoretical -- `set_watchlist_briefing_settings`
+    (Task 2) validates only `> 0`, never catalog membership, and Task 2's
+    own test suite uses `briefing_cadence_seconds=3600` as its standard
+    fixture. `3600` is not one of `_CADENCE_OPTIONS` (`Off`/43200/86400/
+    604800), so both of this pane's own defensive fallbacks are exercised
+    by a value the writer accepts right now, through no path more exotic
+    than Task 2's writer itself.
+
+    Mirrors the stale-preset-id fallback test (`test_casting_refuses_
+    before_dispatch_when_the_default_preset_is_dangling`, `_preset_select_
+    options`'s own precedent) for the Select half, and the mode/preset-
+    picker honesty test above for the scope-label half -- both fallbacks,
+    seeded once, asserted together.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3_600)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+
+        # Fallback 1: the Select still renders, holding the real stored
+        # value via a synthetic trailing option -- never `InvalidSelect
+        # ValueError` for a value this picker never offered.
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        option_labels = {value: str(label) for label, value in cadence_select._options}
+        assert option_labels[3_600] == "Every 3600s"
+        assert cadence_select.value == 3_600
+
+        # Fallback 2: the scope label stays honest -- generic wording, but
+        # still names the real cadence and still carries the "while the
+        # app is open" promise verbatim, not a silent "on request" lie.
+        assert "scheduled every 3600s while the app is open" in pane.scope_label
+        assert "on request" not in pane.scope_label
+
+
 # --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------
 #
 # Tasks 1-4 built the `briefing_scripts` table, the cast service
@@ -1746,6 +2076,61 @@ async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
 
 
 @pytest.mark.asyncio
+async def test_a_cast_press_during_a_claimed_briefing_refuses_not_run_concurrently(
+    monkeypatch,
+):
+    """Phase 4 Task 1, survey finding (c): before this fix, Cast had NO
+    refusal at all for this case (`watchlists_collections_screen.py`'s own
+    comment above `_cast_sweep_is_safe` used to document the absence
+    explicitly) -- a press during a genuinely in-flight cast for the SAME
+    briefing would start a second, concurrent one. Claimed directly via the
+    service (`briefing_cast._claim_cast`), standing in for another
+    in-process caster; `_cast_in_flight` is deliberately untouched, since
+    this is not the SAME screen instance's own dispatch-time guard being
+    exercised (that is `test_second_cast_while_in_flight_refuses_naming_
+    the_running_one`, above).
+
+    Asserts the SPECIFIC `blocking` toast (`severity="warning"`, "already
+    being cast"), not merely "some refusal happened": `generate_script`
+    itself also refuses a claimed briefing (`GenerationInFlightError`), so
+    a looser assertion would still pass with the screen's OWN `blocking`
+    check deleted entirely, as long as the worker went on to call
+    `generate_script` and hit ITS claim collision instead -- a different,
+    generic-error-toast path this test must tell apart from the one it
+    names (this is what pins mutation (iii)).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        live_script_id = db.insert_briefing_script(
+            briefing_id, preset_id=None, preset_name="Solo", roster_snapshot_json="[]"
+        )
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        with briefing_cast._claim_cast(briefing_id):
+            await _press_cast(screen, pilot, app, briefing_id)
+
+        assert cast_chat.calls == [], "nothing may be cast while claimed elsewhere"
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already being cast" in message
+        assert db.get_briefing_script(live_script_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
+        )
+
+
+@pytest.mark.asyncio
 async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_guard_is_
     claimed_before_the_worker_runs`: the handler is synchronous with no
@@ -1816,9 +2201,9 @@ async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None):
+        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg)
+            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -1875,9 +2260,9 @@ async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None):
+        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg)
+            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -2928,9 +3313,9 @@ async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_l
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None):
+        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg)
+            return real_sweep(db_arg, script_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 
@@ -2981,9 +3366,9 @@ async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkey
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None):
+        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg)
+            return real_sweep(db_arg, script_id_arg, exclude=exclude)
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 

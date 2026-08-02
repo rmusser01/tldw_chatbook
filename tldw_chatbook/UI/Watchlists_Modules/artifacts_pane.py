@@ -158,6 +158,27 @@ class BriefingDefaultPresetChanged(Message):
         super().__init__()
 
 
+class BriefingCadenceChanged(Message):
+    """Posted when the user picks a different scheduled-briefing cadence.
+
+    Spec #2 phase 4, Task 4: `briefing_cadence_seconds` had a writer (Task
+    2's `set_watchlist_briefing_settings`) and a reader (Task 3's scheduler,
+    through `list_briefing_schedules`) but no way for a user to set it --
+    this retires that deferral, mirroring `BriefingModeChanged` exactly: the
+    screen owns the write (`asyncio.to_thread(db.set_watchlist_briefing_
+    settings, ..., briefing_cadence_seconds=...)`); this pane only reports
+    the user's pick. `None` means "Off" (never scheduled) -- a REAL option
+    value on the picker's `Select`, not `Select.NULL`, the same real,
+    distinct-from-blank value `BriefingDefaultPresetChanged.preset_id`
+    already carries for "App default" (see `_APP_DEFAULT_PRESET_LABEL`
+    above).
+    """
+
+    def __init__(self, seconds: int | None) -> None:
+        self.seconds = seconds
+        super().__init__()
+
+
 class ManagePresetsRequested(Message):
     """Posted when the user asks to open the preset manager (Task 3's
     `BriefingPresetModal`, via the screen's own `_open_briefing_preset_
@@ -277,6 +298,67 @@ _MODE_OPTIONS: list[tuple[str, str]] = [
 #: which this picker never uses -- there is always something selected, even
 #: when that something means "use the app default".
 _APP_DEFAULT_PRESET_LABEL = "App default"
+
+#: The cadence picker's options (spec #2 phase 4, Task 4): `Off` (`None`,
+#: never scheduled -- Locked Decision 4 of the phase 4 plan, opt-in per
+#: watchlist) plus three preset cadences in seconds, mirroring `sources_
+#: pane.py`'s own labelled-seconds idiom (`_FREQUENCY_OPTIONS`, for a
+#: source's check frequency) rather than inventing a new one. `Off` carries
+#: `None` as a REAL option value, for the identical reason
+#: `_APP_DEFAULT_PRESET_LABEL` above states for the default-preset picker's
+#: own `None` option -- verified directly against this Textual version
+#: (`Select.value` compares by `==`, and `None == Select.NULL` is `False`,
+#: so the two are never confused): with `allow_blank=False` and `None`
+#: among the option values, `None` is a legal, distinct selection.
+_CADENCE_OPTIONS: list[tuple[str, int | None]] = [
+    ("Off", None),
+    ("Every 12h", 43_200),
+    ("Daily", 86_400),
+    ("Weekly", 604_800),
+]
+
+#: What each non-Off cadence means in the scope label's own words, keyed by
+#: the identical seconds values `_CADENCE_OPTIONS` offers -- so a new
+#: cadence option cannot silently drift out of sync with what the scope
+#: label says about it. `cadence_scope_phrase` below is the only reader.
+_CADENCE_SCOPE_PHRASES: dict[int, str] = {
+    43_200: "every 12h",
+    86_400: "daily",
+    604_800: "weekly",
+}
+
+
+def cadence_scope_phrase(seconds: int | None) -> str | None:
+    """What the Artifacts scope label should say a stored cadence means.
+
+    Spec #2 phase 4, Task 4: `WatchlistsCollectionsScreen._briefing_scope_
+    label` used to always say "written on this device, on request" -- true
+    in phase 1, when nothing could write `briefing_cadence_seconds`, but a
+    lie the moment Task 2 gave it a writer and this task gave the writer a
+    picker. "While the app is open" is the phase 4 plan's own promised
+    copy: there is no background service, so a schedule only fires for as
+    long as this process keeps running (`Scheduling/scheduler/loop.py`'s
+    own worker lifecycle) -- see `Docs/User_Guide/watchlists.md`'s
+    "Scheduled briefings" note, which states the identical phrase.
+
+    Args:
+        seconds: A watchlist's stored `briefing_cadence_seconds` -- `None`
+            for "never scheduled".
+
+    Returns:
+        `None` for `None` (the caller falls back to "on request"); a
+        "scheduled <cadence> while the app is open" phrase for one of
+        `_CADENCE_OPTIONS`' three cadences; a generic every-N-seconds
+        phrase for any other positive value -- `set_watchlist_briefing_
+        settings` (Task 2) accepts any positive int, so a value this
+        picker never offered (hand-written, or a future option this pane
+        has not shipped yet) must still read as honest, not silently
+        fall back to "on request".
+    """
+    if seconds is None:
+        return None
+    phrase = _CADENCE_SCOPE_PHRASES.get(seconds, f"every {seconds}s")
+    return f"scheduled {phrase} while the app is open"
 
 
 def _status_text(row: dict[str, Any]) -> str:
@@ -516,6 +598,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: "use the app default" -- the value `_generate_briefing` passes to
     #: `generate_briefing(..., preset_id=...)`.
     default_preset_id = reactive[int | None](None, recompose=True)
+    #: Spec #2 phase 4, Task 4: the watchlist's stored `briefing_cadence_
+    #: seconds`. `None` (the default, and the fallback for a pane that has
+    #: not yet heard from `_load_briefings`) means "never scheduled" --
+    #: Locked Decision 4 of the phase 4 plan: scheduling is opt-in, per
+    #: watchlist, off by default, since a schedule spends the user's LLM
+    #: tokens unattended.
+    briefing_cadence_seconds = reactive[int | None](None, recompose=True)
     #: Task 5: every `briefing_scripts` row cast from the SELECTED briefing
     #: (newest first, per `list_briefing_scripts`) -- never every script
     #: across the whole watchlist, since a script belongs to exactly one
@@ -597,6 +686,25 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             options.append((str(preset.get("name") or f"Preset {preset_id}"), preset_id))
         if self.default_preset_id is not None and self.default_preset_id not in known_ids:
             options.append((f"Preset {self.default_preset_id} (deleted)", self.default_preset_id))
+        return options
+
+    def _cadence_select_options(self) -> list[tuple[str, int | None]]:
+        """Options for the cadence picker: `_CADENCE_OPTIONS` verbatim,
+        plus a synthetic trailing option when the stored cadence is not
+        one of them.
+
+        Same defensive shape as `_preset_select_options`'s stale-id
+        fallback immediately above: `set_watchlist_briefing_settings`
+        (Task 2) accepts any positive `briefing_cadence_seconds`, so a
+        value this picker never offered must not raise `InvalidSelect
+        ValueError` the moment `compose` builds `value=self.briefing_
+        cadence_seconds`.
+        """
+        options = list(_CADENCE_OPTIONS)
+        known_seconds = {seconds for _, seconds in options}
+        current = self.briefing_cadence_seconds
+        if current is not None and current not in known_seconds:
+            options.append((f"Every {current}s", current))
         return options
 
     @staticmethod
@@ -765,13 +873,17 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             )
 
         if self.can_generate:
-            # Task 4: the selection-mode and default-preset pickers, plus
-            # the entry into Task 3's preset manager. Rendered only when a
-            # single watchlist is in scope -- like Generate itself, there is
-            # nothing for either picker to act on without one, and unlike
-            # Generate (which stays visible-but-disabled to explain itself)
-            # a picker with nothing to pick from has no useful disabled
-            # state to show.
+            # Task 4 (phase 2a): the selection-mode and default-preset
+            # pickers, plus the entry into Task 3's preset manager. Task 4
+            # (phase 4) adds a third picker -- scheduled-briefing cadence --
+            # to this SAME strip rather than a new one, for the identical
+            # zero-extra-height reason the phase 3 Export Feed button was
+            # folded into an existing toolbar (see that button's own
+            # comment above). Rendered only when a single watchlist is in
+            # scope -- like Generate itself, there is nothing for any
+            # picker to act on without one, and unlike Generate (which
+            # stays visible-but-disabled to explain itself) a picker with
+            # nothing to pick from has no useful disabled state to show.
             with Horizontal(
                 id="artifacts-picker-toolbar", classes="destination-filter-strip"
             ):
@@ -792,6 +904,17 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     tooltip=(
                         "The preset Generate uses for this watchlist "
                         "(LLM, model, and style notes)."
+                    ),
+                )
+                yield Select(
+                    self._cadence_select_options(),
+                    value=self.briefing_cadence_seconds,
+                    id="artifacts-cadence-select",
+                    allow_blank=False,
+                    compact=True,
+                    tooltip=(
+                        "How often this watchlist writes a new briefing on "
+                        "its own, while the app is open. Off by default."
                     ),
                 )
                 yield Button(
@@ -1296,3 +1419,5 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(BriefingModeChanged(str(event.value)))
         elif select.id == "artifacts-preset-select":
             self.post_message(BriefingDefaultPresetChanged(event.value))
+        elif select.id == "artifacts-cadence-select":
+            self.post_message(BriefingCadenceChanged(event.value))

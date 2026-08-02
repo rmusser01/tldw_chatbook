@@ -286,7 +286,9 @@ from .Scheduling.services.server_client import SchedulingServerClient
 from .Scheduling.scheduler.loop import SchedulerLoop, Handler
 from .Scheduling.scheduler.handlers.reminder_handler import ReminderHandler
 from .Scheduling.scheduler.handlers.watchlist_check_handler import WatchlistCheckHandler
+from .Scheduling.scheduler.handlers.briefing_handler import BriefingJobHandler
 from .Scheduling.services.watchlist_projection import WatchlistProjection
+from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -4733,6 +4735,15 @@ class TldwCli(
                 shadow_mode=watchlist_checks_shadow,
             )
 
+        briefing_schedules_enabled = get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", True
+        )
+        briefing_projection = None
+        briefing_handler = None
+        if briefing_schedules_enabled:
+            briefing_projection = BriefingProjection(subscriptions_db)
+            briefing_handler = BriefingJobHandler(subscriptions_db=subscriptions_db)
+
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
                 dispatch_service=self.notification_dispatch_service
@@ -4740,6 +4751,8 @@ class TldwCli(
         }
         if watchlist_handler is not None:
             handlers["watchlist_job"] = watchlist_handler
+        if briefing_handler is not None:
+            handlers["briefing_job"] = briefing_handler
 
         self.scheduler_loop = SchedulerLoop(
             self.scheduling_service.db,
@@ -4749,6 +4762,9 @@ class TldwCli(
             ),
             watchlist_projection=(
                 watchlist_projection if watchlist_handler is not None else None
+            ),
+            briefing_projection=(
+                briefing_projection if briefing_handler is not None else None
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(

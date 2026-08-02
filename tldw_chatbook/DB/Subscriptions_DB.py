@@ -694,6 +694,16 @@ class SubscriptionsDB(BaseDB):
             cursor.execute(
                 "ALTER TABLE watchlists ADD COLUMN default_briefing_preset_id INTEGER"
             )
+        # Briefings phase 4: per-watchlist scheduled-generation cadence.
+        # NULL means never -- scheduled briefings are opt-in per watchlist
+        # (Locked Decision 4, Docs/superpowers/plans/2026-08-01-watchlists-
+        # briefings-phase-4.md), so a watchlist with no explicit cadence
+        # must never surface from `list_briefing_schedules`. Same additive
+        # column-presence idiom as the two columns above.
+        if "briefing_cadence_seconds" not in wcols:
+            cursor.execute(
+                "ALTER TABLE watchlists ADD COLUMN briefing_cadence_seconds INTEGER"
+            )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS watchlist_sources (
                 watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id)     ON DELETE CASCADE,
@@ -1828,7 +1838,15 @@ class SubscriptionsDB(BaseDB):
         THE coverage invariant's DB half: a `failed` briefing must never
         advance the window (failure never loses items -- the next attempt
         re-covers the same window), so 'failed' is deliberately excluded
-        from this status set. Do not add it here.
+        from this status set. Do not add it here. Pact partner:
+        `list_briefing_schedules` below uses the SAME
+        `('complete','empty')` allowlist for `last_completed_at`, because a
+        failed run must never advance the SCHEDULE either -- grep
+        "list_briefing_schedules" before changing this set, and change both
+        or neither. (`list_briefing_schedules` also returns a second,
+        deliberately status-blind `last_attempt_at` column for retry-cadence
+        purposes -- that one is NOT part of this pact; see its own
+        docstring.)
 
         Args:
             watchlist_id: The watchlist to compute the watermark for.
@@ -1846,6 +1864,73 @@ class SubscriptionsDB(BaseDB):
                 (watchlist_id,),
             ).fetchone()
         return row[0] if row is not None else None
+
+    def list_briefing_schedules(self) -> List[Dict[str, Any]]:
+        """List every watchlist with a scheduled briefing cadence.
+
+        One row per watchlist with a non-NULL `briefing_cadence_seconds`
+        (Locked Decision 4 of the briefings phase 4 plan: scheduled
+        briefings are opt-in per watchlist, so an un-cadenced watchlist
+        must not appear here at all). Meant for the phase 4 scheduler
+        projection to turn into due jobs.
+
+        `last_completed_at` is computed with the exact same
+        `status IN ('complete', 'empty')` allowlist as
+        `latest_completed_watermark` above -- a `failed` briefing must not
+        advance the schedule any more than it advances the coverage
+        watermark (the schedule-side mirror of "failure never advances
+        coverage": a run that failed did not complete, so the next
+        scheduled attempt stays due from the same last-success point
+        rather than being pushed out by the failure). Pact partner: grep
+        `status IN ('complete', 'empty')` if you are touching either
+        allowlist -- they must move together.
+
+        `last_attempt_at`, in contrast, is deliberately status-blind: MAX
+        `created_at` over that watchlist's briefings of ANY status,
+        `failed`/`generating` included. It is NOT part of the
+        `last_completed_at` pact above and must never gain a status
+        filter -- the whole-branch review that added it found that a
+        projection using `last_completed_at` alone made a FAILED schedule
+        perpetually due (`next_run_at` frozen at the last success, so
+        every ~30-minute queue reload re-emitted it, uncapped). The
+        scheduler projection combines both columns (latest of the two)
+        so a failed attempt defers the next retry by one cadence period
+        instead of leaving it stuck in the past.
+
+        Returns:
+            A list of dicts, one per watchlist with
+            `briefing_cadence_seconds IS NOT NULL`, each with keys
+            `watchlist_id`, `name`, `briefing_cadence_seconds`,
+            `last_completed_at` (the max `created_at` among that
+            watchlist's `complete`/`empty` briefings, or `None` if it has
+            never completed one), and `last_attempt_at` (the max
+            `created_at` among ALL of that watchlist's briefings
+            regardless of status, or `None` if it has never had one).
+        """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    w.id AS watchlist_id,
+                    w.name AS name,
+                    w.briefing_cadence_seconds AS briefing_cadence_seconds,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                          AND b.status IN ('complete', 'empty')
+                    ) AS last_completed_at,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                    ) AS last_attempt_at
+                FROM watchlists AS w
+                WHERE w.briefing_cadence_seconds IS NOT NULL
+                ORDER BY w.id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     # --- Briefing presets & scripts (spec #2 phase 2a) ---
 
@@ -2337,10 +2422,11 @@ class SubscriptionsDB(BaseDB):
         *,
         selection_mode: Optional[str] = None,
         default_preset_id: object = _UNSET,
+        briefing_cadence_seconds: object = _UNSET,
     ) -> None:
-        """Write a watchlist's briefing selection mode and/or default preset.
+        """Write a watchlist's briefing selection mode, preset, and/or cadence.
 
-        Two independent, optional writes in one call:
+        Three independent, optional writes in one call:
 
         - `selection_mode`: when given, must be one of the valid modes
           below and replaces `watchlists.briefing_selection_mode`. `None`
@@ -2353,6 +2439,17 @@ class SubscriptionsDB(BaseDB):
           `watchlists.default_briefing_preset_id` back to "no default
           preset". Passing nothing leaves the column untouched; passing
           `None` explicitly clears it; passing an id sets it.
+        - `briefing_cadence_seconds`: same `_UNSET`-sentinel shape as
+          `default_preset_id`. Passing nothing leaves the column untouched;
+          passing `None` explicitly clears `watchlists.briefing_cadence_seconds`
+          back to "never scheduled" (Locked Decision 4 of the briefings
+          phase 4 plan: scheduled briefings are opt-in per watchlist,
+          `NULL` means never); passing a positive `int` sets the cadence.
+          Must be a genuine `int`, not merely `int`-like: `bool` is a
+          subclass of `int` in Python, so without an explicit
+          `isinstance(..., bool)` exclusion `True` would silently pass as
+          a cadence of one second -- a runaway schedule -- rather than
+          being rejected (Qodo review).
 
         Args:
             watchlist_id: `watchlists.id` of the row to update.
@@ -2361,13 +2458,19 @@ class SubscriptionsDB(BaseDB):
             default_preset_id: A `briefing_presets.id`, `None` to clear, or
                 the `_UNSET` sentinel (default) to leave the current value
                 alone.
+            briefing_cadence_seconds: A positive `int` number of seconds
+                between scheduled briefings, `None` to clear (never
+                scheduled), or the `_UNSET` sentinel (default) to leave
+                the current value alone.
 
         Returns:
             None.
 
         Raises:
             ValueError: If `selection_mode` is given and is not one of the
-                valid modes.
+                valid modes, or if `briefing_cadence_seconds` is given and
+                is not a positive `int` (a `bool`, a numeric string, a
+                `float`, or a non-positive value all raise).
         """
         # Pact: this tuple must name the exact same three strings, in the
         # same meaning, as `briefing_selection.VALID_MODES`
@@ -2392,6 +2495,19 @@ class SubscriptionsDB(BaseDB):
         if default_preset_id is not _UNSET:
             updates.append("default_briefing_preset_id = ?")
             values.append(default_preset_id)
+        if briefing_cadence_seconds is not _UNSET:
+            if briefing_cadence_seconds is not None and (
+                not isinstance(briefing_cadence_seconds, int)
+                or isinstance(briefing_cadence_seconds, bool)
+                or briefing_cadence_seconds <= 0
+            ):
+                raise ValueError(
+                    f"set_watchlist_briefing_settings: briefing_cadence_seconds "
+                    f"must be a positive int number of seconds or None (never); "
+                    f"got {briefing_cadence_seconds!r}"
+                )
+            updates.append("briefing_cadence_seconds = ?")
+            values.append(briefing_cadence_seconds)
 
         if not updates:
             return
