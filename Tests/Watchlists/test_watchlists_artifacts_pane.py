@@ -3187,6 +3187,63 @@ async def test_second_synthesis_while_in_flight_refuses_naming_the_running_one()
 
 
 @pytest.mark.asyncio
+async def test_a_synthesis_press_during_a_claimed_script_refuses_not_run_concurrently(
+    monkeypatch,
+):
+    """task-1811, mirroring `test_a_cast_press_during_a_claimed_briefing_
+    refuses_not_run_concurrently` exactly: before this fix, Synthesize had
+    NO refusal for this case (`watchlists_collections_screen.py`'s own
+    comment above `_audio_sweep_is_safe` used to document the gap
+    explicitly) -- a press during a genuinely in-flight synthesis for the
+    SAME script would start a second, concurrent one. Claimed directly via
+    the service (`briefing_audio._claim_audio`), standing in for another
+    in-process caller; `_audio_in_flight` is deliberately untouched, since
+    this is not the SAME screen instance's own dispatch-time guard being
+    exercised (that is `test_second_synthesis_while_in_flight_refuses_
+    naming_the_running_one`, above).
+
+    Asserts the SPECIFIC `blocking` toast (`severity="warning"`, "already
+    being synthesized"), not merely "some refusal happened":
+    `generate_script_audio` itself also refuses a claimed script
+    (`GenerationInFlightError`), so a looser assertion would still pass
+    with the screen's OWN `blocking` check deleted entirely, as long as
+    the worker went on to call `generate_script_audio` and hit ITS claim
+    collision instead -- a different, generic-error-toast path this test
+    must tell apart from the one it names (this is what pins the
+    equivalent of mutation (iii) from the Cast test).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+
+    fake_audio = _FakeAudioService()
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        live_audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+        with briefing_audio._claim_audio(script_id):
+            await _press_synthesize(screen, pilot, app, script_id)
+
+        assert fake_audio.calls == [], (
+            "nothing may be synthesized while claimed elsewhere"
+        )
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already being synthesized" in message
+        assert db.get_briefing_audio(live_audio_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
+        )
+
+
+@pytest.mark.asyncio
 async def test_the_audio_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_cast_guard_
     is_claimed_before_the_worker_runs`: the handler is synchronous with no

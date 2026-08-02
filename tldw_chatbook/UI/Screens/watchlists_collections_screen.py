@@ -5519,12 +5519,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #
     # Phase 4 Task 1 investigated whether Synthesize needs the SAME
     # `blocking` refusal Cast just gained (survey finding (c)'s sibling
-    # question): structurally, yes -- `_synthesize_audio` has no `blocking`
+    # question): structurally, yes -- `_synthesize_audio` had no `blocking`
     # check either, so two presses could in principle start two concurrent
-    # renders for the same script. It is left AS-IS here: the task's own
-    # scope named Cast specifically, or "sweep gains `exclude`" everywhere,
-    # not a second new blocking check; adding one is a natural, small
-    # follow-up with the identical shape as `_sweep_and_guard_cast`.
+    # renders for the same script. Phase 4 left it AS-IS, deliberately, as a
+    # natural small follow-up; task-1811 is that follow-up: `_synthesize_
+    # audio` below now runs `_sweep_and_guard_audio`, the identical shape as
+    # `_sweep_and_guard_cast`, and refuses on `blocking` exactly like
+    # `_cast_script` does.
 
     def _audio_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_audio` may run right now.
@@ -5552,6 +5553,43 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return await asyncio.to_thread(
             fail_interrupted_audio, db, script_id, exclude=claims
         )
+
+    @staticmethod
+    def _audio_row_label(row: Mapping[str, Any]) -> str:
+        """Name one audio render the way a toast has to: which row, and
+        when. Sibling of `_script_row_label`, for the identical reason
+        (task-1811).
+        """
+        return (
+            f"audio {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard_audio(
+        self, db: Any, script_id: int, exclude: Collection[int]
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check, for a synthesis. Runs
+        off the UI thread. Sibling of `_sweep_and_guard_cast` -- see that
+        method's own docstring for the full reasoning; this is the
+        identical shape, scoped to one script's audio renders instead of
+        one briefing's scripts (task-1811, mirroring Cast's own `blocking`
+        refusal from phase 4 Task 1 onto Synthesize).
+
+        Returns:
+            `(recovered, blocking)`, exactly like `_sweep_and_guard_cast`.
+        """
+        stuck = [
+            self._audio_row_label(row)
+            for row in db.list_briefing_audio(script_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_audio(db, script_id, exclude=exclude)
+        blocking = [
+            self._audio_row_label(row)
+            for row in db.list_briefing_audio(script_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
 
     @on(SynthesizeAudioRequested)
     def handle_synthesize_audio_requested(
@@ -5625,16 +5663,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         toast.
 
         The sweep is claim-aware (`active_audio_claims()`), like every
-        other sweep call site (phase 4 Task 1) -- but, unlike `_cast_
-        script`, there is no `blocking` check after it; see this class's
-        own comment above `_audio_sweep_is_safe` for what was found and why
-        that is left for a follow-up.
+        other sweep call site (phase 4 Task 1), and is now followed by a
+        `blocking` check, mirroring `_cast_script`'s own (task-1811): a row
+        that SURVIVES `_sweep_and_guard_audio`'s sweep because it is
+        claimed by a live in-process synthesis refuses THIS attempt
+        instead of starting a second, concurrent one over the top of it.
+        Unlike `_cast_script`'s own `recovered` branch, there is no
+        one-COMPLETE-row-per-script invariant here either (a script may be
+        synthesized many times), so a zombie this sweep actually recovers
+        (i.e. NOT `blocking`) does not itself refuse a fresh synthesis --
+        the same press both recovers the zombie AND synthesizes real audio
+        (`test_synthesizing_recovers_a_zombie_audio_row_via_its_own_
+        sweep`).
         """
         try:
             try:
-                claims = active_audio_claims()
-                await asyncio.to_thread(
-                    fail_interrupted_audio, db, script_id, exclude=claims
+                _recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard_audio, db, script_id, active_audio_claims()
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
@@ -5645,6 +5690,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Failed to check this script's audio. Nothing was "
                     "started.",
                     severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep because a live in-process claim holds
+                # it -- not ours to duplicate. Mirrors `_cast_script`'s own
+                # `blocking` refusal; see this method's own docstring for
+                # why there is no `recovered`-branch sibling here.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already being synthesized "
+                    "for this script. Nothing else was started.",
+                    severity="warning",
                     markup=False,
                 )
                 return
