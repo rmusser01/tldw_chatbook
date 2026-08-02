@@ -174,6 +174,23 @@ guessed on the user's behalf would quietly mis-group observations in the summary
 not a safe fallback: it would make genuine failures invisible in exactly the view meant to surface
 them.
 
+**The built-in vocabulary** (owner decision, 2026-08-02). Ten tags, chosen so the common verdicts
+are one keystroke away and per-bench extension is the exception rather than the rule — the
+fragmentation this section warns about is driven by people inventing a tag because none of the
+built-ins fit:
+
+| Kind | Slugs |
+|---|---|
+| `failure` | `broke-character`, `refused`, `leaked-prompt`, `generic-assistant-voice`, `contradicted-card`, `ignored-the-question` |
+| `notable` | `notable`, `surprising` |
+| `positive` | `in-character`, `handled-well` |
+
+`leaked-prompt` means the card's own system prompt surfaced in the reply. `notable` is the
+deliberate catch-all — "worth another look" without claiming the reply was good or bad.
+
+These are the defaults, not a closed set: a bench extends them through `extra_tags`, and every
+extension states its kind.
+
 ## Execution
 
 Calls go through the app's normal chat path (`chat_api_call`), not the word-bench capture client:
