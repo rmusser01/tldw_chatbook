@@ -80,13 +80,19 @@ def test_save_chatbook_row_states_why_it_is_unavailable():
 
     no_artifact = row(can_save_chatbook=False)
     assert no_artifact.enabled is False
-    assert "No Chatbook artifact" in no_artifact.description
+    assert (
+        no_artifact.description
+        == "No Chatbook artifact is available to save yet"
+    )
 
     # The temporary-chat block wins over artifact availability: the write
     # itself is the problem, so readiness is moot.
     temporary = row(can_save_chatbook=True, ephemeral=True)
     assert temporary.enabled is False
-    assert "temporary chat" in temporary.description
+    assert (
+        temporary.description
+        == "Saving a Chatbook exports a file to disk — not available in a temporary chat."
+    )
 
 
 @pytest.mark.unit
@@ -103,12 +109,12 @@ def test_caption_entry_requires_an_IMAGE_attachment():
 
     nothing = caption("none")
     assert nothing.enabled is False
-    assert "Attach an image" in nothing.description
+    assert nothing.description == "Attach an image first"
 
     # A PDF is staged: the entry stays visible and says why it can't act.
     other = caption("other")
     assert other.enabled is False
-    assert "not an image" in other.description
+    assert other.description == "Attached file is not an image"
 
     image = caption("image")
     assert image.enabled is True

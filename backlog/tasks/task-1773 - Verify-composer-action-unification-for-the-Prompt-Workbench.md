@@ -1,10 +1,10 @@
 ---
 id: TASK-1773
 title: Verify composer action unification for the Prompt Workbench
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 23:26'
-updated_date: '2026-08-01 23:30'
+updated_date: '2026-08-02 00:48'
 labels: []
 dependencies: []
 references:
@@ -24,9 +24,9 @@ Establish the already-approved, width-bounded Console composer action contract b
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The composer at-rest row remains width-bounded and exposes overflow, Send, and Mic without duplicate Attach or Save Chatbook controls.
-- [ ] #2 Overflow actions use stable attach-context and save-chatbook IDs that invoke the existing screen handlers, with unavailable actions remaining visible and explaining why.
-- [ ] #3 Focused composer menu, collapse, native chat-flow, and Workbench contract tests verify action parity on the target branch.
+- [x] #1 The composer at-rest row remains width-bounded and exposes overflow, Send, and Mic without duplicate Attach or Save Chatbook controls.
+- [x] #2 Overflow actions use stable attach-context and save-chatbook IDs that invoke the existing screen handlers, with unavailable actions remaining visible and explaining why.
+- [x] #3 Focused composer menu, collapse, native chat-flow, and Workbench contract tests verify action parity on the target branch.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,15 @@ ADR required: yes
 ADR path: backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md
 Reason: This prerequisite implements the action-row boundary on which the approved long-lived Prompt Workbench UX depends.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verification-only after rebase onto origin/dev: TASK-1680/e2ea3650 semantics were already present, so no production or CSS changes were needed. Tightened focused menu coverage to pin the exact visible disabled-row reasons for Save Chatbook and Generate Caption.
+
+Evidence: menu suite passed (31 passed); full prescribed five-file run produced 521 passed with one unrelated workspace-conversation-search timing failure in Tests/UI/test_console_native_chat_flow.py, which passed immediately when rerun alone. The composer action parity checks were green.
+
+ADR check: ADR-040 remains the governing Prompt Workbench boundary; no new ADR required.
+
+Modified: Tests/UI/test_console_composer_menu.py (exact disabled-reason assertions).
+<!-- SECTION:NOTES:END -->
