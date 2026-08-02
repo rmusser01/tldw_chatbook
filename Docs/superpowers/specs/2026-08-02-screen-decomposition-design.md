@@ -1,6 +1,6 @@
 # Screen Decomposition — Design
 
-**Status:** draft for review — 2026-08-02, revision 2
+**Status:** approved 2026-08-02 (revision 3 — composer row corrected after source verification: `ConsoleComposerBar` already exists, so its cluster is a controller, not a new region)
 **Scope:** `chat_screen.py`, `settings_screen.py`, `library_screen.py`
 
 ## Purpose
@@ -165,7 +165,7 @@ of their own. That is the gap.
 | Cluster | Lines / methods | Kind |
 |---|---|---|
 | rail + inspector | 958 / 42 | region widgets (left, context, inspector rails) |
-| composer | 377 / 18 | region widget |
+| composer | 377 / 18 | controller — the region widget already exists (`ConsoleComposerBar` at `#console-native-composer`); the screen-side lines are orchestration (undo/redo, history navigation, action-state sync), not rendering |
 | workspace | 1,382 / 40 | controller |
 | session | 916 / 31 | controller |
 | message | 1,027 / 23 | controller |
