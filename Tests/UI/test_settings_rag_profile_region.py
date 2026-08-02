@@ -1394,7 +1394,7 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         settings_screen_module, "get_shared_rag_service", lambda: object()
     )
 
-    def _boom(*, media_db, chachanotes_db, rag_service=None):
+    def _boom(*, media_db, chachanotes_db, rag_service=None, progress_callback=None):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _boom)
@@ -1516,6 +1516,102 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
     assert "backfill" in message.lower()
+
+
+# --- Task 3 (RAG UX v2 PR1): the retired Search screen's Maintenance tab
+# was the only place a LIVE per-batch backfill signal ever reached the UI
+# (search_rag_window.py's _update_indexing_progress, wired to
+# backfill_semantic_index's progress_callback). Settings' own Backfill
+# button passed no progress_callback at all, so #settings-library-rag-
+# index-status stayed frozen for the whole run -- minutes of silence, then
+# a single final notify toast. This test locks in the re-homed behaviour.
+#
+# The real callback contract (RAG_Search/ingestion_indexing.py:1587-1591,
+# confirmed against the CLI's own _progress at RAG_Search/backfill.py:79-91
+# and the retired window's at search_rag_window.py:1057-1065/1133-1144) is
+# ONE positional dict argument -- {"item_type", "indexed", "skipped",
+# "failed"} -- called after every processed batch, cumulative per item
+# type. This is NOT the kwargs-shaped guess
+# (source=/indexed=/up_to_date=/failed=) sketched in the task brief; the
+# fake below pins the real shape. ---
+
+
+@pytest.mark.asyncio
+async def test_backfill_streams_progress_to_index_status(monkeypatch, tmp_path):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "built")
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: object()
+    )
+
+    progress_calls: list[str] = []
+
+    async def _fake_backfill(*, progress_callback=None, **kwargs):
+        assert progress_callback is not None
+        progress_calls.append("started")
+        # Real shape: one positional dict, keys item_type/indexed/skipped/
+        # failed -- see ingestion_indexing.py:1589.
+        progress_callback({"item_type": "media", "indexed": 3, "skipped": 1, "failed": 0})
+        progress_callback({"item_type": "notes", "indexed": 5, "skipped": 0, "failed": 1})
+        return {"status": "ok", "indexed": 8, "skipped": 1, "failed": 1, "errors": []}
+
+    monkeypatch.setattr(
+        settings_screen_module, "backfill_semantic_index", _fake_backfill
+    )
+
+    app = _build_test_app()
+    app.media_db = object()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        toasts: list = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        # Spy on every write to the index-status Static -- the worker runs
+        # on a real background thread, so by the time wait_for_complete()
+        # returns below only the LAST write is still visible on the
+        # widget; the per-batch lines are only observable as they land.
+        status_lines: list[str] = []
+        real_set_static_text = screen._set_static_text
+
+        def _spy_set_static_text(selector, text):
+            if selector == "#settings-library-rag-index-status":
+                status_lines.append(text)
+            return real_set_static_text(selector, text)
+
+        monkeypatch.setattr(screen, "_set_static_text", _spy_set_static_text)
+
+        screen._rag_backfill_worker()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert progress_calls == ["started"]
+    assert "Indexing media: 3 indexed, 1 up-to-date, 0 failed" in status_lines
+    assert "Indexing notes: 5 indexed, 0 up-to-date, 1 failed" in status_lines
+    # Ordering: both per-batch lines land before the post-completion
+    # index-status refresh (the _stub_index_status("built") fetch) that
+    # _rag_backfill_worker's own tail already triggers -- the row ends on
+    # the real index status, not stuck on a stale progress line.
+    media_idx = status_lines.index("Indexing media: 3 indexed, 1 up-to-date, 0 failed")
+    notes_idx = status_lines.index("Indexing notes: 5 indexed, 0 up-to-date, 1 failed")
+    assert media_idx < notes_idx
+    assert any("Index: built" in line for line in status_lines[notes_idx + 1 :])
+
+    # Final-summary notify behaviour is untouched by this task: still one
+    # toast, still the existing success wording driven by the returned
+    # summary dict.
+    assert toasts, "backfill completion produced no toast"
+    message, kwargs = toasts[-1]
+    assert "Backfill complete: 8 indexed, 1 already up-to-date." in message
+    assert kwargs.get("severity") == "information"
 
 
 # --- Task 4 review Finding 2: _rag_after_set_active must not misreport a
