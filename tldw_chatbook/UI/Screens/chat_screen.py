@@ -10523,6 +10523,19 @@ class ChatScreen(BaseAppScreen):
             notify_on_failure=False,
         )
         self._apply_console_rail_section_open(section_id, next_open)
+        if section_id == "character" and next_open:
+            # A collapsed body has `display: none`, so
+            # `_character_avatar_available_cols()` measures 0 and
+            # `character_avatar_box(0)` clamps to the 16-column MINIMUM. An
+            # avatar first rendered while collapsed would then stay pinned
+            # at that size forever, because
+            # `_refresh_active_character_avatar_if_scope_changed` early-
+            # returns while (character_id, state) is unchanged -- the
+            # "~50-column rail showing a 16-column portrait" defect
+            # task-1661 fixed for a different trigger. Clearing the scope
+            # guard makes the next sync tick re-measure the now-visible body
+            # and repaint at the rail's real width.
+            self._last_console_avatar_scope = None
 
     def _sync_console_workspace_context(self) -> None:
         try:
