@@ -33,7 +33,13 @@ scheduled, or vice versa. Scripts are diffed by ``source_script_id``
 against :meth:`CharactersRAGDB.kept_script_source_ids`, so a re-keep adds
 only scripts that were cast *after* the previous keep (or missed because
 they were not yet ``complete``) and never duplicates or overwrites one
-already kept.
+already kept. This also makes a genuine *race* between two concurrent
+callers keeping the same briefing safe: the loser's
+``create_kept_briefing`` call raises ``ConflictError`` against the
+``source_briefing_id UNIQUE`` constraint (the table's only unique
+constraint, so the exception is unambiguous), which is caught and turned
+into the identical re-keep path a sequential re-keep already takes --
+never a raw exception surfacing to the caller.
 
 Cross-DB datetime boundary (load-bearing, see Task 1's report): every
 ``CharactersRAGDB`` connection opens with ``sqlite3.PARSE_DECLTYPES`` plus
@@ -79,6 +85,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from ..DB.ChaChaNotes_DB import ConflictError
 from .briefing_cast import STATUS_COMPLETE as _SCRIPT_COMPLETE
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_COMPLETE
 
@@ -248,7 +255,12 @@ def keep_briefing(
     kept never creates a second `kept_briefings` row and never rewrites
     its fields (including `origin` -- it is set only when this call is the
     one that creates the row). It only ever *adds* `kept_scripts` rows for
-    scripts that were not kept yet, keyed by `source_script_id`.
+    scripts that were not kept yet, keyed by `source_script_id`. This also
+    covers a genuine race between two concurrent callers keeping the same
+    briefing: the loser's insert raises `ConflictError` against the
+    `source_briefing_id UNIQUE` constraint, which is caught here and
+    turned into the identical re-keep path -- the caller sees a normal
+    `created=False` result, never the raw `ConflictError`.
 
     Args:
         subs_db: An open `SubscriptionsDB` -- the source of the briefing
@@ -274,6 +286,10 @@ def keep_briefing(
             `status == "complete"`, or its `body_markdown` is empty or
             whitespace-only. No `kept_briefings` row is written in any of
             these cases.
+        ConflictError: Only in the vanishingly rare case where a
+            concurrent caller's row is deleted again between this
+            function losing the create race and re-querying for it --
+            not a state this function can recover from silently.
     """
     briefing = subs_db.get_briefing(briefing_id)
     if briefing is None:
@@ -290,21 +306,41 @@ def keep_briefing(
 
     existing = chacha_db.get_kept_briefing_by_source(briefing_id)
     if existing is None:
-        kept_id = chacha_db.create_kept_briefing(
-            source_briefing_id=briefing_id,
-            watchlist_name=_watchlist_name(subs_db, briefing["watchlist_id"]),
-            body_markdown=briefing["body_markdown"],
-            covers_through_item_id=briefing.get("covers_through_item_id"),
-            covers_from_ts=_to_chacha_datetime(briefing.get("covers_from_ts")),
-            selection_mode=briefing.get("selection_mode"),
-            model_used=briefing.get("model_used"),
-            item_count=briefing.get("item_count") or 0,
-            featured_count=briefing.get("featured_count") or 0,
-            overflow_count=briefing.get("overflow_count") or 0,
-            origin=origin,
-            original_created_at=_to_chacha_datetime(briefing.get("created_at")),
-        )
-        created = True
+        try:
+            kept_id = chacha_db.create_kept_briefing(
+                source_briefing_id=briefing_id,
+                watchlist_name=_watchlist_name(subs_db, briefing["watchlist_id"]),
+                body_markdown=briefing["body_markdown"],
+                covers_through_item_id=briefing.get("covers_through_item_id"),
+                covers_from_ts=_to_chacha_datetime(briefing.get("covers_from_ts")),
+                selection_mode=briefing.get("selection_mode"),
+                model_used=briefing.get("model_used"),
+                item_count=briefing.get("item_count") or 0,
+                featured_count=briefing.get("featured_count") or 0,
+                overflow_count=briefing.get("overflow_count") or 0,
+                origin=origin,
+                original_created_at=_to_chacha_datetime(briefing.get("created_at")),
+            )
+            created = True
+        except ConflictError:
+            # Lost a race: another caller kept this same briefing between
+            # our existence check above and this insert.
+            # `create_kept_briefing`'s only UNIQUE constraint is
+            # `source_briefing_id`, so a `ConflictError` here unambiguously
+            # means "already kept" -- fall into the same additive re-keep
+            # branch a normal re-keep takes, rather than surfacing the race
+            # as an error to the caller (Task 3's auto-keep and a manual
+            # Keep button (Task 5) can plausibly fire for the same
+            # briefing at nearly the same moment).
+            existing = chacha_db.get_kept_briefing_by_source(briefing_id)
+            if existing is None:
+                # The row that won the race must have been deleted again
+                # between the conflict and this re-query -- vanishingly
+                # rare, and not a state this function can recover from
+                # silently, so the original conflict propagates.
+                raise
+            kept_id = existing["id"]
+            created = False
     else:
         kept_id = existing["id"]
         created = False

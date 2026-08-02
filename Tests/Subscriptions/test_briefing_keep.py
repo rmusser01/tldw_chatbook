@@ -250,6 +250,67 @@ def test_keep_passes_origin_through_only_on_creation(tmp_path: Path) -> None:
         chacha_db.close_connection()
 
 
+# --- Concurrent keep race -----------------------------------------------------
+
+
+def test_keep_survives_a_racing_create_kept_briefing_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1 (Important): two concurrent callers -- Task 3's
+    auto-keep and a manual Keep press, say -- can both pass the "does a
+    kept row already exist?" check before either has inserted one. The
+    loser's `create_kept_briefing` call then hits the real
+    `source_briefing_id UNIQUE` constraint (the table's only UNIQUE, so a
+    `ConflictError` from it is unambiguous) and must land as a friendly
+    re-keep result, not a raw exception.
+
+    Forced deterministically rather than with real threads: the kept row
+    is pre-created directly via `chacha_db.create_kept_briefing` (exactly
+    what "another caller won the race" would have done), then this
+    briefing's *first* `get_kept_briefing_by_source` call within the
+    `keep_briefing` call below is monkeypatched to still report `None` --
+    reproducing the exact TOCTOU window a real race would hit -- so the
+    real `create_kept_briefing` call underneath it collides with the
+    pre-created row for real.
+    """
+    subs_db = _subs_db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = _watchlist(subs_db, name="Tech Watch")
+        briefing_id = _complete_briefing(subs_db, watchlist_id)
+
+        raced_kept_id = chacha_db.create_kept_briefing(
+            source_briefing_id=briefing_id,
+            watchlist_name="Tech Watch",
+            body_markdown="# Digest\n\nAnother caller already kept this.\n",
+            origin="scheduled",
+        )
+
+        real_lookup = chacha_db.get_kept_briefing_by_source
+        calls = {"n": 0}
+
+        def _first_call_reports_absent(source_briefing_id: int):
+            calls["n"] += 1
+            return None if calls["n"] == 1 else real_lookup(source_briefing_id)
+
+        monkeypatch.setattr(
+            chacha_db, "get_kept_briefing_by_source", _first_call_reports_absent
+        )
+
+        result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
+
+        assert result == {
+            "kept_id": raced_kept_id,
+            "created": False,
+            "scripts_added": 0,
+        }
+        assert len(chacha_db.list_kept_briefings()) == 1  # no duplicate row
+        kept = chacha_db.get_kept_briefing(raced_kept_id)
+        assert kept["origin"] == "scheduled"  # the racing caller's origin stands
+    finally:
+        chacha_db.close_connection()
+
+
 # --- Scripts: complete-only, additive-idempotent -----------------------------
 
 
