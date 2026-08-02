@@ -2,7 +2,7 @@
 
 Date: 2026-08-02
 
-Client SHA: `12acb277751ebd3985b768ff8a66605da3ae3818`
+Client SHA: `b856795415cb8f8f6abf9eafeb2f73a7a6bae908`
 
 Server compatibility SHA: `a6e289031ddbe531fab4983d7e5671a6a85292ed`
 
@@ -10,15 +10,18 @@ ADR: [ADR-040](../../../../backlog/decisions/040-versioned-prompt-artifacts-and-
 
 ## Outcome
 
-The complete Prompt improvement workbench passed its prescribed client and
-server matrices, static smoke gates, isolated real-app Textual sweep, visual
-inspection, and content-log canary audit.
+The prescribed client and server matrices, static smoke gates, isolated
+real-app Textual scenarios, rendered-capture review, and content-log canary
+audit passed. The repaired Apply footer renders stacked System/User choices at
+all three required terminal sizes. Live assertions prove the checkbox glyphs
+and full labels are painted, contained by the editor, and free of overlap with
+each other, the lane row, and every action button.
 
 `Prompts` is the first normal item in the existing Console composer hamburger.
 It is not present in the top/tab-bar actions or as an always-visible composer
-button. The idle composer remains hamburger / Send / Mic. This preserves the
-composer-unification prerequisite represented by reference commits
-`d15e35e1c` and `e2ea3650b` from TASK-1680.
+button. The idle composer retains its existing Collapse / hamburger / Send /
+Mic controls. This preserves the composer-unification prerequisite represented
+by reference commits `d15e35e1c` and `e2ea3650b` from TASK-1680.
 
 ## Environment and method
 
@@ -31,9 +34,9 @@ is used.
 
 The run creates private temporary config and data roots matching
 `<temporary-root>/console-prompt-*/`, then removes them in `finally`. It seeds
-12 isolated records: legacy, foreign v1, block-v2 Prompt, block-v2 Recipe,
-malformed/future, and pagination fixtures. The run used terminal sizes
-140x40, 100x30, and 80x24.
+13 isolated records: legacy, foreign v1, block-v2 Prompt, block-v2 Recipe,
+malformed, future-version, type/kind-mismatched, and six pagination fixtures.
+The run used terminal sizes 140x40, 100x30, and 80x24.
 
 The server compatibility worktree remained pinned to the SHA above. It was
 not clean: these two unrelated pre-existing untracked templates were present
@@ -64,7 +67,7 @@ committed:
   Tests/Chat/test_sensitive_llm_logging.py -q
 ```
 
-Result: `939 passed, 2 warnings in 447.64s`; exit 0. The warnings were the
+Result: `943 passed, 2 warnings in 359.28s`; exit 0. The warnings were the
 environment's existing Requests dependency-version warning and Python 3.12
 `audioop` deprecation. The known conversation-browser stale-search timing
 flake did not occur, so no node rerun was needed.
@@ -77,12 +80,16 @@ flake did not occur, so no node rerun was needed.
   tldw_chatbook/Widgets/Prompts \
   tldw_chatbook/Widgets/Console
 git diff --check
-.venv/bin/python Docs/superpowers/qa/console-prompt-improvement-2026-08/capture_qa.py
+TLDW_QA_CAPTURE_STAGE=all \
+  .venv/bin/python \
+  Docs/superpowers/qa/console-prompt-improvement-2026-08/capture_qa.py
 ```
 
-All five commands exited 0. The CSS build generated 457,588 characters; only
+All five commands exited 0. The CSS build generated 457,922 characters; only
 its timestamp changed, so the generated file was restored and not included in
-the evidence commit.
+the evidence commit. The final isolated full-app run seeded 13 records,
+exercised every scenario below in one coherent pass, regenerated 25 SVGs and
+the observation manifest, and exited 0.
 
 The configured Ruff and mypy tools were run across all 97 Python files touched
 between feature base `2166a677562869796244a744346e213a75474ae6` and the client
@@ -107,7 +114,7 @@ virtual environment:
   tldw_Server_API/tests/Prompt_Management_NEW/integration/test_structured_prompt_search.py -q
 ```
 
-Result: `160 passed, 2 warnings in 94.54s`; exit 0. The warnings cover the
+Result: `160 passed, 2 warnings in 65.43s`; exit 0. The warnings cover the
 legacy single-user API-key format and an isolated user-DB fallback used by the
 test environment.
 
@@ -120,21 +127,49 @@ exited 0.
 
 ## Real-app observations
 
-- Browse opens from the composer menu, shows `Improve My Prompt`, uses one
-  source at a time, and paginates 12 seeded rows as page 1 of 2.
+- Browse opens from `Prompts`, the first normal item in the composer hamburger,
+  shows `Improve My Prompt`, uses one source at a time, and paginates 13 seeded
+  rows as page 1 of 2. At every required size, the top/tab control row has no
+  Prompts action and the idle composer retains its existing Collapse /
+  hamburger / Send / Mic controls without a standalone Prompts button.
 - The real Server source without an external service shows the explicit
   unavailable message and Retry action. Modern/old-server behavior is paired
   with the green adapter and server compatibility matrices; no live external
   Server Library was claimed.
-- Foreign v1 content is read-only with explicit conversion; malformed/future
-  records remain guarded. Local normalized list identities open through the
-  real database/detail boundary.
-- The shared block editor supports manual content edits and duplication at all
-  three sizes. Narrow surfaces scroll while the modal footer remains reachable.
+- A legacy Prompt opens through its real normalized database row as conservative
+  editable System/User blocks with the exact stored lane content and zero model
+  calls. Foreign v1 remains read-only with explicit conversion.
+- Malformed, future-version, and type/kind-mismatched structured records open
+  through their real normalized rows in read-only compatibility state. Their
+  stored records remain unchanged, `Convert and save as new` stays available,
+  Update Original is blocked, and converted copies cannot Apply before save.
+- The shared block editor supports content edits and reordering. Introducing an
+  invalid XML tag disables Apply/Save; resolving it restores validity without
+  replacing the unaffected widget or losing its cursor/focus. Narrow surfaces
+  scroll while the modal footer remains reachable. At 140x40, 100x30, and
+  80x24, the footer paints checkbox glyphs and the full
+  `Apply system prompt to this session` / `Apply User` labels without clipping
+  or overlap.
 - Auto no-change leaves the composer untouched. Auto success exposes the
   conditional hamburger Undo and restores the exact draft snapshot.
-- Preservation veto mounts one editable Review candidate instead of mutating
-  the composer. Cancellation ignores the detached late result.
+- The provider-unavailable Improve path performs resolution only, makes no
+  auxiliary or send call, disables improvement actions, exposes actionable
+  recovery copy, and opens the real Console provider/model settings. It is
+  distinct from the Server Prompt-source unavailable state.
+- A real inline-file composer segment is projected as an opaque token. When the
+  provider candidate drops that token, the modal shows generic review-required
+  copy, blocks Apply, and preserves the exact protected body/label and composer
+  snapshot without exposing them to the provider.
+- A delayed result made stale by live draft and System edits mounts an editable
+  Review candidate with actionable stale copy. It retains both live edits,
+  transcript, and attachments, performs no partial apply, and makes exactly one
+  auxiliary call with no hidden retry. Cancellation still ignores a detached
+  late result.
+- Applying a reviewed structured Prompt leaves System unchecked by default and
+  User checked. Explicitly opting into System applies the compiled System and
+  User values atomically to the live session/composer, with no send/model call,
+  transcript mutation, attachment mutation, or persistence requirement in the
+  isolated non-persistent session.
 - Recipe Fill uses one auxiliary call and remains mandatory review. At every
   size a valid non-empty `additional_context` becomes one mapped User-lane
   `Additional context` block; the composer remains byte-equivalent. Duplicate
@@ -173,7 +208,7 @@ metadata is the intentionally redacted temporary-root pattern in
 ## Capture index
 
 All captures are deterministic Textual SVG exports from the real app and were
-visually inspected after rendering. There are 18 SVGs plus the observation
+visually inspected after rendering. There are 25 SVGs plus the observation
 record.
 
 | Surface | 140x40 | 100x30 | 80x24 |
@@ -187,7 +222,14 @@ Additional 140x40 states:
 
 - [Server unavailable and Retry](captures/140x40-server-unavailable.svg)
 - [Auto success with hamburger Undo](captures/140x40-auto-success-undo.svg)
-- [Preservation-veto Review](captures/140x40-preservation-review.svg)
+- [Legacy Prompt as editable conservative blocks](captures/140x40-legacy-editable-blocks.svg)
+- [Malformed structured compatibility guard](captures/140x40-malformed-compatibility.svg)
+- [Block validation introduced](captures/140x40-block-validation.svg)
+- [Optional System + User apply ready](captures/140x40-system-user-apply-ready.svg)
+- [Optional System + User applied](captures/140x40-system-user-applied.svg)
+- [Provider unavailable Improve recovery](captures/140x40-provider-unavailable-improve.svg)
+- [Protected inline-file Review veto](captures/140x40-protected-inline-review-blocked.svg)
+- [Stale delayed result in Review](captures/140x40-stale-result-review.svg)
 - [Foreign-v1 compatibility guard](captures/140x40-foreign-v1-guard.svg)
 - [Library Prompt/Recipe labels](captures/140x40-library-prompt-recipe-labels.svg)
 - [Library save-name conflict](captures/140x40-library-save-conflict.svg)
@@ -195,8 +237,9 @@ Additional 140x40 states:
 The one-shot Impeccable detector returned `[]` for the three inspected Python
 UI targets. Two guessed component-CSS paths did not exist and were reported as
 unavailable; no second detector run was substituted. Visual inspection found
-no non-scrollable clipping, overlap, unreachable modal footer, source-label
-ambiguity, or placement regression in the published captures.
+no non-scrollable clipping, overlap, unreachable modal footer, missing
+System/User control content, source-label ambiguity, or placement regression
+in the published captures.
 
 ## Design sections 1-15 traceability
 
@@ -207,15 +250,15 @@ ambiguity, or placement regression in the published captures.
 | 3. Browse and source search | `console_prompts_browse.py`, `prompt_scope_service.py`, `prompt_normalizers.py` | Prompt-management and modal suites; pagination, unavailable, and foreign-guard captures |
 | 4. Structured artifact contract | `prompt_artifact_models.py`, `prompt_artifact_codec.py`, `prompt_block_compiler.py`, local/server migrations | codec/compiler/DB matrices and server structured API tests; v1 and `single_text_recipe` coexistence coverage |
 | 5. Built-in and saved Recipes | `outcome_first_recipe()`, `library_prompts_state.py`, saved-Recipe modal path | Recipe service/modal/Library tests; editable and Filled Prompt captures |
-| 6. Block editor | `prompt_block_editor_state.py`, `prompt_block_editor.py` | `test_prompt_block_editor_state.py`, `test_prompt_block_editor.py`; all-size editor inspection |
-| 7. Improvement modes | `console_prompt_improve_view.py`, `console_prompts_modal.py`, `prompt_improvement_service.py` | improvement-service/modal tests; Auto, Review, and Recipe observations |
+| 6. Block editor | `prompt_block_editor_state.py`, `prompt_block_editor.py` | `test_prompt_block_editor_state.py`, `test_prompt_block_editor.py`; live edit/reorder/validation/cursor-focus observations and all-size editor inspection |
+| 7. Improvement modes | `console_prompt_improve_view.py`, `console_prompts_modal.py`, `prompt_improvement_service.py` | improvement-service/modal tests; live Auto, Review, Recipe, and provider-recovery observations |
 | 8. Request boundary | `console_provider_gateway.py`, `prompt_improvement_prompts.py`, request-scoped sensitive policy | gateway and sensitive-logging tests; one-call live canary |
-| 9. Preservation/context guards | `prompt_projection.py`, `prompt_preservation.py` | preservation and composer-transaction tests; inline placeholder and Review veto audit |
-| 10. Concurrency/application | immutable request models, modal worker tokens, composer transaction coordinator | cancellation/stale/modal/composer tests; cancel-late-discard and exact Undo observations |
+| 9. Preservation/context guards | `prompt_projection.py`, `prompt_preservation.py` | preservation and composer-transaction tests; real inline-file projection, token-veto, and exact segment-retention audit |
+| 10. Concurrency/application | immutable request models, modal worker tokens, composer transaction coordinator | cancellation/stale/modal/composer tests; live delayed-result Review, cancel-late-discard, atomic optional-System apply, and exact Undo observations |
 | 11. Saving/version/authority | `Prompts_DB.py`, `prompt_scope_service.py`, server adapter, Library state | DB/property/server/Library matrices; normalized identity and optimistic-conflict regressions |
-| 12. Typed outcomes/errors | `prompt_improvement_models.py`, fail-closed service outcomes, modal status/retry states | malformed/no-change/provider/preservation/context-limit tests; unavailable and Review captures |
+| 12. Typed outcomes/errors | `prompt_improvement_models.py`, fail-closed service outcomes, modal status/retry states | malformed/no-change/provider/preservation/context-limit tests; live compatibility, provider-unavailable, stale, and Review captures |
 | 13. Privacy/observability | `sensitive_logging.py`, gateway `ContextVar` propagation, metadata-only telemetry | registry-parity and provider canary tests plus zero-count isolated log audit |
-| 14. Testing/quality gates | trusted optimizer fixture, prompting eval cases, deterministic `capture_qa.py` | 939 client tests, 160 server tests, static smoke gates, 18 inspected captures |
+| 14. Testing/quality gates | trusted optimizer fixture, prompting eval cases, deterministic `capture_qa.py` | 943 client tests, 160 server tests, static smoke gates, 25 inspected captures and explicit observation manifest |
 | 15. Delivery boundaries | composer menu ownership, ADR-040, stage Backlog tasks and SDD reports | workbench parity tests; this evidence archive and TASK-1777 closeout |
 
 ## Explicit completion checks and limitations

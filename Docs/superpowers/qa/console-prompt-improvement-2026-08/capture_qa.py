@@ -38,10 +38,11 @@ os.environ["XDG_CONFIG_HOME"] = str(IMPORT_SANDBOX / "config")
 os.environ["XDG_DATA_HOME"] = str(IMPORT_SANDBOX / "data")
 
 from loguru import logger
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app, drain_created_dirs
 from Tests.UI.test_library_prompts_canvas import _wire_empty_non_prompt_services
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
     ConsoleProviderResolution,
@@ -188,6 +189,19 @@ def _seed(db: PromptsDatabase) -> dict[str, int]:
         prompt_definition={"kind": "future_prompt", "schema_version": 99},
         artifact_type="prompt",
     )
+    add(
+        "mismatched",
+        name="Mismatched structured artifact",
+        author="QA",
+        details="Guarded artifact-type and definition-kind mismatch",
+        system_prompt="Mismatched compatibility system.",
+        user_prompt="Mismatched compatibility user.",
+        keywords=["mismatched"],
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=_definition("block_recipe"),
+        artifact_type="prompt",
+    )
     for index in range(6):
         add(
             f"filler_{index}",
@@ -206,14 +220,31 @@ class DeterministicGateway:
 
     def __init__(self) -> None:
         self.auxiliary_calls = 0
+        self.resolution_calls = 0
         self.stream_calls = 0
         self.hold_next = False
+        self.provider_unavailable = False
+        self.drop_protected_tokens = False
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.observed_placeholders: set[str] = set()
+        self.last_source_prompt = ""
         self.response_canary = ""
 
     async def resolve_for_send(self, selection: Any) -> ConsoleProviderResolution:
+        self.resolution_calls += 1
+        if self.provider_unavailable:
+            return ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url=selection.base_url or "http://127.0.0.1:9099",
+                model=selection.explicit_model
+                or selection.configured_model
+                or "qa-local-model",
+                ready=False,
+                visible_copy="The selected QA provider is unavailable. Configure a ready provider and model.",
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
         return ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
@@ -233,6 +264,7 @@ class DeterministicGateway:
             await self.release.wait()
         payload = json.loads(str(request.messages[-1]["content"]))
         source = str(payload["source_prompt"])
+        self.last_source_prompt = source
         self.observed_placeholders.update(PLACEHOLDER.findall(source))
         if request.response_format["json_schema"]["name"] == "recipe_fill":
             recipe = payload["recipe"]
@@ -262,6 +294,8 @@ class DeterministicGateway:
         else:
             if "NO_CHANGE_MARKER" in source:
                 rewritten = source
+            elif self.drop_protected_tokens:
+                rewritten = PLACEHOLDER.sub("", source)
             elif "{{ACCOUNT_ID}}" in source:
                 rewritten = "Summarize the account outcome in Markdown."
             elif self.response_canary:
@@ -297,6 +331,56 @@ async def _wait(
             return
         await pilot.pause(0.05)
     raise AssertionError(f"Timed out waiting for {label}")
+
+
+def _assert_apply_footer_painted(editor: PromptBlockEditor) -> dict[str, Any]:
+    """Prove the live modal paints complete lane choices and safe action geometry."""
+
+    footer = editor.query_one("#prompt-editor-footer")
+    lane_options = editor.query_one("#prompt-editor-lane-options")
+    actions = editor.query_one("#prompt-editor-actions")
+    system = editor.query_one("#prompt-editor-apply-system", Checkbox)
+    user = editor.query_one("#prompt-editor-apply-user", Checkbox)
+    for checkbox, label in (
+        (system, "Apply system prompt to this session"),
+        (user, "Apply User"),
+    ):
+        painted = "\n".join(
+            checkbox.render_line(row).text for row in range(checkbox.region.height)
+        )
+        assert "▐X▌" in painted, (checkbox.id, checkbox.region, painted)
+        assert label in painted, (checkbox.id, checkbox.region, painted)
+        assert checkbox.is_on_screen
+        assert editor.region.contains_region(checkbox.region)
+
+    assert footer.has_class("two-row")
+    assert lane_options.region.bottom <= actions.region.y
+    assert system.region.right <= user.region.x
+    action_widgets = [
+        editor.query_one(selector, Button)
+        for selector in (
+            "#prompt-editor-back",
+            "#prompt-editor-save-prompt",
+            "#prompt-editor-save-recipe",
+            "#prompt-editor-update-original",
+            "#prompt-editor-apply",
+        )
+    ]
+    for action in action_widgets:
+        assert action.is_on_screen
+        assert action.region.width > 0 and action.region.height > 0
+        assert editor.region.contains_region(action.region)
+    for left, right in zip(action_widgets, action_widgets[1:]):
+        assert left.region.right <= right.region.x
+    return {
+        "stacked_footer": True,
+        "system_checkbox_glyph_visible": True,
+        "system_checkbox_full_label_visible": True,
+        "user_checkbox_glyph_visible": True,
+        "user_checkbox_full_label_visible": True,
+        "lane_and_action_rows_do_not_overlap": True,
+        "action_buttons_do_not_overlap_or_clip": True,
+    }
 
 
 def _configure_app(app: Any, service: Any, gateway: DeterministicGateway) -> None:
@@ -387,6 +471,486 @@ def _semantic_snapshot(snapshot: Any) -> tuple[Any, ...]:
     )
 
 
+async def _return_to_browse(pilot: Any, modal: ConsolePromptsModal) -> None:
+    """Use the modal's real Back control and wait for Browse to remount."""
+
+    if modal.state.mode == "browse":
+        return
+    modal.query_one("#console-prompts-back", Button).press()
+    await _wait(
+        pilot,
+        lambda: (
+            modal.state.mode == "browse"
+            and bool(modal.query("#console-prompts-search"))
+        ),
+        label="Prompt Workbench Browse return",
+    )
+
+
+async def _open_named_artifact(
+    pilot: Any,
+    modal: ConsolePromptsModal,
+    *,
+    name: str,
+    local_id: int,
+) -> dict[str, Any]:
+    """Search the real Prompt DB, select its normalized row, and open detail."""
+
+    await _return_to_browse(pilot, modal)
+    search = modal.query_one("#console-prompts-search", Input)
+    search.value = name
+    await _wait(
+        pilot,
+        lambda: (
+            len(modal.query(".console-prompts-result")) == 1
+            and len(modal.browse_result.items) == 1
+            and modal.browse_result.items[0].get("name") == name
+        ),
+        label=f"normalized row for {name}",
+    )
+    row = dict(modal.browse_result.items[0])
+    assert row["backend"] == "local"
+    assert row["local_id"] == local_id
+    assert row["id"] == f"local:prompt:{row['source_id']}"
+    modal.query_one(".console-prompts-result", Button).press()
+    await _wait(
+        pilot,
+        lambda: (
+            modal.state.mode == "edit"
+            and modal.state.selected_identity == str(row["source_id"])
+        ),
+        label=f"latest detail for {name}",
+    )
+    return row
+
+
+async def _capture_artifact_compatibility_states(
+    service: Any,
+    db: PromptsDatabase,
+    ids: dict[str, int],
+    forbidden: tuple[str, ...],
+) -> dict[str, Any]:
+    """Exercise real normalized legacy and guarded structured artifact rows."""
+
+    gateway = DeterministicGateway()
+    app = _build_test_app(configured_default="chat")
+    _configure_app(app, service, gateway)
+    observed: dict[str, Any] = {"compatibility": {}}
+    async with _run_test(app, size=(140, 40)) as pilot:
+        console = await _console(app, pilot)
+        console._open_console_prompts_modal()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="artifact compatibility Prompt modal",
+        )
+        modal = app.screen_stack[-1]
+        await _wait(
+            pilot,
+            lambda: bool(modal.query(".console-prompts-result")),
+            label="artifact compatibility Browse rows",
+        )
+
+        await _open_named_artifact(
+            pilot,
+            modal,
+            name="Legacy release note",
+            local_id=ids["legacy"],
+        )
+        editor = modal.query_one(PromptBlockEditor)
+        state = editor.state
+        assert modal._decoded is not None and modal._decoded.state == "legacy"
+        assert state.system_origin is not None
+        assert state.user_origin is not None
+        assert state.system_origin.text == "Keep claims source-backed."
+        assert state.user_origin.text == "Draft a compact release note."
+        assert state.compiled_system == state.system_origin.text
+        assert state.compiled_user == state.user_origin.text
+        assert [block.id for block in state.definition.lanes[0].blocks] == [
+            "legacy-system-1"
+        ]
+        assert [block.id for block in state.definition.lanes[1].blocks] == [
+            "legacy-user-1"
+        ]
+        assert not editor.query_one(
+            "#prompt-block-content-legacy-system-1", TextArea
+        ).read_only
+        assert not editor.query_one(
+            "#prompt-block-content-legacy-user-1", TextArea
+        ).read_only
+        observed["legacy"] = {
+            "normalized_row_verified": True,
+            "definition_state": "legacy",
+            "editable": True,
+            "conservative_lane_origins_retained": True,
+            "model_calls": gateway.auxiliary_calls,
+        }
+        _capture(
+            app,
+            "140x40-legacy-editable-blocks.svg",
+            "Prompt Workbench legacy Prompt editable blocks",
+            forbidden,
+        )
+
+        guarded_cases = (
+            ("malformed", "Malformed future artifact", "malformed"),
+            ("future", "Future schema artifact", "unsupported"),
+            (
+                "mismatched",
+                "Mismatched structured artifact",
+                "mismatched",
+            ),
+        )
+        for key, name, expected_state in guarded_cases:
+            before_record = db.fetch_prompt_details(ids[key])
+            await _open_named_artifact(
+                pilot,
+                modal,
+                name=name,
+                local_id=ids[key],
+            )
+            assert modal._decoded is not None
+            assert modal._decoded.state == expected_state
+            assert not modal.query(PromptBlockEditor)
+            compatibility = str(
+                modal.query_one("#console-prompts-compatibility", Static).renderable
+            )
+            assert expected_state in compatibility
+            system = modal.query_one("#console-prompts-compat-system", TextArea)
+            user = modal.query_one("#console-prompts-compat-user", TextArea)
+            convert = modal.query_one("#console-prompts-convert", Button)
+            assert system.read_only and user.read_only
+            assert convert.label == "Convert and save as new"
+            assert convert.disabled is False
+            assert gateway.auxiliary_calls == 0
+            assert db.fetch_prompt_details(ids[key]) == before_record
+            case_observation = {
+                "normalized_row_verified": True,
+                "definition_state": expected_state,
+                "read_only": True,
+                "convert_enabled": True,
+                "model_calls": 0,
+                "record_unchanged": True,
+            }
+            if key == "malformed":
+                _capture(
+                    app,
+                    "140x40-malformed-compatibility.svg",
+                    "Prompt Workbench malformed structured compatibility",
+                    forbidden,
+                )
+                convert.press()
+                await _wait(
+                    pilot,
+                    lambda: bool(modal.query(PromptBlockEditor)),
+                    label="malformed compatibility conversion working copy",
+                )
+                converted = modal.query_one(PromptBlockEditor)
+                assert modal.state.working_copy_unsaved
+                assert converted.query_one(
+                    "#prompt-editor-update-original", Button
+                ).disabled
+                assert not converted.query_one(
+                    "#prompt-editor-save-prompt", Button
+                ).disabled
+                assert converted.query_one("#prompt-editor-apply", Button).disabled
+                case_observation.update(
+                    {
+                        "converted_to_unsaved_copy": True,
+                        "update_original_disabled": True,
+                        "save_as_new_enabled": True,
+                        "apply_guarded_until_saved": True,
+                    }
+                )
+            observed["compatibility"][key] = case_observation
+
+        assert gateway.auxiliary_calls == 0
+        assert gateway.stream_calls == 0
+    return observed
+
+
+async def _capture_block_edit_and_system_apply(
+    service: Any,
+    ids: dict[str, int],
+    forbidden: tuple[str, ...],
+) -> dict[str, Any]:
+    """Edit/reorder/validate real blocks, then opt into atomic lane Apply."""
+
+    gateway = DeterministicGateway()
+    app = _build_test_app(configured_default="chat")
+    _configure_app(app, service, gateway)
+    observed: dict[str, Any] = {}
+    async with _run_test(app, size=(140, 40)) as pilot:
+        console = await _console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Original unsent user draft.")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        store.set_session_system_prompt(session_id, "Original live System prompt.")
+        staged_attachment = PendingAttachment(
+            file_path="qa-evidence.txt",
+            display_name="QA evidence.txt",
+            file_type="text",
+            insert_mode="attachment",
+            text_content="This staged attachment must remain untouched.",
+            original_size=46,
+            processed_size=46,
+        )
+        assert store.add_pending_attachment(session_id, staged_attachment)
+        messages_before = tuple(store.messages_for_session(session_id))
+        attachments_before = tuple(store.pending_attachments(session_id))
+
+        console._open_console_prompts_modal()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="block edit Prompt modal",
+        )
+        modal = app.screen_stack[-1]
+        await _wait(
+            pilot,
+            lambda: bool(modal.query(".console-prompts-result")),
+            label="block edit Browse rows",
+        )
+        row = await _open_named_artifact(
+            pilot,
+            modal,
+            name="Structured answer prompt",
+            local_id=ids["block_prompt"],
+        )
+        editor = modal.query_one(PromptBlockEditor)
+        assert modal._decoded is not None
+        assert modal._decoded.state == "supported_v2"
+        assert row["definition_state"] == "supported_v2"
+
+        goal = editor.query_one("#prompt-block-content-goal", TextArea)
+        goal.cursor_location = (0, 8)
+        goal.focus()
+        await pilot.pause()
+        goal_identity = id(goal)
+        goal_cursor = goal.cursor_location
+        await editor._change_field(
+            "role",
+            "content",
+            "Be exact, concise, and cite the available evidence.",
+        )
+        await pilot.pause()
+        same_goal = editor.query_one("#prompt-block-content-goal", TextArea)
+        assert same_goal is goal
+        assert id(same_goal) == goal_identity
+        assert same_goal.cursor_location == goal_cursor
+        assert app.focused is same_goal
+
+        editor.query_one("#prompt-block-move-up-output", Button).press()
+        await pilot.pause()
+        same_goal = editor.query_one("#prompt-block-content-goal", TextArea)
+        assert same_goal is goal
+        assert same_goal.cursor_location == goal_cursor
+        assert app.focused is same_goal
+        assert [block.id for block in editor.state.definition.lanes[1].blocks] == [
+            "output",
+            "goal",
+        ]
+
+        await editor._change_field("output", "xml_tag", "bad tag")
+        await pilot.pause()
+        assert editor.state.issues
+        assert "Invalid" in str(
+            editor.query_one("#prompt-editor-validation", Static).renderable
+        )
+        assert editor.query_one("#prompt-editor-apply", Button).disabled
+        assert editor.query_one("#prompt-editor-save-prompt", Button).disabled
+        assert editor.query_one("#prompt-block-content-goal", TextArea) is goal
+        assert app.focused is goal
+        _capture(
+            app,
+            "140x40-block-validation.svg",
+            "Prompt Workbench block validation and recovery",
+            forbidden,
+        )
+
+        await editor._change_field("output", "xml_tag", "result")
+        await pilot.pause()
+        assert not editor.state.issues
+        assert "Valid" in str(
+            editor.query_one("#prompt-editor-validation", Static).renderable
+        )
+        assert editor.query_one("#prompt-block-content-goal", TextArea) is goal
+        assert goal.cursor_location == goal_cursor
+        assert app.focused is goal
+        system_checkbox = editor.query_one("#prompt-editor-apply-system", Checkbox)
+        user_checkbox = editor.query_one("#prompt-editor-apply-user", Checkbox)
+        assert system_checkbox.value is False
+        assert user_checkbox.value is True
+        system_checkbox.value = True
+        await pilot.pause()
+        assert system_checkbox.value is True
+        assert not editor.query_one("#prompt-editor-apply", Button).disabled
+        expected_system = editor.state.compiled_system
+        expected_user = editor.state.compiled_user
+        editor.query_one("#prompt-lane-system", Collapsible).collapsed = True
+        editor.query_one("#prompt-lane-user", Collapsible).collapsed = True
+        await pilot.pause()
+        system_checkbox.focus()
+        system_checkbox.scroll_visible()
+        await pilot.pause()
+        apply_button = editor.query_one("#prompt-editor-apply", Button)
+        assert system_checkbox.is_on_screen, (
+            system_checkbox.region,
+            system_checkbox.virtual_region,
+        )
+        assert user_checkbox.is_on_screen, (
+            user_checkbox.region,
+            user_checkbox.virtual_region,
+        )
+        assert apply_button.is_on_screen, (
+            apply_button.region,
+            apply_button.virtual_region,
+        )
+        footer_observation = _assert_apply_footer_painted(editor)
+        _capture(
+            app,
+            "140x40-system-user-apply-ready.svg",
+            "Prompt Workbench optional System and User Apply ready",
+            forbidden,
+        )
+
+        auxiliary_before = gateway.auxiliary_calls
+        stream_before = gateway.stream_calls
+        editor.query_one("#prompt-editor-apply", Button).press()
+        await _wait(
+            pilot,
+            lambda: app.screen_stack[-1] is console,
+            label="optional System and User Apply completion",
+        )
+        live_settings = console._ensure_active_console_session_settings()
+        assert live_settings.system_prompt == expected_system
+        assert composer.draft_text() == expected_user
+        assert store.session_draft(session_id) == expected_user
+        assert tuple(store.messages_for_session(session_id)) == messages_before
+        assert tuple(store.pending_attachments(session_id)) == attachments_before
+        assert gateway.auxiliary_calls == auxiliary_before == 0
+        assert gateway.stream_calls == stream_before == 0
+        assert store.persistence is None
+        observed["block_editor"] = {
+            "normalized_row_verified": True,
+            "edited": True,
+            "reordered": True,
+            "validation_introduced": True,
+            "validation_resolved": True,
+            "sibling_widget_identity_retained": True,
+            "cursor_retained": True,
+            "focus_retained": True,
+        }
+        observed["optional_system_apply"] = {
+            "system_default_off": True,
+            "user_default_on": True,
+            "system_opted_in": True,
+            "compiled_system_applied": True,
+            "compiled_user_applied": True,
+            "persistence_outcome": "not_required_success",
+            "transcript_unchanged": True,
+            "attachments_unchanged": True,
+            "normal_send_calls": 0,
+            "auxiliary_calls": 0,
+            "visible_footer": footer_observation,
+        }
+        _capture(
+            app,
+            "140x40-system-user-applied.svg",
+            "Console after optional System and User Prompt Apply",
+            forbidden,
+        )
+    return observed
+
+
+async def _capture_provider_unavailable_improve(
+    service: Any,
+    forbidden: tuple[str, ...],
+) -> dict[str, Any]:
+    """Resolve a real unavailable model target and exercise its recovery route."""
+
+    gateway = DeterministicGateway()
+    gateway.provider_unavailable = True
+    app = _build_test_app(configured_default="chat")
+    _configure_app(app, service, gateway)
+    observed: dict[str, Any] = {}
+    async with _run_test(app, size=(140, 40)) as pilot:
+        console = await _console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft a useful answer.")
+        console._open_console_prompts_modal()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="provider-unavailable Prompt modal",
+        )
+        modal = app.screen_stack[-1]
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-improve")),
+            label="provider-unavailable Browse",
+        )
+        modal.query_one("#console-prompts-improve", Button).press()
+        await _wait(
+            pilot,
+            lambda: (
+                modal.state.mode == "improve"
+                and bool(modal.query("#console-prompts-auto-improve"))
+            ),
+            label="provider-unavailable Improve state",
+        )
+        auto = modal.query_one("#console-prompts-auto-improve", Button)
+        review = modal.query_one("#console-prompts-review-improve", Button)
+        status = str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        assert auto.disabled and review.disabled
+        assert "unavailable" in status.lower()
+        assert "qa provider" in status.lower()
+        assert gateway.resolution_calls == 1
+        assert gateway.auxiliary_calls == 0
+        _capture(
+            app,
+            "140x40-provider-unavailable-improve.svg",
+            "Prompt Workbench provider unavailable Improve state",
+            forbidden,
+        )
+
+        modal.query_one("#console-prompts-back", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-configure-provider")),
+            label="provider recovery control",
+        )
+        configure = modal.query_one("#console-prompts-configure-provider", Button)
+        assert configure.disabled is False
+        browse_status = str(
+            modal.query_one("#console-prompts-model-status", Static).renderable
+        )
+        assert "Model improvement unavailable" in browse_status
+        configure.press()
+        await _wait(
+            pilot,
+            lambda: bool(app.screen_stack[-1].query("#console-settings-modal")),
+            label="provider recovery settings modal",
+        )
+        assert gateway.auxiliary_calls == 0
+        assert gateway.stream_calls == 0
+        observed = {
+            "resolution_calls": gateway.resolution_calls,
+            "auxiliary_calls": 0,
+            "normal_send_calls": 0,
+            "improve_actions_disabled": True,
+            "actionable_unavailable_copy": True,
+            "configure_control_enabled": True,
+            "configure_opened_console_settings": True,
+            "distinct_from_server_source_unavailable": True,
+        }
+    return observed
+
+
 async def _capture_responsive_surfaces(
     size: tuple[int, int], service: Any, forbidden: tuple[str, ...]
 ) -> dict[str, Any]:
@@ -400,7 +964,6 @@ async def _capture_responsive_surfaces(
     async with _run_test(app, size=size) as pilot:
         console = await _console(app, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.insert_text("Draft a useful answer.")
         store = console._ensure_console_chat_store()
         store.set_session_system_prompt(store.active_session_id, "Be concise.")
 
@@ -415,6 +978,16 @@ async def _capture_responsive_surfaces(
         assert "console-attach-context" not in visible_ids
         assert "console-save-chatbook" not in visible_ids
         assert not console.query("#console-control-prompts")
+        assert set(visible_ids) == {
+            "console-composer-collapse",
+            "console-composer-menu",
+            "console-send-message",
+            "console-dictation",
+        }, visible_ids
+        observed["entry_point"] = "composer_hamburger"
+        observed["top_control_prompts_absent"] = True
+        observed["idle_composer_controls"] = visible_ids
+        composer.insert_text("Draft a useful answer.")
 
         composer.query_one("#console-composer-menu", Button).press()
         await _wait(
@@ -433,6 +1006,7 @@ async def _capture_responsive_surfaces(
             else action_ids
         )
         assert normal[:3] == ["prompts", "attach-context", "save-chatbook"]
+        observed["prompts_first_normal_menu_item"] = True
         observed["menu_order"] = action_ids
         _capture(
             app,
@@ -529,6 +1103,17 @@ async def _capture_responsive_surfaces(
             label="Filled Prompt mandatory review",
         )
         editor = modal.query_one(PromptBlockEditor)
+        await _wait(
+            pilot,
+            lambda: (
+                editor.query_one("#prompt-editor-apply-system", Checkbox).region.width
+                > 0
+                and editor.query_one("#prompt-editor-apply-user", Checkbox).region.width
+                > 0
+            ),
+            label=f"Filled Prompt Apply footer at {prefix}",
+        )
+        observed["visible_apply_footer"] = _assert_apply_footer_painted(editor)
         mapped = editor.state.definition.lanes[1].blocks[-1]
         assert mapped.id == "additional-context"
         assert mapped.content == gateway.response_canary
@@ -661,8 +1246,13 @@ async def _exercise_improvement_states(
         observed["auto_success_undo"] = True
 
         composer.clear_draft()
-        composer.insert_text("Summarize {{ACCOUNT_ID}} without changing the token.")
+        inline_body = "QA protected inline body that must never reach the model"
+        inline_label = "qa-private-inline.txt"
+        composer.insert_text("Summarize the protected source: ")
+        composer.insert_file_segment(inline_body, inline_label)
+        composer.insert_text(" Return only a concise conclusion.")
         veto_before = composer.capture_draft_snapshot()
+        gateway.drop_protected_tokens = True
         console._open_console_prompts_modal()
         await _wait(
             pilot,
@@ -687,11 +1277,126 @@ async def _exercise_improvement_states(
             modal.query_one("#console-prompts-improvement-status", Static).renderable
         )
         assert status == "Review required before applying"
-        observed["preservation_veto_review"] = True
+        assert len(gateway.observed_placeholders) == 1
+        protected_token = next(iter(gateway.observed_placeholders))
+        assert protected_token in gateway.last_source_prompt
+        assert inline_body not in gateway.last_source_prompt
+        assert inline_label not in gateway.last_source_prompt
+        candidate = modal.query_one("#console-prompts-review-user", TextArea)
+        assert protected_token not in candidate.text
+        assert inline_body not in candidate.text
+        assert inline_label not in candidate.text
+        modal.query_one("#console-prompts-review-apply", Button).press()
+        await _wait(
+            pilot,
+            lambda: (
+                "Protected prompt material changed"
+                in str(
+                    modal.query_one(
+                        "#console-prompts-improvement-status", Static
+                    ).renderable
+                )
+            ),
+            label="protected inline-file Apply veto",
+        )
+        after_blocked_apply = composer.capture_draft_snapshot()
+        assert after_blocked_apply == veto_before
+        protected_segments = [
+            segment
+            for segment in after_blocked_apply.segments
+            if segment.origin == "inline_file"
+        ]
+        assert len(protected_segments) == 1
+        assert protected_segments[0].text == inline_body
+        assert protected_segments[0].label == inline_label
+        observed["protected_inline_file_veto"] = {
+            "generic_review_required_copy": True,
+            "apply_blocked": True,
+            "placeholder_round_trip_guarded": True,
+            "protected_segment_retained": True,
+            "provider_received_no_inline_body_or_label": True,
+            "composer_unchanged": True,
+        }
         _capture(
             app,
-            "140x40-preservation-review.svg",
-            "Prompt Workbench preservation Review",
+            "140x40-protected-inline-review-blocked.svg",
+            "Prompt Workbench protected inline-file Review veto",
+            (*forbidden, inline_body, inline_label, protected_token),
+        )
+        await _close_modal(pilot, modal)
+        gateway.drop_protected_tokens = False
+
+        composer.clear_draft()
+        composer.insert_text("Draft a useful answer.")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        store.set_session_system_prompt(session_id, "Captured System prompt.")
+        gateway.hold_next = True
+        gateway.started.clear()
+        gateway.release.clear()
+        calls_before_stale = gateway.auxiliary_calls
+        console._open_console_prompts_modal()
+        await _wait(
+            pilot,
+            lambda: isinstance(app.screen_stack[-1], ConsolePromptsModal),
+            label="stale-result Prompt modal",
+        )
+        modal = app.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-auto-improve")),
+            label="stale-result Improve mode",
+        )
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await gateway.started.wait()
+        composer.insert_text(" Live user edit while waiting.")
+        store.set_session_system_prompt(session_id, "Live System edit while waiting.")
+        stale_live_draft = composer.capture_draft_snapshot()
+        messages_before_stale_release = tuple(store.messages_for_session(session_id))
+        attachments_before_stale_release = tuple(store.pending_attachments(session_id))
+        gateway.release.set()
+        await _wait(
+            pilot,
+            lambda: bool(modal.query("#console-prompts-review-user")),
+            label="stale result Review state",
+        )
+        stale_status = str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        assert "System prompt changed" in stale_status
+        assert composer.capture_draft_snapshot() == stale_live_draft
+        assert (
+            console._ensure_active_console_session_settings().system_prompt
+            == "Live System edit while waiting."
+        )
+        assert (
+            tuple(store.messages_for_session(session_id))
+            == messages_before_stale_release
+        )
+        assert (
+            tuple(store.pending_attachments(session_id))
+            == attachments_before_stale_release
+        )
+        assert gateway.auxiliary_calls == calls_before_stale + 1
+        await pilot.pause()
+        assert gateway.auxiliary_calls == calls_before_stale + 1
+        assert gateway.stream_calls == 0
+        observed["stale_in_flight_result"] = {
+            "live_draft_retained": True,
+            "live_system_retained": True,
+            "review_state_mounted": True,
+            "actionable_stale_copy": True,
+            "partial_apply": False,
+            "extra_provider_calls": 0,
+            "transcript_unchanged": True,
+            "attachments_unchanged": True,
+        }
+        _capture(
+            app,
+            "140x40-stale-result-review.svg",
+            "Prompt Workbench stale in-flight result Review",
             forbidden,
         )
         await _close_modal(pilot, modal)
@@ -968,7 +1673,7 @@ async def main() -> None:
     )
     generic_forbidden: tuple[str, ...] = ()
     observations: dict[str, Any] = {
-        "chatbook_head": "12acb277751ebd3985b768ff8a66605da3ae3818",
+        "chatbook_head": "b856795415cb8f8f6abf9eafeb2f73a7a6bae908",
         "profile_shape": "<temporary-root>/console-prompt-improvement-qa-*/",
         "seeded_rows": len(ids),
         "sizes": [],
@@ -980,6 +1685,30 @@ async def main() -> None:
                 observations["sizes"].append(
                     await _capture_responsive_surfaces(size, service, generic_forbidden)
                 )
+        if stage in {"all", "artifacts"}:
+            observations[
+                "artifact_live"
+            ] = await _capture_artifact_compatibility_states(
+                service,
+                db,
+                ids,
+                generic_forbidden,
+            )
+        if stage in {"all", "blocks"}:
+            observations[
+                "block_apply_live"
+            ] = await _capture_block_edit_and_system_apply(
+                service,
+                ids,
+                generic_forbidden,
+            )
+        if stage in {"all", "provider"}:
+            observations[
+                "provider_unavailable_live"
+            ] = await _capture_provider_unavailable_improve(
+                service,
+                generic_forbidden,
+            )
         if stage in {"all", "improvement"}:
             observations["improvement"] = await _exercise_improvement_states(
                 service, generic_forbidden

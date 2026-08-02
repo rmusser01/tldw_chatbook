@@ -1,4 +1,76 @@
 {
+  "artifact_live": {
+    "compatibility": {
+      "future": {
+        "convert_enabled": true,
+        "definition_state": "unsupported",
+        "model_calls": 0,
+        "normalized_row_verified": true,
+        "read_only": true,
+        "record_unchanged": true
+      },
+      "malformed": {
+        "apply_guarded_until_saved": true,
+        "convert_enabled": true,
+        "converted_to_unsaved_copy": true,
+        "definition_state": "malformed",
+        "model_calls": 0,
+        "normalized_row_verified": true,
+        "read_only": true,
+        "record_unchanged": true,
+        "save_as_new_enabled": true,
+        "update_original_disabled": true
+      },
+      "mismatched": {
+        "convert_enabled": true,
+        "definition_state": "mismatched",
+        "model_calls": 0,
+        "normalized_row_verified": true,
+        "read_only": true,
+        "record_unchanged": true
+      }
+    },
+    "legacy": {
+      "conservative_lane_origins_retained": true,
+      "definition_state": "legacy",
+      "editable": true,
+      "model_calls": 0,
+      "normalized_row_verified": true
+    }
+  },
+  "block_apply_live": {
+    "block_editor": {
+      "cursor_retained": true,
+      "edited": true,
+      "focus_retained": true,
+      "normalized_row_verified": true,
+      "reordered": true,
+      "sibling_widget_identity_retained": true,
+      "validation_introduced": true,
+      "validation_resolved": true
+    },
+    "optional_system_apply": {
+      "attachments_unchanged": true,
+      "auxiliary_calls": 0,
+      "compiled_system_applied": true,
+      "compiled_user_applied": true,
+      "normal_send_calls": 0,
+      "persistence_outcome": "not_required_success",
+      "system_default_off": true,
+      "system_opted_in": true,
+      "transcript_unchanged": true,
+      "user_default_on": true,
+      "visible_footer": {
+        "action_buttons_do_not_overlap_or_clip": true,
+        "lane_and_action_rows_do_not_overlap": true,
+        "stacked_footer": true,
+        "system_checkbox_full_label_visible": true,
+        "system_checkbox_glyph_visible": true,
+        "user_checkbox_full_label_visible": true,
+        "user_checkbox_glyph_visible": true
+      }
+    }
+  },
   "canary_audit": {
     "counts": {
       "block": 0,
@@ -19,7 +91,7 @@
     ],
     "provider_calls": 1
   },
-  "chatbook_head": "12acb277751ebd3985b768ff8a66605da3ae3818",
+  "chatbook_head": "b856795415cb8f8f6abf9eafeb2f73a7a6bae908",
   "guards_library": {
     "foreign_v1_guard": true,
     "library_save_conflict": true,
@@ -29,14 +101,48 @@
     "auto_success_undo": true,
     "cancel_late_discard": true,
     "no_change": true,
-    "preservation_veto_review": true
+    "protected_inline_file_veto": {
+      "apply_blocked": true,
+      "composer_unchanged": true,
+      "generic_review_required_copy": true,
+      "placeholder_round_trip_guarded": true,
+      "protected_segment_retained": true,
+      "provider_received_no_inline_body_or_label": true
+    },
+    "stale_in_flight_result": {
+      "actionable_stale_copy": true,
+      "attachments_unchanged": true,
+      "extra_provider_calls": 0,
+      "live_draft_retained": true,
+      "live_system_retained": true,
+      "partial_apply": false,
+      "review_state_mounted": true,
+      "transcript_unchanged": true
+    }
   },
   "profile_shape": "<temporary-root>/console-prompt-improvement-qa-*/",
-  "seeded_rows": 12,
+  "provider_unavailable_live": {
+    "actionable_unavailable_copy": true,
+    "auxiliary_calls": 0,
+    "configure_control_enabled": true,
+    "configure_opened_console_settings": true,
+    "distinct_from_server_source_unavailable": true,
+    "improve_actions_disabled": true,
+    "normal_send_calls": 0,
+    "resolution_calls": 1
+  },
+  "seeded_rows": 13,
   "sizes": [
     {
       "browse_page": "Page 1 of 2",
+      "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
+      "idle_composer_controls": [
+        "console-composer-collapse",
+        "console-composer-menu",
+        "console-send-message",
+        "console-dictation"
+      ],
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
@@ -48,14 +154,32 @@
         "narrate-conversation",
         "impersonate"
       ],
+      "prompts_first_normal_menu_item": true,
       "recipe_blocks": 10,
       "recipe_save_recovered_after_mapped_context_delete": true,
       "server_retry": true,
-      "size": "140x40"
+      "size": "140x40",
+      "top_control_prompts_absent": true,
+      "visible_apply_footer": {
+        "action_buttons_do_not_overlap_or_clip": true,
+        "lane_and_action_rows_do_not_overlap": true,
+        "stacked_footer": true,
+        "system_checkbox_full_label_visible": true,
+        "system_checkbox_glyph_visible": true,
+        "user_checkbox_full_label_visible": true,
+        "user_checkbox_glyph_visible": true
+      }
     },
     {
       "browse_page": "Page 1 of 2",
+      "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
+      "idle_composer_controls": [
+        "console-composer-collapse",
+        "console-composer-menu",
+        "console-send-message",
+        "console-dictation"
+      ],
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
@@ -67,13 +191,31 @@
         "narrate-conversation",
         "impersonate"
       ],
+      "prompts_first_normal_menu_item": true,
       "recipe_blocks": 10,
       "recipe_save_recovered_after_mapped_context_delete": true,
-      "size": "100x30"
+      "size": "100x30",
+      "top_control_prompts_absent": true,
+      "visible_apply_footer": {
+        "action_buttons_do_not_overlap_or_clip": true,
+        "lane_and_action_rows_do_not_overlap": true,
+        "stacked_footer": true,
+        "system_checkbox_full_label_visible": true,
+        "system_checkbox_glyph_visible": true,
+        "user_checkbox_full_label_visible": true,
+        "user_checkbox_glyph_visible": true
+      }
     },
     {
       "browse_page": "Page 1 of 2",
+      "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
+      "idle_composer_controls": [
+        "console-composer-collapse",
+        "console-composer-menu",
+        "console-send-message",
+        "console-dictation"
+      ],
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
@@ -85,9 +227,20 @@
         "narrate-conversation",
         "impersonate"
       ],
+      "prompts_first_normal_menu_item": true,
       "recipe_blocks": 10,
       "recipe_save_recovered_after_mapped_context_delete": true,
-      "size": "80x24"
+      "size": "80x24",
+      "top_control_prompts_absent": true,
+      "visible_apply_footer": {
+        "action_buttons_do_not_overlap_or_clip": true,
+        "lane_and_action_rows_do_not_overlap": true,
+        "stacked_footer": true,
+        "system_checkbox_full_label_visible": true,
+        "system_checkbox_glyph_visible": true,
+        "user_checkbox_full_label_visible": true,
+        "user_checkbox_glyph_visible": true
+      }
     }
   ]
 }
