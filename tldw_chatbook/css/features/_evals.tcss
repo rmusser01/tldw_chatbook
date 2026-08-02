@@ -820,3 +820,148 @@
     overflow-y: auto;
     height: auto;
 }
+
+/* Task 3 (task-1691 phase 2): the character card picker (`card_picker.py`).
+   `.evals-card-picker` -- not a bare `CardPicker` type selector; no editor
+   widget in this whole file uses one -- so this reaches the widget however
+   Task 4's bench editor mounts it (its own `id=` is caller-supplied, not
+   fixed, per `card_picker.py`'s own module docstring).
+
+   `height: auto`, overriding `Vertical`'s own DEFAULT_CSS `height: 1fr`:
+   the picker must size to its OWN content (the search box's one row plus
+   the row list's bounded `max-height` below), not claim an arbitrary `1fr`
+   share of whatever eventually hosts it -- same convention as
+   `#evals-bench-targets-section`'s own `height: auto` above, and for the
+   same reason: a sibling control below it (Task 4's Add/Cancel) must get
+   whatever room it needs, not be squeezed by this widget silently growing
+   to fill unclaimed space it does not actually use. */
+.evals-card-picker {
+    height: auto;
+}
+
+/* The row list itself. Bounded AND independently scrollable -- up to 500
+   cards (`evals_state.py`'s own `_LIST_LIMIT`, the read this widget's rows
+   are built from) must remain individually reachable by scrolling, never
+   silently clipped: `Vertical`'s DEFAULT_CSS is `overflow: hidden hidden`,
+   which would otherwise make every row past whatever fits the bounded box
+   permanently unreachable by any means (not merely off-screen -- there
+   would be no scrollbar and no scroll action to reach it), the same
+   "vanished, not merely clipped" failure `#evals-bench-probes-preview`
+   above already guards its own list against. `max-height: 10` mirrors that
+   rule's own `max-height: 6` (scaled up: a card list is the picker's
+   entire reason to exist, so it gets more of the picker's own budget than
+   a read-only probe preview gets of the bench editor's). */
+#evals-card-picker-rows {
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+}
+
+.evals-card-row {
+    width: 100%;
+}
+
+/* Task 4 (task-1691 phase 2): the character bench editor
+   (character_bench_editor.py). Mirrors #evals-bench-editor's own
+   single-scroll-level contract above: this widget is the SOLE selection-
+   kind-specific child of #evals-detail-pane (a real bounded `height: 100%`
+   from _lab.tcss, not an ambiguous `auto` ancestor -- see
+   #evals-inspector-bench's own long comment above for the parent-chain
+   distinction that DOES need `height: auto`, which does not apply here),
+   with nothing after it to starve -- so plain `overflow-y: auto` on
+   Vertical's own default `1fr` height is enough, the same pairing
+   #evals-bench-editor itself uses. Confirmed live via
+   test_evals_character_bench_editor.py's own
+   test_save_stays_hit_testable_at_realistic_sizes, at both 160x45 and
+   235x52, and via test_a_card_past_the_row_cap_is_reachable_inside_the_
+   editors_own_scroll for the CardPicker nested-scroll case specifically
+   (Task 3's own `#evals-card-picker-rows` bounded `max-height: 10` list,
+   mounted one level down inside this widget's own scroll -- proven not to
+   strand a row past the fold, not merely assumed to compose cleanly). */
+#evals-character-bench-editor {
+    overflow-y: auto;
+}
+
+.evals-cb-field-label {
+    text-style: bold;
+    color: $ds-text-primary;
+    margin-bottom: 0;
+}
+
+#evals-cb-name,
+#evals-cb-description,
+#evals-cb-samples,
+#evals-cb-seed,
+#evals-cb-temperature,
+#evals-cb-max-tokens {
+    margin-bottom: 1;
+}
+
+#evals-cb-probe-set {
+    margin-bottom: 1;
+}
+
+/* The read-only ␣/⏎-marker probe listing -- one line per probe (see
+   character_bench_editor.py's `_probe_preview_text`). Bounded and
+   independently scrollable, mirroring `#evals-bench-probes-preview`'s own
+   precedent for the identical reason: a probe set with many probes must
+   not itself push the card picker/targets/sampler fields and Save/Revert
+   further than a scroll of `#evals-character-bench-editor` itself can
+   reach. */
+#evals-cb-probes {
+    height: auto;
+    max-height: 6;
+    overflow-y: auto;
+    margin-bottom: 1;
+}
+
+.evals-cb-target-row {
+    width: 100%;
+}
+
+#evals-cb-targets-empty {
+    color: $ds-text-muted;
+    margin-bottom: 1;
+}
+
+#evals-cb-form-error {
+    margin-bottom: 1;
+}
+
+#evals-cb-form-actions {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#evals-cb-form-actions Button {
+    margin: 0 1 0 0;
+}
+
+/* Whole-branch review Important 2 (task-1691 phase 2 fix round):
+   `ProbeSetDetail` (character_bench_editor.py) -- a bare probe-set
+   dataset selected directly from the rail. Same parent-chain shape as
+   `#evals-classic-detail` (see that selector's own long comment above):
+   the sole selection-kind-specific child of `#evals-detail-pane` (a real
+   bounded `height: 100%`, never an ambiguous `auto` ancestor), with
+   nothing after it to starve -- so this does not share `EvalsInspector`'s
+   bug either, but the rule is kept for the same established precedent
+   that comment already documents. */
+#evals-probeset-detail {
+    overflow-y: auto;
+}
+
+#evals-probeset-detail-count {
+    margin-bottom: 1;
+}
+
+/* Mirrors `#evals-cb-probes` exactly -- the identical bounded,
+   independently-scrollable ␣/⏎-marker listing, built by the same shared
+   `_probe_listing_widget` helper, just under a different id so both
+   widgets can exist in the same screen across a selection change without
+   colliding. */
+#evals-probeset-detail-probes {
+    height: auto;
+    max-height: 6;
+    overflow-y: auto;
+    margin-bottom: 1;
+}

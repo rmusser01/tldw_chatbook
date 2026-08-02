@@ -894,6 +894,12 @@ def test_never_run_bench_renders_unpreflighted_state(evals_db, never_run_bench):
     screen._selection = EvalsSelection(kind="bench", id=never_run_bench)
     screen._bench_run_running = False
     screen._sample_bench_running = False
+    # task-1691 phase 2 Task 6: `_primary_action_state`'s in-flight branch
+    # now cross-checks a THIRD flag (the character-bench run worker) --
+    # this bare `object.__new__` construction bypasses `__init__` entirely
+    # (by design, to exercise `_primary_action_state` without the Textual
+    # app machinery), so every flag it reads must be set by hand here too.
+    screen._character_bench_run_running = False
 
     label, disabled, tooltip = screen._primary_action_state()
 

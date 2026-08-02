@@ -26,7 +26,7 @@ selection-driven recompose safe here.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -35,7 +35,23 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.Chat_Functions import chat_api_call
 from ...DB.Evals_DB import ConflictError, EvalsDB
+from ...Evals.character_probe.cards import snapshot_cards
+from ...Evals.character_probe.models import CharacterProbeConfig
+from ...Evals.character_probe.runner import (
+    CancelToken as CharacterCancelToken,
+    ChatCallable,
+    CharacterProbeRunner,
+)
+from ...Evals.character_probe.storage import (
+    create_probe_run_group,
+    is_probe_set,
+    load_character_bench,
+    load_probe_set,
+    save_character_bench,
+    save_conversations,
+)
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
@@ -43,8 +59,9 @@ from ...Evals.word_bench.storage import _unique_name, duplicate_bench
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
+from ..Evals.character_bench_editor import CharacterBenchEditor, ProbeSetDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
-from ..Evals.inspector import EvalsCellInspector, EvalsInspector
+from ..Evals.inspector import CharacterBenchEstimate, EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Evals.results_grid import ResultsGrid
 from ..Evals.snippet_editor import SnippetEditor
@@ -54,6 +71,125 @@ from .lab_frame import LabScreen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+
+
+def _extract_chat_reply_text(response: Any) -> str:
+    """The generated text out of one ``chat_api_call(streaming=False)`` reply.
+
+    ``chat_api_call`` is a thin dispatcher: for a non-streaming call it
+    returns whatever its provider handler returns verbatim, and llama.cpp's
+    handler (``chat_with_llama`` -> ``_chat_with_openai_compatible_local_
+    server``) returns the raw, already-JSON-decoded OpenAI-shaped response
+    body -- never pre-extracted text. This is the one place that extraction
+    happens for a character probe run.
+
+    Per ``character_probe.models.ConversationTurn``'s own docstring, a
+    reply that legitimately generated NO content (``message.content`` is
+    ``""`` or ``None``) must become ``""``, not an error -- "the model said
+    nothing" is a real, recordable observation this eval exists to surface.
+    Anything else that does not have the expected shape (no ``choices``, a
+    non-mapping ``message``, ...) raises instead: that is a genuine
+    extraction failure, and ``CharacterProbeRunner._run_conversation``
+    already catches it per-turn and records it as that conversation's own
+    ``error`` -- silently degrading it to ``""`` here would misrepresent a
+    real failure as an empty-but-successful reply.
+
+    Args:
+        response: Whatever ``chat_api_call`` returned.
+
+    Returns:
+        str: The generated text, or ``""`` for a legitimately contentless
+        reply.
+
+    Raises:
+        ValueError: If ``response`` carries no usable
+            ``choices[0].message.content`` at all.
+    """
+    if isinstance(response, str):
+        return response
+    if isinstance(response, Mapping):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            message = first.get("message") if isinstance(first, Mapping) else None
+            if isinstance(message, Mapping):
+                content = message.get("content")
+                if content is None or isinstance(content, str):
+                    return content or ""
+    raise ValueError(
+        f"llama.cpp chat response had no usable message content: {response!r}"
+    )
+
+
+def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> ChatCallable:
+    """Production ``ChatCallable``: a real call through the app's normal
+    chat path (``Chat_Functions.chat_api_call``), per the design spec's own
+    "Execution" section ("multi-turn messages in, text out, real sampler,
+    no logprobs").
+
+    **Hardcoded to ``api_endpoint="llama_cpp"``, deliberately narrow, not
+    general** -- mirrors ``sample_bench.py``'s own "why the target
+    resolution is narrow, not general" rationale for the identical reason:
+    ``ChatCallable``'s shape (``chat_fn(messages, model, temperature,
+    max_tokens, seed)``) carries no ``provider`` argument -- the runner
+    calls this SAME callable for every target in the run, keyed only by
+    ``model=``, so this factory must commit to one provider up front rather
+    than branching per call on information it is never given. Every
+    character-bench target reachable through this app's own UI today is a
+    ``llama_cpp`` row: ``CharacterBenchEditor`` (Task 4) has no Add-target
+    control, so ``target_ids`` is populated ONLY at bench creation, via
+    ``sample_bench.resolve_unsteered_llama_cpp_target`` -- an llama.cpp-
+    only resolution, like the one-click sample bench's own (see
+    ``_on_new_character_bench_requested``'s own docstring for why it is a
+    DIFFERENT function, not the same one). Inventing a
+    per-provider dispatch here for targets this app can never actually
+    create would be exactly the kind of fabrication ``sample_bench.py``'s
+    own module docstring already rules out for the identical reason.
+
+    ``chat_api_call``/``chat_with_llama`` resolve the endpoint URL, API
+    key, and any config-level model default themselves, from the SAME live
+    runtime config snapshot every other real chat call in this app reads
+    (``get_runtime_config_snapshot()``) -- unlike ``sample_bench.py``'s raw
+    ``WordBenchCaptureClient``, this factory needs no ``app_config``
+    parameter of its own to thread through.
+
+    Args:
+        _config: The bench being run. Unused today (the callable it builds
+            reads temperature/max_tokens/seed from its own per-call
+            arguments, which ``CharacterProbeRunner`` already derives from
+            this same config) -- kept as a parameter so the DI seam's
+            shape (``Callable[[CharacterProbeConfig], ChatCallable]``,
+            mirroring ``_sample_bench_client_factory``'s per-target
+            callable) never has to change if a future caller needs it.
+
+    Returns:
+        ChatCallable: A plain, synchronous callable -- never a coroutine
+        function -- matching ``character_probe.runner.ChatCallable``'s own
+        contract. ``CharacterProbeRunner`` dispatches every call through
+        ``asyncio.to_thread`` itself; this factory must never wrap it in
+        anything ``async``.
+    """
+
+    def _chat(
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        seed: Optional[int],
+    ) -> str:
+        response = chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=messages,
+            model=model,
+            temp=temperature,
+            max_tokens=max_tokens,
+            seed=seed,
+            streaming=False,
+        )
+        return _extract_chat_reply_text(response)
+
+    return _chat
 
 
 class EvalsScreen(LabScreen):
@@ -68,6 +204,16 @@ class EvalsScreen(LabScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
         self._view_model = EvalsViewModel(self._resolve_db(app_instance))
+        #: The cross-database handle for character cards (``ChaChaNotes_
+        #: DB``, a different database from the ``EvalsDB`` `_view_model`
+        #: wraps -- see ``EvalsViewModel.character_cards``'s own
+        #: docstring). Resolved ONCE here, like `_view_model`'s own
+        #: ``EvalsDB`` handle just above, not re-read on every compose --
+        #: this screen never opens it itself; `app.py`'s startup wiring
+        #: (`self.chachanotes_db = ...`) already owns that. `None` when
+        #: unavailable, degrading `EvalsViewModel.character_cards` to an
+        #: empty picker rather than crashing the character-bench editor.
+        self._chacha_db: Any = self._resolve_chacha_db(app_instance)
         self._selection = EvalsSelection()
         #: Preflight resolved once per selection, not once per pane.
         #: The frame calls compose_lab_rail/compose_lab_inspector during
@@ -149,6 +295,53 @@ class EvalsScreen(LabScreen):
         #: on the worker, unlike the run-bench/sample-bench pattern this
         #: screen uses everywhere else -- is the correct guard here.
         self._bench_delete_pending: bool = False
+        #: True for the duration of one character-bench run flow -- the
+        #: character-probe sibling of ``_bench_run_running`` above, sharing
+        #: the SAME physical ``#evals-primary-action`` button (a word bench
+        #: and a character bench are never both selected at once, so the
+        #: button itself is never ambiguous, but the WORKER guards must
+        #: still cross-check every other kind: see ``_on_primary_action_
+        #: pressed`` and ``_on_sample_bench_requested``, both extended to
+        #: this THIRD flag for task-1691 phase 2 Task 6, mirroring the
+        #: exact "PR #1113 review" cross-worker race this file's other two
+        #: flags already document).
+        self._character_bench_run_running: bool = False
+        #: The character bench (``eval_tasks``) id the in-flight run worker
+        #: is running -- resolved at PRESS time (see
+        #: ``_on_primary_action_pressed``), never re-read from
+        #: ``self._selection`` inside the worker, mirroring ``_bench_run_
+        #: task_id`` exactly.
+        self._character_bench_run_task_id: Optional[str] = None
+        #: The active character-bench run's cooperative cancel token, or
+        #: ``None``. Unlike ``_bench_run_cancel_token``/``_sample_bench_
+        #: cancel_token`` above (real seams with no current reader -- no
+        #: Cancel affordance exists in this screen for ANY bench type yet),
+        #: this one IS read today, defensively, by nothing new this task
+        #: adds; kept for the same future-Cancel-button reason those two
+        #: document. A character-probe run's own cancellation contract
+        #: (``character_probe.runner``'s module docstring) additionally
+        #: differs from the word-bench one: cancelling stops SCHEDULING
+        #: further turns/conversations but cannot abort a turn already
+        #: in flight, since every provider call is dispatched through
+        #: ``asyncio.to_thread``, which survives Task cancellation.
+        self._character_bench_run_cancel_token: Optional[CharacterCancelToken] = None
+        #: DI seam for tests only -- overrides the production chat callable
+        #: (``_default_character_probe_chat_factory``, a plain synchronous
+        #: ``def`` dispatched to a real llama.cpp endpoint via
+        #: ``chat_api_call``) with a fake, mirroring ``_sample_bench_
+        #: client_factory`` above seam-for-seam EXCEPT for shape: a word
+        #: bench's client factory is called once PER TARGET (``Callable
+        #: [[Target], CaptureClientLike]``, since ``WordBenchRunner`` opens
+        #: one HTTP client per target); a character bench's factory is
+        #: called ONCE for the whole run (``Callable[[CharacterProbeConfig],
+        #: ChatCallable]``), because ``CharacterProbeRunner`` takes a single
+        #: chat callable up front and reads only ``model=`` per call -- see
+        #: ``_run_character_bench_worker``'s own docstring for why this
+        #: means every target a character bench can ever run against is
+        #: implicitly llama.cpp today. ``None`` in production.
+        self._character_probe_chat_factory: Optional[
+            Callable[[CharacterProbeConfig], ChatCallable]
+        ] = None
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -172,6 +365,21 @@ class EvalsScreen(LabScreen):
         orchestrator = getattr(app_instance, "evaluation_orchestrator", None)
         return getattr(orchestrator, "db", None)
 
+    @staticmethod
+    def _resolve_chacha_db(app_instance: object) -> Any:
+        """Find the app's real ``ChaChaNotes_DB`` handle, or ``None``.
+
+        Character cards live in a different database from the one
+        ``_resolve_db`` resolves above -- ``app.py``'s startup wiring
+        assigns the real handle to ``app_instance.chachanotes_db``
+        directly (unlike ``evaluation_orchestrator.db``, there is no
+        intermediate wrapper object to unwrap here). Mirrors the exact
+        ``getattr(self.app_instance, "chachanotes_db", None)`` convention
+        already used elsewhere in this app (e.g. ``chat_screen.py``) for
+        the same handle, rather than inventing a second lookup path.
+        """
+        return getattr(app_instance, "chachanotes_db", None)
+
     def select(self, *, kind: SelectionKind, id: Optional[str] = None) -> None:  # noqa: A002
         """Set the workbench's active selection and refresh dependent panes.
 
@@ -188,8 +396,8 @@ class EvalsScreen(LabScreen):
 
         Args:
             kind: The selected object's kind (``SelectionKind`` --
-                ``"none"``, ``"bench"``, ``"classic"``, ``"dataset"``, or
-                ``"run_group"``).
+                ``"none"``, ``"bench"``, ``"classic"``, ``"character_
+                bench"``, ``"dataset"``, or ``"run_group"``).
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
@@ -229,25 +437,45 @@ class EvalsScreen(LabScreen):
         ``select()`` (task-1482 Task 2).
 
         A THIRD, independent check overrides both branches above (task-1610):
-        if the currently mounted detail pane holds a ``BenchEditor`` whose
-        ``is_dirty()`` is ``True``, this returns ``False`` regardless of
-        selection identity -- a recompose would destroy that unsaved state
-        even when the selection itself never moved. This is deliberately
-        NOT limited to ``bench_task_id``'s own editor: the sample-bench
-        worker's sharpest case is a user parked on some OTHER bench's
-        editor (unrelated to the sample bench just created elsewhere) with
-        unsaved edits -- ``self._selection`` reads "unmoved" there (it never
-        pointed at the sample bench to begin with), but the mounted editor
-        is still real, unsaved, user state a recompose must not touch.
-        Queried defensively (``QueryError`` -> not dirty, nothing to
-        protect): most selections never mount a ``BenchEditor`` at all.
+        if the currently mounted detail pane holds a ``BenchEditor`` OR a
+        ``CharacterBenchEditor`` whose ``is_dirty()`` is ``True``, this
+        returns ``False`` regardless of selection identity -- a recompose
+        would destroy that unsaved state even when the selection itself
+        never moved. This is deliberately NOT limited to ``bench_task_id``'s
+        own editor: the sample-bench worker's sharpest case is a user
+        parked on some OTHER bench's editor (unrelated to the sample bench
+        just created elsewhere) with unsaved edits -- ``self._selection``
+        reads "unmoved" there (it never pointed at the sample bench to
+        begin with), but the mounted editor is still real, unsaved, user
+        state a recompose must not touch. Queried defensively (``QueryError``
+        -> not dirty, nothing to protect): most selections never mount
+        either editor at all, and the two are never BOTH mounted at once
+        (mutually exclusive selection kinds), so checking both costs at
+        most one real query.
+
+        task-1691 phase 2 Task 6 review round 1 (Important finding): before
+        this check covered ``CharacterBenchEditor`` too, editing a
+        character bench's field without saving, then pressing Run (a
+        SEPARATE button -- the editor stays mounted), let the completing
+        worker's own ``select(kind="run_group", ...)`` silently discard
+        the unsaved edit -- this is exactly the class of bug task-1610's
+        original ``BenchEditor``-only check was built to prevent, just
+        newly reachable because Task 6 is the first code to ever call
+        ``select()`` after a character-bench run completes.
         """
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
-            editor = self.query_one("#evals-bench-editor", BenchEditor)
+            editor: Any = self.query_one("#evals-bench-editor", BenchEditor)
         except QueryError:
             editor = None
+        if editor is None:
+            try:
+                editor = self.query_one(
+                    "#evals-character-bench-editor", CharacterBenchEditor
+                )
+            except QueryError:
+                editor = None
         if editor is not None and editor.is_dirty():
             return False
 
@@ -258,6 +486,33 @@ class EvalsScreen(LabScreen):
             if group is not None and group.get("task_id") == bench_task_id:
                 return True
         return False
+
+    def _character_run_group(self, group: Optional[Mapping[str, Any]]) -> bool:
+        """Whether a resolved run-group row (``EvalsViewModel.run_group_
+        by_id``) belongs to a CHARACTER bench rather than a word bench.
+
+        Shared by every place a ``"run_group"`` selection composes
+        something bench-type-specific: ``_compose_detail_pane`` (a neutral
+        placeholder instead of the word-bench-shaped ``ResultsGrid``) and
+        ``_register_grid_shortcuts`` below (so lens/baseline/sort/export
+        are never advertised in the footer for a run with no grid to act
+        on) -- see this task's own "the two bench types never share a
+        detail surface" constraint. Until task-1691 phase 2 Task 6 wired
+        Run for a character bench, this was unreachable: no character-
+        probe run group could ever exist to select.
+
+        Args:
+            group: A resolved row from ``run_group_by_id``, or ``None``
+                for an unresolvable/missing selection.
+
+        Returns:
+            bool: ``False`` for ``None`` (nothing to classify) or a word
+            bench's own run group; ``True`` only for a genuine
+            character-probe run group.
+        """
+        if group is None:
+            return False
+        return self._view_model.character_bench_by_id(group.get("task_id")) is not None
 
     def _register_grid_shortcuts(self) -> None:
         """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
@@ -274,8 +529,34 @@ class EvalsScreen(LabScreen):
         than driven from inside the grid widget itself, since the grid
         does not know when it stops being the active selection (its own
         unmount does not fire a footer-clearing hook).
+
+        task-1691 phase 2 Task 6: a CHARACTER-probe run group selection
+        also clears these -- ``_compose_detail_pane`` renders a plain
+        placeholder for that case, never ``ResultsGrid``, so advertising
+        grid-only keys there would advertise controls with nothing
+        mounted to act on. Classified via a single targeted
+        ``list_runs(run_group_id=..., limit=1)`` row, deliberately NOT
+        ``EvalsViewModel.run_group_by_id`` (which pivots every run in the
+        database, via ``run_groups()``, just to answer this one
+        selection's bench type) -- this method already runs on every
+        selection change, so it must stay cheap even when nothing is
+        actually selected in the "run_group" kind.
         """
-        if self._selection.kind == "run_group" and self._selection.id:
+        is_character_run = False
+        if (
+            self._selection.kind == "run_group"
+            and self._selection.id
+            and self._view_model.db is not None
+        ):
+            rows = self._view_model.db.list_runs(
+                run_group_id=self._selection.id, limit=1
+            )
+            if rows:
+                is_character_run = (
+                    self._view_model.character_bench_by_id(rows[0].get("task_id"))
+                    is not None
+                )
+        if self._selection.kind == "run_group" and self._selection.id and not is_character_run:
             self.register_footer_shortcuts(
                 source="evals-grid",
                 shortcuts=(
@@ -303,6 +584,154 @@ class EvalsScreen(LabScreen):
         does."""
         event.stop()
         self.select(kind="bench", id=event.bench_id)
+
+    @on(CharacterBenchEditor.Saved)
+    def _on_character_bench_editor_saved(
+        self, event: CharacterBenchEditor.Saved
+    ) -> None:
+        """Mirrors ``_on_bench_editor_saved`` exactly, for the character-
+        bench editor's own ``Saved`` message: re-selecting reloads the
+        form from what ``save_character_bench`` actually persisted and
+        refreshes the rail row and inspector alongside it, the same way
+        any other selection change does."""
+        event.stop()
+        self.select(kind="character_bench", id=event.bench_id)
+
+    @on(LibraryRail.NewCharacterBenchRequested)
+    def _on_new_character_bench_requested(
+        self, event: LibraryRail.NewCharacterBenchRequested
+    ) -> None:
+        """Creates a draft character-probe bench bound to the newest probe
+        set and selects it -- the character-bench mirror of
+        ``LibraryRail._create_new_bench``. Handled here rather than
+        in-widget in ``library_rail.py`` (see ``NewCharacterBenchRequested``'s
+        own docstring): a plain DB write, exactly like ``_create_new_bench``
+        -- no network call, so no worker.
+
+        **Why a target is resolved here, unlike a draft WORD bench (whose
+        ``target_ids`` starts empty and is filled in later via
+        ``BenchEditor``'s Add-target picker).** The character-bench editor
+        (task-1691 phase 2, Task 4) carries its target list through
+        verbatim with no Add/Remove control of its own -- bench creation is
+        the ONLY place ``target_ids`` is ever populated for this bench
+        type. Leaving it empty here would ship a bench with no path to
+        ever becoming runnable, so ``sample_bench.resolve_unsteered_llama_
+        cpp_target`` is called with ``create=True``: reuse an existing
+        UNSTEERED ``llama_cpp`` ``eval_models`` row if one exists, else
+        mint a fresh (also unsteered) one from the configured endpoint if
+        ``app_config`` names one -- still a plain DB write, no network call
+        (like its sibling ``resolve_sample_target``, this never dials out;
+        it only ever reads config and writes a row naming an endpoint).
+
+        **Whole-branch review Critical 1 (fix round): this deliberately
+        does NOT call ``resolve_sample_target`` -- the one-click sample
+        bench's own resolver -- even though it once did.** That function
+        reuses ``list_models(provider="llama_cpp")[0]`` -- the newest
+        ``llama_cpp`` row, whatever it is -- with no regard for its
+        ``config``, so it could just as easily hand back a row
+        ``bench_editor.py``'s "+ New target" mini-form steered with a
+        ``prefix`` or ``system_prompt``. Both are silently wrong for THIS
+        caller: a ``prefix``-steered row makes every run attempt raise in
+        ``targets.resolve_target`` (a probe is chat-shaped, with no slot
+        for a literal prefix), permanently stranding the bench -- this
+        editor has no way to change its target afterward -- and a
+        ``system_prompt``-steered row has its steering composed ahead of
+        the card's own system prompt by ``runner.py``, silently
+        contaminating every probe conversation the bench exists to
+        observe. See ``resolve_unsteered_llama_cpp_target``'s own
+        docstring for the full account.
+
+        If NEITHER an existing unsteered row nor a configured endpoint is
+        available, ``target_ids`` stays empty and the created bench
+        genuinely cannot be made runnable through this UI alone --
+        ``config.py`` ships a default ``llama_cpp`` API URL, so this is the
+        near-universal case in practice (mirrors ``resolve_sample_
+        target``'s own "near-universal" note), but it is a real, reachable
+        gap this task cannot close: this editor offers no way to add a
+        target after the fact. The toast below names that state explicitly
+        rather than claiming an unconditional success.
+
+        ``character_ids`` starts empty (a draft has no characters picked
+        yet -- that is the editor's job) and ``strict=False`` is required
+        to construct a ``CharacterProbeConfig`` with it: the strict
+        (default) path raises "needs at least one character" at
+        construction, exactly the validation a genuine Save should keep
+        (see ``CharacterProbeConfig``'s own docstring) but that a bare
+        DRAFT must not be blocked by.
+        """
+        event.stop()
+        db = self._view_model.db
+        if db is None:
+            self.app_instance.notify(
+                "The evaluation service is unavailable.", severity="error"
+            )
+            return
+        probe_sets = self._view_model.probe_sets()
+        if not probe_sets:
+            # Defensive only: `library_rail.py`'s own button is disabled
+            # whenever this is true (see `_new_bench_actions`).
+            self.app_instance.notify(
+                "Import or create a probe set first.", severity="warning"
+            )
+            return
+        # `probe_sets()` is `datasets()`'s own newest-first order (see
+        # `EvalsViewModel.datasets`/`_create_new_bench`'s identical note),
+        # filtered -- so the first entry IS "the newest probe set" with no
+        # extra sort needed.
+        probe_set = probe_sets[0]
+        app_config = self._current_app_config()
+        target = sample_bench.resolve_unsteered_llama_cpp_target(
+            self._view_model, app_config, create=True
+        )
+        target_ids = (target["id"],) if target is not None else ()
+        config = CharacterProbeConfig(
+            name=_unique_name("Untitled character bench"),
+            probe_set_id=str(probe_set.get("id")),
+            character_ids=(),
+            target_ids=target_ids,
+            strict=False,
+        )
+        try:
+            bench_id = save_character_bench(db, config)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create character bench.")
+            # markup=False: `exc` can carry a name collision naming the
+            # bench itself, the same free-text hazard `_create_new_bench`'s
+            # own `_notify` call already guards against for word benches.
+            self.app_instance.notify(
+                f"Could not create character bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+            return
+        probe_set_name = str(probe_set.get("name") or "Untitled probe set")
+        if target_ids:
+            self.app_instance.notify(
+                f"Character bench created against {probe_set_name}.",
+                severity="information",
+                markup=False,
+            )
+        else:
+            # See this handler's own docstring on why this is a real,
+            # reachable state and not merely defensive copy. Fix-round
+            # correction: THIS bench, not just "a new one", must be named
+            # as the thing that's stuck -- the previous wording only ever
+            # suggested creating another bench and never told the user
+            # this one cannot run and is safe to delete, which left a
+            # one-click-reachable, never-undoable state with no recovery
+            # instruction (review finding, this fix round). Deletion
+            # itself is real as of this same round -- see
+            # `_compose_inspector_pane`'s `"character_bench"` branch.
+            self.app_instance.notify(
+                "Character bench created, but it cannot be run: no "
+                "llama.cpp target is configured. This bench cannot be "
+                "made runnable after the fact -- delete it (see the "
+                "Delete button below) and create a new one once a "
+                "target is configured in Settings.",
+                severity="warning",
+                markup=False,
+            )
+        self.select(kind="character_bench", id=bench_id)
 
     @on(BenchEditor.CreateTargetRequested)
     async def _on_bench_create_target_requested(
@@ -449,7 +878,11 @@ class EvalsScreen(LabScreen):
         task-1482 Task 2).
         """
         event.stop()
-        if self._sample_bench_running or self._bench_run_running:
+        if (
+            self._sample_bench_running
+            or self._bench_run_running
+            or self._character_bench_run_running
+        ):
             return
         self._sample_bench_launch_selection = self._selection
         self.run_worker(
@@ -606,28 +1039,34 @@ class EvalsScreen(LabScreen):
 
     @on(Button.Pressed, "#evals-primary-action")
     def _on_primary_action_pressed(self, event: Button.Pressed) -> None:
-        """Runs the selected bench (see ``sample_bench.run_existing_bench``).
+        """Runs the selected bench -- a WORD bench via ``sample_bench.
+        run_existing_bench``, or (task-1691 phase 2 Task 6) a CHARACTER
+        bench via ``_run_character_bench_worker``. ``#evals-primary-action``
+        is the one physical button both kinds share (``_compose_inspector_
+        pane`` only ever composes it for whichever kind is currently
+        selected, never both), so this single handler dispatches to
+        whichever worker matches ``self._selection.kind`` at press time.
 
         Mirrors ``_on_sample_bench_requested``'s guard rationale exactly --
         see that method's own docstring for the full three-part
         explanation, repeated here only in brief. If two presses are
-        already queued before either dispatches, both see
-        ``_bench_run_running`` as ``False`` and both reach
+        already queued before either dispatches, both see the relevant
+        running flag as ``False`` and both reach
         ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
         protects there, cancelling the second worker's Task before it takes
         its first step, so only one worker body (and one flag-set) ever
-        runs. Once a worker IS running and has set the flag, THIS check is
+        runs. Once a worker IS running and has set its flag, THIS check is
         what stops a later press from calling ``run_worker`` again --
         without it, that call would cancel the already-running worker via
         the same ``exclusive`` group after it has done real work,
         abandoning its in-flight DB rows (see
         ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
-        path needs). A THIRD check, ``_sample_bench_running``, closes the
-        cross-worker race PR #1113 review found: this button and
-        ``#evals-create-sample-bench`` live in separate ``exclusive``
-        groups, so without this cross-check a press here while the SAMPLE
-        bench worker is in flight would start a second, genuinely
-        overlapping run.
+        path needs). The other two flags close the cross-worker race PR
+        #1113 review found: this button, ``#evals-create-sample-bench``,
+        and (task-1691 phase 2) a character-bench run all live in separate
+        ``exclusive`` groups, so without cross-checking every OTHER flag a
+        press here while a DIFFERENT worker is in flight would start a
+        second, genuinely overlapping run.
 
         The selected bench id is resolved and stored on the instance HERE,
         not re-read from ``self._selection`` inside the worker -- selection
@@ -636,20 +1075,32 @@ class EvalsScreen(LabScreen):
         against.
         """
         event.stop()
-        if self._bench_run_running or self._sample_bench_running:
+        if (
+            self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
             return
         selection = self._selection
-        if selection.kind != "bench" or not selection.id:
-            # Defensive only: `_primary_action_state` keeps the button
-            # disabled (so Textual never emits `Pressed` at all) for every
-            # selection kind but a found bench.
+        if selection.kind == "bench" and selection.id:
+            self._bench_run_task_id = selection.id
+            self.run_worker(
+                self._run_bench_worker,
+                exclusive=True,
+                group="evals-run-bench",
+            )
             return
-        self._bench_run_task_id = selection.id
-        self.run_worker(
-            self._run_bench_worker,
-            exclusive=True,
-            group="evals-run-bench",
-        )
+        if selection.kind == "character_bench" and selection.id:
+            self._character_bench_run_task_id = selection.id
+            self.run_worker(
+                self._run_character_bench_worker,
+                exclusive=True,
+                group="evals-run-character-bench",
+            )
+            return
+        # Defensive only: `_primary_action_state` keeps the button disabled
+        # (so Textual never emits `Pressed` at all) for every selection
+        # kind but a found, runnable bench of either type.
 
     async def _run_bench_worker(self) -> None:
         """Runs ``self._bench_run_task_id`` via
@@ -736,6 +1187,327 @@ class EvalsScreen(LabScreen):
                     markup=False,
                 )
 
+    @staticmethod
+    def _resolved_target_row(db: EvalsDB, target_id: str) -> Mapping[str, Any]:
+        """One character-bench target's raw ``eval_models`` row.
+
+        Mirrors ``sample_bench._resolve_targets``'s identical per-target
+        lookup (the word-bench side of this exact concern) byte for byte:
+        a ``target_id`` with no matching row (deleted after the bench was
+        created or last saved) must raise, naming the id, rather than
+        letting ``create_probe_run_group``/``CharacterProbeRunner.run``
+        receive a hole in the target list -- both validate the ROWS they
+        are given (via ``targets.resolve_targets``), but neither can tell
+        "no row for this id" apart from "a caller silently dropped one".
+
+        Args:
+            db: The evals database handle.
+            target_id: One of the bench's ``CharacterProbeConfig.
+                target_ids``.
+
+        Returns:
+            The ``eval_models`` row, exactly as ``EvalsDB.get_model``
+            returns it -- passed straight through to
+            ``create_probe_run_group``/``CharacterProbeRunner.run``, which
+            do their own validation (id/model_id presence, steering shape)
+            via ``targets.resolve_targets``.
+
+        Raises:
+            RuntimeError: If no live row matches ``target_id``.
+        """
+        model = db.get_model(target_id)
+        if model is None:
+            raise RuntimeError(
+                f"Target {target_id!r} could not be resolved — its "
+                "eval_models row is missing or was deleted."
+            )
+        return model
+
+    @staticmethod
+    def _mark_character_run_ids(
+        db: Optional[EvalsDB], run_ids: Mapping[str, str], status: str
+    ) -> None:
+        """Best-effort status stamp for every run
+        ``_run_character_bench_worker`` created, mirroring ``sample_bench.
+        _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
+        call and its "log and continue, never let a bookkeeping failure
+        mask the real outcome" contract -- called immediately after
+        ``create_probe_run_group`` returns (``status="running"``, whole-
+        branch review fix round: the in-flight window between that call
+        and ``save_conversations`` succeeding was the one outcome this
+        worker's own remediation for every OTHER status had not yet
+        covered), the success path (``status="completed"``), the
+        ``CancelledError`` path (``status="cancelled"``), AND (review
+        round 2 -- the general ``except Exception:`` branch is reachable
+        with `run_ids` already populated too: ``factory(config)`` failing
+        to build a chat callable, ``asyncio.Semaphore(config.
+        concurrency)`` raising for a non-positive concurrency, or a plain
+        DB I/O failure inside ``save_conversations`` itself are all
+        ordinary exceptions, not cancellations) the general failure path
+        (``status="failed"``) of that worker.
+
+        Necessary because ``character_probe.storage``/``runner`` (Task 1's
+        phase-1 engine) never call ``EvalsDB.update_run_status``
+        themselves -- unlike ``WordBenchRunner.run``, which moves each run
+        pending -> running -> completed/cancelled on its own. Left
+        unstamped, ``EvalsViewModel.run_groups()``'s own pivot falls a
+        "pending, nothing running/cancelled/failed" group through to
+        "completed" (see that method's own docstring) -- true by
+        coincidence for a genuinely successful run, but also true, and
+        misleading, for one that never finished, regardless of WHY.
+
+        ``"failed"`` and ``"cancelled"`` are not the same run-level fact
+        (one was requested, one wasn't) but ``run_groups()``'s own pivot
+        deliberately has no separate group-level "failed" bucket -- its
+        ``_has_blocked`` check groups a run-level ``"cancelled"`` OR
+        ``"failed"`` status into the identical group-level ``"cancelled"``
+        label (see that method's own docstring). Stamping ``"failed"``
+        here is therefore both the semantically honest run-level fact AND
+        sufficient for the group to stop reading "completed" in the rail
+        -- the property review round 1/2 both actually care about.
+
+        Args:
+            db: The evals database handle, or ``None`` -- nothing to
+                stamp when this worker failed before ever resolving one
+                (the earliest possible failure, before any run existed to
+                mark).
+            run_ids: ``target_id -> eval_runs id``, as returned by
+                ``create_probe_run_group`` -- empty (``{}``) when this
+                worker failed or was cancelled before that call ever ran,
+                in which case there is nothing to stamp either.
+            status: ``"running"``, ``"completed"``, ``"cancelled"``, or
+                ``"failed"``.
+        """
+        if db is None or not run_ids:
+            return
+        for run_id in set(run_ids.values()):
+            try:
+                db.update_run_status(run_id, status)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not mark character bench run {run_id!r} "
+                    f"{status!r}."
+                )
+
+    async def _run_character_bench_worker(self) -> None:
+        """Runs ``self._character_bench_run_task_id`` -- the character-probe
+        sibling of ``_run_bench_worker`` just above (see that method's own
+        docstring for the parts not re-explained here: the guard
+        rationale, the ``_selection_unmoved_since_launch`` completion
+        rule, and reusing ``_set_bench_run_running_ui``/``_reset_bench_
+        run_running_ui``/``_on_bench_run_progress`` for the SAME physical
+        ``#evals-primary-action`` button -- those three helpers are already
+        bench-type-agnostic and need no character-bench variant).
+
+        Unlike the word-bench path, there is no single ``sample_bench.
+        run_existing_bench``-shaped engine entry point to call: Task 1's
+        phase-1 engine exposes its steps directly (``load_character_
+        bench``, ``load_probe_set``, ``cards.snapshot_cards``,
+        ``storage.create_probe_run_group``, ``CharacterProbeRunner.run``,
+        ``storage.save_conversations``), so this method IS the
+        character-bench equivalent of ``run_existing_bench``, composed
+        inline -- a second Textual-free orchestration module is outside
+        this task's declared file list (``evals_screen.py``/
+        ``inspector.py`` only).
+
+        **The chat callable is SYNCHRONOUS and must never be awaited
+        here.** ``CharacterProbeRunner`` already dispatches every call
+        through ``asyncio.to_thread`` internally (see
+        ``character_probe.runner``'s own module docstring) -- this method
+        hands it a plain callable (from ``self._character_probe_chat_
+        factory`` or the production default) and only ever ``await``s
+        ``runner.run(...)`` itself, never the callable directly.
+
+        **Cancellation**: ``to_thread`` survives ``Task`` cancellation, so
+        a turn already dispatched to a worker thread always runs to
+        completion and is recorded -- cancelling only stops SCHEDULING
+        further turns/conversations (``character_probe.runner``'s own
+        module docstring states this contract; it is not re-implemented
+        here). A hard cancellation of THIS worker (Textual's
+        ``exclusive=True`` superseding it) can still land before
+        ``save_conversations`` ever runs, in which case the run group's
+        ``eval_runs`` rows (already written by ``create_probe_run_group``,
+        before the runner starts) persist with no results attached.
+        Nothing in ``character_probe.storage``/``runner`` (Task 1's
+        phase-1 engine) ever transitions ``eval_runs.status`` past its
+        ``'pending'`` DB default itself -- unlike ``WordBenchRunner``,
+        which moves each run pending -> running -> completed/cancelled on
+        its own -- so this method stamps every status transition directly:
+        ``"running"`` right after ``create_probe_run_group`` returns
+        (whole-branch review fix round -- closes the one in-flight window
+        this worker's own remediation for every other outcome had not yet
+        covered), ``"completed"`` after ``save_conversations`` succeeds
+        (review round 1 fix), ``"cancelled"`` in the ``except
+        CancelledError`` branch below, via ``_mark_character_run_ids``
+        (mirrors ``sample_bench._mark_orphaned_runs_cancelled``'s own
+        ``EvalsDB.update_run_status`` call and its "log and continue,
+        never let a bookkeeping failure
+        mask the real outcome" contract). Left unstamped,
+        ``EvalsViewModel.run_groups()``'s own pivot falls a "pending,
+        nothing running/cancelled/failed" group through to "completed"
+        (see that method's own docstring) -- true by coincidence for a
+        genuinely finished run, but also true, and actively misleading,
+        for one that was hard-cancelled with zero results.
+
+        Every error ``cards.snapshot_cards``/``targets.resolve_targets``
+        (via ``create_probe_run_group``/``CharacterProbeRunner.run``) can
+        raise for an empty ``character_ids``/``target_ids`` -- reachable
+        only for a hand-crafted or corrupted row, since
+        ``_primary_action_state`` already blocks the button for both
+        cases -- surfaces through the SAME broad ``except Exception``
+        toast below as every other failure here, never silently
+        swallowed.
+        """
+        task_id = self._character_bench_run_task_id
+        cancel_token = CharacterCancelToken()
+        self._character_bench_run_running = True
+        self._character_bench_run_cancel_token = cancel_token
+        self._set_bench_run_running_ui()
+        group_id: Optional[str] = None
+        db: Optional[EvalsDB] = None
+        run_ids: dict[str, str] = {}
+        try:
+            db = self._view_model.db
+            if db is None:
+                raise RuntimeError("The evaluation service is unavailable.")
+            config = load_character_bench(db, task_id)
+            probe_set = load_probe_set(db, config.probe_set_id)
+            if self._chacha_db is None:
+                # Qodo review (task-1691 phase 2 fix wave): `__init__`
+                # documents `self._chacha_db` as `Optional` (see
+                # `_resolve_chacha_db`'s own docstring -- it degrades to
+                # `None` when `app_instance.chachanotes_db` is absent), but
+                # `snapshot_cards` unconditionally calls `chacha_db.get_
+                # character_card_by_id(...)` with no `None` guard of its
+                # own. Reachable for real: a bench SAVED earlier with
+                # `character_ids` (so `_primary_action_state`'s "no
+                # characters" gate does not fire and Run is enabled) then
+                # RUN in a session where the character database never
+                # wired up. Without this guard the first `snapshot_cards`
+                # call raises a bare `AttributeError` ("'NoneType' object
+                # has no attribute 'get_character_card_by_id'"), which the
+                # broad `except Exception` below still catches and
+                # reports -- but as that raw, unnamed attribute error
+                # rather than a message that tells the user what is
+                # actually missing. Same wording `_primary_action_state`'s
+                # own new guard uses below, so both surfaces name the
+                # identical cause.
+                raise RuntimeError("The character card database is unavailable.")
+            cards = snapshot_cards(self._chacha_db, list(config.character_ids))
+            raw_targets = [
+                self._resolved_target_row(db, target_id)
+                for target_id in config.target_ids
+            ]
+            new_group_id, run_ids = create_probe_run_group(
+                db, task_id, config, cards, probe_set, raw_targets
+            )
+            # Whole-branch review, deferred-minor-promoted-to-must-fix: the
+            # run rows `create_probe_run_group` just wrote sit at their
+            # `'pending'` DB default from here until `save_conversations`
+            # succeeds below -- a real, observable window (the runner is
+            # about to make one or more provider calls, which can each take
+            # seconds). `_mark_character_run_ids`'s own docstring already
+            # explains why an unstamped run reads as "completed" through
+            # `run_groups()`'s pivot; the "completed"/"cancelled"/"failed"
+            # terminal stamps this worker already applies below make a
+            # lying-pending IN-FLIGHT group the one state this worker had
+            # not yet corrected, inconsistent with its own remediation for
+            # every OTHER outcome.
+            self._mark_character_run_ids(db, run_ids, "running")
+            factory = (
+                self._character_probe_chat_factory
+                or _default_character_probe_chat_factory
+            )
+            chat_fn = factory(config)
+            runner = CharacterProbeRunner(chat_fn, cancel_token)
+            conversations = await runner.run(
+                cards,
+                probe_set,
+                raw_targets,
+                config,
+                progress=self._on_bench_run_progress,
+            )
+            save_conversations(db, new_group_id, run_ids, conversations)
+            self._mark_character_run_ids(db, run_ids, "completed")
+            group_id = new_group_id
+        except asyncio.CancelledError:
+            # A hard cancellation (Textual's `exclusive=True` superseding
+            # this worker) is re-raised, never swallowed -- Textual's
+            # worker bookkeeping needs to observe the real cancellation,
+            # the same rule `_run_bench_worker`'s identical clause states.
+            # `run_ids` is `{}` (its `__init__`-time default, never
+            # reassigned) if cancellation landed before `create_probe_run_
+            # group` ever ran -- `_mark_character_run_ids` no-ops on an
+            # empty mapping, so this is safe to call unconditionally.
+            self._mark_character_run_ids(db, run_ids, "cancelled")
+            logger.info("Character bench run worker was cancelled.")
+            raise
+        except Exception as exc:
+            # Review round 2 (Important finding): the window between
+            # `create_probe_run_group` (populates `run_ids`) and
+            # `save_conversations` completing is reachable by an ORDINARY
+            # exception, not only cancellation -- `factory(config)`
+            # failing to build a chat callable, `asyncio.Semaphore(config.
+            # concurrency)` raising for a non-positive concurrency inside
+            # `runner.run`, or a plain DB I/O failure inside `save_
+            # conversations` itself (`db.get_run`/`update_run`/
+            # `store_result`, all real writes). Left unstamped, this run
+            # group's rows would stay `'pending'` forever, which `run_
+            # groups()`'s own pivot (see `_mark_character_run_ids`'s own
+            # docstring) falls through to "completed" -- the exact
+            # falsehood the CancelledError branch above already guards
+            # against. `"failed"` (not `"cancelled"`): this run was never
+            # requested to stop, it genuinely errored -- `run_groups()`'s
+            # pivot buckets a `"failed"` run-level status into the SAME
+            # group-level `"cancelled"` label a `"cancelled"` run-level
+            # status gets (there is no separate group-level "failed"
+            # bucket; see that method's own `_has_blocked` check), so this
+            # still reads truthfully as "not completed" in the rail even
+            # though the run-level row itself records the more precise
+            # reason. `run_ids` is `{}` if this exception fired before
+            # `create_probe_run_group` ever ran -- `_mark_character_run_
+            # ids` no-ops on an empty mapping, so this is safe
+            # unconditionally, mirroring the CancelledError branch.
+            self._mark_character_run_ids(db, run_ids, "failed")
+            # Type only: persistent exception diagnostics can serialize
+            # frame locals, which here include the bench's own config and
+            # every snapshotted card's full text.
+            logger.warning(
+                "Character bench run failed (exception_category={}).",
+                type(exc).__name__,
+            )
+            # markup=False: `exc` can carry user-controlled text -- a card
+            # name, probe text, or bench name reaching this message via
+            # `snapshot_cards`/`create_probe_run_group`'s own error
+            # strings. Same hazard `_run_bench_worker`'s identical notify()
+            # call documents.
+            self.app_instance.notify(
+                f"Could not run the bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._character_bench_run_running = False
+            self._character_bench_run_cancel_token = None
+            self._reset_bench_run_running_ui()
+        if group_id is not None:
+            launch_selection = EvalsSelection(kind="character_bench", id=task_id)
+            if self._selection_unmoved_since_launch(launch_selection, task_id):
+                self.app_instance.notify(
+                    "Bench run finished.", severity="information", markup=False
+                )
+                self.select(kind="run_group", id=group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The run group still exists; only the auto-navigate is
+                # skipped.
+                self.app_instance.notify(
+                    "Bench run finished — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
+
     def _on_bench_run_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
         ``WordBenchRunner.run``'s own coroutine (this worker's, not a
@@ -784,17 +1556,23 @@ class EvalsScreen(LabScreen):
         """Why ``#evals-delete-bench`` should be disabled for ``bench_id``,
         or ``None`` when it's safe to delete.
 
-        Gated ONLY on ``_bench_run_running`` for THIS bench -- unlike
-        ``_primary_action_state``, which also blocks while the SAMPLE
-        bench worker is running. That extra gate exists there because a
-        completing sample-bench worker eventually selects a brand-new
-        bench the primary action could otherwise race a second run
-        against; the sample-bench worker never touches an *existing*
-        bench id (it creates its own, not-yet-selected one) until it
-        finishes, so it must not block deleting some OTHER, unrelated,
-        already-selected bench here.
+        Gated ONLY on ``_bench_run_running``/``_character_bench_run_
+        running`` for THIS bench -- unlike ``_primary_action_state``, which
+        also blocks while the SAMPLE bench worker is running. That extra
+        gate exists there because a completing sample-bench worker
+        eventually selects a brand-new bench the primary action could
+        otherwise race a second run against; the sample-bench worker never
+        touches an *existing* bench id (it creates its own, not-yet-
+        selected one) until it finishes, so it must not block deleting
+        some OTHER, unrelated, already-selected bench here.
         """
         if bench_id and self._bench_run_running and self._bench_run_task_id == bench_id:
+            return "A run of this bench is in flight."
+        if (
+            bench_id
+            and self._character_bench_run_running
+            and self._character_bench_run_task_id == bench_id
+        ):
             return "A run of this bench is in flight."
         return None
 
@@ -894,7 +1672,16 @@ class EvalsScreen(LabScreen):
         """
         event.stop()
         selection = self._selection
-        if selection.kind != "bench" or not selection.id:
+        # Fix round (review finding): a "character_bench" selection uses
+        # this SAME button/handler/flow -- see `_compose_inspector_pane`'s
+        # `"character_bench"` branch, which composes `#evals-delete-bench`
+        # for it too, Delete-only (no Duplicate -- that engine call,
+        # `duplicate_bench`, is word-bench-specific; see this fix round's
+        # own report for why closing "can never be deleted" took priority
+        # over adding duplication). `EvalsDB.delete_task` (called from
+        # `_apply_bench_deletion` below) is a plain soft-delete by id --
+        # it does not care what `config_data.bench_type` the row carries.
+        if selection.kind not in ("bench", "character_bench") or not selection.id:
             return
         if self._bench_delete_disabled_reason(selection.id):
             # Defensive only: `_compose_inspector_pane` already disables
@@ -904,7 +1691,11 @@ class EvalsScreen(LabScreen):
         if self._bench_delete_pending:
             return
         self._bench_delete_pending = True
-        bench = self._view_model.bench_by_id(selection.id)
+        bench = (
+            self._view_model.character_bench_by_id(selection.id)
+            if selection.kind == "character_bench"
+            else self._view_model.bench_by_id(selection.id)
+        )
         name = str(bench.get("name")) if bench else "Untitled bench"
         self.run_worker(
             self._delete_bench_flow(selection.id, name),
@@ -1023,7 +1814,11 @@ class EvalsScreen(LabScreen):
             # button trap, regardless of which worker owns the first run.
             # See `_primary_action_state`'s own in-flight branch just
             # below for the identical rationale on the primary action.
-            sample_bench_running=self._sample_bench_running or self._bench_run_running,
+            sample_bench_running=(
+                self._sample_bench_running
+                or self._bench_run_running
+                or self._character_bench_run_running
+            ),
             id="evals-library-pane",
         )
 
@@ -1095,6 +1890,32 @@ class EvalsScreen(LabScreen):
             )
             return
 
+        if selection.kind == "character_bench":
+            bench = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if bench is None:
+                yield Static(
+                    "This bench could not be found; it may have been deleted.",
+                    id="evals-detail-missing",
+                )
+                return
+            # A genuinely SEPARATE widget from `BenchEditor` above -- word
+            # benches and character-probe benches never share a detail
+            # surface (see `character_bench_editor.py`'s own module
+            # docstring). `self._chacha_db` (resolved once in `__init__`)
+            # is threaded through here rather than this widget opening
+            # `ChaChaNotes_DB` itself -- see that field's own comment.
+            yield CharacterBenchEditor(
+                self._view_model,
+                selection.id,
+                self._view_model.character_cards(self._chacha_db),
+                id="evals-character-bench-editor",
+            )
+            return
+
         if selection.kind == "classic":
             task = (
                 self._view_model.classic_task_by_id(selection.id)
@@ -1120,6 +1941,19 @@ class EvalsScreen(LabScreen):
                     id="evals-detail-missing",
                 )
                 return
+            if is_probe_set(dataset):
+                # Whole-branch review Important 2: `SnippetEditor` is
+                # word-bench shaped -- its Import control writes SNIPPET-
+                # shaped samples into the selected dataset's own metadata,
+                # which corrupts a probe set's `turns`-shaped samples on
+                # the very next press (see `ProbeSetDetail`'s own module
+                # docstring for the full failure chain). A probe-set
+                # selection gets a read-only listing instead, with no
+                # import/edit control of any kind.
+                yield ProbeSetDetail(
+                    self._view_model, dataset, id="evals-probeset-detail"
+                )
+                return
             yield SnippetEditor(
                 self._view_model, selection.id, id="evals-snippet-editor"
             )
@@ -1135,6 +1969,29 @@ class EvalsScreen(LabScreen):
                 yield Static(
                     "This run could not be found; it may have been deleted.",
                     id="evals-detail-missing",
+                )
+                return
+            if self._character_run_group(group):
+                # task-1691 phase 2 Task 6: before this task, a character
+                # bench could never actually run, so this branch was
+                # unreachable for that bench type. `ResultsGrid` is WORD-
+                # BENCH shaped top to bottom (raw/chat mode, top-K,
+                # snippets) -- its own snapshot-shape check would either
+                # render a misleading "no snippets or no targets to
+                # render" (a character-probe snapshot has no "snippets"
+                # key at all) or, if that guard were ever loosened, leak
+                # logprobs/top-K vocabulary into a bench type that carries
+                # none. A neutral, honest placeholder instead: the
+                # conversations from this run ARE saved (see the run
+                # toast and this run's own `eval_results` rows via
+                # `character_probe.storage.load_conversations`), only the
+                # browsing UI for them is Phase 3's own deliverable, not
+                # this one's (see the plan's "Not in Phase 2" list).
+                yield Static(
+                    "This run's conversations were saved. A review view "
+                    "for character probe runs is not built yet.",
+                    id="evals-detail-character-run-placeholder",
+                    markup=False,
                 )
                 return
             # ResultsGrid renders its own header (bench name, prompt mode,
@@ -1208,6 +2065,35 @@ class EvalsScreen(LabScreen):
                 # `#evals-primary-action` -- see the comment there (task-
                 # 1482 Task 7 fix round 1) for why.
 
+        if selection.kind == "character_bench":
+            # task-1691 phase 2 Task 6: a genuinely SEPARATE widget from
+            # `EvalsInspector` above, never that class reused with an
+            # internal branch -- `EvalsInspector` renders logprobs/top-K/
+            # canary vocabulary throughout (Readiness, per-target
+            # continuations), and this bench type must never grow any of
+            # it (see this task's own "no logprobs vocabulary anywhere in
+            # character-probe UI" constraint). `CharacterBenchEstimate`
+            # carries ONLY the Estimate section -- the one thing this
+            # bench type's cost preview needs -- reusing the SAME
+            # `#evals-inspector-estimate-calls` id the word-bench pane
+            # uses so a caller that only wants "the estimate" can query
+            # one selector regardless of which bench type is selected;
+            # the two widgets are never mounted at once (mutually
+            # exclusive selection kinds), so the shared id is never
+            # ambiguous. Gated on a RESOLVED bench, mirroring the "bench"
+            # branch above -- Duplicate/Delete are composed further down.
+            character_bench_row = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if character_bench_row is not None:
+                yield CharacterBenchEstimate(
+                    self._view_model,
+                    selection.id,
+                    id="evals-inspector-character-bench",
+                )
+
         if selection.kind == "classic":
             # Classic tasks are read-only in this workbench (see the design
             # spec's "Classic tasks" section and BenchEditor's
@@ -1223,7 +2109,7 @@ class EvalsScreen(LabScreen):
                 if selection.id
                 else None
             )
-            if group is not None:
+            if group is not None and not self._character_run_group(group):
                 # Focused-cell detail (full top-K + probe table), updated
                 # by `_on_grid_cell_focused` as the grid's cell cursor
                 # moves -- see that handler and results_grid.py's module
@@ -1231,6 +2117,16 @@ class EvalsScreen(LabScreen):
                 # never a recompose. The primary action button below still
                 # renders (with its existing "already completed" reason,
                 # unchanged from Task 3) beneath it.
+                #
+                # Excluded for a CHARACTER-probe run group (task-1691
+                # phase 2 Task 6): `_compose_detail_pane` never mounts
+                # `ResultsGrid` for that case (a plain placeholder instead
+                # -- see its own comment), so no `CellFocused` event could
+                # ever reach `_on_grid_cell_focused` to update this
+                # widget; it would sit forever on its own placeholder text
+                # ("...see its full top-K and probe table here"), both a
+                # dead control and a leak of top-K vocabulary into a bench
+                # type that carries none.
                 yield EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
@@ -1272,40 +2168,73 @@ class EvalsScreen(LabScreen):
         # orders these `[ Run bench ]` then `[ Duplicate ]` then
         # `[ Delete ]`, and the original Task 7 placement (right after
         # `EvalsInspector`, ahead of the primary action) inverted that.
-        # Still bench-selection-only, and still gated on a RESOLVED bench
-        # (`bench is not None`, set in the `selection.kind == "bench"`
-        # branch above): an unresolvable bench id renders no
-        # `EvalsInspector` and, per this same guard, neither of these
-        # buttons either -- there is nothing here to duplicate or delete.
+        # Still gated on a RESOLVED bench (`bench is not None`, set in the
+        # `selection.kind == "bench"` branch above): an unresolvable bench
+        # id renders no `EvalsInspector` and, per this same guard, neither
+        # of these buttons either -- there is nothing here to duplicate or
+        # delete.
         if selection.kind == "bench" and bench is not None:
             yield Button("Duplicate", id="evals-duplicate-bench")
-            delete_reason = self._bench_delete_disabled_reason(selection.id)
-            if delete_reason:
-                # Mirrors the primary action's own TASK-1076 convention
-                # just above (a status badge plus an always-visible
-                # callout, not a hover-only tooltip -- see that block's
-                # comment for the accessibility rationale). Not factored
-                # into one shared helper: the primary action's version
-                # also folds in the bench's own NAME (this button's label
-                # never changes).
-                yield Static(
-                    "Delete: Blocked",
-                    id="evals-delete-bench-status",
-                    classes="ds-status-badge evals-status-blocked",
-                    markup=False,
-                )
-                yield Static(
-                    delete_reason,
-                    id="evals-delete-bench-reason",
-                    classes="ds-recovery-callout",
-                    markup=False,
-                )
-            yield Button(
-                "Delete",
-                id="evals-delete-bench",
-                disabled=bool(delete_reason),
-                tooltip=delete_reason,
+            yield from self._compose_delete_bench_button(selection.id)
+        elif selection.kind == "character_bench":
+            # Task 5 fix round (review finding): a character bench had NO
+            # Duplicate/Delete affordance at all -- combined with the
+            # residual no-resolvable-target dead end
+            # (`_on_new_character_bench_requested`'s own docstring), a
+            # bench created that way could never be deleted, fixed, or
+            # hidden through the UI: permanent rail clutter with no
+            # recovery path. Delete-only, deliberately: `duplicate_bench`
+            # (`word_bench.storage`) loads/rebuilds through `BenchConfig`/
+            # `save_bench`, which reject `CharacterProbeConfig`'s stored
+            # shape outright -- a character-bench equivalent does not
+            # exist yet, and inventing one is a bigger, separate change
+            # than closing "can never be deleted" needs. `#evals-delete-
+            # bench` is the SAME id/handler word benches use
+            # (`_on_delete_bench_pressed` now accepts both kinds; see its
+            # own updated comment) -- `EvalsDB.delete_task` is a plain
+            # soft-delete by id and does not care about `bench_type`.
+            # Reuses `character_bench_row`, resolved once already by the
+            # `character_bench` branch above this function's `bench`/
+            # `EvalsInspector` block -- both branches share ONE function
+            # scope (this is a single generator, not two), so a second
+            # `character_bench_by_id` read here would just repeat that
+            # exact lookup.
+            if character_bench_row is not None:
+                yield from self._compose_delete_bench_button(selection.id)
+
+    def _compose_delete_bench_button(self, bench_id: str) -> ComposeResult:
+        """Yields ``#evals-delete-bench`` (plus its Blocked-reason status/
+        callout, when blocked) for ``bench_id`` -- shared by the word-bench
+        and character-bench branches of ``_compose_inspector_pane`` above,
+        which differ only in whether Duplicate is ALSO offered alongside
+        it (word bench only; see that method's own comment)."""
+        delete_reason = self._bench_delete_disabled_reason(bench_id)
+        if delete_reason:
+            # Mirrors the primary action's own TASK-1076 convention above
+            # (a status badge plus an always-visible callout, not a
+            # hover-only tooltip -- see that block's comment for the
+            # accessibility rationale). Not factored into one shared
+            # helper with the primary action: the primary action's own
+            # version also folds in the bench's NAME (this button's label
+            # never changes).
+            yield Static(
+                "Delete: Blocked",
+                id="evals-delete-bench-status",
+                classes="ds-status-badge evals-status-blocked",
+                markup=False,
             )
+            yield Static(
+                delete_reason,
+                id="evals-delete-bench-reason",
+                classes="ds-recovery-callout",
+                markup=False,
+            )
+        yield Button(
+            "Delete",
+            id="evals-delete-bench",
+            disabled=bool(delete_reason),
+            tooltip=delete_reason,
+        )
 
     def _primary_action_state(self) -> tuple[str, bool, str]:
         """Label, disabled, and tooltip-reason for the primary action button.
@@ -1325,7 +2254,11 @@ class EvalsScreen(LabScreen):
         """
         selection = self._selection
 
-        if self._bench_run_running or self._sample_bench_running:
+        if (
+            self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
             # Whole-branch review Important finding: this function used to
             # never consult either running-flag at all, so a rail click
             # during an in-flight run -- `EvalsScreen.select()` always
@@ -1338,14 +2271,18 @@ class EvalsScreen(LabScreen):
             # to avoid, just reopened by a recompose instead of by a
             # missing press handler. Checked first, before every other
             # branch, so it wins regardless of what's currently selected --
-            # including the found-bench branch just below, whose own label
-            # this still borrows (escaped) so the button keeps naming its
-            # object even while blocked.
-            bench = (
-                self._view_model.bench_by_id(selection.id)
-                if selection.kind == "bench" and selection.id
-                else None
-            )
+            # including the found-bench branches just below, whose own
+            # label this still borrows (escaped) so the button keeps
+            # naming its object even while blocked. Extended for
+            # task-1691 phase 2 Task 6: a character-bench selection
+            # resolves its name via `character_bench_by_id`, since
+            # `bench_by_id` only ever resolves WORD benches.
+            if selection.kind == "bench" and selection.id:
+                bench = self._view_model.bench_by_id(selection.id)
+            elif selection.kind == "character_bench" and selection.id:
+                bench = self._view_model.character_bench_by_id(selection.id)
+            else:
+                bench = None
             name = escape_markup(str(bench.get("name") or "Untitled bench")) if bench else None
             return (
                 f"Run {name}" if name else "Run Bench",
@@ -1419,12 +2356,127 @@ class EvalsScreen(LabScreen):
                 f"Runs {name} against its configured targets.",
             )
 
+        if selection.kind == "character_bench":
+            # A SEPARATE branch from "bench" above, never folded into it:
+            # `bench_by_id` only ever resolves WORD benches (see its own
+            # docstring), so a character-bench selection id would never
+            # match there. `_compose_inspector_pane` composes no
+            # `EvalsInspector` for this kind (see that method -- neither
+            # of its `if` branches matches `"character_bench"`, so it
+            # falls straight through to this function with no readiness
+            # panel above it) -- deliberately: that panel's whole
+            # vocabulary (top-K, logprobs, canary) belongs to the
+            # word-bench world and would be a lie about what a character
+            # probe measures.
+            bench = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if bench is None:
+                return (
+                    "Run Bench",
+                    True,
+                    "The selected bench no longer exists; choose another "
+                    "bench to run.",
+                )
+            name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            config_data = bench.get("config_data") or {}
+            character_ids = config_data.get("character_ids") or []
+            if not character_ids:
+                # Reachable for every draft this program's own "+ New
+                # character bench" creates (task-1691 phase 2, Task 5):
+                # character_ids starts empty on purpose, since picking
+                # characters is the editor's job, not the creation
+                # button's. "card" (not just "character"): the editor's
+                # own picker and section heading both use "character
+                # card"/"Characters" -- matching that vocabulary here.
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no characters yet; pick at least one "
+                    "character card in the editor.",
+                )
+            target_ids = config_data.get("target_ids") or []
+            if not target_ids:
+                # Deliberately NOT the word-bench branch's "add one in the
+                # bench editor and Save" wording: the character-bench
+                # editor (Task 4) has no Add-target control at all --
+                # target_ids is set ONLY at creation time (see
+                # `_on_new_character_bench_requested`'s own docstring).
+                # Telling a user to do something this editor cannot do
+                # would be a dead-end instruction dressed up as help; the
+                # honest remedy is to recreate the bench once a target is
+                # resolvable.
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no targets yet; configure a local "
+                    "llama.cpp provider in Settings, then create a new "
+                    "character bench.",
+                )
+            if self._chacha_db is None:
+                # Qodo review (task-1691 phase 2 fix wave): characters and
+                # targets are both present -- the only remaining reason
+                # this bench cannot actually run is a card database that
+                # never wired up (`_resolve_chacha_db` degrades to `None`
+                # rather than raising -- see its own docstring). Checked
+                # LAST, only once every other precondition already passed,
+                # so this branch never shadows the "no characters"/"no
+                # targets" messages just above with a less specific one --
+                # this is the exact reachable state the finding names: a
+                # bench saved earlier WITH characters, reopened in a
+                # session where the character database is unavailable.
+                # Without this guard the button would read as fully
+                # runnable and only fail once `_run_character_bench_
+                # worker`'s own matching guard caught it mid-run; named
+                # with the identical wording that guard uses, so a user
+                # sees the same cause whichever surface they hit first.
+                return (
+                    f"Run {name}",
+                    True,
+                    "The character card database is unavailable; this "
+                    "bench cannot be run until it is.",
+                )
+            # task-1691 phase 2 Task 6: characters and targets are both
+            # present, so this bench can actually run -- `_on_primary_
+            # action_pressed` now dispatches `_run_character_bench_worker`
+            # for `selection.kind == "character_bench"`. Wording mirrors
+            # the word-bench ready branch's own tooltip exactly
+            # ("Runs {name} against its configured targets.") for the same
+            # naming-the-object convention this whole function follows.
+            return (
+                f"Run {name}",
+                False,
+                f"Runs {name} against its configured targets.",
+            )
+
         # No "classic" branch: `_compose_inspector_pane` never calls this
         # function for a classic-task selection at all -- classic tasks
         # are read-only (see `ClassicTaskDetail`'s deferral sentence) and
         # get no run control, not even a disabled one.
 
         if selection.kind == "dataset":
+            dataset = (
+                self._view_model.dataset_by_id(selection.id) if selection.id else None
+            )
+            if dataset is not None and is_probe_set(dataset):
+                # Whole-branch review Important 3 (fix round): a probe set
+                # is bound to a bench via "+ New character bench", never
+                # "+ New bench" (that button now deliberately filters
+                # probe sets out -- see `library_rail._create_new_bench`'s
+                # own updated docstring), and that control binds to the
+                # NEWEST probe set, not necessarily the one selected here
+                # -- unlike a word bench's "+ New bench", which DOES bind
+                # to the currently-selected dataset. This branch must not
+                # claim otherwise.
+                return (
+                    "Run Bench",
+                    True,
+                    "Datasets are run from within a bench; use + New "
+                    "character bench in the Catalog rail to create one "
+                    "(binds to the newest probe set).",
+                )
             return (
                 "Run Bench",
                 True,

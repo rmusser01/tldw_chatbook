@@ -172,7 +172,7 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
         # library_rail.py's own `_handle_dataset_import_file_selected`
         # docstring).
         rail = screen.query_one(LibraryRail)
-        rail._handle_dataset_import_file_selected(import_path)
+        await rail._handle_dataset_import_file_selected(import_path)
         await pilot.pause()
         assert screen._selection.kind == "dataset"
         dataset_id = screen._selection.id

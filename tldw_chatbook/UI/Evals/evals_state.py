@@ -18,7 +18,9 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
-SelectionKind = Literal["none", "bench", "classic", "dataset", "run_group"]
+SelectionKind = Literal[
+    "none", "bench", "classic", "character_bench", "dataset", "run_group"
+]
 
 #: EvalsDB.list_tasks/list_datasets/list_runs all page; the Evals workbench
 #: has no pagination UI yet, so each read pulls a generous single page
@@ -81,13 +83,109 @@ class EvalsViewModel:
         return [task for task in self._all_tasks() if self._is_word_bench(task)]
 
     def classic_tasks(self) -> list[dict[str, Any]]:
-        """Every other ``eval_tasks`` row (pre-word-bench evaluation tasks)."""
+        """Every other ``eval_tasks`` row (pre-word-bench evaluation tasks).
+
+        This currently also includes character-probe benches: neither this
+        method nor ``benches()`` special-cases ``bench_type ==
+        "character_probe"`` (see ``character_benches()`` below), so a
+        character bench is simply "not a word bench" by this method's own
+        definition -- the rail marks it with ``CHARACTER_PROBE_MARKER``
+        rather than moving it out of this list (``library_rail.py``'s
+        ``_classic_row_label``).
+        """
         return [task for task in self._all_tasks() if not self._is_word_bench(task)]
+
+    def character_benches(self) -> list[dict[str, Any]]:
+        """Character-probe benches: ``eval_tasks`` rows tagged
+        ``bench_type == "character_probe"`` (``character_probe.storage.
+        BENCH_TYPE``).
+
+        A subset of ``classic_tasks()`` (see that method's own note) --
+        this is a separate read for callers (the character-probe bench
+        editor and detail pane) that want exactly this kind of row without
+        also getting genuinely-classic pre-word-bench tasks.
+
+        Returns:
+            list[dict[str, Any]]: Matching rows, in ``_all_tasks()``'s own
+            order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_character_bench
+
+        return [task for task in self._all_tasks() if is_character_bench(task)]
 
     def datasets(self) -> list[dict[str, Any]]:
         if self._db is None:
             return []
         return self._db.list_datasets(limit=_LIST_LIMIT)
+
+    def probe_sets(self) -> list[dict[str, Any]]:
+        """Datasets holding probes rather than snippets.
+
+        A subset of ``datasets()`` -- every probe set IS a dataset row
+        (see ``character_probe.storage.save_probe_set``), so this adds no
+        new read, only the ``is_probe_set`` filter.
+
+        Returns:
+            list[dict[str, Any]]: Matching dataset rows, in ``datasets()``'s
+            own order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_probe_set
+
+        return [row for row in self.datasets() if is_probe_set(row)]
+
+    def word_bench_datasets(self) -> list[dict[str, Any]]:
+        """Datasets holding snippets rather than probes -- ``datasets()``
+        minus ``probe_sets()``, mirroring that method's own "no new read,
+        only a filter" shape.
+
+        Whole-branch review Important 3: ``library_rail.py``'s "+ New
+        bench" used to bind a WORD bench to whatever dataset was currently
+        selected (or the newest one) out of ``datasets()`` directly --
+        including a probe set, since that method draws no distinction.
+        Importing a probe set leaves it selected AND newest (see
+        ``ProbeSetDetail``'s own module docstring for the sibling defect
+        this shares a root cause with), so the very next "+ New bench"
+        press after an import created a word bench pointed at a probe set
+        with zero real snippets. Both the button's enabled state
+        (``LibraryRail._new_bench_actions``) and its bind target
+        (``LibraryRail._create_new_bench``) now read this method instead
+        of ``datasets()`` directly, so a probe set can never satisfy
+        either.
+
+        Returns:
+            list[dict[str, Any]]: Matching dataset rows, in ``datasets()``'s
+            own order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_probe_set
+
+        return [row for row in self.datasets() if not is_probe_set(row)]
+
+    def character_cards(self, chacha_db: Any) -> list[dict[str, Any]]:
+        """Character cards for the picker (``card_picker.py``'s
+        ``CardPicker``), ordered by name.
+
+        Takes an explicit ``chacha_db`` handle rather than reading one off
+        ``self._db`` -- character cards live in ``ChaChaNotes_DB``, a
+        different database from the ``EvalsDB`` this view model otherwise
+        wraps (see ``card_picker.py``'s own module docstring). The caller
+        (the character-bench editor screen) owns resolving that second
+        handle; this method only shapes the read the same empty-safe way
+        every other method on this class does.
+
+        Args:
+            chacha_db: A ``CharactersRAGDB``-shaped handle, or None when the
+                character database is unavailable.
+
+        Returns:
+            list[dict[str, Any]]: Card rows, or an empty list when no handle
+            was supplied.
+        """
+        if chacha_db is None:
+            return []
+        return list(chacha_db.list_character_cards(limit=_LIST_LIMIT))
 
     def llama_targets(self) -> list[dict[str, Any]]:
         """Configured ``llama_cpp`` ``eval_models`` rows -- what the bench
@@ -274,6 +372,20 @@ class EvalsViewModel:
         for task in self.classic_tasks():
             if task.get("id") == task_id:
                 return task
+        return None
+
+    def character_bench_by_id(self, bench_id: str) -> Optional[dict[str, Any]]:
+        """The character-probe bench row named ``bench_id``, or ``None``.
+
+        Mirrors ``bench_by_id``/``classic_task_by_id`` exactly, just scoped
+        to ``character_benches()`` -- the selection-kind-specific lookup
+        ``EvalsScreen`` uses for a ``"character_bench"`` selection (see
+        ``library_rail.py``'s own routing of a character-probe row to that
+        kind, distinct from a genuinely classic task's ``"classic"``).
+        """
+        for bench in self.character_benches():
+            if bench.get("id") == bench_id:
+                return bench
         return None
 
     def dataset_by_id(self, dataset_id: str) -> Optional[dict[str, Any]]:

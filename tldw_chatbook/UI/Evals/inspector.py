@@ -60,6 +60,8 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from ...config import LOCAL_PROVIDERS
+from ...Evals.character_probe.models import ProbeSet
+from ...Evals.character_probe.storage import load_character_bench, load_probe_set
 from ...Evals.word_bench import analysis
 from ...Evals.word_bench.models import BenchConfig, CellCapture, CellError, PreflightResult
 from ...Evals.word_bench.storage import load_bench
@@ -441,6 +443,125 @@ class EvalsInspector(Vertical):
         else:
             cost_text = "local · no cost"
         yield Static(cost_text, id="evals-inspector-estimate-cost", markup=False)
+
+
+def _character_bench_call_count(
+    probe_set: ProbeSet, card_count: int, target_count: int, samples_per_cell: int
+) -> int:
+    """Total provider calls one character-probe run will make.
+
+    Per the design spec's own "Cost is shown before running" rule: *"Total
+    calls = cards x probes x targets x samples x turns-per-probe."*
+    ``sum(len(p.turns) for p in probe_set.probes)`` is exactly "probes x
+    turns-per-probe" collapsed into one number (a probe set's probes can
+    have different turn counts -- see ``runnable_character_bench``'s own
+    fixture, "2 probes (2 turns, 1 turn)" -- so this is a sum, not a
+    multiplication by one shared per-probe turn count).
+
+    Args:
+        probe_set: The bench's scripts.
+        card_count: ``len(CharacterProbeConfig.character_ids)``.
+        target_count: ``len(CharacterProbeConfig.target_ids)``.
+        samples_per_cell: ``CharacterProbeConfig.samples_per_cell``.
+
+    Returns:
+        int: The total call count.
+    """
+    turns_per_run = sum(len(probe.turns) for probe in probe_set.probes)
+    return turns_per_run * card_count * target_count * samples_per_cell
+
+
+class CharacterBenchEstimate(Vertical):
+    """Inspector-pane content for a selected CHARACTER bench: ONLY an
+    Estimate (call count and a rough duration) -- no Readiness list, no
+    per-target continuation, no cost line.
+
+    A genuinely SEPARATE widget from ``EvalsInspector`` above, not that
+    class reused with an internal branch: this bench type carries no
+    preflight/logprobs concept at all (nothing in ``character_probe``
+    ever calls a provider before a real run -- see this module's own
+    "never calls a provider" guarantee, which this widget shares), so
+    there is no Readiness data to render and inventing a stand-in would
+    put word-bench vocabulary (top-K, canary, "Blocked") in front of a
+    bench type that has none of those concepts, violating task-1691 phase
+    2's own global constraint ("No logprobs / top-K / normalizer / canary
+    vocabulary anywhere in character-probe UI"). Cost-per-provider is also
+    intentionally omitted (unlike ``EvalsInspector``'s own cost line):
+    every character-bench target reachable through this app's UI today is
+    a local ``llama_cpp`` row (see ``EvalsScreen._default_character_probe_
+    chat_factory``'s own docstring for why), so a "local x no cost" line
+    would be true but adds a second read (``db.get_model`` per target)
+    for a fact this bench type cannot currently vary -- reintroduce it
+    if/when a non-local target ever becomes reachable for this bench type.
+    """
+
+    def __init__(
+        self, view_model: EvalsViewModel, bench_id: str, **kwargs: Any
+    ) -> None:
+        super().__init__(**kwargs)
+        self._view_model = view_model
+        self._bench_id = bench_id
+
+    def compose(self) -> ComposeResult:
+        db = self._view_model.db
+        if db is None:
+            return
+        try:
+            config = load_character_bench(db, self._bench_id)
+            probe_set = (
+                load_probe_set(db, config.probe_set_id)
+                if config.probe_set_id
+                else None
+            )
+        except Exception:
+            # Mirrors `EvalsInspector.compose`'s own broad catch and its
+            # rationale verbatim: a bare `except Exception: return` here
+            # would yield ZERO widgets from this generator, leaving a
+            # blank inspector pane with no message and no log line to
+            # diagnose from (TASK-861's own finding, for the word-bench
+            # sibling of this exact failure shape). Deliberately
+            # `Exception`, not `BaseException`: `asyncio.CancelledError`
+            # is a `BaseException` subclass and must keep propagating.
+            logger.opt(exception=True).error(
+                "Unexpected failure loading character bench configuration "
+                f"for the inspector pane, bench {self._bench_id!r}."
+            )
+            yield Static(
+                "This bench's estimate could not be computed because of "
+                "an unexpected error; see the log for details.",
+                id="evals-inspector-error",
+                markup=False,
+            )
+            return
+
+        yield Static("Estimate", classes="destination-section evals-pane-title")
+        if probe_set is None or not probe_set.probes:
+            # A bench's `probe_set_id` is required at creation (see
+            # `EvalsScreen._on_new_character_bench_requested`) and this
+            # editor carries no control that could blank it out
+            # afterward, so this is not reachable through the UI today --
+            # kept as an honest fallback rather than a bare crash for a
+            # hand-edited or otherwise corrupted row, mirroring this
+            # pane's own "fail loudly, never silently default" convention
+            # by naming the actual condition instead of printing "0
+            # calls" as if that were a real estimate.
+            yield Static(
+                "No probe set configured yet.",
+                id="evals-inspector-readiness-empty",
+            )
+            return
+        call_count = _character_bench_call_count(
+            probe_set,
+            len(config.character_ids),
+            len(config.target_ids),
+            config.samples_per_cell,
+        )
+        duration = _format_estimate_duration(call_count * _ASSUMED_SECONDS_PER_CALL)
+        yield Static(
+            f"{call_count} calls · {duration}",
+            id="evals-inspector-estimate-calls",
+            markup=False,
+        )
 
 
 class EvalsCellInspector(Vertical):

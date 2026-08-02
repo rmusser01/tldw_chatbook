@@ -67,6 +67,7 @@ gate used to offer no bench-creation affordance whatsoever.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +81,12 @@ from textual.widgets import Button, Static
 
 from ...Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from ...Constants import TAB_SETTINGS
+from ...Evals.character_probe.probe_format import parse_probe_text
+from ...Evals.character_probe.storage import (
+    is_character_bench,
+    is_probe_set,
+    save_probe_set,
+)
 from ...Evals.word_bench.models import BenchConfig
 from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
@@ -114,6 +121,35 @@ _RAIL_IMPORT_PARSERS = {
 _NEW_DATASET_BASE_NAME = "Untitled dataset"
 
 
+async def _read_import_file_off_thread(file_path: Path) -> str:
+    """Reads ``file_path``'s full text on a worker thread, never blocking
+    the UI event loop.
+
+    Qodo review (task-1691 phase 2 fix wave), platform compliance rule
+    497164: a plain ``file_path.read_text()`` call runs synchronously on
+    whatever thread calls it, and both rail import handlers below
+    (``_handle_dataset_import_file_selected``, ``_handle_probe_import_
+    file_selected``) are invoked as ``FileOpen`` dismiss callbacks running
+    on Textual's own main/UI thread -- a slow disk or a large file would
+    freeze the whole app for the duration of the read. This is the ONE
+    seam both handlers share (the read itself is byte-for-byte identical
+    between them; only what happens to the text afterward -- snippet
+    parsing vs. probe-set parsing -- differs), so the fix lives here once
+    rather than being duplicated into each handler and risking the two
+    drifting apart again.
+
+    ``asyncio.to_thread`` (not a Textual ``@work`` worker): both call
+    sites are themselves plain callables handed to ``push_screen(...,
+    callback)``, invoked through Textual's own ``invoke()`` helper
+    (``textual._callback``), which already awaits an ``async def``
+    callback -- see that helper's own ``isawaitable`` check. A one-off
+    background-thread hop is all this single blocking call needs; a full
+    worker (with its own cancellation/exclusivity semantics) would be
+    strictly more machinery for no behavioural gain here.
+    """
+    return await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+
+
 def _default_open_sections() -> dict[str, bool]:
     return {section_id: True for section_id in RAIL_SECTIONS}
 
@@ -127,6 +163,15 @@ CLASSIC_SUBGROUP_LABEL = "─ classic ─"
 
 EVALS_RAIL_CLASSIC_ROW_PREFIX = "evals-rail-row-benches-classic-"
 
+#: Prefixes a rail row whose bench or dataset belongs to the character-probe
+#: eval, so the two kinds sharing one section are distinguishable at a
+#: glance -- a probe set and a snippet dataset otherwise look identical, and
+#: selecting a bench row is a guess about which detail pane will appear.
+#: Single-width by construction: a double-width glyph would shift every rail
+#: row's alignment (the ␣/⏎/✓✗ markers elsewhere follow the same rule; see
+#: ``test_the_marker_glyph_is_single_width``).
+CHARACTER_PROBE_MARKER = "◆ "
+
 
 def _bench_row_label(row: dict[str, Any]) -> str:
     # escape_markup: `Button(label=...)` parses its argument as Textual
@@ -136,15 +181,27 @@ def _bench_row_label(row: dict[str, Any]) -> str:
     # `_run_group_row_label` (below) already closed for run rows. Bench
     # names are machine-generated today, but the bench-authoring program
     # makes them user-typed (task-1482).
+    #
+    # No CHARACTER_PROBE_MARKER check here: every row reaching this
+    # function already passed `EvalsViewModel._is_word_bench` (it is only
+    # ever called for `benches()` rows -- see `_benches_section_body`
+    # below), and `is_character_bench`/`_is_word_bench` are mutually
+    # exclusive (`config_data["bench_type"]` is either `"word_bench"` or
+    # `"character_probe"`, never both). Marking here would be dead code.
+    # A character-probe bench instead reaches `_classic_row_label` below,
+    # since it is not a word bench and `classic_tasks()` has no other
+    # category for it yet (see that method's own docstring).
     return escape_markup(str(row.get("name") or "Untitled bench"))
 
 
 def _classic_row_label(row: dict[str, Any]) -> str:
-    return escape_markup(str(row.get("name") or "Untitled task"))
+    name = escape_markup(str(row.get("name") or "Untitled task"))
+    return f"{CHARACTER_PROBE_MARKER}{name}" if is_character_bench(row) else name
 
 
 def _dataset_row_label(row: dict[str, Any]) -> str:
-    return escape_markup(str(row.get("name") or "Untitled dataset"))
+    name = escape_markup(str(row.get("name") or "Untitled dataset"))
+    return f"{CHARACTER_PROBE_MARKER}{name}" if is_probe_set(row) else name
 
 
 #: Single-cell-width status glyphs for run rows -- NEVER emoji, which
@@ -266,6 +323,29 @@ class LibraryRail(NotifyMixin, Vertical):
         is a coroutine), so ``EvalsScreen`` runs it as a worker rather than
         this widget doing it inline, mirroring why row selection is a
         message rather than a direct call too.
+        """
+
+    class NewCharacterBenchRequested(Message, namespace="library_rail"):
+        """Posted when "+ New character bench" is pressed.
+
+        Unlike ``_create_new_bench``'s plain in-widget DB write (a draft
+        word bench needs nothing beyond a dataset id), creating a draft
+        character bench also resolves a target via ``sample_bench.
+        resolve_unsteered_llama_cpp_target`` -- a sibling of the ``sample_
+        bench.resolve_sample_target`` function ``EvalsScreen``'s own
+        sample-bench flow calls (whole-branch review Critical 1: NOT the
+        same function -- that one reuses ANY existing ``llama_cpp`` row
+        with no regard for its steering, which is unsafe for a character
+        probe; see the sibling function's own docstring). Reusing target-
+        resolution logic (rather than reimplementing it here) is why this
+        posts a message for ``EvalsScreen`` to handle instead of doing the
+        write here, the way ``_create_new_bench`` does. See
+        ``EvalsScreen._on_new_character_bench_requested`` for why a target
+        must be resolved at CREATE time at all: the character-bench editor
+        (task-1691 phase 2, Task 4) has no Add-target control of its own,
+        so bench creation is the only place ``target_ids`` is ever
+        populated -- leaving it empty here would ship a bench with no path
+        to ever becoming runnable.
         """
 
     def __init__(
@@ -413,11 +493,19 @@ class LibraryRail(NotifyMixin, Vertical):
         )
 
     def _new_bench_actions(self) -> ComposeResult:
-        """"+ New bench": create a draft bench bound to a dataset, in-widget
-        (no worker -- a draft bench is a plain DB write, exactly like
-        ``_create_new_dataset``). Shared by both branches of
-        ``_benches_section_body`` (task-1482), in a ``Horizontal`` row
-        mirroring ``_dataset_actions``'s own shape.
+        """"+ New bench" / "+ New character bench": create a draft bench,
+        in-widget for the word-bench case (no worker -- a draft bench is a
+        plain DB write, exactly like ``_create_new_dataset``), routed
+        through ``EvalsScreen`` for the character-bench case (see
+        ``NewCharacterBenchRequested``'s own docstring for why). Shared by
+        both branches of ``_benches_section_body`` (task-1482 / task-1691
+        phase 2), in one ``Horizontal`` row mirroring ``_dataset_actions``'s
+        own shape -- ``#lab-rail .evals-rail-empty-actions`` (``_lab.tcss``)
+        stacks this row vertically at the rail's narrow width regardless of
+        the Python-level ``Horizontal``, the same fix already proven for
+        ``_dataset_actions``'s three buttons, so a second button here does
+        not reopen the side-by-side clipping ``_lab.tcss``'s own comment
+        documents.
 
         Deliberately NOT gated on ``sample_bench.provider_is_configured``:
         creating a bench writes only ``eval_tasks``/``eval_datasets`` rows,
@@ -428,11 +516,23 @@ class LibraryRail(NotifyMixin, Vertical):
         gate used to render no bench-creation affordance at all (see
         ``_benches_section_body``'s own updated comment on this).
 
-        Disabled -- with an explanatory tooltip AND an adjacent one-line
-        hint, never a silent no-op (the fix-batch convention) -- when
-        there is no dataset yet to bind the new bench to.
+        Both buttons are disabled -- with an explanatory tooltip AND an
+        adjacent one-line hint, never a silent no-op (the fix-batch
+        convention) -- when there is nothing yet to bind the new bench to:
+        a WORD-BENCH dataset (``EvalsViewModel.word_bench_datasets()``) for
+        "+ New bench", a probe set (``EvalsViewModel.probe_sets()``) for
+        "+ New character bench" -- a character bench with no probe set has
+        no probes to ever run.
+
+        Whole-branch review Important 3 (fix round): ``has_dataset`` reads
+        ``word_bench_datasets()``, not ``datasets()`` -- a probe set is a
+        dataset row too, but it holds zero snippets a word bench could
+        ever measure. Before this fix, a probe-set-only library still
+        showed "+ New bench" enabled (see ``word_bench_datasets()``'s own
+        docstring for the exact failure chain this closes).
         """
-        has_dataset = bool(self.view_model.datasets())
+        has_dataset = bool(self.view_model.word_bench_datasets())
+        has_probe_set = bool(self.view_model.probe_sets())
         yield Horizontal(
             Button(
                 "+ New bench",
@@ -444,6 +544,18 @@ class LibraryRail(NotifyMixin, Vertical):
                     if not has_dataset
                     else "Creates a draft bench bound to the selected "
                     "dataset (or the newest one, if none is selected)."
+                ),
+            ),
+            Button(
+                "+ New character bench",
+                id="evals-rail-new-character-bench",
+                compact=True,
+                disabled=not has_probe_set,
+                tooltip=(
+                    "Import or create a probe set first."
+                    if not has_probe_set
+                    else "Creates a draft character-probe bench bound to "
+                    "the newest probe set."
                 ),
             ),
             classes="evals-rail-empty-actions",
@@ -461,6 +573,19 @@ class LibraryRail(NotifyMixin, Vertical):
             yield Static(
                 "Create or import a dataset first.",
                 id="evals-rail-new-bench-hint",
+                classes="evals-rail-new-bench-hint",
+                markup=False,
+            )
+        if not has_probe_set:
+            # A dedicated id (distinct from `#evals-rail-new-bench-hint`)
+            # sharing the SAME visual class -- both hints are one-line,
+            # muted "why this button is disabled" copy, and nothing here
+            # scopes a query on the shared class alone (see the comment
+            # just above for the one place that matters, which is id-
+            # scoped already).
+            yield Static(
+                "Import or create a probe set first.",
+                id="evals-rail-new-character-bench-hint",
                 classes="evals-rail-new-bench-hint",
                 markup=False,
             )
@@ -721,7 +846,16 @@ class LibraryRail(NotifyMixin, Vertical):
                 children.append(
                     self._row_button(
                         button_id=button_id,
-                        kind="classic",
+                        # A character-probe bench renders in this same
+                        # subgroup (marked with CHARACTER_PROBE_MARKER --
+                        # see _classic_row_label), but selecting one must
+                        # route to its OWN detail surface, never
+                        # ClassicTaskDetail's read-only one -- see
+                        # EvalsScreen._compose_detail_pane's
+                        # "character_bench" branch (task-1691 phase 2,
+                        # Task 5). A genuinely classic (pre-word-bench)
+                        # task keeps kind="classic".
+                        kind="character_bench" if is_character_bench(row) else "classic",
                         row_id=row.get("id"),
                         label=_classic_row_label(row),
                     )
@@ -751,6 +885,9 @@ class LibraryRail(NotifyMixin, Vertical):
         yield Horizontal(
             Button("+ New dataset", id="evals-rail-new-dataset", compact=True),
             Button("Import…", id="evals-rail-import-dataset", compact=True),
+            Button(
+                "Import probes…", id="evals-rail-import-probes", compact=True
+            ),
             classes="evals-rail-empty-actions",
         )
 
@@ -776,6 +913,10 @@ class LibraryRail(NotifyMixin, Vertical):
             event.stop()
             self._create_new_bench()
             return
+        if button_id == "evals-rail-new-character-bench":
+            event.stop()
+            self.post_message(self.NewCharacterBenchRequested())
+            return
         if button_id == "evals-rail-new-dataset":
             event.stop()
             self._create_new_dataset()
@@ -783,6 +924,10 @@ class LibraryRail(NotifyMixin, Vertical):
         if button_id == "evals-rail-import-dataset":
             event.stop()
             self._open_dataset_import_dialog()
+            return
+        if button_id == "evals-rail-import-probes":
+            event.stop()
+            self._open_probe_import_dialog()
             return
         selection = self._row_targets.get(button_id)
         if selection is None:
@@ -817,19 +962,23 @@ class LibraryRail(NotifyMixin, Vertical):
 
         Dataset binding (task-1482, pinned): the currently selected
         dataset if one is selected and still resolves, else the newest
-        dataset -- ``view_model.datasets()`` is already newest-first
-        (``EvalsDB.list_datasets``'s own ``ORDER BY created_at DESC``), so
-        ``datasets[0]`` IS "the newest one" with no extra sort needed. A
-        stale ``kind="dataset"`` selection (its id no longer resolves --
-        e.g. the dataset was deleted from under the rail) degrades to the
-        same newest-dataset fallback rather than creating an unbound
-        bench or crashing.
+        dataset -- ``view_model.word_bench_datasets()`` is already newest-
+        first (``EvalsDB.list_datasets``'s own ``ORDER BY created_at
+        DESC``, ``word_bench_datasets()``'s own filter preserves that
+        order -- see its own docstring), so ``datasets[0]`` IS "the newest
+        one" with no extra sort needed. A stale ``kind="dataset"``
+        selection (its id no longer resolves -- e.g. the dataset was
+        deleted from under the rail, OR (whole-branch review Important 3,
+        fix round) it resolves to a PROBE SET, which this method must
+        never bind a word bench to -- see ``word_bench_datasets()``'s own
+        docstring) degrades to the same newest-word-bench-dataset fallback
+        rather than creating an unbound or probe-set-bound bench.
         """
         db = self.view_model.db
         if db is None:
             self._notify("The evaluation service is unavailable.", severity="error")
             return
-        datasets = self.view_model.datasets()
+        datasets = self.view_model.word_bench_datasets()
         if not datasets:
             # The button is disabled whenever this is true (see
             # `_new_bench_actions`) -- reachable only via a stale render or
@@ -874,13 +1023,19 @@ class LibraryRail(NotifyMixin, Vertical):
             self._handle_dataset_import_file_selected,
         )
 
-    def _handle_dataset_import_file_selected(self, path: Optional[Any]) -> None:
+    async def _handle_dataset_import_file_selected(self, path: Optional[Any]) -> None:
         """Creates a NEW dataset from an imported file in one step -- there
         is no existing dataset to import INTO yet (that is
         ``snippet_editor.SnippetEditor``'s job, once a dataset exists and is
         selected). Public-shaped so a test can drive it directly with a real
         temp file, bypassing the modal picker -- mirrors
         ``SnippetEditor._handle_import_file_selected``.
+
+        ``async`` (Qodo review, task-1691 phase 2 fix wave): the file read
+        below now hops onto a worker thread via ``_read_import_file_off_
+        thread`` -- see that function's own docstring for why, and why an
+        ``async def`` callback here costs nothing extra (``push_screen``'s
+        own ``invoke()`` helper already awaits it).
         """
         if not path:
             return
@@ -894,7 +1049,7 @@ class LibraryRail(NotifyMixin, Vertical):
             self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
             return
         try:
-            content = file_path.read_text(encoding="utf-8")
+            content = await _read_import_file_off_thread(file_path)
         except (OSError, UnicodeDecodeError) as exc:
             self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
             return
@@ -926,6 +1081,75 @@ class LibraryRail(NotifyMixin, Vertical):
             entry_word = "entry" if skipped_count == 1 else "entries"
             message += f"; skipped {skipped_count} invalid {entry_word}"
         self._notify(f"{message}.", severity="information")
+        self.post_message(
+            self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
+        )
+
+    def _open_probe_import_dialog(self) -> None:
+        """Mirrors ``_open_dataset_import_dialog``: no filters, since the
+        character-probe plain-text format (``---``/``===`` delimited, see
+        ``character_probe.probe_format``) has no standard file extension of
+        its own the way snippet CSV/JSON does.
+        """
+        self.app.push_screen(
+            FileOpen(title="Import probe set"),
+            self._handle_probe_import_file_selected,
+        )
+
+    async def _handle_probe_import_file_selected(self, path: Optional[Any]) -> None:
+        """Creates a NEW probe-set dataset from an imported plain-text file.
+
+        Public-shaped (not ``_on_...``) so a test can drive it directly with
+        a real temp file, bypassing the modal picker -- mirrors
+        ``_handle_dataset_import_file_selected``'s own convention for
+        snippet imports.
+
+        ``async`` (Qodo review, task-1691 phase 2 fix wave): the file read
+        below now hops onto a worker thread via ``_read_import_file_off_
+        thread`` -- the SAME helper ``_handle_dataset_import_file_
+        selected`` uses, so the two siblings stay identical on this point
+        rather than diverging. See that function's own docstring for why,
+        and why an ``async def`` callback here costs nothing extra
+        (``push_screen``'s own ``invoke()`` helper already awaits it).
+
+        Args:
+            path: The chosen file, or ``None``/falsy when the dialog was
+                cancelled.
+        """
+        if not path:
+            return
+        db = self.view_model.db
+        if db is None:
+            self._notify("The evaluation service is unavailable.", severity="error")
+            return
+        try:
+            file_path = validate_path_simple(path, require_exists=True)
+        except ValueError as exc:
+            self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
+            return
+        try:
+            text = await _read_import_file_off_thread(file_path)
+        except (OSError, UnicodeDecodeError) as exc:
+            self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
+            return
+        try:
+            probe_set = parse_probe_text(text)
+        except ValueError as exc:
+            self._notify(
+                f"That file is not a valid probe set: {exc}", severity="error"
+            )
+            return
+
+        dataset_name = f"{file_path.stem or 'Imported probes'} {uuid.uuid4().hex[:8]}"
+        try:
+            dataset_id = save_probe_set(db, dataset_name, probe_set)
+        except Exception as exc:
+            self._notify(f"Import failed: {exc}", severity="error")
+            return
+
+        count = len(probe_set.probes)
+        probe_word = "probe" if count == 1 else "probes"
+        self._notify(f"Imported {count} {probe_word} into a new probe set.")
         self.post_message(
             self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
         )
