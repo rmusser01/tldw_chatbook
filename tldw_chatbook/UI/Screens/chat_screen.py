@@ -5806,7 +5806,12 @@ class ChatScreen(BaseAppScreen):
             record = await method(mode=source, prompt_identifier=identifier)
             recipe_sources[str(identifier)] = source
             if isinstance(record, Mapping):
-                durable_id = record.get("id") or record.get("uuid") or identifier
+                durable_id = (
+                    record.get("source_id")
+                    or record.get("id")
+                    or record.get("uuid")
+                    or identifier
+                )
                 recipe_sources[str(durable_id)] = source
             return record
 
@@ -5971,7 +5976,9 @@ class ChatScreen(BaseAppScreen):
             latest = await detail(source, recipe_source_id)
             if not isinstance(latest, Mapping):
                 raise ValueError("The selected Recipe is no longer available.")
-            latest_identity = latest.get("id") or latest.get("uuid")
+            latest_identity = (
+                latest.get("source_id") or latest.get("id") or latest.get("uuid")
+            )
             if str(latest_identity or "") != recipe_source_id:
                 raise ValueError("The selected Recipe identity changed.")
             latest_version = latest.get("version", latest.get("optimistic_version"))
@@ -5991,7 +5998,9 @@ class ChatScreen(BaseAppScreen):
             latest = await detail(captured.source, captured.prompt_source_id)
             if not isinstance(latest, Mapping):
                 raise ValueError("The selected Prompt is no longer available.")
-            latest_identity = latest.get("id") or latest.get("uuid")
+            latest_identity = (
+                latest.get("source_id") or latest.get("id") or latest.get("uuid")
+            )
             if str(latest_identity or "") != captured.prompt_source_id:
                 raise ValueError("The selected Prompt identity changed.")
             latest_version = latest.get("version", latest.get("optimistic_version"))

@@ -308,10 +308,14 @@ class _MutableResolutionPromptGateway(_PromptImprovementGateway):
 
 
 def _native_prompt_record(
-    *, artifact_type: str, identifier: str, version: int = 4
+    *,
+    artifact_type: str,
+    identifier: str,
+    version: int = 4,
+    source_id: str | None = None,
 ) -> dict[str, object]:
     kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
-    return {
+    record: dict[str, object] = {
         "id": identifier,
         "name": "Saved structured artifact",
         "artifact_type": artifact_type,
@@ -350,11 +354,15 @@ def _native_prompt_record(
         "version": version,
         "backend": "local",
     }
+    if source_id is not None:
+        record["source_id"] = source_id
+    return record
 
 
 class _NativePromptScopeService:
     def __init__(self, record: dict[str, object]) -> None:
         self.record = record
+        self.detail_calls: list[tuple[str, str]] = []
         self.usage_calls: list[tuple[str, str]] = []
         self.usage_error: Exception | None = None
 
@@ -378,6 +386,7 @@ class _NativePromptScopeService:
         return [deepcopy(self.record)]
 
     async def get_prompt(self, *, mode: str, prompt_identifier: str):
+        self.detail_calls.append((mode, prompt_identifier))
         return deepcopy(self.record)
 
     async def save_prompt(self, *, mode: str, **payload):
@@ -855,6 +864,64 @@ async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_fa
         assert (
             tuple(store.messages_for_session(store.active_session_id))
             == transcript_before
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
+    artifact_type: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    source_id = f"{artifact_type}-source"
+    service = _NativePromptScopeService(
+        _native_prompt_record(
+            artifact_type=artifact_type,
+            identifier=f"local:prompt:{source_id}",
+            source_id=source_id,
+        )
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        if artifact_type == "recipe":
+            modal.query_one("#console-prompts-improve", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-structured-recipe", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-recipe-saved", Button).press()
+            await pilot.pause()
+        modal.query_one(".console-prompts-result", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "Answer the question."
+        assert service.detail_calls == [
+            ("local", source_id),
+            ("local", source_id),
+        ]
+        assert service.usage_calls == (
+            [("local", source_id)] if artifact_type == "prompt" else []
         )
         assert gateway.stream_calls == 0
 

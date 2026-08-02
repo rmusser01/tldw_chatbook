@@ -22,7 +22,12 @@ def _row_token(identifier: str) -> str:
 
 
 def _identifier(item: Mapping[str, Any]) -> str:
-    value = item.get("id", item.get("uuid", item.get("name", "")))
+    value = (
+        item.get("source_id")
+        or item.get("id")
+        or item.get("uuid")
+        or item.get("name", "")
+    )
     return str(value)
 
 
@@ -84,8 +89,7 @@ class ConsolePromptsBrowse(Vertical):
             id="console-prompts-improve",
             classes="console-prompts-primary-action",
             disabled=bool(
-                self._improve_unavailable_reason
-                and not self._manual_improve_available
+                self._improve_unavailable_reason and not self._manual_improve_available
             ),
         )
         if self._improve_unavailable_reason:
@@ -159,7 +163,7 @@ class ConsolePromptsBrowse(Vertical):
         self._row_ids.clear()
         for item in result.items:
             identifier = _identifier(item)
-            token = _row_token(identifier)
+            token = _row_token(str(item.get("id") or identifier))
             self._row_ids[token] = identifier
             artifact_type = str(item.get("artifact_type") or "prompt").title()
             source = str(item.get("backend") or result.source).title()

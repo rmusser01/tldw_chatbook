@@ -12,11 +12,16 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     outcome_first_recipe,
 )
 from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
     PromptImprovementOutcome,
+)
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService,
+    PromptScopeService,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ComposerTransactionValidationError,
@@ -154,6 +159,36 @@ class _PromptBackend:
     async def save(self, **payload: Any) -> Any:
         self.save_calls.append(payload)
         return payload if self.save_result is None else self.save_result
+
+
+class _RealPromptScopeBackend:
+    """Console callback adapter over the real local Prompt scope/DB stack."""
+
+    def __init__(self, service: PromptScopeService) -> None:
+        self.service = service
+        self.detail_calls: list[tuple[str, str]] = []
+        self.save_calls: list[dict[str, Any]] = []
+
+    async def capabilities(self, source: str) -> object:
+        return await self.service.get_capabilities(mode=source)
+
+    async def list_page(self, source: str, page: int) -> Mapping[str, Any]:
+        return await self.service.list_prompts(mode=source, page=page, per_page=10)
+
+    async def search(self, source: str, query: str) -> Any:
+        return await self.service.search_prompts(mode=source, query=query, limit=25)
+
+    async def detail(self, source: str, identifier: str) -> Any:
+        self.detail_calls.append((source, identifier))
+        return await self.service.get_prompt(
+            mode=source,
+            prompt_identifier=identifier,
+        )
+
+    async def save(self, **payload: Any) -> Any:
+        self.save_calls.append(dict(payload))
+        source = str(payload.pop("source", "local"))
+        return await self.service.save_prompt(mode=source, **payload)
 
 
 class _Harness(App):
@@ -522,6 +557,147 @@ async def test_selected_row_deleted_before_detail_fetch_stays_in_browse() -> Non
 
 
 @pytest.mark.asyncio
+async def test_normalized_browse_detail_and_update_use_source_id_not_composite_id() -> (
+    None
+):
+    source_id = "9f4e2f0a-1111-4222-8333-444455556666"
+    composite_id = f"local:prompt:{source_id}"
+    backend = _PromptBackend(
+        pages={
+            1: {
+                "items": [
+                    {
+                        **_brief(composite_id),
+                        "source_id": source_id,
+                    }
+                ],
+                "page": 1,
+                "total_pages": 1,
+                "total_items": 1,
+            }
+        }
+    )
+    backend.detail_result = {
+        **_detail(identifier=composite_id),
+        "source_id": source_id,
+    }
+    backend.save_result = {
+        **backend.detail_result,
+        "version": 5,
+    }
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        result_button = app.screen.query_one(".console-prompts-result", Button)
+        assert result_button.id is not None
+        assert composite_id.encode("utf-8").hex() in result_button.id
+
+        result_button.press()
+        await pilot.pause()
+
+        assert backend.detail_calls == [("local", source_id)]
+        assert app.screen.state.selected_identity == source_id
+
+        app.screen.query_one("#prompt-editor-update-original", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert backend.save_calls[-1]["prompt_identifier"] == source_id
+
+
+@pytest.mark.asyncio
+async def test_real_normalized_local_prompt_round_trip_opens_updates_and_uses_source_id(
+    tmp_path,
+) -> None:
+    prompt_db = PromptsDatabase(
+        tmp_path / "console-prompts.db", client_id="console-test"
+    )
+    try:
+        _prompt_id, prompt_uuid, _message = prompt_db.add_prompt(
+            name="Normalized Console Prompt",
+            author="Console test",
+            details="Real PromptScopeService and PromptsDatabase round trip",
+            system_prompt="# Role\n\nBe exact.",
+            user_prompt="Answer the question.",
+            keywords=["console", "identity"],
+            overwrite=False,
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=_definition(),
+            artifact_type="prompt",
+        )
+        assert prompt_uuid
+        scope = PromptScopeService(
+            local_service=LocalPromptService(prompt_db),
+            server_service=None,
+        )
+        backend = _RealPromptScopeBackend(scope)
+        guarded_identities: list[tuple[str, str]] = []
+
+        async def apply_result(_result: Any, captured: Any) -> Any:
+            latest = await scope.get_prompt(
+                mode=captured.source,
+                prompt_identifier=captured.prompt_source_id,
+            )
+            guarded_identities.append(
+                (captured.prompt_source_id, str(latest["source_id"]))
+            )
+            used = await scope.record_prompt_usage(
+                mode=captured.source,
+                prompt_identifier=captured.prompt_source_id,
+            )
+            guarded_identities.append(
+                (captured.prompt_source_id, str(used["source_id"]))
+            )
+            return SimpleNamespace(kind="applied", user_message="")
+
+        app = _Harness(
+            backend,  # type: ignore[arg-type]
+            improvement_kwargs={
+                "improvement_context": SimpleNamespace(
+                    composer_snapshot=SimpleNamespace(),
+                    current_system_fingerprint="system-fingerprint",
+                ),
+                "apply_improvement_result": apply_result,
+            },
+        )
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            row = app.screen.browse_result.items[0]
+            assert row["id"] == f"local:prompt:{prompt_uuid}"
+            assert row["source_id"] == prompt_uuid
+
+            app.screen.query_one(".console-prompts-result", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.screen.state.mode == "edit"
+            assert app.screen.state.selected_identity == prompt_uuid
+            assert backend.detail_calls == [("local", prompt_uuid)]
+
+            app.screen.query_one("#prompt-editor-update-original", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert backend.save_calls[-1]["prompt_identifier"] == prompt_uuid
+            assert app.screen.state.selected_identity == prompt_uuid
+
+            app.screen.query_one("#prompt-editor-apply", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+
+        assert guarded_identities == [
+            (prompt_uuid, prompt_uuid),
+            (prompt_uuid, prompt_uuid),
+        ]
+    finally:
+        prompt_db.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("detail", "expected_mode", "unsaved"),
     [
@@ -878,7 +1054,7 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         await pilot.pause()
 
         assert modal.state.working_copy_unsaved is False
-        assert modal.state.selected_identity == "local:prompt:new-77"
+        assert modal.state.selected_identity == "new-77"
         assert modal.state.selected_version == 9
         assert modal.state.selected_source == "local"
         assert modal._selected_record is not None
@@ -898,7 +1074,7 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         await pilot.pause()
         await pilot.pause()
 
-    assert backend.save_calls[1]["prompt_identifier"] == "local:prompt:new-77"
+    assert backend.save_calls[1]["prompt_identifier"] == "new-77"
     assert backend.save_calls[1]["expected_version"] == 9
     assert backend.save_calls[1]["name"] == "Saved Prompt"
 

@@ -144,7 +144,12 @@ def _fingerprint_definition(definition: BlockArtifactDefinition) -> str:
 
 
 def _record_identifier(record: Mapping[str, Any]) -> str:
-    value = record.get("id", record.get("uuid", record.get("name", "")))
+    value = (
+        record.get("source_id")
+        or record.get("id")
+        or record.get("uuid")
+        or record.get("name", "")
+    )
     if value in (None, ""):
         raise ValueError("Prompt detail has no source identity.")
     return str(value)
@@ -157,7 +162,7 @@ def _record_version(record: Mapping[str, Any]) -> int | None:
 
 def _saved_record_identifier(record: Mapping[str, Any]) -> str:
     """Return a durable identity from a normalized save response."""
-    value = record.get("id") or record.get("uuid") or record.get("source_id")
+    value = record.get("source_id") or record.get("id") or record.get("uuid")
     if value in (None, ""):
         raise ValueError("Saved Prompt response has no durable identity.")
     return str(value)
