@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import struct
 import threading
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -64,6 +65,32 @@ _WAV_CHUNKS = (
     b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x40\x00\x00\x00"
     + bytes((i * 7 + 3) % 256 for i in range(64)),
 )
+
+
+def _valid_wav_body(
+    data_size: int, *, sample_rate: int = 44100, channels: int = 1
+) -> bytes:
+    """Build a structurally-valid canonical PCM16 RIFF/WAVE body of a given
+    `data` chunk size -- used by the F4 (sink-upgrade-cap) test below to
+    prove that a WAV *big enough to trip the cap but otherwise perfectly
+    sink-eligible* still falls back to the legacy path, as opposed to
+    `_WAV_CHUNKS` extended with raw padding, which would also fail
+    `validate_pcm16_wav`'s RIFF-size check on its own -- a false-positive
+    that would pass even without the cap fix.
+    """
+    bits_per_sample = 16
+    block_align = channels * (bits_per_sample // 8)
+    byte_rate = sample_rate * block_align
+    fmt_payload = struct.pack(
+        "<HHIIHH", 1, channels, sample_rate, byte_rate, block_align, bits_per_sample
+    )
+    data_bytes = bytes((i * 7 + 3) % 256 for i in range(data_size))
+    riff_payload = (
+        b"WAVE"
+        + b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload
+        + b"data" + struct.pack("<I", data_size) + data_bytes
+    )
+    return b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
 
 
 class _RecordingStream:
@@ -887,6 +914,86 @@ async def test_a_sink_eligible_wav_response_streams_live_and_deletes_its_artifac
     assert not created_paths[0].exists(), (
         "the now-redundant artifact must be deleted once played live"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_wav_response_over_the_sink_upgrade_cap_skips_the_sink_entirely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4 fix-round: a WAV response too large for the in-memory sink-upgrade
+    attempt (`tts_events._MAX_WAV_SINK_UPGRADE_BYTES`) must abandon that
+    attempt -- never even constructing a `StreamingPcmSink` -- and fall
+    through to the already-complete, disk-backed legacy path, the same way
+    every OTHER wav response does when no sink is available at all. Shrinks
+    the cap via monkeypatch (rather than actually streaming >16MiB) to keep
+    the fixture small and the test fast.
+
+    Uses `_valid_wav_body()`, a STRUCTURALLY VALID (and thus, absent the
+    cap, sink-eligible) wav -- not `_WAV_CHUNKS` plus raw padding, which
+    would also fail `validate_pcm16_wav`'s RIFF-size check on its own and
+    so would reach the legacy path regardless of whether the cap fix
+    exists at all, a false-positive that was caught while writing this
+    test (mutation-checked: with the cap enforcement itself removed, THIS
+    version of the test fails -- the raw-padding version did not).
+    """
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+    monkeypatch.setattr(tts_events_module, "_MAX_WAV_SINK_UPGRADE_BYTES", 64)
+
+    sink_holder: dict[str, _RecordingSink] = {}
+
+    class _Sink(_RecordingSink):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            sink_holder["sink"] = self
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _Sink)
+
+    # data_size=200 -> body is well over the 64-byte cap above, but the wav
+    # itself remains fully valid (and would be sink-eligible without the cap).
+    oversized_chunks = (_valid_wav_body(200),)
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(oversized_chunks, timeline))
+    service = _DefaultService(response)
+    handler = _Handler()
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    artifact: Path | None = None
+
+    try:
+        await handler.handle_tts_request(
+            TTSRequestEvent(
+                text="Oversized wav response",
+                message_id="oversized-wav-1",
+                voice=None,
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert artifact is not None, (
+            "over the cap: the legacy path must still expose the fully "
+            "written artifact, exactly as if no sink were available"
+        )
+        assert artifact.read_bytes() == b"".join(oversized_chunks)
+        assert sink_holder == {}, (
+            "no StreamingPcmSink should ever be constructed once the "
+            "in-memory upgrade attempt exceeds its cap"
+        )
+    finally:
+        await handler.cleanup_tts_resources()
+
+    assert artifact is not None
+    assert not artifact.exists()
 
 
 @pytest.mark.asyncio

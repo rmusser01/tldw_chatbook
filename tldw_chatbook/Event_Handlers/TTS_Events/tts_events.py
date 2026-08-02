@@ -53,6 +53,21 @@ _TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS = 1.0
 _TTS_SECURE_DELETE_TIMEOUT_SECONDS = 1.0
 _TTS_RETAINED_WORK_DRAIN_TIMEOUT_SECONDS = 1.0
 _GLOBAL_OVERRIDE_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
+# F4 fix-round: hard cap, in bytes, on the in-memory WAV body the
+# opportunistic sink-upgrade attempt (see `wav_collect` in `_generate_tts`)
+# will accumulate before giving up and falling through to the legacy,
+# already-fully-written disk artifact. Derived from the streaming sink's
+# own BUFFER_CAP_SECONDS (`Audio/streaming_sink.py`, 60s -- the most audio
+# it could ever actually buffer and play) at a deliberately generous
+# worst-case PCM16 rate -- 48kHz stereo, 2 bytes/sample:
+#   60s * 48_000Hz * 2ch * 2bytes = 11_520_000 bytes (~11.5MB)
+# rounded up to a clean 16MiB. A WAV response bigger than this could never
+# be fully played through the sink's own buffer anyway (`feed()` rejects
+# the tail past BUFFER_CAP_SECONDS of buffered audio at the response's
+# REAL sample rate), so abandoning the attempt here costs nothing in
+# correctness -- only saves the memory/CPU of accumulating (and then
+# copying) a body this large just to discover that.
+_MAX_WAV_SINK_UPGRADE_BYTES = 16 * 1024 * 1024
 
 
 class _TTSResponseContractError(RuntimeError):
@@ -940,8 +955,19 @@ class TTSEventHandler:
                 # case the Global Constraint says must be left alone) would
                 # regress that bound for every wav response on a machine
                 # with no `sounddevice` at all -- e.g. a headless/CI box.
-                wav_collect: list[bytes] | None = (
-                    [] if _wants_wav_collection(audio_format) else None
+                #
+                # Fix-round F4: a `bytearray` accumulator, not a
+                # `list[bytes]` later joined with `b"".join(...)` -- the
+                # list-then-join shape briefly (and, since `wav_collect`
+                # itself was never dereferenced afterward, not so briefly)
+                # held BOTH the complete list of every streamed chunk AND
+                # the freshly `b"".join`-ed copy of the same bytes at once.
+                # `bytearray.extend()` grows one buffer in place instead;
+                # each `chunk` is copied in and then immediately eligible
+                # for GC (nothing else retains it beyond `buffered_chunks`,
+                # which is cleared every `_TTS_ARTIFACT_WRITE_BATCH_BYTES`).
+                wav_collect: bytearray | None = (
+                    bytearray() if _wants_wav_collection(audio_format) else None
                 )
 
                 def cleanup_late_write() -> None:
@@ -970,7 +996,16 @@ class TTSEventHandler:
                     if not chunk:
                         continue
                     if wav_collect is not None:
-                        wav_collect.append(chunk)
+                        wav_collect.extend(chunk)
+                        if len(wav_collect) > _MAX_WAV_SINK_UPGRADE_BYTES:
+                            # F4: oversized body -- abandon the in-memory
+                            # upgrade attempt (and free what was collected
+                            # so far) rather than keep accumulating a body
+                            # too big to ever fully fit the sink's own
+                            # buffer anyway. The legacy write loop below is
+                            # completely unaffected: it already has (or
+                            # will have) the complete file on disk.
+                            wav_collect = None
                     buffered_chunks.append(chunk)
                     buffered_bytes += len(chunk)
                     if buffered_bytes >= _TTS_ARTIFACT_WRITE_BATCH_BYTES:
@@ -993,7 +1028,16 @@ class TTSEventHandler:
                 # there is no reason to ever surface a user-facing failure
                 # for this opportunistic upgrade not panning out.
                 if wav_collect and sink_available():
-                    wav_body = b"".join(wav_collect)
+                    # The one copy `sink_plan`/`validate_pcm16_wav` actually
+                    # demands: both are typed (and, `validate_pcm16_wav`'s
+                    # `struct.unpack_from`/slicing aside, documented) around
+                    # an immutable `bytes` body, not a still-growable
+                    # `bytearray` -- converting here, once, at that boundary
+                    # (fix-round F4) is the single unavoidable copy; dropping
+                    # `wav_collect` immediately after frees the accumulator
+                    # instead of holding both for the rest of this call.
+                    wav_body = bytes(wav_collect)
+                    wav_collect = None
                     wav_plan = sink_plan("wav", None, wav_body)
                     if wav_plan is not None:
                         streamed_outcome_code = await self._stream_response_via_sink(
