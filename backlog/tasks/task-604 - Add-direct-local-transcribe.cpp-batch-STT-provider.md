@@ -1,9 +1,11 @@
 ---
 id: TASK-604
 title: Add direct-local transcribe.cpp batch STT provider
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:04'
+updated_date: '2026-08-02 22:00'
 labels:
   - stt
   - gguf
@@ -37,3 +39,17 @@ Let a user choose an existing local GGUF and complete real Library audio/video b
 - [ ] #6 transcribe.cpp never participates in semantic default routing or silent fallback. Worker failures extend the existing bounded `error_detail` payload with a path-safe STT failure code and only eligible `choose_another_gguf` and `retry_faster_whisper` actions; the parent job record and Library failure UI preserve those actions, including the explicit provenance-linked **Retry with faster-whisper** flow.
 - [ ] #7 Focused tests cover picker/config restart, key-only persistence, the complete production Library ingestion path, worker-side revalidation, lazy import, final ABI probe, load-before-seal capability equality, typed failure/action propagation, native path redaction, crash containment, shutdown, and package-resolution/provider smoke for all five released OS/CPU wheel lanes including Linux ABI coverage.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add the exact optional pin and a lazy single-job transcribe.cpp adapter; revalidate before one native load, derive authoritative capabilities, seal the per-job registry, and normalize output through the existing coordinator.
+2. Carry the direct-local request, normalized provenance, and a bounded path-safe failure envelope through the existing spawn parser and parent writer for audio/video.
+3. Add exact manual-only batch routing plus an explicit faster-whisper retry override that preserves existing job/attempt lineage.
+4. Add the Library and first-run Choose GGUF picker, off-loop admission, dedicated key-only config persistence, and the two bounded recovery actions.
+5. Run only focused TASK-604 tests/static checks, self-review the branch diff, and document completion.
+
+ADR required: no
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md and backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md
+Reason: the accepted ADRs already govern the provider/runtime boundary, direct-local configuration, worker revalidation, provenance, and explicit no-managed-store/no-resident-executor scope.
+<!-- SECTION:PLAN:END -->
