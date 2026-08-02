@@ -317,7 +317,11 @@ def _parse_search_result(item: object) -> RemoteModelSummary:
     repository = item.get("modelId")
     private = item.get("private")
     gated = item.get("gated")
-    if not is_exact_repository(repository) or type(private) is not bool:
+    if (
+        not isinstance(repository, str)
+        or not is_exact_repository(repository)
+        or type(private) is not bool
+    ):
         raise RemoteDiscoveryError("invalid_response")
     normalized_gated = _normalized_gated(gated)
     if normalized_gated is None:

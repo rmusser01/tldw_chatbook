@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
+import json
 import traceback
 
 import httpx
@@ -17,6 +19,11 @@ from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     ResolvedRemoteModel,
     build_remote_catalog,
     is_exact_repository,
+)
+from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
+from tldw_chatbook.Model_Artifacts.service import (
+    ModelArtifactService,
+    ProvenanceClass,
 )
 
 
@@ -707,3 +714,94 @@ def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() ->
         "Runtime compatibility has not been verified. Configuration is required."
     )
     assert catalog.descriptor(artifact.reference) is artifact
+
+
+@pytest.mark.asyncio
+async def test_remote_gguf_flows_through_managed_install_without_activation(
+    tmp_path, monkeypatch
+) -> None:
+    """Catches remote bytes bypassing managed integrity or becoming active.
+
+    A regression that skips the pinned source map, omits the integrity
+    manifest, assigns a consumer, or ignores ``activate=False`` fails this
+    real resolve-to-provision flow. Network transport and egress checks are
+    isolated at their external boundary; metadata parsing, catalog mapping,
+    preflight, consent, fetch, verification, and installation stay real.
+    """
+    payload = b"GGUF\x00managed-test"
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    commit = "c" * 40
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url)))
+        if request.method == "GET" and request.url.path == "/api/models/acme/model":
+            return httpx.Response(
+                200,
+                json=_model_info(
+                    [_lfs_file("tiny-model.gguf", size=len(payload), digest=payload_sha256)],
+                    commit=commit,
+                    card_data=None,
+                ),
+            )
+        if request.url.path == f"/acme/model/resolve/{commit}/tiny-model.gguf":
+            if request.method == "HEAD":
+                return httpx.Response(200, headers={"etag": '"tiny-v1"'})
+            if request.method == "GET":
+                return httpx.Response(200, content=payload, headers={"etag": '"tiny-v1"'})
+        pytest.fail(f"unexpected network request: {request.method} {request.url}")
+
+    async def allow_mocked_egress(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.acquisition.check_url_or_raise_async",
+        allow_mocked_egress,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.fetch.check_url_or_raise_async",
+        allow_mocked_egress,
+    )
+    client_factory = _client_factory(handler)
+
+    resolved = await HuggingFaceRemoteAdapter(client_factory=client_factory).resolve(
+        "acme/model"
+    )
+    catalog = build_remote_catalog(resolved, resolved.candidates[0])
+    core = ModelArtifactService(tmp_path / "managed")
+    acquisition = ArtifactAcquisitionService(
+        core,
+        client_factory=client_factory,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    report = await acquisition.preflight(
+        catalog.artifact.reference, catalog, sources=catalog.sources
+    )
+    assert report.gating_errors == ()
+    provisioned = await acquisition.provision(
+        report.root,
+        report.grant(),
+        catalog,
+        sources=catalog.sources,
+        activate=False,
+    )
+
+    artifact = catalog.artifact
+    assert provisioned == artifact.reference
+    installed_payload = core.artifact_path(artifact.reference) / "model.gguf"
+    manifest_path = core.artifact_path(artifact.reference) / "manifest.json"
+    assert installed_payload.read_bytes() == payload
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["descriptor"]["reference"] == artifact.reference.to_dict()
+    assert manifest["descriptor"]["files"] == [
+        {"path": "model.gguf", "size_bytes": len(payload), "sha256": payload_sha256}
+    ]
+    assert artifact.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+    assert artifact.consumer == "unassigned"
+    assert not core.active_path(artifact.reference.artifact_id).exists()
+    assert [(method, httpx.URL(url).path) for method, url in requests] == [
+        ("GET", "/api/models/acme/model"),
+        ("HEAD", f"/acme/model/resolve/{commit}/tiny-model.gguf"),
+        ("GET", f"/acme/model/resolve/{commit}/tiny-model.gguf"),
+    ]
