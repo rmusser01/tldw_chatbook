@@ -39,14 +39,36 @@ F6.
 
 `awaiting_reply` is also `tick()`-driven: `_awaiting_armed_at` anchors the
 same way `_armed_at` does (first `tick()` call after
-`_begin_awaiting_reply()` adopts `now`). If `AWAITING_REPLY_DEADLINE_SECONDS`
-elapses with no reply-lifecycle input at all, the send is presumed to have
-silently refused (V2's send path has refusal branches -- an unmounted
-send button, a session that changed mid-flight -- that emit no reply
-signal whatsoever back to this controller). The honest recovery is to stop
+`_begin_awaiting_reply()` adopts `now`). **The watchdog guards only the
+send -> `on_reply_started()` gap**, not generation in progress
+(task-3-review.md N1): if `AWAITING_REPLY_DEADLINE_SECONDS` elapses with
+`on_reply_started()` never having arrived at all, the send is presumed to
+have silently refused (V2's send path has refusal branches -- an
+unmounted send button, a session that changed mid-flight -- that emit no
+reply signal whatsoever back to this controller). `on_reply_started()`
+itself DISARMS the watchdog outright the moment it arrives (it does not
+merely re-anchor it) -- it is positive proof the send did not silently
+refuse, and more than `AWAITING_REPLY_DEADLINE_SECONDS` from there to the
+first *speakable* sentence is routine in this app (a cold local-model
+load, a reasoning model's long non-speakable thinking block, or a reply
+that opens with a fenced code block, which the sentence sequencer skips
+entirely by design and so legitimately yields no utterance for its whole
+duration). Once disarmed, only `on_reply_failed()` or the sequencer's own
+signals are the failure detector for that reply -- never this wall clock.
+
+On genuine expiry (never disarmed), the honest recovery is to stop
 waiting for a reply that may never come and let the user speak again:
-`OpenCapture` (if needed) and `_transition("listening")`. This is a
-last-resort backstop, not the primary error path -- `on_reply_failed()`,
+`SuppressReplySpeech` (this reply must never be allowed to speak, exactly
+like `on_reply_failed()`), `OpenCapture` (if needed), and
+`_transition("listening")`. Because the abandoned reply may still show up
+late, a subsequent `on_reply_started()` for it re-emits
+`SuppressReplySpeech` again (idempotently) rather than being a silent
+no-op -- in the real wiring, `on_reply_started` is exactly the point that
+would otherwise call the sentence sequencer's own `begin_reply()`, which
+RESETS the sequencer's suppression latch, so without this the late reply
+could still speak into the reopened mic despite the earlier suppression
+(task-3-review.md N2). This is a last-resort backstop for the narrow
+send-to-started window, not the primary error path -- `on_reply_failed()`,
 driven by the wiring layer's own error handling, is expected to fire long
 before this in the vast majority of failures.
 
@@ -94,7 +116,14 @@ two turns, which this FSM's single-outstanding-reply model cannot
 represent -- but in acoustic mode the mic is still reopened (per the same
 `on_reply_started` rule above) so the user is not left deaf mid-turn; in
 default mode there is nothing further to do (the mic was already meant to
-be closed there).
+be closed there). This mid-reply reopen is routed through the SAME
+consecutive-empty-limit ceiling as the `listening`/`countdown` branch
+(task-3-review.md N3) -- `speaking` has no watchdog of its own (by
+design; keypress barge-in stays available there), so this ceiling is the
+only bound on it. A limit-hit ending WITH segments mid-reply resets the
+ceiling (it is not a "silent room" ending, even though no send is issued
+for it); a SECOND consecutive empty-limit ending exits the loop, exactly
+as it would in `listening`/`countdown`.
 
 ## Re-entry (`enter()` called while not `idle`)
 
@@ -267,6 +296,8 @@ class HandsFreeController:
         self._armed_at: Optional[float] = None
         self._last_countdown_remaining: Optional[float] = None
         self._awaiting_armed_at: Optional[float] = None
+        self._awaiting_watchdog_disarmed: bool = False
+        self._reply_abandoned_by_watchdog: bool = False
         self._resume_latched: bool = False
         self._capture_open: bool = False
         self._capture_limit_reopened: bool = False
@@ -346,6 +377,8 @@ class HandsFreeController:
         self._sequencer_drained = False
         self._cancel_countdown()
         self._awaiting_armed_at = None
+        self._awaiting_watchdog_disarmed = False
+        self._reply_abandoned_by_watchdog = False
         self._clear_resume_latch()
         self._transition("awaiting_reply")
 
@@ -382,6 +415,8 @@ class HandsFreeController:
         from_idle = self._state == "idle"
         self._cancel_countdown()
         self._awaiting_armed_at = None
+        self._awaiting_watchdog_disarmed = False
+        self._reply_abandoned_by_watchdog = False
         self._clear_resume_latch()
         self._capture_limit_reopened = False
         self._reply_finished = False
@@ -431,15 +466,25 @@ class HandsFreeController:
 
     def _tick_awaiting_reply(self, now: float) -> None:
         """See the module docstring's "`awaiting_reply` watchdog" section:
-        a send that silently refuses (no reply-lifecycle input arrives at
-        all) would otherwise hang this state forever. Mirrors
+        a send that silently refuses (`on_reply_started()` never arrives
+        at all) would otherwise hang this state forever. Mirrors
         `_tick_countdown`'s anchoring: the first call after entering
         `awaiting_reply` adopts `now` as the anchor (elapsed is always 0
         relative to a same-call anchor, so this never expires on its own
-        first call, exactly like the countdown's arming tick)."""
+        first call, exactly like the countdown's arming tick). A no-op
+        once `on_reply_started()` has disarmed it (task-3-review.md N1) --
+        this watchdog guards only the send -> `on_reply_started()` gap,
+        never generation in progress. On genuine expiry, suppresses this
+        reply's speech (task-3-review.md N2) exactly like
+        `on_reply_failed()` would, and records the abandonment so a LATE
+        `on_reply_started()` for this same reply can re-affirm it."""
+        if self._awaiting_watchdog_disarmed:
+            return
         if self._awaiting_armed_at is None:
             self._awaiting_armed_at = now
         if now - self._awaiting_armed_at >= AWAITING_REPLY_DEADLINE_SECONDS:
+            self._reply_abandoned_by_watchdog = True
+            self._emit(SuppressReplySpeech())
             self._reopen_capture_if_closed()
             self._transition("listening")
 
@@ -506,13 +551,28 @@ class HandsFreeController:
         issued regardless of `had_segments`, since a send mid-reply would
         interleave two turns; acoustic mode still reopens the mic (per
         `on_reply_started`'s rule) so the user is not left deaf mid-turn,
-        default mode has nothing further to do."""
+        default mode has nothing further to do. This mid-reply reopen is
+        routed through the SAME consecutive-empty-limit ceiling as
+        `listening`/`countdown` (task-3-review.md N3) -- `speaking` has no
+        watchdog of its own, so this ceiling is the only bound on it: an
+        ending WITH segments resets the ceiling (it is not a "silent room"
+        ending, even without a send for it), a SECOND consecutive
+        empty-limit ending exits the loop exactly as it would elsewhere."""
         if not limit_hit:
             return
         self._capture_open = False  # the capture already ended, any state
         if self._state in ("awaiting_reply", "speaking"):
-            if self._acoustic_barge_in:
+            if not self._acoustic_barge_in:
+                return  # default mode: nothing to reopen, no ceiling to track
+            if had_segments:
+                self._capture_limit_reopened = False  # a real capture; reset the ceiling
                 self._reopen_capture_if_closed()
+                return
+            if not self._capture_limit_reopened:
+                self._capture_limit_reopened = True
+                self._reopen_capture_if_closed()
+                return
+            self._exit()
             return
         if self._state not in ("listening", "countdown"):
             return  # idle: nothing further to do
@@ -556,17 +616,35 @@ class HandsFreeController:
     def on_reply_started(self) -> None:
         """Reply generation has begun streaming. Never itself changes
         `state` -- that is `on_first_utterance()`'s job, once the
-        sequencer actually queues speakable text -- but in acoustic-mode
-        this is exactly when the mic reopens (`_begin_awaiting_reply()`
-        just closed it, unconditionally, for the send): mid-reply is the
-        acoustic mode's whole point, since the user may interrupt by
-        speaking (task-3-review.md F1). A no-op in default mode (the mic
-        stays closed until the reply drains) and in any state other than
-        `awaiting_reply`."""
-        if self._state != "awaiting_reply":
+        sequencer actually queues speakable text.
+
+        While `awaiting_reply`: DISARMS the `awaiting_reply` watchdog
+        outright (task-3-review.md N1 -- positive proof the send did not
+        silently refuse; see the module docstring's "`awaiting_reply`
+        watchdog" section for why this must disarm rather than merely
+        re-anchor). In acoustic mode this is also exactly when the mic
+        reopens (`_begin_awaiting_reply()` just closed it, unconditionally,
+        for the send): mid-reply is the acoustic mode's whole point, since
+        the user may interrupt by speaking (task-3-review.md F1). A no-op
+        for the reopen in default mode (the mic stays closed until the
+        reply drains).
+
+        Outside `awaiting_reply`: if the watchdog already abandoned THIS
+        reply (`_reply_abandoned_by_watchdog`), this is a LATE arrival for
+        a reply the loop gave up on -- re-emits `SuppressReplySpeech`
+        (idempotently) rather than doing nothing, since in the real wiring
+        this input is exactly the point that would otherwise call the
+        sentence sequencer's own `begin_reply()`, which resets its
+        suppression latch and would let the late reply speak after all
+        (task-3-review.md N2). A true no-op in every other case (e.g. a
+        stray call in `idle`/`listening` with nothing outstanding at all)."""
+        if self._state == "awaiting_reply":
+            self._awaiting_watchdog_disarmed = True
+            if self._acoustic_barge_in:
+                self._reopen_capture_if_closed()
             return
-        if self._acoustic_barge_in:
-            self._reopen_capture_if_closed()
+        if self._reply_abandoned_by_watchdog:
+            self._emit(SuppressReplySpeech())
 
     def on_first_utterance(self) -> None:
         """The sequencer queued its first speakable sentence."""

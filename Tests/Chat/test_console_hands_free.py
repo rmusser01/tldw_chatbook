@@ -551,6 +551,57 @@ def test_capture_ended_in_speaking_non_acoustic_only_corrects_the_model():
     assert c.state == "speaking"
 
 
+def test_capture_ended_in_speaking_acoustic_reopen_respects_the_ceiling():
+    """N3 (review, LOW): the acoustic mid-reply reopen used to bypass the
+    reopen-once ceiling entirely -- 4 consecutive empty-limit endings
+    mid-reply meant 4 `OpenCapture`s and 0 `ExitLoop`. `speaking` has no
+    watchdog of its own (by design -- keypress barge-in stays available),
+    so this ceiling is the only bound on it. Routed through the SAME
+    consecutive-empty-limit accounting as `listening`/`countdown`: a
+    SECOND consecutive empty-limit ending exits, not a fourth."""
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"
+
+    ev.clear()
+    c.on_capture_ended(had_segments=False, limit_hit=True)  # 1st: reopen
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert not any(isinstance(e, ExitLoop) for e in ev)
+    assert c.state == "speaking"
+
+    ev.clear()
+    c.on_capture_ended(had_segments=False, limit_hit=True)  # 2nd consecutive: exit
+    assert any(isinstance(e, ExitLoop) for e in ev)
+    assert c.state == "idle"
+
+
+def test_capture_ended_in_speaking_acoustic_with_segments_resets_the_ceiling():
+    """N3 (continued): a limit-hit ending WITH segments mid-reply is not
+    a "silent room" ending -- it must reset the ceiling, same as a
+    successful send does, not count toward the consecutive-empty streak."""
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"
+
+    c.on_capture_ended(had_segments=False, limit_hit=True)  # 1st empty: reopen
+    c.on_capture_ended(had_segments=True, limit_hit=True)  # a real capture: resets
+    ev.clear()
+    c.on_capture_ended(had_segments=False, limit_hit=True)  # fresh 1st again: reopen, not exit
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert not any(isinstance(e, ExitLoop) for e in ev)
+    assert c.state == "speaking"
+
+
 def test_zero_sentence_reply_short_circuits_to_listening():
     c, ev = mk()
     c.enter(capture_live=True)
@@ -601,9 +652,18 @@ def test_resume_latch_does_not_survive_a_turn_boundary():
     assert c.state == "countdown"
 
 
-def test_resume_latch_cleared_on_countdown_expiry_turn_boundary():
-    """F3 (continued): the same swallow via the countdown-expiry send
-    path (not just `on_capture_ended`)."""
+def test_resume_latch_cleared_after_a_relatch_following_consumption():
+    """F3 (continued); N4 (review, test-honesty fix): a second variant
+    that layers a consume-then-relatch sequence before the SAME turn
+    boundary (`on_capture_ended`) the sibling test above already uses --
+    NOT a genuinely different "countdown-expiry send" path, despite an
+    earlier draft of this docstring claiming that. Reaching `countdown`
+    (and its `tick()`-driven expiry) while latched is unreachable BY
+    CONSTRUCTION: arming a countdown requires an UNlatched
+    `on_voice_final` (a latched one just consumes the latch and stays
+    `listening`, per carried finding #1), so "latched" and "about to
+    expire via `tick()`" can never coexist -- there is no
+    countdown-expiry variant of this test to write."""
     c, ev = mk()
     c.enter(capture_live=True)
     c.on_speech_resumed()  # latches
@@ -639,9 +699,12 @@ def test_awaiting_reply_deadline_not_yet_expired_stays_awaiting():
 
 def test_awaiting_reply_deadline_expiry_reopens_and_returns_to_listening():
     """F5 (review): a silently-refused send must not hang the loop in
-    `awaiting_reply` forever. Mutation evidence: removing the deadline
-    watchdog makes this fail (state stays `awaiting_reply` under an
-    arbitrarily large `now`)."""
+    `awaiting_reply` forever ("never-started still fires at 30s" -- N1's
+    pin). Mutation evidence: removing the deadline watchdog makes this
+    fail (state stays `awaiting_reply` under an arbitrarily large `now`).
+    N2 (review): expiry must also suppress the reply's speech, exactly
+    like `on_reply_failed` -- a late reply must not be able to speak into
+    the reopened mic."""
     c, ev = mk()
     c.enter(capture_live=True)
     c.on_voice_final()
@@ -654,7 +717,74 @@ def test_awaiting_reply_deadline_expiry_reopens_and_returns_to_listening():
     c.tick(now=1.6 + AWAITING_REPLY_DEADLINE_SECONDS + 0.1)  # past the deadline
     assert c.state == "listening"
     assert any(isinstance(e, OpenCapture) for e in ev)
+    assert any(isinstance(e, SuppressReplySpeech) for e in ev)
     assert any(isinstance(e, ModeChanged) and e.state == "listening" for e in ev)
+
+
+def test_watchdog_disarms_after_on_reply_started_and_never_fires():
+    """N1 (review, MED): `on_reply_started()` is positive proof the send
+    did NOT silently refuse -- 30s to the first SPEAKABLE sentence is
+    routine (cold model load, a long thinking block, or a reply opening
+    with a fenced code block the sequencer skips entirely), so the
+    watchdog must disarm outright once generation is confirmed alive
+    rather than keep ticking toward a false-positive abandonment.
+    Mutation evidence: removing the disarm makes this fail (an
+    arbitrarily late tick would still fire and abandon a live reply)."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.state == "awaiting_reply"
+    c.on_reply_started()  # confirmed alive at t=10 (a slow cold-load reply)
+    ev.clear()
+    c.tick(now=1.6)  # first awaiting_reply tick: would anchor if not disarmed
+    c.tick(now=1.6 + AWAITING_REPLY_DEADLINE_SECONDS + 100.0)  # way past 30s
+    assert c.state == "awaiting_reply"  # never abandoned
+    assert ev == []
+
+
+def test_watchdog_expiry_then_late_reply_lifecycle_inputs_cannot_speak():
+    """N2 (review, MED): the reviewer's exact compound sequence -- expiry,
+    then a late reply eventually arriving anyway (`on_reply_started` /
+    `on_first_utterance` / `on_reply_finished` in order) -- must never let
+    speech reach the reopened mic, and the mic must stay ordinarily usable
+    (a composer keypress remains a no-op in `listening`, exactly like
+    normal typing). The late `on_reply_started` specifically must
+    re-affirm suppression (idempotent): in the real wiring that input is
+    what would otherwise reset the sentence sequencer's own suppression
+    latch (`SentenceSequencer.begin_reply()`), which would let the late
+    reply speak after all if this controller did not counteract it."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.tick(now=1.6)  # anchors the watchdog
+    c.tick(now=1.6 + AWAITING_REPLY_DEADLINE_SECONDS + 0.1)  # expires
+    assert c.state == "listening"
+    assert any(isinstance(e, SuppressReplySpeech) for e in ev)
+
+    ev.clear()
+    c.on_reply_started()  # the abandoned reply shows up anyway
+    assert any(isinstance(e, SuppressReplySpeech) for e in ev)  # re-affirmed
+    assert c.state == "listening"  # no speech path opened
+
+    ev.clear()
+    c.on_first_utterance()  # its first "speakable" sentence, if any
+    assert c.state == "listening"  # still cannot reach `speaking`
+    assert ev == []
+
+    ev.clear()
+    c.on_reply_finished()
+    c.on_sequencer_drained()
+    assert c.state == "listening"
+    assert ev == []
+
+    ev.clear()
+    c.on_composer_key()  # the mic stays ordinarily usable
+    assert c.state == "listening"
+    assert ev == []
 
 
 def test_countdown_tick_clamped_and_nonincreasing_under_backwards_jitter():
@@ -670,6 +800,50 @@ def test_countdown_tick_clamped_and_nonincreasing_under_backwards_jitter():
     assert len(ticks) == 4
     assert all(0.0 <= r <= 1.5 for r in ticks)
     assert all(ticks[i] >= ticks[i + 1] for i in range(len(ticks) - 1))
+
+
+def test_backwards_reanchor_requires_full_delay_from_the_new_anchor():
+    """N6 (review, INFO -- kept-behavior pin): the backwards re-anchor
+    (`_armed_at = min(_armed_at, now)`) is a deliberate choice ("elapsed
+    can never go negative"), with a documented side effect -- a clock
+    step back effectively re-arms the countdown from the earlier point,
+    so it can expire earlier in real terms than the full
+    `send_delay_seconds` measured from the ORIGINAL arm. This pins the
+    kept, intentional half: the FULL delay is still required, measured
+    from the RE-ANCHORED (new, earlier) point -- the re-anchor does not
+    additionally truncate past that. Mutation evidence: dropping the
+    re-anchor (freezing `_armed_at` at its first value) makes this fail,
+    since expiry would then need `now` to reach the ORIGINAL anchor plus
+    the full delay, which this test's final tick falls well short of."""
+    c, ev = mk()  # send_delay_seconds=1.5
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=10.0)  # arms at 10.0
+    c.tick(now=9.0)  # a 1s backwards clock step: re-anchors to 9.0
+    assert c.state == "countdown"  # not expired by the step itself
+    c.tick(now=9.0 + 1.5 - 0.1)  # just short of the full delay from 9.0
+    assert c.state == "countdown"
+    c.tick(now=9.0 + 1.5 + 0.1)  # full delay elapsed from the re-anchored point
+    assert c.state == "awaiting_reply"
+
+
+def test_resume_latch_cleared_on_empty_limit_reopen_turn_boundary():
+    """N5 (review, LOW, coverage): the `on_capture_ended` latch clear is
+    the ONLY one of the three F3 clear sites that does unique work -- it
+    is the sole `listening -> listening` self-transition turn boundary,
+    where `_transition`'s "leaving listening" clear cannot fire (state
+    never actually leaves `listening`). Reproduces the reviewer's exact
+    probe: latch -> empty-limit reopen -> next capture's first final ->
+    `countdown`. Mutation evidence: removing this specific clear survived
+    45/45 without this dedicated pin."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_speech_resumed()  # latches, nothing pending
+    c.on_capture_ended(had_segments=False, limit_hit=True)  # empty-limit reopen
+    assert c.state == "listening"
+    ev.clear()
+    c.on_voice_final()  # next capture's first final must NOT be swallowed
+    assert c.state == "countdown"
 
 
 def test_enter_from_speaking_silences_before_resetting():
