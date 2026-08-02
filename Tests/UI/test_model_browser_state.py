@@ -248,29 +248,69 @@ def test_inventory_keeps_assigned_consumer_readiness_copy(tmp_path: Path) -> Non
 
 
 def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:
-    """Raw acquisition details never reach user notifications."""
+    """Raw acquisition details never reach user notifications.
+
+    TASK-596 delta port: every one of install_failure_message's branches
+    (there are nine: eight typed exceptions plus the untyped fallback) gets
+    its own case here, each asserting the mapped text IS present -- not
+    merely that the message is truthy/nonempty, which would pass even if
+    two different exception types collapsed onto the same generic string
+    -- AND that the injected raw marker is absent, exercised per branch
+    rather than once for the whole batch.
+    """
     from tldw_chatbook.Model_Artifacts.acquisition import (
         AcquisitionBusyError,
         CatalogError,
+        ConsentMismatchError,
+        GatedRepositoryError,
         InsufficientSpaceError,
         PreflightNotGrantableError,
         TransferError,
     )
     from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 
-    marker = "SECRET-GATING-DETAIL"
-    errors = (
-        AcquisitionBusyError(marker),
-        CatalogError(marker),
-        InsufficientSpaceError(marker),
-        PreflightNotGrantableError(marker),
-        TransferError(marker, retryable=True),
-    )
-    messages = tuple(
-        install_failure_message(error, model_label="Whisper") for error in errors
-    )
+    marker = "SECRET-GATING-DETAIL-9c31af"
 
-    assert all(marker not in message for message in messages)
-    assert all(message for message in messages)
-    assert "Whisper" in messages[0]
-    assert "Whisper" in messages[1]
+    def _check(exc: BaseException, expected_text: str) -> None:
+        message = install_failure_message(exc, model_label="Whisper")
+        assert expected_text in message
+        assert marker not in message
+
+    _check(
+        InsufficientSpaceError(marker),
+        "Not enough free disk space for this install.",
+    )
+    _check(
+        GatedRepositoryError(marker),
+        "Configure HUGGINGFACE_API_KEY (or HF_TOKEN) and retry.",
+    )
+    _check(
+        AcquisitionBusyError(marker),
+        "Another Whisper install is already in progress. Try again shortly.",
+    )
+    _check(
+        ConsentMismatchError(marker),
+        "The install plan changed. Retry Install to review the current plan.",
+    )
+    _check(
+        PreflightNotGrantableError(marker),
+        "This install plan cannot proceed. Retry Install to review the current plan.",
+    )
+    _check(
+        CatalogError(marker),
+        "The Whisper download source is misconfigured.",
+    )
+    _check(
+        TransferError(marker, retryable=True),
+        "The download was interrupted. Retry Install to resume.",
+    )
+    _check(
+        TransferError(marker, retryable=False),
+        "The download failed and cannot be retried automatically.",
+    )
+    # The untyped fallback: any exception not one of the eight typed cases
+    # above still gets a safe, labeled message rather than leaking str(exc).
+    _check(
+        RuntimeError(marker),
+        "Whisper install failed. See the application log for details.",
+    )
