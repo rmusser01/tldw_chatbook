@@ -58,6 +58,19 @@ SOURCE = "mcp"
 # canvas both key off these exact decision/error shapes, so they must not
 # drift from what is logged via `record_tool_decision`.
 DENY_REFUSAL = "blocked by MCP permissions (set to Off)"
+
+#: TASK-294: an EXPLICIT user "Deny" on the approval card. Distinct from
+#: `DENY_REFUSAL`, which correctly describes the permanent permissions-Off
+#: state -- blaming a user's per-call "no" on configuration is misleading
+#: provenance (a model reading it retries never; a user reading the
+#: transcript goes hunting for a setting they never flipped). Wording
+#: matches the builtin gate's and the review hook's user-denial copy.
+USER_DENY_REFUSAL = "tool call denied by the user"
+
+#: TASK-294: a verdict that is MISSING or unrecognized after the approval
+#: round trip. Fails closed like a deny, but blames nobody: the user never
+#: decided, and the permissions were not Off.
+UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
 KILL_SWITCH_REFUSAL = "blocked — MCP tools are switched off"
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
@@ -545,7 +558,12 @@ class MCPToolProvider:
             decisions = self._approval_callback([pending])
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
-        verdict = (decisions or {}).get(tool_id, "deny")
+        # TASK-294: default to a DISTINCT sentinel, not "deny" -- a missing
+        # verdict means nobody decided, and collapsing it into "deny" here
+        # is what used to blame the user (or the permissions) for a refusal
+        # no one made. `_apply_verdict`'s fall-through maps it to
+        # `UNRESOLVED_REFUSAL`; the fail-closed posture is unchanged.
+        verdict = (decisions or {}).get(tool_id, "unresolved")
         return self._apply_verdict(verdict, tool, call_args)
 
     # -- internals ----------------------------------------------------------
@@ -621,9 +639,16 @@ class MCPToolProvider:
         if verdict == "timeout":
             self._record_decision_safe(tool, decision="denied-timeout")
             return ToolResult(ok=False, error=TIMEOUT_REFUSAL)
-        # "deny" and any unrecognized verdict fail closed the same way.
+        if verdict == "deny":
+            # TASK-294: an explicit card "Deny" gets USER provenance -- a
+            # person said no to this call; the permissions were not Off.
+            self._record_decision_safe(tool, decision="denied")
+            return ToolResult(ok=False, error=USER_DENY_REFUSAL)
+        # An unrecognized or MISSING verdict fails closed -- but blaming the
+        # user here would be the same provenance lie in the other direction:
+        # nobody decided anything. Neutral copy, still a refusal.
         self._record_decision_safe(tool, decision="denied")
-        return ToolResult(ok=False, error=DENY_REFUSAL)
+        return ToolResult(ok=False, error=UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(
         self, fn: Callable[[], None], tool: HubTool, *, what: str

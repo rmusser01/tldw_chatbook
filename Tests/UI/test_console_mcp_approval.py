@@ -857,7 +857,9 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     bounds in left-to-right order, under the real bundled stylesheet.
 
     T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
-    stays compact (height <= 3, should be ~1-2 lines), the `#approval-batch-rows`
+    stays compact (height <= 6 -- three stacked lines since TASK-1846 split
+    header/args/controls, plus slack for a multi-arg collapsed row; a row
+    that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
     container doesn't balloon (height <= rows*3 + slack), and the
     `#approval-batch-actions` bar sits close after the rows (region.y within
     a few rows of the last row's bottom), matching the audit-mode geometry
@@ -1126,7 +1128,15 @@ async def test_request_mcp_approvals_round_trip_resolves_from_ui_thread():
     assert received[-1] is None
 
 
-def test_request_mcp_approvals_collapses_duplicate_llm_names_in_payload():
+def test_request_mcp_approvals_routes_one_decision_to_duplicate_names():
+    """Duplicate same-name rows resolve through ONE round trip and map.
+
+    TASK-294 rename: this was called `..._collapses_duplicate_llm_names_in_
+    payload`, but nothing here asserts payload collapsing -- visual
+    collapsing lives in `_collapse_pending_calls` (and since TASK-1861 is
+    keyed per call id). What this proves is the round trip: two pending rows
+    sharing a name, one card decision, one decisions map back.
+    """
     controller, _ = _build_controller()
     received: list[dict | None] = []
     controller.app = _FakeApp()

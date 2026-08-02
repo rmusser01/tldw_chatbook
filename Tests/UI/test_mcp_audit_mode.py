@@ -153,13 +153,25 @@ async def test_rows_render_in_given_newest_first_order_with_all_columns():
 
 @pytest.mark.asyncio
 async def test_when_column_formats_iso_timestamp():
+    """TASK-294: an aware UTC timestamp renders in the VIEWER's timezone.
+
+    The old expectation pinned raw UTC wall-clock -- wrong by the viewer's
+    whole UTC offset, silently, on any machine not running UTC.
+    """
+    from datetime import datetime
+
     app = AuditModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPAuditMode)
         await canvas.update_entries([_entry(ts="2026-07-16T21:22:05+00:00")])
         await pilot.pause()
         table = app.query_one("#mcp-audit-table", DataTable)
-        assert _row_texts(table, 0)[0] == "2026-07-16 21:22:05"
+        expected = (
+            datetime.fromisoformat("2026-07-16T21:22:05+00:00")
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+        assert _row_texts(table, 0)[0] == expected
 
 
 @pytest.mark.asyncio

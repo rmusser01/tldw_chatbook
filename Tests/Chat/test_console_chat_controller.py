@@ -3982,3 +3982,53 @@ def test_kill_switch_off_changes_nothing():
             [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")]
         )
         assert verdicts.get("c1", "proceed") == "proceed", (switch, verdicts)
+
+
+@pytest.mark.unit
+def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
+    """Pin the documented pass-through contract (TASK-294, P5 minor).
+
+    `build_tool_review_hook`'s docstring states a name neither provider
+    claims (a skill, `spawn_subagent`, `find_tools`, `load_tools`) passes
+    through unreviewed. TASK-631's test proves those names are REFUSED with
+    the kill switch on; nothing pinned the switch-OFF half -- no prompt, no
+    verdict entry, so the runtime dispatches them normally. If routing ever
+    started claiming these names by accident, gated prompts would appear
+    for internal plumbing calls; if it started refusing them, agent spawn
+    and tool discovery would silently break.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): pass
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return None  # claims nothing
+
+    prompted: list = []
+
+    def request_approvals(pending):
+        prompted.append(pending)
+        return {}
+
+    hook = build_tool_review_hook(_Gate(), _Provider(), None, request_approvals)
+    verdicts = hook([
+        ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
+        ToolCall(name="find_tools", args={"query": "q"}, call_id="c2"),
+        ToolCall(name="load_tools", args={"names": []}, call_id="c3"),
+        ToolCall(name="skill__notes__summarize", args={}, call_id="c4"),
+    ])
+
+    assert not prompted, "unclaimed names must not be offered a card"
+    assert verdicts == {}, (
+        f"unclaimed names must pass through unreviewed, got: {verdicts}"
+    )
