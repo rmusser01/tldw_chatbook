@@ -3,9 +3,11 @@ id: TASK-859
 title: >-
   Delete or implement the unread [subscriptions.security] switches and stale
   metadata denylist
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 04:35'
+updated_date: '2026-08-02 13:33'
 labels:
   - security
   - config
