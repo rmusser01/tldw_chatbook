@@ -673,6 +673,7 @@ def build_summary_rows(
     *,
     rag_deps_installed: bool,
     speech_installed: bool = False,
+    speech_runtime_installed: bool = False,
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -691,6 +692,15 @@ def build_summary_rows(
             this function stays pure/I/O-free. Defaults to False so every
             existing caller that doesn't yet resolve this stays correct
             (an unconfigured/uninstalled row either way).
+        speech_runtime_installed: Review Important 4 residual -- whether the
+            ``onnx-asr`` runtime extra is importable (same probe the step
+            itself gates on: ``Utils.optional_deps.parakeet_onnx_deps_installed``).
+            Without this, a config persisted while the extra WAS installed
+            (a completed setup) could still read ✓ configured/ready in the
+            same run after the extra is removed, even though the step
+            itself now says "runtime not installed" -- the two must agree.
+            Defaults to False (conservative: unknown runtime state reads as
+            not-ready, matching ``speech_installed``'s own default bias).
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -751,6 +761,16 @@ def build_summary_rows(
     speech_configured = speech_prefill.provider_id == routing_policy().parakeet_provider_id
     if not speech_configured:
         speech_row = SummaryRow("Speech transcription", ROW_DEFAULT, "not set up (optional)")
+    elif not speech_runtime_installed:
+        # Review Important 4 residual: readiness must agree with the same
+        # runtime probe the step itself gates on -- "files on disk" is not
+        # "can actually run". Checked BEFORE speech_installed so the more
+        # fundamental problem is the one reported when both are true.
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_ATTENTION,
+            "configured but the onnx-asr runtime isn't installed — revisit Lab ▸ Models",
+        )
     elif speech_installed:
         speech_row = SummaryRow(
             "Speech transcription",
