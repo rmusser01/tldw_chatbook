@@ -3,10 +3,18 @@
 #
 """Per-model pricing (dollars per million tokens) for the cost ticker.
 
-Resolution order: [pricing].models config override -> seeded direct map ->
-[pricing].patterns config override -> seeded pattern fallback -> local
-provider zero-rate -> None. None means "no pricing data" and the UI must
-show token counts instead of fabricating a dollar figure.
+Resolution order, per lookup: a ``[pricing].models`` config entry beats the
+seeded direct map for the same "provider:model" key -> otherwise the seeded
+direct map -> then that provider's pattern list, where a ``[pricing].
+patterns`` entry for a provider REPLACES that provider's whole seeded list
+(providers absent from config keep their seeded patterns) -> then the
+local-provider zero-rate -> then None. None means "no pricing data" and the
+UI must show token counts instead of fabricating a dollar figure.
+
+Provider names are normalized through ``provider_config_key`` (the same
+mapping the rest of the app uses: lowercase, spaces and dashes to
+underscores), so an execution-key spelling ("local-llm") and a readiness-key
+spelling ("local_llm") resolve identically.
 
 Rates were verified against each provider's official pricing page on
 _SEED_AS_OF (see task-2-report.md for the full source list); a few entries
@@ -17,13 +25,13 @@ per-token rate for that model.
 from __future__ import annotations
 
 import re
-import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 #
 #######################################################################################################################
@@ -32,29 +40,41 @@ logger = logging.getLogger(__name__)
 #
 # Date the seed table below was last checked against official provider pricing pages.
 _SEED_AS_OF = "2026-08-01"
+# Anthropic and OpenAI were re-verified against their live pricing pages on
+# this date (the final-review F5 wave); every other provider's rates still
+# carry their original _SEED_AS_OF, because they were NOT re-checked then --
+# `as_of` is the staleness defence surfaced in the PR3 tooltip, so it must
+# never claim a verification that did not happen.
+_RECHECKED_AS_OF = "2026-08-02"
 
-# Providers that run locally: always $0.00. Cross-checked against the exact
-# provider strings dispatched in tldw_chatbook/Chat/Chat_Functions.py
-# (API_CALL_HANDLERS keys) plus the local-runtime sections that exist in
-# config.py's [api_settings] but have no handler wired up yet.
+# Providers that run locally: always $0.00.
+#
+# Written in POST-NORMALIZATION form: every lookup runs the caller's provider
+# through `provider_config_key` first (lowercase, spaces/dashes -> "_"), which
+# is the same key the rest of the app stores on a resolution
+# (`ConsoleProviderResolution.provider` is the READINESS key -- "local_llm",
+# "local_mlx_lm" -- not the execution key "local-llm"/"mlx_lm" that
+# `Chat_Functions.API_CALL_HANDLERS` dispatches on). Seeding the execution
+# spellings made a local send resolve to None (no pricing) instead of $0.00.
+# Cross-checked against `provider_readiness.KEYLESS_PROVIDER_KEYS` plus the
+# local-runtime sections in config.py's [api_settings].
 LOCAL_PROVIDERS = frozenset(
     {
-        "llama_cpp",
+        "aphrodite",
         "koboldcpp",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_llm",
+        "local_mlx_lm",
+        "local_ollama",
+        "local_onnx",
+        "local_transformers",
+        "local_vllm",
+        "ollama",
         "oobabooga",
         "tabbyapi",
         "vllm",
-        "local-llm",
-        "ollama",
-        "aphrodite",
-        "mlx_lm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "local_mlx_lm",
-        "local_onnx",
-        "local_transformers",
     }
 )
 
@@ -78,6 +98,18 @@ def _entry(inp: float, out: float, cr: Optional[float] = None, cw: Optional[floa
     }
 
 
+def _stamped(as_of: str, entries: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Restamp a provider block's entries with the date IT was verified."""
+    return {key: {**value, "as_of": as_of} for key, value in entries.items()}
+
+
+def _stamped_patterns(
+    as_of: str, patterns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Restamp a provider's pattern list with the date IT was verified."""
+    return [{**pattern, "as_of": as_of} for pattern in patterns]
+
+
 def _lower_keys(mapping: Dict[str, Any]) -> Dict[str, Any]:
     """Lowercase every "provider:model" key so lookups are case-insensitive.
 
@@ -85,21 +117,68 @@ def _lower_keys(mapping: Dict[str, Any]) -> Dict[str, Any]:
     the seed table and any config-supplied `[pricing].models` overrides must
     go through this before landing in `direct_mappings`, or a naturally-cased
     override key would silently never match.
+
+    Only the PROVIDER half is run through ``provider_config_key`` (which also
+    folds dashes to underscores): model ids are full of meaningful dashes
+    ("claude-sonnet-5", "gpt-4o-mini"), so folding the whole key would
+    scramble every one of them.
     """
-    return {str(key).lower(): value for key, value in mapping.items()}
+    return {_normalize_pricing_key(key): value for key, value in mapping.items()}
 
 
-# Anthropic: cache read = 0.1x input, cache write = 1.25x input (5-min TTL).
-# Verified 2026-08-01 (pre-verified rates supplied with the task brief).
-DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
+def _normalize_pricing_key(key: Any) -> str:
+    """Return a "<normalized provider>:<lowercased model>" lookup key."""
+    text = str(key).strip()
+    provider, separator, model = text.partition(":")
+    if not separator:
+        return text.lower()
+    return f"{provider_config_key(provider)}:{model.strip().lower()}"
+
+
+# Anthropic - re-verified 2026-08-02 against the current API pricing docs.
+# House rule for the whole family: cache read = 0.1x input, cache write =
+# 1.25x input (5-min TTL); the retired families below carry cache rates
+# derived from that published multiplier, since Anthropic's archive pages
+# publish only the input/output pair.
+#
+# Rates are per GENERATION, never per family name: Opus 4.1 bills $15/$75
+# while Opus 4.6-4.8 and Opus 5 bill $5/$25, so the seeded entries and the
+# pattern fallbacks below are both generation-scoped. A model whose
+# generation is not recognized resolves to None (UI shows token counts)
+# rather than silently inheriting an older generation's -- 3x wrong -- rate.
+_ANTHROPIC_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
+    # Current lineup (the models config.py actually ships/defaults to).
+    "anthropic:claude-sonnet-5": _entry(3.00, 15.00, 0.30, 3.75),
+    "anthropic:claude-opus-5": _entry(5.00, 25.00, 0.50, 6.25),
+    "anthropic:claude-fable-5": _entry(10.00, 50.00, 1.00, 12.50),
+    "anthropic:claude-opus-4-8": _entry(5.00, 25.00, 0.50, 6.25),
+    "anthropic:claude-opus-4-7": _entry(5.00, 25.00, 0.50, 6.25),
+    "anthropic:claude-opus-4-6": _entry(5.00, 25.00, 0.50, 6.25),
     "anthropic:claude-opus-4-1": _entry(15.00, 75.00, 1.50, 18.75),
     "anthropic:claude-sonnet-4-6": _entry(3.00, 15.00, 0.30, 3.75),
     "anthropic:claude-sonnet-4-5": _entry(3.00, 15.00, 0.30, 3.75),
     "anthropic:claude-haiku-4-5": _entry(1.00, 5.00, 0.10, 1.25),
+    # Retired families kept for history rows people still have on disk.
+    "anthropic:claude-3-7-sonnet": _entry(3.00, 15.00, 0.30, 3.75),
+    "anthropic:claude-3-5-sonnet": _entry(3.00, 15.00, 0.30, 3.75),
+    "anthropic:claude-3-opus": _entry(15.00, 75.00, 1.50, 18.75),
+    "anthropic:claude-3-5-haiku": _entry(0.80, 4.00, 0.08, 1.00),
+    "anthropic:claude-3-haiku": _entry(0.25, 1.25, 0.025, 0.3125),
+}
 
-    # OpenAI - verified 2026-08-01 via https://developers.openai.com/api/docs/pricing
-    # (platform.openai.com/docs/pricing now redirects there). "Cached input" column
-    # maps to cache_read_per_mtok; OpenAI has no cache-write concept (cache_write=None).
+# OpenAI - re-verified 2026-08-02 via https://developers.openai.com/api/docs/pricing
+# (platform.openai.com/docs/pricing 301s there; openai.com/api/pricing/ 403s).
+# Standard tier. "Cached input" maps to cache_read_per_mtok.
+#
+# The gpt-5.6 family is the only OpenAI line that publishes a "Cache writes"
+# rate (every other model's cache_write is None), and it is also priced in
+# two context tiers -- the short-context (<=272K input tokens) rate is
+# seeded, since this per-model schema cannot express a context-dependent
+# tier (same limitation noted for Gemini below).
+_OPENAI_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
+    "openai:gpt-5.6-terra": _entry(2.00, 12.00, 0.20, 2.50),
+    "openai:gpt-5.6-sol": _entry(5.00, 30.00, 0.50, 6.25),
+    "openai:gpt-5.6-luna": _entry(0.20, 1.20, 0.02, 0.25),
     "openai:gpt-4o": _entry(2.50, 10.00, 1.25, None),
     "openai:gpt-4o-mini": _entry(0.15, 0.60, 0.075, None),
     "openai:gpt-4.1": _entry(2.00, 8.00, 0.50, None),
@@ -110,9 +189,22 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "openai:gpt-5-nano": _entry(0.05, 0.40, 0.005, None),
     "openai:gpt-5.1": _entry(1.25, 10.00, 0.125, None),
     "openai:gpt-5.2": _entry(1.75, 14.00, 0.175, None),
+    "openai:o1": _entry(15.00, 60.00, 7.50, None),
+    # o1-pro's cached-input cell is published as null, not as a number.
+    "openai:o1-pro": _entry(150.00, 600.00, None, None),
     "openai:o3": _entry(2.00, 8.00, 0.50, None),
     "openai:o3-mini": _entry(1.10, 4.40, 0.55, None),
     "openai:o4-mini": _entry(1.10, 4.40, 0.275, None),
+    # Deliberately NOT seeded: `chatgpt-4o-latest` (retired 2026-02-17) and
+    # `o1-mini` (retired 2025-10-27) appear in config.py's model browse list
+    # but carry no published per-token rate on any official page. They
+    # resolve to None so the UI shows token counts rather than a fabricated
+    # dollar figure -- a `[pricing].models` override is the escape hatch.
+}
+
+DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
+    **_stamped(_RECHECKED_AS_OF, _ANTHROPIC_MODEL_PRICING),
+    **_stamped(_RECHECKED_AS_OF, _OPENAI_MODEL_PRICING),
 
     # Google Gemini - verified 2026-08-01 via https://ai.google.dev/gemini-api/docs/pricing
     # (standard, <=200k-token tier for models with a long-context surcharge).
@@ -159,27 +251,65 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "deepseek:deepseek-v4-pro": _entry(0.435, 0.87, 0.003625, None),
 }
 
+# Pattern fallbacks exist to price DATED SNAPSHOTS of a seeded model
+# ("claude-sonnet-4-5-20250929", "gpt-4o-2024-11-20"), never to extend a
+# family name across generations. Every pattern is therefore anchored to the
+# generation it was verified for; an unrecognized generation falls through to
+# None, which the UI renders as token counts. The alternative -- a loose
+# `^claude-opus` -- charged Opus 4.1's $15/$75 for every Opus 5 turn.
 DEFAULT_PRICING_PATTERNS: Dict[str, List[Dict[str, Any]]] = {
-    "anthropic": [
-        {"pattern": r"^claude-opus", **_entry(15.00, 75.00, 1.50, 18.75)},
-        {"pattern": r"^claude-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
-        {"pattern": r"^claude-haiku", **_entry(1.00, 5.00, 0.10, 1.25)},
-    ],
-    "openai": [
+    "anthropic": _stamped_patterns(_RECHECKED_AS_OF, [
+        # Current generations.
+        {"pattern": r"^claude-opus-4-1", **_entry(15.00, 75.00, 1.50, 18.75)},
+        {"pattern": r"^claude-opus-(?:4-[678]|5)", **_entry(5.00, 25.00, 0.50, 6.25)},
+        {"pattern": r"^claude-sonnet-(?:4-[56]|5)", **_entry(3.00, 15.00, 0.30, 3.75)},
+        {"pattern": r"^claude-haiku-4-5", **_entry(1.00, 5.00, 0.10, 1.25)},
+        {"pattern": r"^claude-fable-5", **_entry(10.00, 50.00, 1.00, 12.50)},
+        # Retired generations (claude-3 family named its tier last).
+        {"pattern": r"^claude-3-opus", **_entry(15.00, 75.00, 1.50, 18.75)},
+        {"pattern": r"^claude-3-7-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
+        {"pattern": r"^claude-3-5-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
+        {"pattern": r"^claude-3-5-haiku", **_entry(0.80, 4.00, 0.08, 1.00)},
+        {"pattern": r"^claude-3-haiku", **_entry(0.25, 1.25, 0.025, 0.3125)},
+    ]),
+    "openai": _stamped_patterns(_RECHECKED_AS_OF, [
         # Longer/more specific prefixes must precede their shorter siblings.
+        {"pattern": r"^gpt-5\.6-terra", **_entry(2.00, 12.00, 0.20, 2.50)},
+        {"pattern": r"^gpt-5\.6-sol", **_entry(5.00, 30.00, 0.50, 6.25)},
+        {"pattern": r"^gpt-5\.6-luna", **_entry(0.20, 1.20, 0.02, 0.25)},
         {"pattern": r"^gpt-5\.2", **_entry(1.75, 14.00, 0.175, None)},
         {"pattern": r"^gpt-5\.1", **_entry(1.25, 10.00, 0.125, None)},
         {"pattern": r"^gpt-5-nano", **_entry(0.05, 0.40, 0.005, None)},
         {"pattern": r"^gpt-5-mini", **_entry(0.25, 2.00, 0.025, None)},
-        {"pattern": r"^gpt-5", **_entry(1.25, 10.00, 0.125, None)},
+        # `(?:-\d|$)` keeps the BASE gpt-5 rate off future point releases:
+        # a bare `^gpt-5` also matches "gpt-5.6-terra", which bills 2.00/12.00
+        # rather than 1.25/10.00. Dated snapshots ("gpt-5-2025-08-07") still
+        # resolve.
+        {"pattern": r"^gpt-5(?:-\d|$)", **_entry(1.25, 10.00, 0.125, None)},
         {"pattern": r"^gpt-4\.1-nano", **_entry(0.10, 0.40, 0.025, None)},
         {"pattern": r"^gpt-4\.1-mini", **_entry(0.40, 1.60, 0.10, None)},
         {"pattern": r"^gpt-4\.1", **_entry(2.00, 8.00, 0.50, None)},
         {"pattern": r"^gpt-4o-mini", **_entry(0.15, 0.60, 0.075, None)},
         {"pattern": r"^gpt-4o", **_entry(2.50, 10.00, 1.25, None)},
+        {"pattern": r"^o1-pro", **_entry(150.00, 600.00, None, None)},
+        # Bare/dated o1 only -- `o1-mini` is retired with no published rate.
+        {"pattern": r"^o1(?:-\d|$)", **_entry(15.00, 60.00, 7.50, None)},
         {"pattern": r"^o3-mini", **_entry(1.10, 4.40, 0.55, None)},
-        {"pattern": r"^o3", **_entry(2.00, 8.00, 0.50, None)},
+        {"pattern": r"^o3(?:-\d|$)", **_entry(2.00, 8.00, 0.50, None)},
         {"pattern": r"^o4-mini", **_entry(1.10, 4.40, 0.275, None)},
+    ]),
+    # Cohere publishes per-token rates only for the "legacy" models; Command A
+    # is billed through Model Vault instance pricing, so its per-token entry
+    # stays UNVERIFIED (see the direct mapping above). Patterned so the app's
+    # own default model id -- "command-a-03-2025" -- resolves at all.
+    # `command-r7b` is deliberately unmatched: it is a distinct, cheaper model
+    # with no rate in this table, and inheriting command-r's would overbill.
+    "cohere": [
+        {"pattern": r"^command-a", **_entry(2.50, 10.00, None, None)},  # UNVERIFIED
+        {"pattern": r"^command-r-plus", **_entry(2.50, 10.00, None, None)},
+        {"pattern": r"^command-r(?:-\d|$)", **_entry(0.50, 1.50, None, None)},
+        {"pattern": r"^command-light", **_entry(0.30, 0.60, None, None)},
+        {"pattern": r"^command(?:-\d|$)", **_entry(1.00, 2.00, None, None)},
     ],
     "google": [
         {"pattern": r"^gemini-2\.5-flash-lite", **_entry(0.10, 0.40, 0.01, None)},
@@ -272,19 +402,31 @@ class PricingCatalog:
         }
 
         # Pattern configurations by provider, merged the same way (a provider
-        # key present in config replaces that provider's whole pattern list;
-        # providers absent from config keep their seeded patterns).
+        # key present in config REPLACES that provider's whole pattern list;
+        # providers absent from config keep their seeded patterns). Both sides
+        # are keyed by the normalized provider so a config-supplied
+        # "Anthropic" replaces the seeded "anthropic" list rather than sitting
+        # beside it as a second, unreachable entry.
         self.pattern_configs: Dict[str, List[Dict[str, Any]]] = {
-            **DEFAULT_PRICING_PATTERNS,
-            **config.get("patterns", {}),
+            **{
+                provider_config_key(provider): patterns
+                for provider, patterns in DEFAULT_PRICING_PATTERNS.items()
+            },
+            **{
+                provider_config_key(provider): patterns
+                for provider, patterns in config.get("patterns", {}).items()
+            },
         }
 
         # Compile patterns for efficiency
         self._compiled_patterns = self._compile_patterns()
-        # Case-insensitive provider index: callers pass mixed/lowercase provider
-        # names while pattern keys are whatever case the seed/config used.
-        self._provider_key_by_lower = {
-            provider.lower(): provider for provider in self._compiled_patterns
+        # Normalized provider index: callers pass whatever spelling the app
+        # stored ("Anthropic", "local-llm", "local_llm") while pattern keys
+        # are whatever case/dash style the seed or config used. Both sides go
+        # through `provider_config_key`, the app's own provider normalization.
+        self._provider_key_by_normalized = {
+            provider_config_key(provider): provider
+            for provider in self._compiled_patterns
         }
 
         self._zero_pricing = self._to_model_pricing(_ZERO)
@@ -335,30 +477,36 @@ class PricingCatalog:
         Resolution order: direct "provider:model" mapping -> provider pattern
         fallback (first match wins) -> local-provider zero-rate -> None.
 
+        The provider is normalized through ``provider_config_key`` -- the same
+        mapping the rest of the app uses -- so the readiness spelling stored on
+        a message ("local_llm") and the execution spelling used by
+        ``Chat_Functions.API_CALL_HANDLERS`` ("local-llm") resolve to the same
+        rates instead of one of them silently returning None.
+
         Args:
-            provider: The provider name (case-insensitive).
+            provider: The provider name (case- and dash-insensitive).
             model: The model identifier (case-insensitive).
 
         Returns:
             A ModelPricing instance, or None if no pricing data is available.
         """
-        provider_l = (provider or "").lower()
-        model_l = (model or "").lower()
+        provider_key_normalized = provider_config_key(provider)
+        model_l = (model or "").strip().lower()
 
         # 1. Direct mapping (highest priority)
-        entry = self.direct_mappings.get(f"{provider_l}:{model_l}")
+        entry = self.direct_mappings.get(f"{provider_key_normalized}:{model_l}")
         if entry is not None:
             return self._to_model_pricing(entry)
 
-        # 2. Provider-specific patterns (case-insensitive provider match)
-        provider_key = self._provider_key_by_lower.get(provider_l)
+        # 2. Provider-specific patterns (normalized provider match)
+        provider_key = self._provider_key_by_normalized.get(provider_key_normalized)
         if provider_key is not None:
             for pattern, pattern_entry in self._compiled_patterns[provider_key]:
                 if pattern.match(model_l):
                     return self._to_model_pricing(pattern_entry)
 
         # 3. Local providers always cost $0.00
-        if provider_l in LOCAL_PROVIDERS:
+        if provider_key_normalized in LOCAL_PROVIDERS:
             return self._zero_pricing
 
         # 4. Unknown model: no fabricated price, let the UI fall back to token counts.
