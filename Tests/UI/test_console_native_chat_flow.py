@@ -113,6 +113,16 @@ def test_console_store_uses_app_citation_repository_for_matching_database():
     assert store.persistence.db is repository.db
 
 
+def test_native_paste_entry_point_advances_edit_serial_for_stale_apply_guard():
+    composer = ConsoleComposerBar()
+    before = composer.edit_serial
+
+    composer.insert_pasted_text("ordinary paste")
+
+    assert composer.edit_serial == before + 1
+    assert composer.capture_draft_snapshot().segments[0].origin == "paste"
+
+
 def test_console_store_rejects_mismatched_citation_repository():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")

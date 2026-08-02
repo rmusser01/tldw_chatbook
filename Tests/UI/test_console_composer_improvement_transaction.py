@@ -1,0 +1,434 @@
+"""Exact, privacy-preserving Console composer improvement transactions."""
+
+from dataclasses import FrozenInstanceError, replace
+
+import pytest
+
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ComposerDraftSegmentSnapshot,
+    ComposerTransactionValidationError,
+    ConsoleComposerBar,
+)
+
+
+LARGE_PASTE = "ordinary pasted material " * 8
+INLINE_BODY = "SECRET INLINE FILE BODY\nwith unicode: 雪"
+INLINE_LABEL = "📄 /private/customer-notes.md · 2 KB"
+
+
+def _mixed_composer(*, second_file: bool = False) -> ConsoleComposerBar:
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_text("Draft ")
+    composer.insert_pasted_text("small paste ")
+    composer.insert_pasted_text(LARGE_PASTE)
+    composer.insert_file_segment(INLINE_BODY, INLINE_LABEL)
+    composer.insert_text(" tail Ω")
+    if second_file:
+        composer.insert_file_segment("SECOND SECRET", "second.txt · 13 B")
+        composer.insert_text(" end")
+    return composer
+
+
+def _semantic_snapshot(snapshot):
+    """Exclude the staleness-only generation/fingerprint from exact UI state."""
+    return (
+        snapshot.segments,
+        snapshot.cursor_index,
+        snapshot.selection,
+        snapshot.edit_serial,
+    )
+
+
+def test_capture_snapshot_preserves_explicit_origins_state_cursor_and_selection():
+    composer = _mixed_composer()
+    composer._segments[1].collapse_state = "expanded"
+    composer._segments[2].collapse_state = "confirm"
+    composer.move_cursor_home()
+    composer.move_cursor_right()
+    snapshot = composer.capture_draft_snapshot()
+
+    assert [segment.origin for segment in snapshot.segments] == [
+        "literal",
+        "paste",
+        "paste",
+        "inline_file",
+        "literal",
+    ]
+    assert [segment.collapse_state for segment in snapshot.segments] == [
+        "literal",
+        "expanded",
+        "confirm",
+        "collapsed",
+        "literal",
+    ]
+    assert snapshot.segments[3].text == INLINE_BODY
+    assert snapshot.segments[3].label == INLINE_LABEL
+    assert snapshot.cursor_index == 1
+    assert snapshot.selection is None
+    assert snapshot.edit_serial == composer.edit_serial
+
+    composer.select_all_draft()
+    selected = composer.capture_draft_snapshot()
+    assert selected.selection == "all"
+    assert selected.cursor_index == len(composer.draft_text())
+
+
+def test_snapshot_is_deeply_immutable_and_fingerprint_is_deterministic():
+    composer = _mixed_composer()
+
+    first = composer.capture_draft_snapshot()
+    second = composer.capture_draft_snapshot()
+
+    assert first == second
+    assert isinstance(first.segments, tuple)
+    with pytest.raises(FrozenInstanceError):
+        first.cursor_index = 0  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        first.segments[0].text = "changed"  # type: ignore[misc]
+
+
+def test_restore_snapshot_round_trips_exact_semantic_state_without_legacy_load(
+    monkeypatch,
+):
+    composer = _mixed_composer()
+    composer._segments[1].collapse_state = "expanded"
+    composer._segments[2].collapse_state = "confirm"
+    composer.select_all_draft()
+    before = composer.capture_draft_snapshot()
+    pending_before = "photo.png · 240 KB"
+    composer.set_pending_attachment_label(pending_before)
+    monkeypatch.setattr(
+        composer,
+        "load_draft",
+        lambda _text: pytest.fail("restore_snapshot must not call load_draft"),
+    )
+
+    composer.insert_text("replacement")
+    composer.restore_snapshot(before)
+
+    after = composer.capture_draft_snapshot()
+    assert _semantic_snapshot(after) == _semantic_snapshot(before)
+    assert composer._pending_attachment_label == pending_before
+
+
+def test_same_text_load_invalidates_snapshot_by_generation():
+    composer = ConsoleComposerBar()
+    composer.load_draft("same bytes")
+    snapshot = composer.capture_draft_snapshot()
+
+    composer.load_draft("same bytes")
+
+    with pytest.raises(ComposerTransactionValidationError, match="stale"):
+        composer.apply_improvement(snapshot, "better bytes")
+    assert composer.draft_text() == "same bytes"
+
+
+def test_replaced_composer_owner_rejects_byte_identical_snapshot():
+    original = ConsoleComposerBar()
+    original.insert_text("same bytes")
+    snapshot = original.capture_draft_snapshot()
+    replacement = ConsoleComposerBar()
+    replacement.insert_text("same bytes")
+
+    with pytest.raises(ComposerTransactionValidationError, match="stale"):
+        replacement.apply_improvement(snapshot, "better bytes")
+
+    assert replacement.draft_text() == "same bytes"
+
+
+def test_same_bytes_after_manual_edit_reject_snapshot_by_edit_serial():
+    composer = ConsoleComposerBar()
+    composer.insert_text("same bytes")
+    snapshot = composer.capture_draft_snapshot()
+    composer.insert_text("!")
+    composer.delete_left()
+    assert composer.draft_text() == "same bytes"
+
+    with pytest.raises(ComposerTransactionValidationError, match="stale"):
+        composer.apply_improvement(snapshot, "better bytes")
+
+    assert composer.draft_text() == "same bytes"
+
+
+def test_projection_keeps_literal_and_paste_but_hides_every_inline_file_value():
+    composer = _mixed_composer(second_file=True)
+    snapshot = composer.capture_draft_snapshot()
+
+    projection = composer.project_snapshot_for_model(
+        snapshot, request_nonce="request-雪-1"
+    )
+
+    assert "Draft small paste" in projection.text
+    assert LARGE_PASTE in projection.text
+    for protected in (
+        INLINE_BODY,
+        "SECRET INLINE FILE BODY",
+        "customer-notes.md",
+        "/private/",
+        "2 KB",
+        "SECOND SECRET",
+        "second.txt",
+        "13 B",
+    ):
+        assert protected not in projection.text
+    assert projection.placeholder_nonce == "request-雪-1"
+    assert len(projection.placeholder_ids) == 2
+    assert projection.placeholder_ids[0] != projection.placeholder_ids[1]
+    assert projection.placeholder_ids[0] in projection.text
+    assert projection.placeholder_ids[1] in projection.text
+    assert (
+        composer.project_snapshot_for_model(snapshot, request_nonce="request-雪-1")
+        == projection
+    )
+
+
+@pytest.mark.parametrize("nonce", ["", " ", "bad\nnonce", "x" * 129, 7])
+def test_projection_rejects_empty_or_invalid_nonce(nonce):
+    composer = _mixed_composer()
+
+    with pytest.raises(ComposerTransactionValidationError, match="nonce"):
+        composer.project_snapshot_for_model(
+            composer.capture_draft_snapshot(), request_nonce=nonce
+        )
+
+
+def test_projection_rejects_nonce_collision_with_improvable_source():
+    composer = ConsoleComposerBar()
+    composer.insert_text("user already wrote nonce-collision here")
+
+    with pytest.raises(ComposerTransactionValidationError, match="collision"):
+        composer.project_snapshot_for_model(
+            composer.capture_draft_snapshot(), request_nonce="nonce-collision"
+        )
+
+
+def test_apply_rewrites_only_improvable_spans_and_rehydrates_files_exactly():
+    composer = _mixed_composer(second_file=True)
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="apply-1")
+    pending_before = "2 files"
+    composer.set_pending_attachment_label(pending_before, count=2, total=2)
+    rewritten = projection.text.replace("Draft ", "Improved ").replace(
+        " tail Ω", " concise tail Ω"
+    )
+
+    undo = composer.apply_improvement(before, rewritten)
+    after = composer.capture_draft_snapshot()
+
+    assert undo == before
+    assert composer.draft_text() == (
+        rewritten.replace(projection.placeholder_ids[0], INLINE_BODY).replace(
+            projection.placeholder_ids[1], "SECOND SECRET"
+        )
+    )
+    protected = [s for s in after.segments if s.origin == "inline_file"]
+    assert protected == [before.segments[3], before.segments[5]]
+    assert all(
+        segment.origin == "literal"
+        for segment in after.segments
+        if segment.origin != "inline_file"
+    )
+    assert composer._pending_attachment_label == pending_before
+    assert composer.improvement_undo_available is True
+
+
+def _tampered_rewrites(projection):
+    first, second = projection.placeholder_ids
+    return {
+        "removed": projection.text.replace(first, ""),
+        "duplicated": projection.text.replace(first, first + first),
+        "edited": projection.text.replace(first, first[:-2] + "x]]"),
+        "reordered": projection.text.replace(first, "TEMP", 1)
+        .replace(second, first, 1)
+        .replace("TEMP", second, 1),
+        "extra": projection.text + " [[TLDW_PROTECTED:forged]]",
+    }
+
+
+@pytest.mark.parametrize(
+    "tamper_kind", ["removed", "duplicated", "edited", "reordered", "extra"]
+)
+def test_tampered_placeholders_fail_atomically(tamper_kind):
+    composer = _mixed_composer(second_file=True)
+    snapshot = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(snapshot, request_nonce="veto-1")
+    before = composer.capture_draft_snapshot()
+    pending_before = "photo.png · 240 KB"
+    composer.set_pending_attachment_label(pending_before)
+
+    with pytest.raises(ComposerTransactionValidationError, match="placeholder"):
+        composer.apply_improvement(
+            snapshot, _tampered_rewrites(projection)[tamper_kind]
+        )
+
+    assert composer.capture_draft_snapshot() == before
+    assert composer._pending_attachment_label == pending_before
+    assert composer.improvement_undo_available is False
+
+
+def test_user_edit_and_forged_snapshot_fail_before_mutation():
+    composer = _mixed_composer()
+    snapshot = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(snapshot, request_nonce="stale-1")
+    composer.insert_text(" user edit")
+    live = composer.capture_draft_snapshot()
+
+    with pytest.raises(ComposerTransactionValidationError, match="stale"):
+        composer.apply_improvement(
+            snapshot, projection.text.replace("Draft", "Improved")
+        )
+    assert composer.capture_draft_snapshot() == live
+
+    forged = replace(live, fingerprint="0" * 64)
+    with pytest.raises(ComposerTransactionValidationError, match="fingerprint"):
+        composer.restore_snapshot(forged)
+    assert composer.capture_draft_snapshot() == live
+
+
+@pytest.mark.parametrize(
+    "segment_values",
+    [
+        ("x", "bogus", "literal", None),
+        ("x", "literal", "bogus", None),
+        (7, "literal", "literal", None),
+        ("x", "literal", "literal", 7),
+    ],
+)
+def test_invalid_snapshot_segment_shape_fails_closed(segment_values):
+    composer = ConsoleComposerBar()
+    valid = composer.capture_draft_snapshot()
+    segment = ComposerDraftSegmentSnapshot(*segment_values)
+    malformed = replace(valid, segments=(segment,))
+
+    with pytest.raises(ComposerTransactionValidationError):
+        composer.project_snapshot_for_model(malformed, request_nonce="shape-1")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"cursor_index": -1},
+        {"cursor_index": 99},
+        {"selection": (2, 1)},
+        {"selection": (0, 99)},
+        {"selection": "partial"},
+        {"edit_serial": -1},
+        {"generation": -1},
+    ],
+)
+def test_invalid_snapshot_cursor_selection_and_counter_shape_fails_closed(changes):
+    composer = ConsoleComposerBar()
+    composer.load_draft("abc")
+    valid = composer.capture_draft_snapshot()
+    malformed = replace(valid, **changes)
+
+    with pytest.raises(ComposerTransactionValidationError):
+        composer.restore_snapshot(malformed)
+
+
+def test_no_change_has_no_mutation_serial_bump_or_new_undo():
+    composer = _mixed_composer()
+    snapshot = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(snapshot, request_nonce="same-1")
+
+    result = composer.apply_improvement(snapshot, projection.text)
+
+    assert result is None
+    assert composer.capture_draft_snapshot() == snapshot
+    assert composer.improvement_undo_available is False
+
+
+def test_improvement_undo_restores_exact_state_and_preserves_attachment():
+    composer = _mixed_composer()
+    composer._segments[1].collapse_state = "expanded"
+    composer._segments[2].collapse_state = "confirm"
+    composer.select_all_draft()
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="undo-1")
+    composer.set_pending_attachment_label("photo.png · 240 KB")
+
+    composer.apply_improvement(before, projection.text.replace("Draft", "Better"))
+    assert composer.undo_improvement() is True
+
+    restored = composer.capture_draft_snapshot()
+    assert _semantic_snapshot(restored) == _semantic_snapshot(before)
+    assert composer._pending_attachment_label == "photo.png · 240 KB"
+    assert composer.improvement_undo_available is False
+    assert composer.undo_improvement() is False
+
+
+@pytest.mark.parametrize("event", ["manual_edit", "send", "load"])
+def test_improvement_undo_expires_on_documented_draft_scope_events(event):
+    composer = _mixed_composer()
+    snapshot = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(snapshot, request_nonce="expire-1")
+    composer.apply_improvement(snapshot, projection.text.replace("Draft", "Better"))
+    assert composer.improvement_undo_available is True
+
+    if event == "manual_edit":
+        composer.insert_text("!")
+    elif event == "send":
+        assert composer.stash_draft_for_send() is not None
+    else:
+        composer.load_draft(composer.draft_text())
+
+    assert composer.improvement_undo_available is False
+    assert composer.undo_improvement() is False
+
+
+def test_later_improvement_replaces_prior_undo_and_undoes_only_latest_apply():
+    composer = _mixed_composer()
+    first_snapshot = composer.capture_draft_snapshot()
+    first_projection = composer.project_snapshot_for_model(
+        first_snapshot, request_nonce="later-1"
+    )
+    composer.apply_improvement(
+        first_snapshot, first_projection.text.replace("Draft", "First")
+    )
+    after_first = composer.capture_draft_snapshot()
+    second_projection = composer.project_snapshot_for_model(
+        after_first, request_nonce="later-2"
+    )
+
+    composer.apply_improvement(
+        after_first, second_projection.text.replace("First", "Second")
+    )
+    assert composer.undo_improvement() is True
+
+    assert _semantic_snapshot(composer.capture_draft_snapshot()) == _semantic_snapshot(
+        after_first
+    )
+
+
+def test_failed_and_no_change_attempts_preserve_existing_improvement_undo():
+    composer = _mixed_composer()
+    original = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(original, request_nonce="keep-1")
+    composer.apply_improvement(original, projection.text.replace("Draft", "Better"))
+    current = composer.capture_draft_snapshot()
+    current_projection = composer.project_snapshot_for_model(
+        current, request_nonce="keep-2"
+    )
+
+    assert composer.apply_improvement(current, current_projection.text) is None
+    assert composer.improvement_undo_available is True
+    with pytest.raises(ComposerTransactionValidationError):
+        composer.apply_improvement(
+            current,
+            current_projection.text.replace(
+                current_projection.placeholder_ids[0],
+                current_projection.placeholder_ids[0] * 2,
+            ),
+        )
+    assert composer.improvement_undo_available is True
+
+
+def test_take_improvement_undo_snapshot_consumes_the_single_pending_undo():
+    composer = _mixed_composer()
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="take-1")
+    composer.apply_improvement(before, projection.text.replace("Draft", "Better"))
+
+    assert composer.take_improvement_undo_snapshot() == before
+    assert composer.take_improvement_undo_snapshot() is None
+    assert composer.improvement_undo_available is False

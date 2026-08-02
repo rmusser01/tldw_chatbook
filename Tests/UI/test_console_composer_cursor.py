@@ -147,6 +147,25 @@ def test_composer_collapsed_paste_inserts_at_cursor_and_splits_literal_text():
     ]
 
 
+def test_cursor_split_preserves_paste_origin_and_typed_text_stays_literal():
+    composer = ConsoleComposerBar(collapse_large_pastes=False)
+    composer.insert_pasted_text("pasted")
+    composer.move_cursor_home()
+    for _ in range(3):
+        composer.move_cursor_right()
+
+    composer.insert_file_segment("SECRET", "notes.md · 6 B")
+    composer.insert_text("typed")
+
+    snapshot = composer.capture_draft_snapshot()
+    assert [(segment.text, segment.origin) for segment in snapshot.segments] == [
+        ("pas", "paste"),
+        ("SECRET", "inline_file"),
+        ("typed", "literal"),
+        ("ted", "paste"),
+    ]
+
+
 def test_composer_deletes_paste_token_as_unit_left_and_right():
     composer = _composer_with("ab", PASTE_CHUNK, "cd")
 

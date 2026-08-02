@@ -26,7 +26,11 @@ user's paste-collapse preference (review W-2).
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
+import hmac
+import json
 import re
+import secrets
 from typing import Any, Literal
 
 from rich.cells import cell_len
@@ -60,6 +64,19 @@ from ...config import (
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 _DictationState = Literal["idle", "starting", "recording", "transcribing"]
 _DraftStyleRange = tuple[int, int, str]
+DraftSegmentOrigin = Literal["literal", "paste", "inline_file"]
+DraftSelection = tuple[int, int] | Literal["all"] | None
+
+_VALID_COLLAPSE_STATES = frozenset({"literal", "collapsed", "confirm", "expanded"})
+_VALID_DRAFT_ORIGINS = frozenset({"literal", "paste", "inline_file"})
+_SNAPSHOT_FINGERPRINT_DOMAIN = b"tldw.console.composer.snapshot.v1\0"
+_PROJECTION_FINGERPRINT_DOMAIN = b"tldw.console.composer.projection.v1\0"
+_PLACEHOLDER_MAC_DOMAIN = b"tldw.console.composer.placeholder.v1\0"
+_PLACEHOLDER_PREFIX = "[[TLDW_PROTECTED:"
+_PLACEHOLDER_PATTERN = re.compile(
+    r"\[\[TLDW_PROTECTED:([0-9a-f]{20}):(\d+):([0-9a-f]{24})\]\]"
+)
+_PLACEHOLDER_CANDIDATE_PATTERN = re.compile(r"\[\[TLDW_PROTECTED:[^\]]*\]\]")
 
 #: Chunk boundary regex mirroring `textwrap.TextWrapper.wordsep_simple_re`
 #: (the pattern used whenever `break_on_hyphens=False`, which every wrap call
@@ -70,11 +87,98 @@ _DraftStyleRange = tuple[int, int, str]
 _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
 
 
+class ComposerTransactionValidationError(ValueError):
+    """Raised when a composer improvement transaction fails closed."""
+
+
+@dataclass(frozen=True)
+class ComposerDraftSegmentSnapshot:
+    """Deeply immutable public representation of one composer segment."""
+
+    text: str
+    origin: DraftSegmentOrigin
+    collapse_state: _CollapseState
+    label: str | None
+
+
+@dataclass(frozen=True)
+class ComposerDraftSnapshot:
+    """Exact immutable composer state captured for one improvement request."""
+
+    segments: tuple[ComposerDraftSegmentSnapshot, ...]
+    cursor_index: int
+    selection: DraftSelection
+    edit_serial: int
+    generation: int
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class ComposerModelProjection:
+    """Provider-safe text plus opaque inline-file placeholder metadata."""
+
+    text: str
+    placeholder_nonce: str
+    placeholder_ids: tuple[str, ...]
+    fingerprint: str
+
+
+def _snapshot_fingerprint(
+    *,
+    segments: tuple[ComposerDraftSegmentSnapshot, ...],
+    cursor_index: int,
+    selection: DraftSelection,
+    edit_serial: int,
+    generation: int,
+) -> str:
+    """Return a deterministic, domain-separated digest of exact draft state."""
+    payload = {
+        "cursor_index": cursor_index,
+        "edit_serial": edit_serial,
+        "generation": generation,
+        "segments": [
+            {
+                "collapse_state": segment.collapse_state,
+                "label": segment.label,
+                "origin": segment.origin,
+                "text": segment.text,
+            }
+            for segment in segments
+        ],
+        "selection": list(selection) if isinstance(selection, tuple) else selection,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(_SNAPSHOT_FINGERPRINT_DOMAIN + encoded).hexdigest()
+
+
+def _projection_fingerprint(
+    text: str, placeholder_nonce: str, placeholder_ids: tuple[str, ...]
+) -> str:
+    """Return a deterministic, domain-separated digest of a model projection."""
+    payload = json.dumps(
+        {
+            "placeholder_ids": list(placeholder_ids),
+            "placeholder_nonce": placeholder_nonce,
+            "text": text,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(_PROJECTION_FINGERPRINT_DOMAIN + payload).hexdigest()
+
+
 @dataclass
 class _DraftSegment:
     """Private composer segment with canonical payload and display state."""
 
     text: str
+    origin: DraftSegmentOrigin = "literal"
     collapse_state: _CollapseState = "literal"
     label: str | None = None
 
@@ -263,6 +367,22 @@ class ConsoleComposerBar(Horizontal):
         # programmatic load/clear/restore leave it untouched so callers can
         # detect "the user typed since X".
         self._user_edit_serial = 0
+        # Monotonic scope/version guard for changes that can retain identical
+        # bytes and edit serials (notably a same-text session/load swap).
+        # Improvement snapshots carry this value so an old request can never
+        # become current again merely because the visible text happens to
+        # match. Exact improvement Undo restores user-visible/editor state but
+        # deliberately advances this generation rather than rewinding it.
+        # Start from an opaque per-instance epoch so a snapshot captured from
+        # a replaced composer owner cannot match a fresh composer's generation
+        # even when its text/edit serial are byte-identical. The value remains
+        # monotonic for this owner as scope replacements advance it.
+        self._draft_generation = secrets.randbits(63)
+        # Per-composer authentication key for opaque protected placeholders.
+        # Tokens reveal neither inline-file metadata nor this key, so edited or
+        # user-authored lookalikes cannot be accepted as protected segments.
+        self._placeholder_secret = secrets.token_bytes(32)
+        self._improvement_undo: ComposerDraftSnapshot | None = None
         # TASK-1281: undo/redo history. `_undo_stack`/`_redo_stack` hold
         # `_DraftHistorySnapshot`s; `_coalescing_active` is True only while
         # the top of `_undo_stack` is still open to absorbing more
@@ -317,6 +437,7 @@ class ConsoleComposerBar(Horizontal):
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
+        self._draft_selection_range: tuple[int, int] | None = None
         self._cursor_visible = True
         self._cursor_blink_timer: Any | None = None
 
@@ -374,6 +495,444 @@ class ConsoleComposerBar(Horizontal):
     def _canonical_draft_text(self) -> str:
         """Return the full payload represented by composer segments."""
         return "".join(segment.text for segment in self._segments)
+
+    def _snapshot_selection(self) -> DraftSelection:
+        """Return the exact selection representation owned by the composer."""
+        if self._draft_selection_all:
+            return "all"
+        return self._draft_selection_range
+
+    def _clear_draft_selection(self) -> None:
+        """Collapse every supported selection representation."""
+        self._draft_selection_all = False
+        self._draft_selection_range = None
+
+    def _mark_manual_draft_edit(self) -> None:
+        """Advance the manual-edit guard and expire temporary improvement Undo."""
+        self._user_edit_serial += 1
+        self.invalidate_improvement_undo()
+
+    def _advance_draft_generation(self) -> None:
+        """Invalidate stale same-text transactions after a scope replacement."""
+        self._draft_generation += 1
+        self.invalidate_improvement_undo()
+
+    @property
+    def improvement_undo_available(self) -> bool:
+        """Return whether one exact pre-improvement snapshot is available."""
+        return self._improvement_undo is not None
+
+    def invalidate_improvement_undo(self) -> None:
+        """Expire the one-shot improvement Undo without touching native history."""
+        self._improvement_undo = None
+
+    def take_improvement_undo_snapshot(self) -> ComposerDraftSnapshot | None:
+        """Consume and return the current exact improvement Undo snapshot."""
+        snapshot = self._improvement_undo
+        self._improvement_undo = None
+        return snapshot
+
+    def undo_improvement(self) -> bool:
+        """Restore and consume the latest exact improvement transaction."""
+        snapshot = self.take_improvement_undo_snapshot()
+        if snapshot is None:
+            return False
+        self.restore_snapshot(snapshot)
+        return True
+
+    @staticmethod
+    def _validate_snapshot_shape(snapshot: ComposerDraftSnapshot) -> None:
+        """Validate a public snapshot and its deterministic fingerprint."""
+        if not isinstance(snapshot, ComposerDraftSnapshot):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot has an unsupported shape."
+            )
+        if type(snapshot.segments) is not tuple:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot segments must be an immutable tuple."
+            )
+        for segment in snapshot.segments:
+            if not isinstance(segment, ComposerDraftSegmentSnapshot):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot contains an unsupported segment."
+                )
+            if not isinstance(segment.text, str) or not segment.text:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment text must be a non-empty string."
+                )
+            if (
+                not isinstance(segment.origin, str)
+                or segment.origin not in _VALID_DRAFT_ORIGINS
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment origin is invalid."
+                )
+            if (
+                not isinstance(segment.collapse_state, str)
+                or segment.collapse_state not in _VALID_COLLAPSE_STATES
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot collapse state is invalid."
+                )
+            if segment.label is not None and not isinstance(segment.label, str):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment label is invalid."
+                )
+
+        draft_length = sum(len(segment.text) for segment in snapshot.segments)
+        if (
+            type(snapshot.cursor_index) is not int
+            or snapshot.cursor_index < 0
+            or snapshot.cursor_index > draft_length
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot cursor is outside the draft."
+            )
+        selection = snapshot.selection
+        if selection == "all":
+            if draft_length == 0:
+                raise ComposerTransactionValidationError(
+                    "An empty composer snapshot cannot have a full selection."
+                )
+        elif selection is not None:
+            if type(selection) is not tuple or len(selection) != 2:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot selection is invalid."
+                )
+            start, end = selection
+            if (
+                type(start) is not int
+                or type(end) is not int
+                or start < 0
+                or start > end
+                or end > draft_length
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot selection is outside the draft."
+                )
+        if type(snapshot.edit_serial) is not int or snapshot.edit_serial < 0:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot edit serial is invalid."
+            )
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot generation is invalid."
+            )
+        if not isinstance(snapshot.fingerprint, str):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot fingerprint is invalid."
+            )
+        expected = _snapshot_fingerprint(
+            segments=snapshot.segments,
+            cursor_index=snapshot.cursor_index,
+            selection=snapshot.selection,
+            edit_serial=snapshot.edit_serial,
+            generation=snapshot.generation,
+        )
+        if not hmac.compare_digest(snapshot.fingerprint, expected):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot fingerprint does not match its state."
+            )
+
+    @staticmethod
+    def _private_segments_from_snapshot(
+        snapshot: ComposerDraftSnapshot,
+    ) -> list[_DraftSegment]:
+        """Build detached mutable segments from a validated public snapshot."""
+        return [
+            _DraftSegment(
+                text=segment.text,
+                origin=segment.origin,
+                collapse_state=segment.collapse_state,
+                label=segment.label,
+            )
+            for segment in snapshot.segments
+        ]
+
+    def capture_draft_snapshot(self) -> ComposerDraftSnapshot:
+        """Capture the exact immutable Console draft transaction state."""
+        self._ensure_editable_segments()
+        segments = tuple(
+            ComposerDraftSegmentSnapshot(
+                text=segment.text,
+                origin=segment.origin,
+                collapse_state=segment.collapse_state,
+                label=segment.label,
+            )
+            for segment in self._segments
+        )
+        selection = self._snapshot_selection()
+        fingerprint = _snapshot_fingerprint(
+            segments=segments,
+            cursor_index=self._cursor_index,
+            selection=selection,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
+        )
+        return ComposerDraftSnapshot(
+            segments=segments,
+            cursor_index=self._cursor_index,
+            selection=selection,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
+            fingerprint=fingerprint,
+        )
+
+    @staticmethod
+    def _validate_request_nonce(request_nonce: str) -> None:
+        """Reject empty, control-bearing, whitespace, or oversized nonces."""
+        if (
+            not isinstance(request_nonce, str)
+            or not request_nonce
+            or len(request_nonce) > 128
+            or not request_nonce.isprintable()
+            or any(character.isspace() for character in request_nonce)
+        ):
+            raise ComposerTransactionValidationError(
+                "Projection request nonce is invalid."
+            )
+
+    @staticmethod
+    def _placeholder_nonce_id(request_nonce: str) -> str:
+        """Return an opaque request identifier without exposing the raw nonce."""
+        return hashlib.sha256(request_nonce.encode("utf-8")).hexdigest()[:20]
+
+    def _placeholder_token(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        *,
+        nonce_id: str,
+        ordinal: int,
+    ) -> str:
+        """Build an authenticated opaque placeholder for one protected segment."""
+        message = (
+            _PLACEHOLDER_MAC_DOMAIN
+            + snapshot.fingerprint.encode("ascii")
+            + b"\0"
+            + nonce_id.encode("ascii")
+            + b"\0"
+            + str(ordinal).encode("ascii")
+        )
+        mac = hmac.new(self._placeholder_secret, message, hashlib.sha256).hexdigest()[
+            :24
+        ]
+        return f"{_PLACEHOLDER_PREFIX}{nonce_id}:{ordinal}:{mac}]]"
+
+    def project_snapshot_for_model(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        *,
+        request_nonce: str,
+    ) -> ComposerModelProjection:
+        """Project improvable text while replacing inline files with opaque tokens."""
+        self._validate_snapshot_shape(snapshot)
+        self._validate_request_nonce(request_nonce)
+        improvable_text = "".join(
+            segment.text
+            for segment in snapshot.segments
+            if segment.origin != "inline_file"
+        )
+        if request_nonce in improvable_text:
+            raise ComposerTransactionValidationError(
+                "Projection request nonce collision with user-authored text."
+            )
+
+        nonce_id = self._placeholder_nonce_id(request_nonce)
+        placeholder_ids: list[str] = []
+        projected_parts: list[str] = []
+        protected_ordinal = 0
+        for segment in snapshot.segments:
+            if segment.origin != "inline_file":
+                projected_parts.append(segment.text)
+                continue
+            token = self._placeholder_token(
+                snapshot,
+                nonce_id=nonce_id,
+                ordinal=protected_ordinal,
+            )
+            protected_ordinal += 1
+            if token in improvable_text:
+                raise ComposerTransactionValidationError(
+                    "Protected placeholder collides with user-authored text."
+                )
+            placeholder_ids.append(token)
+            projected_parts.append(token)
+
+        text = "".join(projected_parts)
+        ids = tuple(placeholder_ids)
+        return ComposerModelProjection(
+            text=text,
+            placeholder_nonce=request_nonce,
+            placeholder_ids=ids,
+            fingerprint=_projection_fingerprint(text, request_nonce, ids),
+        )
+
+    def _validated_apply_parts(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> tuple[list[_DraftSegment], str]:
+        """Validate protected tokens and construct the detached apply result."""
+        if not isinstance(rewritten_model_text, str):
+            raise ComposerTransactionValidationError(
+                "Improved composer text must be a string."
+            )
+        protected = [
+            segment for segment in snapshot.segments if segment.origin == "inline_file"
+        ]
+        candidates = _PLACEHOLDER_CANDIDATE_PATTERN.findall(rewritten_model_text)
+        prefix_count = rewritten_model_text.count(_PLACEHOLDER_PREFIX)
+        if not protected:
+            if prefix_count or candidates:
+                raise ComposerTransactionValidationError(
+                    "Improved text contains an unexpected protected placeholder."
+                )
+            return (
+                [
+                    _DraftSegment(
+                        rewritten_model_text,
+                        origin="literal",
+                        collapse_state="literal",
+                    )
+                ]
+                if rewritten_model_text
+                else [],
+                "".join(segment.text for segment in snapshot.segments),
+            )
+
+        if prefix_count != len(protected) or len(candidates) != len(protected):
+            raise ComposerTransactionValidationError(
+                "Every protected placeholder must appear exactly once."
+            )
+        parsed = [_PLACEHOLDER_PATTERN.fullmatch(candidate) for candidate in candidates]
+        if any(match is None for match in parsed):
+            raise ComposerTransactionValidationError(
+                "A protected placeholder was edited or malformed."
+            )
+        matches = [match for match in parsed if match is not None]
+        nonce_ids = {match.group(1) for match in matches}
+        if len(nonce_ids) != 1:
+            raise ComposerTransactionValidationError(
+                "Protected placeholders do not share one request identity."
+            )
+        nonce_id = next(iter(nonce_ids))
+        expected = tuple(
+            self._placeholder_token(snapshot, nonce_id=nonce_id, ordinal=index)
+            for index in range(len(protected))
+        )
+        if tuple(candidates) != expected:
+            raise ComposerTransactionValidationError(
+                "Protected placeholders were edited, duplicated, or reordered."
+            )
+
+        remaining = rewritten_model_text
+        rebuilt: list[_DraftSegment] = []
+        for token, protected_segment in zip(expected, protected):
+            leading, separator, remaining = remaining.partition(token)
+            if not separator:
+                raise ComposerTransactionValidationError(
+                    "A protected placeholder is missing from improved text."
+                )
+            if leading:
+                rebuilt.append(
+                    _DraftSegment(
+                        leading,
+                        origin="literal",
+                        collapse_state="literal",
+                    )
+                )
+            rebuilt.append(
+                _DraftSegment(
+                    protected_segment.text,
+                    origin=protected_segment.origin,
+                    collapse_state=protected_segment.collapse_state,
+                    label=protected_segment.label,
+                )
+            )
+        if remaining:
+            rebuilt.append(
+                _DraftSegment(
+                    remaining,
+                    origin="literal",
+                    collapse_state="literal",
+                )
+            )
+        source_parts: list[str] = []
+        protected_index = 0
+        for segment in snapshot.segments:
+            if segment.origin == "inline_file":
+                source_parts.append(expected[protected_index])
+                protected_index += 1
+            else:
+                source_parts.append(segment.text)
+        return rebuilt, "".join(source_parts)
+
+    def apply_improvement(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> ComposerDraftSnapshot | None:
+        """Atomically replace improvable spans after exact stale/token checks."""
+        self._validate_snapshot_shape(snapshot)
+        live = self.capture_draft_snapshot()
+        if (
+            snapshot.edit_serial != live.edit_serial
+            or snapshot.generation != live.generation
+            or not hmac.compare_digest(snapshot.fingerprint, live.fingerprint)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot is stale and cannot be applied."
+            )
+        rebuilt, source_projection = self._validated_apply_parts(
+            snapshot, rewritten_model_text
+        )
+        if rewritten_model_text == source_projection:
+            return None
+
+        # All parsing and validation above used detached immutable/local values.
+        # This is the single live segment swap for the complete transaction.
+        self._segments = rebuilt
+        self._segments_initialized = True
+        self._cursor_index = len(self._canonical_draft_text())
+        self._clear_draft_selection()
+        self._mark_manual_draft_edit()
+        self._draft_generation += 1
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+        self._improvement_undo = snapshot
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        return snapshot
+
+    def restore_snapshot(self, snapshot: ComposerDraftSnapshot) -> None:
+        """Atomically restore exact draft state without calling ``load_draft``."""
+        self._validate_snapshot_shape(snapshot)
+        rebuilt = self._private_segments_from_snapshot(snapshot)
+
+        # A restore is a new live scope generation even though user-visible
+        # bytes/state and edit serial are restored exactly. This prevents an
+        # older in-flight result from becoming valid again after Undo.
+        next_generation = self._draft_generation + 1
+        self._segments = rebuilt
+        self._segments_initialized = True
+        self._cursor_index = snapshot.cursor_index
+        self._draft_selection_all = snapshot.selection == "all"
+        self._draft_selection_range = (
+            snapshot.selection if isinstance(snapshot.selection, tuple) else None
+        )
+        self._user_edit_serial = snapshot.edit_serial
+        self._draft_generation = next_generation
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+        self.invalidate_improvement_undo()
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def _has_any_draft_content(self) -> bool:
         """Return whether the canonical draft contains at least one character."""
@@ -1442,16 +2001,20 @@ class ConsoleComposerBar(Horizontal):
             return
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
-        if segment.collapse_state in {"literal", "expanded"}:
+        if segment.origin == "literal" and segment.collapse_state in {
+            "literal",
+            "expanded",
+        }:
             segment.text = segment.text[:offset] + text + segment.text[offset:]
             self._cursor_index += len(text)
             return
         if offset == len(segment.text):
-            # Caret just past a paste token: prepend to the right literal
-            # neighbour when possible, else start a new literal segment.
+            # Caret just past a protected/non-literal segment: prepend to the
+            # right literal neighbour when possible, else start a new literal.
             right_index = segment_index + 1
             if (
                 right_index < len(self._segments)
+                and self._segments[right_index].origin == "literal"
                 and self._segments[right_index].collapse_state == "literal"
             ):
                 self._segments[right_index].text = (
@@ -1461,12 +2024,32 @@ class ConsoleComposerBar(Horizontal):
                 self._segments.insert(right_index, _DraftSegment(text))
             self._cursor_index += len(text)
             return
-        # Caret just before a leading paste token (offset == 0).
-        left_index = segment_index - 1
-        if left_index >= 0 and self._segments[left_index].collapse_state == "literal":
-            self._segments[left_index].text += text
-        else:
-            self._segments.insert(segment_index, _DraftSegment(text))
+        if offset == 0:
+            # Caret just before a protected/non-literal segment.
+            left_index = segment_index - 1
+            if (
+                left_index >= 0
+                and self._segments[left_index].origin == "literal"
+                and self._segments[left_index].collapse_state == "literal"
+            ):
+                self._segments[left_index].text += text
+            else:
+                self._segments.insert(segment_index, _DraftSegment(text))
+            self._cursor_index += len(text)
+            return
+
+        # An expanded paste/inline file can expose interior caret positions,
+        # but typing there must not silently change the original segment's
+        # provenance. Split the surviving source around a new literal segment.
+        left_text = segment.text[:offset]
+        right_text = segment.text[offset:]
+        replacement: list[_DraftSegment] = []
+        if left_text:
+            replacement.append(replace(segment, text=left_text))
+        replacement.append(_DraftSegment(text))
+        if right_text:
+            replacement.append(replace(segment, text=right_text))
+        self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(text)
 
     def _insert_segment_at_cursor(self, segment: _DraftSegment) -> None:
@@ -1485,22 +2068,10 @@ class ConsoleComposerBar(Horizontal):
             right_text = target.text[offset:]
             replacement: list[_DraftSegment] = []
             if left_text:
-                replacement.append(
-                    _DraftSegment(
-                        left_text,
-                        collapse_state=target.collapse_state,
-                        label=target.label,
-                    )
-                )
+                replacement.append(replace(target, text=left_text))
             replacement.append(segment)
             if right_text:
-                replacement.append(
-                    _DraftSegment(
-                        right_text,
-                        collapse_state=target.collapse_state,
-                        label=target.label,
-                    )
-                )
+                replacement.append(replace(target, text=right_text))
             self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(segment.text)
 
@@ -1528,13 +2099,7 @@ class ConsoleComposerBar(Horizontal):
                 + segment.text[max(0, end - segment_start) :]
             )
             if kept_text:
-                kept_segments.append(
-                    _DraftSegment(
-                        kept_text,
-                        collapse_state=segment.collapse_state,
-                        label=segment.label,
-                    )
-                )
+                kept_segments.append(replace(segment, text=kept_text))
         self._segments = kept_segments
         self._cursor_index = start
         self._clamp_cursor()
@@ -1661,7 +2226,8 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Draft payload to show and send literally.
         """
-        self._draft_selection_all = False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._cursor_index = len(text)
@@ -1714,12 +2280,15 @@ class ConsoleComposerBar(Horizontal):
         """
         if stash is None or not stash.segments:
             return
-        self._draft_selection_all = False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
         if not self._segments_initialized:
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
-        self._segments = list(stash.segments) + self._segments
+        self._segments = [
+            replace(segment) for segment in stash.segments
+        ] + self._segments
         self._cursor_index = len(self._canonical_draft_text())
         # TASK-1281 review F3: this replaces the draft wholesale without
         # recording (a rejected send putting the user's own text back is
@@ -1753,7 +2322,8 @@ class ConsoleComposerBar(Horizontal):
         """
         if record_history and self._has_any_draft_content():
             self._record_undo_snapshot(coalesce=False)
-        self._draft_selection_all = False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
         self._segments = []
         self._segments_initialized = True
         self._cursor_index = 0
@@ -1878,7 +2448,7 @@ class ConsoleComposerBar(Horizontal):
         token edge (0 or the full text length) it was nearer to, rather
         than restored verbatim into what is now the middle of a token.
         """
-        self._draft_selection_all = False
+        self._clear_draft_selection()
         text_length = len(snapshot.text)
         raw_cursor = max(0, min(snapshot.cursor_index, text_length))
         if not snapshot.text:
@@ -1886,7 +2456,11 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         elif text_length > self.UNDO_RECOLLAPSE_CHAR_THRESHOLD:
             self._segments = [
-                _DraftSegment(snapshot.text, collapse_state="collapsed")
+                _DraftSegment(
+                    snapshot.text,
+                    origin="literal",
+                    collapse_state="collapsed",
+                )
             ]
             self._cursor_index = 0 if raw_cursor * 2 < text_length else text_length
         else:
@@ -1911,7 +2485,7 @@ class ConsoleComposerBar(Horizontal):
         """
         if not self._undo_stack:
             return False
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
         self._redo_stack.append(current)
         if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
@@ -1932,7 +2506,7 @@ class ConsoleComposerBar(Horizontal):
         """
         if not self._redo_stack:
             return False
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
         self._undo_stack.append(current)
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
@@ -1983,7 +2557,7 @@ class ConsoleComposerBar(Horizontal):
             True when there is draft text to select, otherwise False.
         """
         if not self.draft_text():
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._refresh_visible_draft()
             return False
         if not self._segments_initialized:
@@ -1991,6 +2565,7 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
         self._draft_selection_all = True
+        self._draft_selection_range = None
         self._cursor_index = len(self._canonical_draft_text())
         # TASK-1281: a select-all is a cursor reposition (to the tail) for
         # undo-coalescing purposes -- it closes any open typed run.
@@ -2012,7 +2587,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -2029,7 +2604,7 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=len(text) == 1 and text.isprintable())
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
@@ -2045,6 +2620,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Raw text inserted through a paste event.
         """
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -2060,7 +2636,7 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
@@ -2070,10 +2646,20 @@ class ConsoleComposerBar(Horizontal):
         )
         if should_collapse:
             self._insert_segment_at_cursor(
-                _DraftSegment(text, collapse_state="collapsed")
+                _DraftSegment(
+                    text,
+                    origin="paste",
+                    collapse_state="collapsed",
+                )
             )
         else:
-            self._insert_literal_at_cursor(text)
+            self._insert_segment_at_cursor(
+                _DraftSegment(
+                    text,
+                    origin="paste",
+                    collapse_state="literal",
+                )
+            )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -2092,7 +2678,6 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Text to insert as if it had just been pasted.
         """
-        self._user_edit_serial += 1
         self.insert_pasted_text(text)
 
     def insert_file_segment(self, text: str, label: str) -> None:
@@ -2103,6 +2688,7 @@ class ConsoleComposerBar(Horizontal):
             label: Display-only token shown in place of the text (e.g.
                 ``"📄 notes.md · 4 KB"``).
         """
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -2116,12 +2702,17 @@ class ConsoleComposerBar(Horizontal):
         self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
         self._insert_segment_at_cursor(
-            _DraftSegment(text, collapse_state="collapsed", label=label)
+            _DraftSegment(
+                text,
+                origin="inline_file",
+                collapse_state="collapsed",
+                label=label,
+            )
         )
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -2138,7 +2729,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
             # TASK-1281: record before dispatching to `clear_draft` -- its
             # own `record_history` default is False (most callers are
@@ -2184,7 +2775,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
@@ -2231,7 +2822,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
-        self._user_edit_serial += 1
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
             self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
@@ -2289,7 +2880,7 @@ class ConsoleComposerBar(Horizontal):
         # TASK-1281: every caller of this helper (arrow keys, Home/End) is a
         # cursor reposition, which always closes an open typed run.
         self._coalescing_active = False
-        self._draft_selection_all = False
+        self._clear_draft_selection()
         if not self._segments_initialized:
             self._refresh_visible_draft()
             return False
@@ -2579,7 +3170,7 @@ class ConsoleComposerBar(Horizontal):
         self._ensure_editable_segments()
         # TASK-1281: click-to-position is a cursor reposition too.
         self._coalescing_active = False
-        self._draft_selection_all = False
+        self._clear_draft_selection()
         self._cursor_index = self._canonical_index_at_display(display_index)
         self._clamp_cursor()
         self._refresh_visible_draft()
@@ -2615,19 +3206,18 @@ class ConsoleComposerBar(Horizontal):
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
     def has_paste_segments(self) -> bool:
-        """Return whether the draft contains any paste-originated segment.
+        """Return whether the draft contains non-literal inserted content.
 
-        A segment keeps its paste provenance (``"collapsed"``, ``"confirm"``,
-        or ``"expanded"``) for as long as it exists, even once fully unfurled
-        -- an "expanded" segment renders identically to typed literal text, so
-        display-string inspection cannot distinguish the two. Callers that
-        must not treat pasted content as command input (for example, Console
-        slash-command parsing) should gate on this real segment state instead.
+        Explicit ``origin`` distinguishes ordinary paste and inline files even
+        when their display state is literal/expanded. Callers that must not
+        treat inserted content as command input should gate on this provenance
+        rather than display state or the presence of a label.
 
         Returns:
-            True when at least one segment originated from a paste event.
+            True when at least one segment originated from paste or an inline
+            file insertion.
         """
-        return any(segment.collapse_state != "literal" for segment in self._segments)
+        return any(segment.origin != "literal" for segment in self._segments)
 
     def suppress_next_draft_click(self) -> None:
         """Suppress the synthesized Click that may follow terminal mouse events."""
