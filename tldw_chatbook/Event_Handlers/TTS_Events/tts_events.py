@@ -18,6 +18,7 @@ from textual.message import Message
 
 # Local imports
 from tldw_chatbook.Audio.streaming_sink import (
+    SinkUnderrun,
     StreamingPcmSink,
     pump,
     sink_available,
@@ -1166,7 +1167,28 @@ class TTSEventHandler:
             playback length.
         """
         await self._stop_prior_legacy_clip()
-        sink = StreamingPcmSink(on_event=self._post_sink_event)
+        last_underrun_frames = 0
+
+        def _on_event(event: object) -> None:
+            nonlocal last_underrun_frames
+            if isinstance(event, SinkUnderrun):
+                # Fix-round M2: `SinkUnderrun` is the only signal that live
+                # playback is stuttering -- `_post_sink_event` alone drops
+                # it into a debug-only log line, invisible to both the
+                # user and metrics on the one feature whose entire premise
+                # is live playback quality. Recorded here so it can be
+                # reported once, at utterance end (below), rather than per
+                # throttled event. `on_event` may be invoked concurrently
+                # from multiple threads (Audio/streaming_sink.py's thread
+                # contract), but `SinkUnderrun` specifically always
+                # originates from the sink's own notify thread, never a
+                # caller thread -- so this plain assignment has exactly
+                # one writer; the read below happens once, after `pump()`
+                # has already returned, from this coroutine's own thread.
+                last_underrun_frames = event.frames
+            self._post_sink_event(event)
+
+        sink = StreamingPcmSink(on_event=_on_event)
         # Fix-round F2: `open()` is documented thread-safe and never
         # raises, but it is NOT free -- lazily importing `sounddevice` on
         # first use plus building/starting the real `OutputStream` measured
@@ -1199,6 +1221,30 @@ class TTSEventHandler:
             skip_bytes=plan.skip_bytes,
             max_bytes=plan.data_bytes,
         )
+
+        # Fix-round M2: report on utterance end, regardless of terminal
+        # outcome -- an underrun can happen on the way to ANY of them, not
+        # just a successful drain. Minimal and honest: one INFO log line
+        # with the cumulative frame count, plus one bump of the existing
+        # `tts_generation_total` counter with a dedicated `"underrun"`
+        # `outcome_code` value (same pattern F8 already established for
+        # `"interrupted"`) -- no UI.
+        if last_underrun_frames > 0:
+            logger.info(
+                "Streaming TTS playback underrun ({} frames) for message {}",
+                last_underrun_frames,
+                message_id,
+            )
+            try:
+                from tldw_chatbook.Metrics.metrics_logger import log_counter
+
+                log_counter(
+                    "tts_generation_total",
+                    labels={"outcome_code": "underrun"},
+                )
+            except Exception:
+                logger.debug("TTS underrun metric publication failed")
+
         # Fix-round F8: the `outcome_code` values returned below
         # ("success"/"interrupted"/"streaming_failed") are a DELIBERATE
         # expansion of `_generate_tts`'s metric label set, not covered by

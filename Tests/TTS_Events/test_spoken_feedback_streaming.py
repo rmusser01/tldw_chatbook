@@ -50,8 +50,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger as loguru_logger
 
 import tldw_chatbook.Audio.streaming_sink as streaming_sink_module
+from tldw_chatbook.Audio.streaming_sink import SinkUnderrun
 from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as tts_events_module
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSCompleteEvent,
@@ -1025,3 +1027,96 @@ async def test_no_real_audio_device_guard_blocks_the_reproduced_hazard(
         )
     finally:
         await handler.cleanup_tts_resources()
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review M2: `SinkUnderrun` -- the only signal that live
+# playback is stuttering -- used to die silently in `_post_sink_event`'s
+# debug-only recorder, invisible to both the user and metrics on the one
+# feature whose entire premise is live playback quality. Minimal honest
+# fix: on utterance end (once `pump()` returns), if any underrun was
+# observed, log it at INFO with the frame count and bump the existing
+# `tts_generation_total` metric with an `outcome_code="underrun"` label
+# (same pattern F8 already established for `"interrupted"`) -- no UI.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_an_underrun_is_logged_at_info_and_bumps_the_metric_on_utterance_end(
+    handler, monkeypatch,
+):
+    class _UnderrunningSink(_RecordingSink):
+        def feed(self, pcm: bytes) -> bool:
+            accepted = super().feed(pcm)
+            # Simulate the device callback running dry mid-utterance --
+            # SinkUnderrun always originates from the sink's own notify
+            # thread in production; calling on_event directly here is the
+            # same seam the real sink uses, just synchronous for the test.
+            self.on_event(SinkUnderrun(frames=42))
+            return accepted
+
+    chunks = [bytes([1, 0]) * 10]
+    response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _UnderrunningSink)
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+
+    metric_calls: list[tuple[str, dict]] = []
+
+    def capture_counter(name, value=1, labels=None):
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter", capture_counter
+    )
+
+    captured_logs: list[str] = []
+    handler_id = loguru_logger.add(
+        lambda message: captured_logs.append(message.record["message"]),
+        level="INFO",
+    )
+    try:
+        await handler._generate_tts("Underrun check.", "adhoc", None)
+    finally:
+        loguru_logger.remove(handler_id)
+
+    assert any(
+        "42" in line and "underrun" in line.lower() for line in captured_logs
+    ), captured_logs
+    assert any(
+        name == "tts_generation_total" and labels.get("outcome_code") == "underrun"
+        for name, labels in metric_calls
+    ), metric_calls
+    # The underrun is a stutter signal, not a failure -- the utterance
+    # itself still completes normally.
+    complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+    assert len(complete_events) == 1
+    assert complete_events[0].error is None
+
+
+@pytest.mark.asyncio
+async def test_no_underrun_never_logs_or_bumps_the_underrun_metric(handler, monkeypatch):
+    chunks = [bytes([1, 0]) * 10]
+    response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    sink_holder: dict = {}
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+
+    metric_calls: list[tuple[str, dict]] = []
+
+    def capture_counter(name, value=1, labels=None):
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter", capture_counter
+    )
+
+    await handler._generate_tts("No underrun.", "adhoc", None)
+
+    assert not any(
+        labels.get("outcome_code") == "underrun" for _, labels in metric_calls
+    ), metric_calls
