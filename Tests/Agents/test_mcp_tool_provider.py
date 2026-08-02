@@ -23,6 +23,8 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     MCPToolProvider,
     NON_TEXT_PLACEHOLDER,
     TIMEOUT_REFUSAL,
+    USER_DENY_REFUSAL,
+    UNRESOLVED_REFUSAL,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -705,7 +707,9 @@ def test_invoke_ask_callback_deny_refuses(running_loop):
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
-    assert result.error == DENY_REFUSAL
+    # TASK-294: an explicit card "Deny" carries USER provenance -- the
+    # permissions were not Off, a person said no.
+    assert result.error == USER_DENY_REFUSAL
     assert service.execute_calls == []
 
 
@@ -724,7 +728,9 @@ def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
-    assert result.error == DENY_REFUSAL
+    # TASK-294: a MISSING verdict blames nobody -- the user never decided
+    # and the permissions were not Off. Fail-closed posture unchanged.
+    assert result.error == UNRESOLVED_REFUSAL
 
 
 def test_invoke_ask_callback_raises_returns_error_never_raises(running_loop):
@@ -768,7 +774,8 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
-    assert result.error == DENY_REFUSAL
+    # TASK-294: a stamped card "deny" is a user decision -- USER provenance.
+    assert result.error == USER_DENY_REFUSAL
     assert service.record_tool_decision_calls[-1][2] == "denied"
     assert service.execute_calls == []
 
@@ -776,7 +783,8 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     # popped, so it applies again without a fresh gate resolution.
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is False
-    assert result2.error == DENY_REFUSAL
+    # TASK-294: the peeked stamp is still the USER's "deny".
+    assert result2.error == USER_DENY_REFUSAL
     assert len(service.record_tool_decision_calls) == 2
 
     # Next turn: the closure clears the stamp set (even with `{}`) -- a

@@ -40,7 +40,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
-from tldw_chatbook.Agents.mcp_tool_provider import DENY_REFUSAL, MCPToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider, USER_DENY_REFUSAL
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_chat_controller import (
     build_mcp_review_hook,
@@ -277,7 +277,10 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
         s for s in outcome.steps if s.kind == "tool_result" and s.tool_name == tool_id
     ]
     assert len(tool_result_steps) == 1
-    assert tool_result_steps[0].result == f"ERROR: {DENY_REFUSAL}"
+    # TASK-294: the PARENT USER's explicit deny now carries user
+    # provenance -- which is precisely what this test protects: the child's
+    # same-turn approval must not override what the user said no to.
+    assert tool_result_steps[0].result == f"ERROR: {USER_DENY_REFUSAL}"
     assert (
         "local:srv",
         "run",

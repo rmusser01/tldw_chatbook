@@ -84,6 +84,7 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Approved", "approved"),
     ("Denied", "denied"),
     ("Denied (timeout)", "denied-timeout"),
+    ("Denied (no decision)", "denied-unresolved"),
     ("Downgraded", "downgraded"),
 ]
 
@@ -93,7 +94,7 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
     ("System", "system"),
 ]
 
-_BLOCKED_DECISIONS = {"denied", "denied-timeout"}
+_BLOCKED_DECISIONS = {"denied", "denied-timeout", "denied-unresolved"}
 
 # Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
 # Outcome columns -- "allowed"/"approved" reached the tool (ready);
@@ -225,6 +226,12 @@ def _format_when(ts: Any) -> str:
         parsed = datetime.fromisoformat(str(ts))
     except ValueError:
         return str(ts)
+    if parsed.tzinfo is not None:
+        # TASK-294: records carry aware UTC timestamps; rendering them
+        # unconverted showed UTC wall-clock with no marker -- wrong by the
+        # viewer's whole UTC offset, silently. Naive values stay as-is:
+        # inventing a zone for them would be a different lie.
+        parsed = parsed.astimezone()
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 

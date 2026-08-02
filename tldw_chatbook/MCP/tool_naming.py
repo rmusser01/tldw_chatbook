@@ -122,6 +122,13 @@ def dedupe_names(names: list[str]) -> list[str]:
     available to this function. The result is stable: calling this again
     with the same input (in the same order) yields the same output.
 
+    Warning (TASK-294): stability is ORDER-dependent. If the catalog is
+    rebuilt with servers or tools enumerated in a different order, a
+    previously `_2`-suffixed name can swap with its unsuffixed twin --
+    anything keyed by LLM name across rebuilds (session approvals, audit
+    grouping) then silently refers to the other tool. Callers must sort or
+    otherwise fix enumeration order before deduping.
+
     Args:
         names: LLM-facing tool names, typically produced by
             `llm_tool_name`, possibly containing duplicates.
