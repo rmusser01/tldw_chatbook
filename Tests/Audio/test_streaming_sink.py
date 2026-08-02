@@ -8,11 +8,39 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 from tldw_chatbook.Audio.streaming_sink import (
     BUFFER_CAP_SECONDS, SinkBufferFull, SinkFailed,
     SinkStarted, SinkStopped, SinkUnderrun, StreamingPcmSink,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_live_sink_registry():
+    """Fix-round L12: `_LIVE_SINK` is a process-global with no reset.
+
+    Every `open()` stops whatever sink was previously registered live, so
+    a sink left live at the end of one test silently couples the next
+    test's `open()`/displacement assertions to it, and leaks that sink's
+    notify thread for the rest of the session. Force-clear before AND
+    after every test: before, so a leftover live sink from a prior test
+    (or a prior *file's* tests, since this is a single process-global)
+    can never be silently displaced by -- or displace -- this test's own
+    sink; after, so this test cannot leak one forward.
+    """
+    import tldw_chatbook.Audio.streaming_sink as mod
+
+    def _force_clear() -> None:
+        live = mod._LIVE_SINK
+        if live is not None:
+            live.stop()   # non-joining (H2); also clears the registry itself
+        with mod._LIVE_SINK_LOCK:
+            mod._LIVE_SINK = None
+
+    _force_clear()
+    yield
+    _force_clear()
 
 RATE = 24000
 BLOCK_MS = 20
@@ -394,3 +422,47 @@ def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
     sink.open(sample_rate=RATE)
     assert sink.state == "failed"
     assert any(isinstance(e, SinkFailed) for e in events)
+
+
+def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
+    """Fix-round H2 pin: `stop()` must never block waiting for the notify
+    thread's queue to drain -- only `settle()` does that. A listener that
+    blocks its own event handling for 500ms must not make an unrelated
+    caller's `stop()` take anywhere near that long; the reviewer measured
+    a 4.95s event-loop freeze (and, with a real `call_from_thread`
+    round-trip, a permanent one) against the pre-fix joining `stop()`.
+
+    Drives the callback directly (not via `FakeStream.tick()`, which
+    itself calls the test-side `_settle_notify_queue` helper and would
+    defeat the point of this test by waiting for the slow listener before
+    `stop()` is even called) so the `SinkStarted` "emit" job is
+    deterministically still in flight -- the listener is inside its
+    500ms sleep -- at the moment `stop()` is called concurrently from
+    this (the test) thread.
+    """
+    events = []
+    listener_started = threading.Event()
+
+    def on_event(e):
+        events.append(e)
+        if isinstance(e, SinkStarted):
+            listener_started.set()
+            time.sleep(0.5)
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        return FakeStream(callback, samplerate, channels, blocksize)
+
+    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))                      # crosses the prebuffer threshold
+    out = np.zeros((FRAMES, 1), dtype=np.int16)
+    sink._callback(out, FRAMES, None, None)  # queues SinkStarted's "emit" job
+    assert listener_started.wait(timeout=2.0), "listener never started"
+
+    start = time.monotonic()
+    sink.stop()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.2, f"stop() blocked for {elapsed:.3f}s -- must never join the notify queue"
+    assert sink.settle(timeout=2.0), "notify queue never settled"
+    assert any(isinstance(e, SinkStopped) for e in events)

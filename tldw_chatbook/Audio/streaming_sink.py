@@ -47,6 +47,26 @@ caller thread (`SinkBufferFull` from `feed()`, `SinkStopped` from
 directly, synchronously, on whichever thread called the method -- there
 is no PortAudio-callback-reentrancy risk there.
 
+`stop()` is NON-JOINING: it never waits for the notify thread to finish
+delivering already-queued work (it enqueues the exit sentinel, tears down
+the stream, clears the live-sink registry, and returns -- all fast paths
+bounded only by a lock acquisition and the stream's own `abort()`/
+`close()`). This is deliberate, not an oversight: `stop()` is called from
+listener callbacks (including reentrantly, from the notify thread
+itself) and, via `pump()`'s one-voice displacement, potentially from an
+asyncio event loop thread -- a context that cannot tolerate an unbounded
+block (an `App.call_from_thread` round-trip out of a slow listener would
+otherwise deadlock the loop against the notify thread waiting on it; see
+the streaming-pcm-sink plan's Task-2 review, H2). Callers that need a
+deterministic guarantee that every event has actually reached `on_event`
+(tests, deterministic teardown) should call `settle()` instead, which
+polls with a timeout rather than blocking unboundedly. One consequence of
+`stop()` never joining: a listener must never call `stop()` on a
+*different* sink than its own from inside its event handling -- two
+sinks whose listeners `stop()` each other synchronously would, under the
+old joining design, deadlock; under this design they no longer can, but
+it remains a confusing, unsupported pattern, so don't.
+
 The `stream_factory` constructor argument is the testability seam: in
 production it is left `None` and `open()` lazily builds a real
 `sounddevice.OutputStream`; tests inject a fake stream whose callback can
@@ -65,10 +85,11 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from importlib.util import find_spec
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Literal, Optional
 
 from loguru import logger
 
@@ -138,27 +159,38 @@ class SinkFailed:
     reason: str
 
 
+#: `PumpResult.outcome` / `StreamingPcmSink.terminal_reason`-adjacent values.
+#: `"source_error"` is `pump`-only (the sink itself has no such reason --
+#: `pump` stops the sink and reports this instead of the sink's own,
+#: unrelated `"stopped"` terminal reason).
+PumpOutcome = Literal["drained", "stopped", "failed", "source_error"]
+
+
 @dataclass(frozen=True)
 class PumpResult:
     """Outcome of a completed `pump()` call.
 
     Attributes:
-        outcome: One of `"drained"` (the source was exhausted, `pump`
-            called `close()`, and the sink went on to reach `"stopped"`
-            naturally -- or was already terminal for a reason other than
-            failure by the time `pump` checked), `"stopped"` (the sink
-            left `"open"`/`"draining"` -- e.g. an external barge-in
-            `stop()` -- while `pump` was still feeding, before the source
-            was exhausted), `"failed"` (the sink transitioned to
-            `"failed"`, whether mid-feed or during the post-`close()`
-            drain wait), or `"source_error"` (the chunk source itself
-            raised; `pump` stopped the sink in response).
+        outcome: `"drained"` if the sink's own `terminal_reason` was a
+            natural drain, `"stopped"` if it was `stop()` (external,
+            reentrant, or forced by `pump` itself to satisfy the
+            terminal-call guarantee on a sink `pump` never got to feed --
+            see `terminal_reason`), `"failed"` if it was a device failure
+            *or* `pump`'s own drain-wait deadline expired, or
+            `"source_error"` if the chunk source itself raised (`pump`
+            stops the sink in response but reports this, not the sink's
+            resulting -- and in this case incidental -- `"stopped"`
+            reason).
         bytes_fed: Total PCM bytes actually handed to `sink.feed()` and
             accepted (after `skip_bytes` was consumed from the head of the
             stream), regardless of outcome.
+        reason: Human-readable detail. Empty except for `"source_error"`
+            (the source exception's `str()`) and `"failed"` (the sink's
+            own `SinkFailed` reason, or a drain-wait-deadline message).
     """
-    outcome: str
+    outcome: PumpOutcome
     bytes_fed: int
+    reason: str = ""
 
 
 def sink_available() -> bool:
@@ -241,6 +273,12 @@ class StreamingPcmSink:
         self._state = "idle"
         self._audible = False
         self._closed = False
+        #: Why this sink reached a terminal state; `None` until it does.
+        #: Set exactly once, alongside the winning `self._state` mutation
+        #: into `"stopped"`/`"failed"` -- see `terminal_reason`.
+        self._terminal_reason: Optional[Literal["drained", "stopped", "failed"]] = None
+        #: The human-readable reason passed to `_fail()`, if any -- see `fail_reason`.
+        self._fail_reason: Optional[str] = None
         self._cap_bytes = 0
         self._prebuffer_bytes = 0
         self._bytes_per_frame = 2
@@ -341,7 +379,6 @@ class StreamingPcmSink:
             self._bytes_per_frame = 2 * channels
             self._cap_bytes = BUFFER_CAP_SECONDS * sample_rate * self._bytes_per_frame
             self._prebuffer_bytes = PREBUFFER_MS * sample_rate * self._bytes_per_frame // 1000
-        _register_live_sink(self)              # one-voice (Task 2 wires displacement)
         factory = self._factory
         if factory is None:
             sd = _import_sounddevice()
@@ -376,6 +413,14 @@ class StreamingPcmSink:
             # just built and started must not be left running.
             self._teardown_stream()
             return
+        # One-voice registration (L7 fix-round finding): deliberately AFTER
+        # this call has actually won "open", not before building/starting
+        # the stream. Nothing has been fed yet at this point either way, so
+        # moving it here closes no window for double-voice playback -- but
+        # it means a sink whose stream_factory/`stream.start()` raises (the
+        # `self._fail(...)` branches above) never evicts a still-healthy
+        # previously-live sink for a voice that never played one sample.
+        _register_live_sink(self)
         self._notify_thread = threading.Thread(
             target=self._notify_loop, name="StreamingPcmSinkNotify", daemon=True,
         )
@@ -456,11 +501,27 @@ class StreamingPcmSink:
         finished it, say), it still tears down `self._stream` if one is
         somehow still present, defensively. Only the *event* emission is
         gated to "first call to reach a terminal state wins".
+
+        NON-JOINING (fix-round H2): this method never blocks waiting for
+        the notify thread to finish delivering already-queued work -- see
+        the module docstring's thread contract for why. It is therefore
+        safe to call from any context, including an asyncio event loop
+        thread. One consequence: if a `SinkStarted`/`SinkUnderrun` job is
+        still queued (not yet delivered) on the notify thread at the
+        moment an *unrelated* thread calls `stop()`, that job's delivery
+        and this call's `SinkStopped` are no longer guaranteed to arrive
+        at `on_event` in that order (they still will if this call is
+        itself running reentrantly ON the notify thread -- the common
+        listener-reacts-to-an-event case -- since then there is nothing
+        else for that thread to be doing concurrently). Callers that need
+        the strict, deterministic ordering guarantee should call
+        `settle()` after `stop()`.
         """
         with self._lock:
             already_terminal = self._state in ("stopped", "failed")
             if not already_terminal:
                 self._state = "stopped"
+                self._terminal_reason = "stopped"
             self._buf.clear()
             self._buffered_bytes = 0
             self._leftover = b""
@@ -468,16 +529,6 @@ class StreamingPcmSink:
         self._teardown_stream()
         if already_terminal:
             return
-        # If this call is not itself running on the notify thread (the
-        # common case -- a real stop() arrives from the UI/worker thread),
-        # let any work already queued from the callback thread (e.g. an
-        # in-flight SinkStarted) finish delivering first, so listeners
-        # never observe SinkStopped before an event that logically
-        # preceded it. Skipping this when we ARE the notify thread avoids
-        # a self-deadlock: a listener calling stop() synchronously from
-        # within its own event handling cannot wait on itself.
-        if self._notify_thread is not None and threading.current_thread() is not self._notify_thread:
-            self._notify_q.join()
         _clear_live_sink(self)
         # Pushed unconditionally -- not gated on self._notify_thread being
         # published yet (see N1). open() may still be mid-flight, between
@@ -488,6 +539,36 @@ class StreamingPcmSink:
         # read (open() never reaches "open" at all) is harmless.
         self._notify_q.put(_NOTIFY_STOP)
         self._emit(SinkStopped())
+
+    def settle(self, timeout: float = 5.0) -> bool:
+        """Block until this sink's notify thread has delivered all queued work.
+
+        `stop()` (and the drain/failure teardown paths) enqueue their
+        final work non-blockingly and never wait for it to actually reach
+        `on_event` -- see `stop()`'s docstring. Most callers never need
+        to; tests and deterministic-teardown paths that DO need to know
+        "has every event this sink will ever emit already been
+        delivered" should call this instead. Deadline-polled rather than
+        an unbounded `queue.Queue.join()`, so a job orphaned by a bug (or
+        a notify thread that never started at all, e.g. a sink stopped
+        while still `"idle"`) turns into a fast, informative `False`
+        instead of hanging forever.
+
+        Args:
+            timeout: Maximum time, in seconds, to wait for the notify
+                queue to fully drain.
+
+        Returns:
+            `True` if the queue settled (every queued job's `task_done()`
+            was called) within `timeout`, `False` if the deadline was
+            reached first. Never raises, never blocks past `timeout`.
+        """
+        deadline = time.monotonic() + timeout
+        while self._notify_q.unfinished_tasks > 0:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.001)
+        return True
 
     def _fail(self, reason: str, *, from_callback: bool = False) -> None:
         """Transition the sink to `"failed"` and emit `SinkFailed`.
@@ -513,6 +594,8 @@ class StreamingPcmSink:
             if self._state in ("stopped", "failed"):
                 return
             self._state = "failed"
+            self._terminal_reason = "failed"
+            self._fail_reason = reason
             self._buf.clear()
             self._buffered_bytes = 0
             self._leftover = b""
@@ -590,6 +673,7 @@ class StreamingPcmSink:
                 with self._lock:
                     if self._state == "draining":
                         self._state = "stopped"
+                        self._terminal_reason = "drained"
                         emit_drain = True
                     else:
                         emit_drain = False
@@ -705,6 +789,48 @@ class StreamingPcmSink:
         return self._state
 
     @property
+    def terminal_reason(self) -> Optional[Literal["drained", "stopped", "failed"]]:
+        """Why this sink reached a terminal state, or `None` if it hasn't yet.
+
+        Fix-round addition (M5): `state` alone cannot distinguish a
+        natural drain from a forced `stop()` -- both leave
+        `state == "stopped"`, by design (see `_callback`'s drain handling
+        and `stop()`). This property disambiguates: `"drained"` (all
+        buffered audio played out after `close()`), `"stopped"` (`stop()`
+        won the transition, whether external, reentrant from a listener,
+        or forced by `pump()` itself), or `"failed"` (the sink failed to
+        open, or the device callback raised). Set exactly once, at the
+        same moment as the winning transition into `state ==
+        "stopped"`/`"failed"` -- immutable for the remainder of the
+        sink's lifetime once set, and read without the lock for the same
+        reason `state` is (a plain attribute, atomic under the GIL;
+        callers polling this in a loop already tolerate the same
+        eventual-consistency `state` itself has).
+        """
+        return self._terminal_reason
+
+    @property
+    def fail_reason(self) -> Optional[str]:
+        """The human-readable reason passed to `_fail()`, if `terminal_reason == "failed"`.
+
+        `None` if the sink never failed (including if it hasn't reached a
+        terminal state at all yet).
+        """
+        return self._fail_reason
+
+    @property
+    def bytes_per_second(self) -> int:
+        """PCM bytes per second of playback at this sink's opened rate.
+
+        `0` until `open()` has recorded a rate (i.e. while still
+        `"idle"`) -- callers that might see `0` (e.g. `pump()`'s
+        oversized-chunk slicing) should treat that as "not meaningfully
+        open yet" rather than divide by it.
+        """
+        with self._lock:
+            return self._cap_bytes // BUFFER_CAP_SECONDS if self._cap_bytes else 0
+
+    @property
     def buffered_seconds(self) -> float:
         """Approximate seconds of audio currently buffered (not yet played).
 
@@ -723,11 +849,10 @@ class StreamingPcmSink:
 #: displaces (stops) whatever sink was previously registered here.
 _LIVE_SINK: Optional[StreamingPcmSink] = None
 
-#: Guards reads/writes of `_LIVE_SINK`. Deliberately never held while a
-#: sink's `stop()` is called -- `stop()` can briefly block (an unbounded
-#: `_notify_q.join()`, see the module's carried Task-1 review risk), and
-#: holding this lock across that call would let one sink's teardown stall
-#: every other sink's `open()`/`_clear_live_sink()` in the meantime.
+#: Guards reads/writes of `_LIVE_SINK`. Kept separate from any sink's own
+#: `stop()` call (never held across one) so that one sink's teardown can
+#: never stall another sink's `open()`/`_clear_live_sink()`, even though
+#: `stop()` itself is now non-joining (fix-round H2) and therefore fast.
 _LIVE_SINK_LOCK = threading.Lock()
 
 
@@ -769,6 +894,111 @@ def _clear_live_sink(sink: StreamingPcmSink) -> None:
             _LIVE_SINK = None
 
 
+#: M3 fix-round: the maximum span of audio, in seconds, `pump` will ever
+#: hand to a single `feed()` call, regardless of how large the chunk it
+#: read from the source was. A chunk larger than `BUFFER_CAP_SECONDS`
+#: could never be accepted no matter how much the buffer drains (`feed()`
+#: rejects anything that would push the buffer over the cap outright),
+#: so retrying it whole would livelock `pump` at the backpressure-retry
+#: interval forever. Slicing to a small fraction of the cap instead
+#: guarantees every slice is eventually placeable.
+_PUMP_SLICE_SECONDS = 1
+
+#: L11 fix-round: how much slack, in seconds, `pump` allows beyond a
+#: sink's own `buffered_seconds` estimate (captured once, at the moment
+#: the drain wait begins) before concluding the device callback has
+#: stalled and giving up rather than polling forever. A module-level
+#: constant (not a `pump()` parameter) so tests can `monkeypatch` it down
+#: to exercise the deadline path without a real multi-second wait.
+_DRAIN_WAIT_MARGIN_SECONDS = 5.0
+
+
+def _ensure_terminal(sink: StreamingPcmSink) -> None:
+    """H1/L9 fix-round: guarantee `sink` has a `terminal_reason`, forcing one if needed.
+
+    The overwhelmingly common case is that `sink` is already terminal by
+    the time this is called -- a cheap, side-effect-free read. The one
+    case it is not is a sink `pump` never got to feed at all (still
+    `"idle"`: `open()` was never called, or is still mid-flight on
+    another thread) -- nothing else will ever terminalize that sink, so
+    `pump` does it itself by calling `stop()`. `stop()` on an
+    already-terminal sink is a safe, cheap no-op per the sink's own
+    contract (see `StreamingPcmSink.stop`), so calling it here
+    unconditionally whenever `terminal_reason` is still `None` can never
+    double-fire or race a "real" terminal transition that is genuinely
+    still in flight -- worst case, `pump`'s `stop()` is the one that wins
+    the transition, which is exactly the guarantee this function exists
+    to provide.
+    """
+    if sink.terminal_reason is None:
+        sink.stop()
+
+
+def _result(sink: StreamingPcmSink, bytes_fed: int) -> PumpResult:
+    """Build a `PumpResult` from a sink already guaranteed to be terminal.
+
+    Callers must call `_ensure_terminal(sink)` first (or otherwise know
+    `sink.terminal_reason` is already set) -- this does not force
+    anything itself. `outcome` is a direct passthrough of
+    `sink.terminal_reason`; `reason` is populated from `sink.fail_reason`
+    only when that outcome is `"failed"` (L8).
+    """
+    outcome = sink.terminal_reason or "stopped"   # defensive fallback; every call site ensures terminal first
+    reason = (sink.fail_reason or "") if outcome == "failed" else ""
+    return PumpResult(outcome=outcome, bytes_fed=bytes_fed, reason=reason)
+
+
+async def _feed_one_piece(sink: StreamingPcmSink, piece: bytes) -> Literal["fed", "terminal", "draining"]:
+    """Feed one already-sliced piece to `sink`, retrying through backpressure.
+
+    Isolates `pump`'s backpressure-retry loop (M4) so both the sink
+    becoming terminal *and* the sink starting to drain (L10) are checked
+    on every single retry attempt, not just once per outer chunk -- an
+    external `close()` landing mid-retry is recognized immediately
+    instead of only after the wasted remainder of the drain's real-time
+    duration has elapsed retrying a piece that can now never be accepted.
+
+    Returns:
+        `"fed"` once `sink.feed(piece)` succeeds, `"terminal"` if
+        `sink.terminal_reason` becomes set first, or `"draining"` if
+        `sink.state` becomes `"draining"` first (`feed()` can never
+        succeed again from there -- no point continuing to retry).
+    """
+    while True:
+        if sink.terminal_reason is not None:
+            return "terminal"
+        if sink.state == "draining":
+            return "draining"
+        if sink.feed(piece):
+            return "fed"
+        await asyncio.sleep(0.05)
+
+
+async def _aclose_source(chunks: AsyncIterator[bytes]) -> None:
+    """M6 fix-round: best-effort `aclose()` of an async chunk source, if it has one.
+
+    Plain `AsyncIterator`s (e.g. a hand-written class implementing only
+    `__anext__`) are not required by the protocol to expose `aclose()`;
+    async *generators* always do. Left uncalled, an early `pump` exit
+    (barge-in, cancellation, a device failure) would otherwise leave a
+    generator's own `finally`/`async with` teardown -- e.g. an HTTP
+    response body -- suspended until GC gets around to it
+    non-deterministically, or never call a plain iterator's `aclose()` at
+    all. Never raises: a failure to close the source must not mask
+    whatever outcome `pump` is already returning or propagating.
+
+    Args:
+        chunks: The chunk source `pump` was iterating.
+    """
+    aclose = getattr(chunks, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:
+        logger.opt(exception=True).debug("pump: closing chunk source raised")
+
+
 async def pump(
     sink: StreamingPcmSink,
     chunks: AsyncIterator[bytes],
@@ -784,29 +1014,73 @@ async def pump(
     * An optional `skip_bytes`-byte prefix (e.g. a WAV header some
       providers cannot be told to omit), dropped across chunk boundaries
       before any audio is fed.
+    * Oversized chunks (M3): a single source chunk is fed in
+      `_PUMP_SLICE_SECONDS`-sized slices rather than as one `feed()`
+      call, so a chunk bigger than the sink's buffer cap can never
+      livelock the backpressure retry below (a slice this small is
+      always eventually placeable; a >60s chunk fed whole never would
+      be, no matter how much the buffer drains).
     * Backpressure: when `feed()` returns `False` (buffer full), `pump`
-      retries the very same remainder after a short sleep rather than
-      dropping audio.
+      retries the very same slice after a short sleep rather than
+      dropping audio (pinned: M4).
     * Prompt exit the moment the sink leaves `"open"`/`"draining"` for a
       terminal state (e.g. an external barge-in `stop()`, or a device
       failure) -- `pump` does not wait for the source to finish in that
-      case.
+      case. If someone *else* already called `close()` on the sink
+      (state `"draining"` but not yet terminal), `pump` stops trying to
+      feed -- `feed()` can never succeed again once closed -- and falls
+      straight through to the same drain-wait below instead of
+      busy-retrying `feed()` at the backpressure interval for no reason
+      (L10).
     * A source that raises: `pump` calls `sink.stop()` and reports
-      `"source_error"`, so the sink still reaches a terminal state even
-      when the caller never gets to call `close()`/`stop()` itself.
+      `"source_error"` with the exception's `str()` as `reason` (L8), so
+      the sink still reaches a terminal state even when the caller never
+      gets to call `close()`/`stop()` itself.
+    * Cancellation, or any other exit this function did not anticipate
+      (H1): a `finally` guarantees a terminal call on every exit, not
+      just the ones explicitly handled above. `asyncio.CancelledError`
+      derives from `BaseException`, so it is not caught by the `except
+      Exception` clause below and propagates through `finally` and back
+      out to the caller once the sink has been terminalized -- `pump`
+      never swallows a cancellation.
+    * Releasing the source (M6): a `finally` also `aclose()`s `chunks` if
+      it exposes one, on every exit, so an early return never leaves an
+      HTTP response (or any other closeable resource) the source was
+      holding open past the point `pump` stopped reading it.
     * Normal exhaustion: `pump` calls `sink.close()` and waits -- polling,
       never blocking the event loop -- for the sink to reach a terminal
-      state.
+      state, bounded by a deadline derived from the sink's own
+      `buffered_seconds` plus a safety margin (L11); if that deadline
+      expires (the device callback has stopped advancing, e.g. a removed
+      device), `pump` stops the sink and reports `"failed"` rather than
+      polling forever.
+
+    `pump`'s own outcome is a direct passthrough of the sink's
+    `terminal_reason` (see `StreamingPcmSink.terminal_reason`) in every
+    case except `"source_error"` (`pump`'s own judgment, not a sink
+    concept) and the drain-wait-deadline case above (also `pump`'s own
+    judgment, reported as `"failed"` even though the `stop()` call used
+    to terminalize the sink tags its own `terminal_reason` as
+    `"stopped"`). This is what makes a barge-in landing in the drain tail
+    correctly report `"stopped"`, not `"drained"` (M5): the sink -- not
+    `pump`'s own bookkeeping about whether *it* called `close()` -- is
+    the single source of truth for why it stopped.
 
     `pump` only ever calls `feed()`/`close()`/`stop()` from its own task,
-    never from a listener registered on the sink, so it never risks
-    blocking on the `stop()` -> `_notify_q.join()` carried risk noted in
-    the module's Task-1 review context.
+    never from a listener registered on the sink. Every one of those
+    calls is now non-blocking (`stop()` no longer joins the sink's notify
+    queue -- see the module docstring's thread contract, fix-round H2),
+    so `pump` never risks stalling the event loop it runs on.
 
     Args:
-        sink: The (already-`open()`ed) sink to feed.
-        chunks: Async iterator of raw PCM16 byte chunks. `pump` only
-            iterates it; it does not open, close, or otherwise manage its
+        sink: The (already-`open()`ed) sink to feed. A sink that is still
+            `"idle"` (never `open()`'d, or `open()` still mid-flight on
+            another thread) is accepted too: `pump` forces it terminal
+            itself (via `stop()`) before returning, per the terminal-call
+            guarantee, rather than silently doing nothing.
+        chunks: Async iterator of raw PCM16 byte chunks. `pump` iterates
+            it and, on every exit, attempts to `aclose()` it if it
+            exposes one; it does not otherwise open or manage its
             lifecycle.
         skip_bytes: Number of leading bytes to discard from the head of
             the concatenated chunk stream before any audio is fed to the
@@ -819,6 +1093,7 @@ async def pump(
     bytes_fed = 0
     remaining_skip = skip_bytes
     try:
+        stop_reading_source = False
         async for chunk in chunks:
             if remaining_skip:
                 if remaining_skip >= len(chunk):
@@ -826,34 +1101,61 @@ async def pump(
                     continue
                 chunk = chunk[remaining_skip:]
                 remaining_skip = 0
+            slice_bytes = max(sink.bytes_per_second * _PUMP_SLICE_SECONDS, 1)
             while chunk:
-                if sink.state not in ("open", "draining"):
-                    return PumpResult(outcome=_early_exit_outcome(sink.state), bytes_fed=bytes_fed)
-                if sink.feed(chunk):
-                    bytes_fed += len(chunk)
+                state = sink.state
+                if state not in ("open", "draining"):
+                    _ensure_terminal(sink)
+                    return _result(sink, bytes_fed)
+                if state == "draining":
+                    # L10: this sink is already draining -- via someone
+                    # else's close() (ours hasn't run yet at this point in
+                    # the function), or our own close() from a previous
+                    # iteration reaching this same state -- either way
+                    # feed() can never succeed again. Stop offering more
+                    # of the source and fall through to the shared
+                    # drain-wait below instead of busy-retrying forever.
+                    stop_reading_source = True
                     break
-                await asyncio.sleep(0.05)
-    except Exception:
+                piece, rest = chunk[:slice_bytes], chunk[slice_bytes:]
+                outcome = await _feed_one_piece(sink, piece)
+                if outcome == "terminal":
+                    return _result(sink, bytes_fed)
+                if outcome == "draining":
+                    stop_reading_source = True
+                    break
+                bytes_fed += len(piece)
+                chunk = rest
+            if stop_reading_source:
+                break
+
+        if sink.terminal_reason is not None:
+            return _result(sink, bytes_fed)
+        sink.close()   # no-op if state is already "draining" (L10 path above)
+        deadline = time.monotonic() + sink.buffered_seconds + _DRAIN_WAIT_MARGIN_SECONDS
+        while sink.terminal_reason is None:
+            if time.monotonic() >= deadline:
+                sink.stop()
+                return PumpResult(
+                    outcome="failed", bytes_fed=bytes_fed,
+                    reason="drain wait exceeded deadline (device callback stalled?)",
+                )
+            await asyncio.sleep(0.01)
+        return _result(sink, bytes_fed)
+    except Exception as exc:
+        logger.opt(exception=True).debug("pump: chunk source raised")
         sink.stop()
-        return PumpResult(outcome="source_error", bytes_fed=bytes_fed)
-
-    if sink.state not in ("open", "draining"):
-        return PumpResult(outcome=_early_exit_outcome(sink.state), bytes_fed=bytes_fed)
-    sink.close()
-    while sink.state not in ("stopped", "failed"):
-        await asyncio.sleep(0.01)
-    return PumpResult(outcome="failed" if sink.state == "failed" else "drained", bytes_fed=bytes_fed)
-
-
-def _early_exit_outcome(state: str) -> str:
-    """Map a sink `state` observed before/without `pump` itself calling `close()` to an outcome.
-
-    Args:
-        state: The sink's `state` at the moment `pump` noticed it had left
-            `"open"`/`"draining"` on its own (i.e. not as a result of
-            `pump`'s own `close()` call).
-
-    Returns:
-        `"failed"` if `state` is `"failed"`, otherwise `"stopped"`.
-    """
-    return "failed" if state == "failed" else "stopped"
+        return PumpResult(outcome="source_error", bytes_fed=bytes_fed, reason=str(exc))
+    finally:
+        # H1: unconditional terminal-call safety net. Every normal return
+        # above already leaves the sink terminal (so this is a cheap
+        # no-op then); this only actually does something on cancellation
+        # or any other exit this function did not explicitly anticipate.
+        # Runs -- and, for a CancelledError, does NOT swallow it: a
+        # `finally` that itself neither returns nor raises lets whatever
+        # exception was propagating continue on afterward -- before the
+        # source is released, so a sink `stop()` forced here can't race a
+        # source `aclose()` that might itself synchronously touch the
+        # sink (defensive; no known real source does).
+        _ensure_terminal(sink)
+        await _aclose_source(chunks)
