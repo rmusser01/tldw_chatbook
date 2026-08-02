@@ -113,6 +113,11 @@ _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if app
 
 _ARGS_SUMMARY_LIMIT = 80
 
+#: TASK-1845: needs-decision was a border + 10% tint with no text change, so
+#: the state vanished in monochrome. PRODUCT.md: "colour must never be the
+#: only carrier of meaning."
+NEEDS_DECISION_PREFIX = "needs decision · "
+
 
 def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Collapse ``calls`` to one entry per unique ``llm_name``, first-seen order.
@@ -129,10 +134,19 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
         if name not in grouped:
             entry = dict(call)
             entry["count"] = 1
+            # TASK-1845: keep EVERY call's arguments, not just the first.
+            # Grouping by name is the verdict contract and stays; hiding the
+            # other calls' targets behind the count was the hazard -- three
+            # reads of three different files rendered as one, so the user
+            # approved three things having seen one.
+            entry["all_arguments"] = [call.get("arguments")]
             grouped[name] = entry
             order.append(name)
         else:
             grouped[name]["count"] += 1
+            grouped[name].setdefault("all_arguments", []).append(
+                call.get("arguments")
+            )
     return [grouped[name] for name in order]
 
 
@@ -147,8 +161,11 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     eye rather than being buried before another badge.
     """
     server_label = str(entry.get("server_label", "") or "")
-    tool_name = str(entry.get("tool_name", "") or "")
-    header = f"{server_label} · {tool_name}"
+    tool_name = str(entry.get("tool_name", "") or entry.get("llm_name", "") or "")
+    header = f"{server_label} · {tool_name}" if server_label else tool_name
+    # TASK-1845: carry the needs-decision state in TEXT, not colour alone.
+    if entry.get("needs_decision"):
+        header = f"{NEEDS_DECISION_PREFIX}{header}"
     count = int(entry.get("count", 1) or 1)
     if count > 1:
         header += f" ×{count}"
@@ -159,7 +176,13 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 
 
 def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
-    """Return a compact, ``markup=False``-safe argument summary, capped at 80 chars.
+    """Return a compact, ``markup=False``-safe argument summary.
+
+    TASK-1845: when handed a COLLAPSED entry (one carrying ``all_arguments``),
+    every call's arguments are rendered, one per line -- a row that says "x3"
+    must show all three targets or the count is concealing the decision. Each
+    line is capped independently so one long payload cannot push the others
+    off screen. Redaction is applied to every line, not just the first.
 
     Secret-looking values (``api_key``, ``token``, ``password``, ...) are
     redacted before rendering -- redaction parity with every other MCP
@@ -167,21 +190,80 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     docstring); the approval card is the one place a raw secret argument
     was still reaching the screen unredacted.
     """
-    try:
-        text = json.dumps(
-            redact_mapping(dict(arguments or {})),
-            default=str,
-            separators=(",", ":"),
-        )
-    except Exception:  # noqa: BLE001 -- a non-serializable arg must never crash rendering
-        text = str(arguments or {})
-    if len(text) > _ARGS_SUMMARY_LIMIT:
-        return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
-    return text
+    def _one(payload: Any) -> str:
+        try:
+            text = json.dumps(
+                redact_mapping(dict(payload or {})),
+                default=str,
+                separators=(",", ":"),
+            )
+        except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
+            text = str(payload or {})
+        if len(text) > _ARGS_SUMMARY_LIMIT:
+            return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
+        return text
+
+    if isinstance(arguments, Mapping) and "all_arguments" in arguments:
+        sets = arguments.get("all_arguments") or []
+        rendered = [_one(payload) for payload in sets]
+        # De-duplicate identical payloads while preserving order: N identical
+        # calls are one decision with one target, and repeating it N times
+        # would bury a genuinely different target further down.
+        seen: set[str] = set()
+        unique = [r for r in rendered if not (r in seen or seen.add(r))]
+        return "\n".join(unique)
+    return _one(arguments)
 
 
 class ChatApprovalCard(Container):
     """Inline approval card for privileged agent actions."""
+
+    def first_focus_widget_id(self) -> str:
+        """Return the id the keyboard should land on when this card is reached.
+
+        TASK-1845. Every row is pre-armed to ``_DEFAULT_DECISION``
+        ("approve_once") because a blank Select breaks ``allow_blank=False``
+        and the bulk-assign path. That default is fine; landing the keyboard
+        on the COMMIT control was not. Both review entry points focused
+        ``#approval-submit``, so the documented route -- jump to the card,
+        press Enter -- granted a tool access to a call the user had not read.
+
+        Tools are how an agent reaches the outside world, so this card is the
+        egress boundary; arriving on it should present a choice, not a
+        pre-signed one.
+
+        Returns:
+            The row's decision Select when there is one to decide, else the
+            card's own container id -- never the Submit button.
+        """
+        try:
+            selects = self.query(".approval-row-decision")
+        except Exception:
+            return "chat-approval-card"
+        for select in selects:
+            if select.id:
+                return select.id
+        return "chat-approval-card"
+
+    def focus_first_decision(self) -> None:
+        """Move focus to this card's first undecided control.
+
+        The single seam both review entry points use, so a third caller
+        cannot reintroduce a focus target that commits on Enter.
+        """
+        try:
+            selects = list(self.query(".approval-row-decision"))
+        except Exception:
+            selects = []
+        if selects:
+            selects[0].focus()
+            return
+        # No rows to decide (card shown for a batch that has since resolved):
+        # focus the card itself rather than an action button.
+        try:
+            self.focus()
+        except Exception:
+            pass
 
     class ApprovalDecided(Message):
         """Posted when the user submits per-row decisions for a pending batch.

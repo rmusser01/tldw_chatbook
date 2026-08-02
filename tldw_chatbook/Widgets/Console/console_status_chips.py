@@ -486,6 +486,6 @@ class ConsoleStatusChips(Horizontal):
         # the only body it ever renders, so a displayed card's action is
         # always its "Submit" button.
         try:
-            card.query_one("#approval-submit", Button).focus()
+            card.focus_first_decision()
         except NoMatches:
             pass
