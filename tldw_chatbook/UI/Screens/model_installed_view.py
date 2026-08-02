@@ -27,6 +27,7 @@ from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.UI.Screens.model_browser_state import (
     InventoryRow,
     UnmanagedRow,
+    format_mib,
     inventory_rows,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -201,9 +202,9 @@ class InstalledView(Widget):
             return Static("Disk usage unavailable.", markup=False)
         return Static(
             "Managed: "
-            f"{self._format_bytes(self._usage.installed_bytes)} installed, "
-            f"{self._format_bytes(self._usage.staging_bytes)} staging · "
-            f"{self._format_bytes(self._usage.free_bytes)} free",
+            f"{format_mib(self._usage.installed_bytes)} installed, "
+            f"{format_mib(self._usage.staging_bytes)} staging · "
+            f"{format_mib(self._usage.free_bytes)} free",
             markup=False,
         )
 
@@ -265,7 +266,7 @@ class InstalledView(Widget):
                     )
                 )
         if row.size_bytes is not None:
-            children.append(Static(f"Size: {self._format_bytes(row.size_bytes)}"))
+            children.append(Static(f"Size: {format_mib(row.size_bytes)}"))
         children.append(Static(row.action_hint, markup=False))
         if row.reference is not None and not row.is_broken:
             children.append(
@@ -283,16 +284,6 @@ class InstalledView(Widget):
                 )
             )
         return Vertical(*children, classes="installed-model-row")
-
-    @staticmethod
-    def _format_bytes(size_bytes: int) -> str:
-        """Format bytes for compact inventory copy."""
-        size = float(size_bytes)
-        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-            if size < 1024 or unit == "TiB":
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TiB"
 
     @staticmethod
     def scan_unmanaged(

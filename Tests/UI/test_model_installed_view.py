@@ -297,14 +297,21 @@ async def test_empty_inventory_still_reports_managed_and_staging_space(
     async with app.run_test() as pilot:
         view._apply_inventory(
             (),
-            ArtifactDiskUsage(installed_bytes=0, staging_bytes=2048, free_bytes=4096),
+            ArtifactDiskUsage(
+                installed_bytes=0,
+                staging_bytes=2 * 1024 * 1024,
+                free_bytes=4 * 1024 * 1024,
+            ),
             None,
         )
         await pilot.pause()
         text = "\n".join(str(item.renderable) for item in view.query("Static"))
 
-    assert "2.0 KiB staging" in text
-    assert "4.0 KiB free" in text
+    # All disk totals render through the single shared format_mib formatter
+    # (TASK-596 delta port), which always renders MiB -- 2 MiB and 4 MiB
+    # chosen so the expected strings are distinct and hand-verifiable.
+    assert "2.0 MiB staging" in text
+    assert "4.0 MiB free" in text
 
 
 @pytest.mark.asyncio
@@ -402,10 +409,16 @@ def test_curated_preflight_result_opens_the_shared_modal(
 
 
 def test_curated_progress_tolerates_recompose_gap() -> None:
-    """A progress event is retained while its widget is temporarily absent."""
+    """A progress event is retained while its widget is temporarily absent.
+
+    ``apply_progress`` (called only by the host screen, ``LLMScreen`` --
+    see its own docstring for why ``CuratedView`` no longer renders
+    itself in response to a bubbled ``InstallProgressed`` -- TASK-596
+    delta port fix round 1) shares this exact tolerance with the
+    self-listening handler it replaced.
+    """
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
-    from tldw_chatbook.Widgets.ModelArtifacts import InstallProgressed
 
     progress = AcquisitionProgress(
         "fetch",
@@ -418,7 +431,7 @@ def test_curated_progress_tolerates_recompose_gap() -> None:
     view.query_one = MagicMock(side_effect=NoMatches)
     view.refresh = MagicMock()
 
-    view._install_progressed(InstallProgressed(progress))
+    view.apply_progress(progress)
 
     assert view._progress is progress
     view.refresh.assert_called_once_with(recompose=True)

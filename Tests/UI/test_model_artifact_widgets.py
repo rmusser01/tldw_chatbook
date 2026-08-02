@@ -18,7 +18,9 @@ def _report(
     *,
     sufficient_space: bool = True,
     gating_errors: tuple[str, ...] = (),
+    repository: str = "publisher/parakeet-v2",
     license_id: str = "CC-BY-4.0",
+    revision: str = "immutable-revision",
 ) -> PreflightReport:
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
     return PreflightReport(
@@ -28,8 +30,8 @@ def _report(
             ArtifactPreflightEntry(
                 ref=reference,
                 source_url="https://example.test/model",
-                repository="publisher/parakeet-v2",
-                revision="immutable-revision",
+                repository=repository,
+                revision=revision,
                 license_id=license_id,
                 license_url="https://example.test/license",
                 precision="int8",
@@ -333,3 +335,110 @@ async def test_progress_widget_restores_the_latest_event_after_recompose() -> No
 
     assert "Downloading" in text
     assert "encoder.onnx" in text
+
+
+@pytest.mark.asyncio
+async def test_plan_panel_survives_bracket_bearing_repository_and_license_text(
+    tmp_path: Path,
+) -> None:
+    """Repository ids, license strings, and revisions can contain square
+    brackets (TASK-596 delta port); Rich would otherwise parse them as
+    markup and eat them. ModelPlanPanel renders the whole plan as one
+    ``Static(..., markup=False)`` -- this pins that the raw bracket text
+    actually reaches the screen, not just that construction doesn't raise.
+
+    Args:
+        tmp_path: pytest fixture; used only as the plan's destination path.
+    """
+    report = _report(
+        tmp_path / "managed",
+        repository="org/model[experimental]",
+        license_id="Custom[v1]",
+        revision="rev[abc]",
+    )
+    app = _PanelApp(report)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in app.query(Static))
+
+    assert "org/model[experimental]" in text
+    assert "Custom[v1]" in text
+    assert "rev[abc]" in text
+
+
+@pytest.mark.asyncio
+async def test_progress_callback_marshals_across_threads_not_direct_mutation() -> None:
+    """The provision() callback runs on a worker thread; every host screen
+    (CuratedView, InstalledView, LibraryScreen, LLMScreen) wires it as
+    ``post_message -> InstallProgressed -> update_progress`` rather than
+    calling ``update_progress`` directly off-thread. This proves that
+    shared contract end-to-end with a REAL ``threading.Thread``, not just
+    that ``make_progress_callback`` builds a callable that posts a message
+    (already covered above) -- it additionally proves the widget update is
+    only ever QUEUED by the worker thread, never applied by it.
+
+    Deterministic, not a race: ``app.run_test()`` drives this app's entire
+    message loop as an ``asyncio`` Task on the one event loop that also
+    runs this test coroutine. ``thread.join()`` blocks this coroutine
+    (never yielding to that loop) until the worker thread finishes, so
+    nothing the worker thread scheduled onto the loop -- including
+    ``post_message``'s ``call_soon_threadsafe`` hop for a foreign-thread
+    caller -- can be processed until ``join()`` returns and this test
+    reaches its next ``await``. So the instant ``join()`` returns, the
+    posted update is guaranteed to still be sitting unprocessed: a
+    callback that mutated the widget directly instead of posting would
+    already show the new text right there, with no ``await`` involved.
+    """
+    import threading
+
+    from textual import on
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import (
+        InstallProgressed,
+        ModelInstallProgress,
+        make_progress_callback,
+    )
+
+    class _HostApp(App):
+        """Mirrors every real host's own wiring, not CuratedView's specifically."""
+
+        def compose(self) -> ComposeResult:
+            yield ModelInstallProgress(id="progress")
+
+        @on(InstallProgressed)
+        def _forward(self, event: InstallProgressed) -> None:
+            self.query_one(ModelInstallProgress).update_progress(event.progress)
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    event = AcquisitionProgress("fetch", reference, "encoder.onnx", 1_048_576, 2_097_152)
+
+    app = _HostApp()
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        await pilot.pause()
+        detail = widget.query_one("#model-install-progress-detail", Static)
+        text_before = str(detail.renderable)
+        assert "encoder.onnx" not in text_before
+
+        callback = make_progress_callback(app.post_message)
+        errors: list[BaseException] = []
+
+        def _invoke_off_thread() -> None:
+            try:
+                callback(event)
+            except BaseException as exc:  # pragma: no cover - fails the assertions below
+                errors.append(exc)
+
+        thread = threading.Thread(target=_invoke_off_thread)
+        thread.start()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert not errors
+
+        # See this test's own docstring for why this is deterministic, not
+        # a race: the widget must NOT have been updated yet.
+        assert str(detail.renderable) == text_before
+
+        await pilot.pause()
+        assert "encoder.onnx" in str(detail.renderable)
