@@ -2,7 +2,7 @@
 id: TASK-2014
 title: >-
   Library ingest canvas keyboard focus is color-only and mostly invisible
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
