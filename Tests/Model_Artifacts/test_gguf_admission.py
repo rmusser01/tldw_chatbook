@@ -35,6 +35,55 @@ from Tests.Model_Artifacts.gguf_test_helpers import (
 from tldw_chatbook.Model_Artifacts import gguf_admission as gguf
 
 
+_ADMISSION_NONRELATIVE_IMPORT_ROOTS = frozenset(
+    {
+        "__future__",
+        "dataclasses",
+        "os",
+        "pathlib",
+        "platform",
+        "stat",
+        "struct",
+        "typing",
+        "unicodedata",
+    }
+)
+_ADMISSION_RELATIVE_IMPORT = "..Utils.path_validation"
+
+
+def _import_targets(source: str) -> set[str]:
+    """Return normalized module and imported-alias targets from Python source."""
+    targets: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            targets.update(alias.name for alias in node.names)
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        prefix = "." * node.level
+        if node.module is None:
+            targets.update(f"{prefix}{alias.name}" for alias in node.names)
+            continue
+        module_target = f"{prefix}{node.module}"
+        targets.add(module_target)
+        targets.update(f"{module_target}.{alias.name}" for alias in node.names)
+    return targets
+
+
+def _unapproved_admission_import_targets(source: str) -> set[str]:
+    unapproved: set[str] = set()
+    for target in _import_targets(source):
+        if target.startswith("."):
+            if target != _ADMISSION_RELATIVE_IMPORT and not target.startswith(
+                f"{_ADMISSION_RELATIVE_IMPORT}."
+            ):
+                unapproved.add(target)
+            continue
+        if target.split(".", 1)[0] not in _ADMISSION_NONRELATIVE_IMPORT_ROOTS:
+            unapproved.add(target)
+    return unapproved
+
+
 def _gguf_header(*, tensors: int = 0, metadata: int = 0) -> bytes:
     return b"GGUF" + struct.pack("<IQQ", 3, tensors, metadata)
 
@@ -869,30 +918,82 @@ def test_normalize_platform_target_rejects_unsupported_pair(
         gguf.normalize_platform_target(system, machine)
 
 
-def test_admission_module_has_no_store_native_network_or_ui_imports():
+def test_admission_import_boundary_allows_only_parser_dependencies():
     source = Path(gguf.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    imported = {
-        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
-    imported.update(
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    )
 
-    forbidden_fragments = (
-        "service",
-        "acquisition",
-        "fetch",
-        "textual",
-        "transcribe",
-        "ggml",
-        "httpx",
+    assert _unapproved_admission_import_targets(source) == set()
+    assert not hasattr(gguf, "select_gguf_descriptor")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from . import store",
+        "from . import os",
+        "from .dataclasses import dataclass",
+        "from tldw_chatbook.Model_Artifacts import service",
+        "import httpx",
+        "import urllib.request",
+        "import socket",
+        "import ctypes",
+        "import cffi",
+        "from textual.app import App",
+    ],
+)
+def test_admission_import_boundary_rejects_disallowed_targets(source: str):
+    assert _unapproved_admission_import_targets(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os",
+        "from dataclasses import dataclass",
+        "from ..Utils.path_validation import validate_path_simple",
+    ],
+)
+def test_admission_import_boundary_allows_approved_targets(source: str):
+    assert _unapproved_admission_import_targets(source) == set()
+
+
+def test_deferred_gguf_managed_import_is_source_only_and_unreferenced():
+    model_artifacts = Path(gguf.__file__).parent
+    deferred_path = model_artifacts / "_deferred_gguf_managed_import.py"
+
+    source = deferred_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    docstring = ast.get_docstring(tree) or ""
+    assert "DEFERRED" in docstring
+    assert "TASK-1861" in docstring
+
+    empty_all = any(
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "__all__"
+        and isinstance(node.value, ast.Tuple)
+        and not node.value.elts
+        for node in tree.body
     )
-    assert not any(
-        fragment in name for name in imported for fragment in forbidden_fragments
-    )
-    selector_name = "select_gguf_" + "descriptor"
-    assert not hasattr(gguf, selector_name)
+    assert empty_all
+
+    defined_functions = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    assert {
+        "runtime_constraint_admits_pinned_version",
+        "_eligible_curated_descriptor",
+        "_local_gguf_descriptor",
+        "select_gguf_descriptor",
+    } <= defined_functions
+    assert "inspect_gguf" not in defined_functions
+
+    init_source = (model_artifacts / "__init__.py").read_text(encoding="utf-8")
+    assert "_deferred_gguf_managed_import" not in init_source
+
+    references = [
+        path
+        for path in model_artifacts.parent.rglob("*.py")
+        if path != deferred_path
+        and "_deferred_gguf_managed_import" in path.read_text(encoding="utf-8")
+    ]
+    assert references == []
