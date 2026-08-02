@@ -43,6 +43,7 @@ Second half of the same defect: MCP rows never carried a `call_id` at all. `_col
 - [x] #4 MCP pending rows carry their `call_id`, so MCP calls are one decision per target
 - [x] #5 The refusal the model receives names the user as the actor and the tool refused
 - [x] #6 Tests cover both decision orderings, and are mutation-verified to fail when either half is reverted
+- [x] #7 Per-call rows approved at different SCOPES keep the broadest scope the user chose
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -55,4 +56,10 @@ Rows with no `call_id` fall back to the name key, which stops every same-name ca
 **AC #6 exists because the first version of the ordering test was vacuous.** It asserted `("read_file", "deny") not in stamped` with the refusal decided FIRST, so a later approval overwrote it and a mutation that stamped every verdict regardless still passed. The deny-decided-LAST case is a separate test; both are mutation-verified.
 
 Also corrects `_fence_call` -> `parse_tool_call` in three comments (two of them shipped): the referenced function never existed.
+
+## Review findings
+
+**A stale test double, and a sweep that missed the obvious file.** Threading `call_id` changed `pending_gate_for`'s signature, and `Tests/Chat/test_console_chat_controller.py`'s `_FakeReviewProvider` still had the 2-arg form, so every MCP review-hook test raised TypeError. My regression covered the approval, agents, bridge and MCP suites but not the controller's OWN test file. The double now mirrors the real provider; no compatibility shim, because the protocol is in-repo only and a shim would hide exactly this drift.
+
+**Scope, not just allow/refuse.** Per-call rows can be approved at different scopes while only ONE scope per name can be stamped (a session/always grant belongs to a tool). Last-write-wins silently downgraded "Approve for session" to "approve once" whenever a later row of the same tool was approved once -- dropping the grant and re-prompting next call. The broadest chosen scope now wins (`always_allow` > `approve_session` > `approve_once`): choosing "for session" on any call of a tool IS choosing to grant that tool for the session, which is what the control means and what its label says.
 <!-- SECTION:NOTES:END -->
