@@ -871,7 +871,11 @@ class StreamingPcmSink:
 
     @property
     def state(self) -> str:
-        """Current lifecycle state: one of `idle`, `open`, `draining`, `stopped`, `failed`."""
+        """Current lifecycle state: one of `idle`, `open`, `draining`, `stopped`, `failed`.
+
+        Returns:
+            The sink's current lifecycle state string.
+        """
         return self._state
 
     @property
@@ -892,6 +896,10 @@ class StreamingPcmSink:
         reason `state` is (a plain attribute, atomic under the GIL;
         callers polling this in a loop already tolerate the same
         eventual-consistency `state` itself has).
+
+        Returns:
+            `"drained"`, `"stopped"`, or `"failed"` once this sink has
+            reached a terminal state; `None` beforehand.
         """
         return self._terminal_reason
 
@@ -901,6 +909,10 @@ class StreamingPcmSink:
 
         `None` if the sink never failed (including if it hasn't reached a
         terminal state at all yet).
+
+        Returns:
+            The failure message passed to `_fail()`, or `None` if this
+            sink never failed.
         """
         return self._fail_reason
 
@@ -912,6 +924,10 @@ class StreamingPcmSink:
         `"idle"`) -- callers that might see `0` (e.g. `pump()`'s
         oversized-chunk slicing) should treat that as "not meaningfully
         open yet" rather than divide by it.
+
+        Returns:
+            PCM bytes per second at this sink's opened sample rate and
+            channel count, or `0` if `open()` has not yet recorded one.
         """
         with self._lock:
             return self._cap_bytes // BUFFER_CAP_SECONDS if self._cap_bytes else 0
@@ -923,6 +939,10 @@ class StreamingPcmSink:
         Includes both whole chunks still queued in the internal buffer and
         any partially-consumed carry-over (`_leftover`) from the last
         device callback.
+
+        Returns:
+            Estimated seconds of buffered, not-yet-played audio at this
+            sink's opened sample rate and channel count.
         """
         with self._lock:
             denom = self._cap_bytes / BUFFER_CAP_SECONDS if self._cap_bytes else 1
