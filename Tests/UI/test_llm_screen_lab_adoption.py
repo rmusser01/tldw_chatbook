@@ -207,6 +207,141 @@ async def test_model_install_progress_survives_switch_to_installed():
 
 
 @pytest.mark.asyncio
+async def test_curated_install_progress_survives_a_screen_level_recompose(monkeypatch):
+    """TASK-596 delta port: a curated install must not go blank/stale.
+
+    ``LabScreen.recompose()`` tears down and rebuilds the whole
+    ``LLMManagementWindow`` -- ``CuratedView`` included -- which used to
+    mean a curated install in progress lost its progress display for the
+    rest of the run: the fresh ``CuratedView`` instance starts with no
+    memory of the install, and (since ``CuratedView`` owns its own
+    preflight/provision worker) further progress ticks from the ORIGINAL
+    instance's worker thread were posted to that now-closed instance and
+    silently dropped, never reaching the fresh one either.
+
+    Exercises the real ``CuratedView._provision`` code path (not a
+    simulation of it) against a stubbed ``ArtifactAcquisitionService`` so
+    this test controls exactly when a second progress tick fires relative
+    to the recompose, then asserts both halves of the fix: the freshly
+    (re)mounted view is hydrated with the last known progress (not blank),
+    and a progress tick emitted AFTER the recompose -- delivered through
+    the pre-recompose instance's own worker, exactly as the real download
+    would -- still reaches and updates the fresh view (not stale).
+    """
+    import asyncio
+    from unittest.mock import MagicMock
+
+    import tldw_chatbook.Model_Artifacts.acquisition as acquisition_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+        ModelInstallProgress,
+    )
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "encoder.onnx", 100 * 1024 * 1024, 600 * 1024 * 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "decoder.onnx", 400 * 1024 * 1024, 600 * 1024 * 1024
+    )
+    resume = asyncio.Event()
+
+    class _FakeAcquisitionService:
+        """Stands in for the real, network-capable acquisition service.
+
+        Only ``.provision`` is exercised; it delivers one progress tick,
+        waits for the test to force a screen-level recompose, then
+        delivers a second tick -- all through the real ``progress``
+        callback ``CuratedView._provision`` built, so the dual-delivery
+        fix under test runs unmodified.
+        """
+
+        def __init__(self, _service) -> None:
+            pass
+
+        async def provision(self, root, consent, registry, *, sources, progress):
+            progress(first_progress)
+            await resume.wait()
+            progress(second_progress)
+            return object()
+
+    monkeypatch.setattr(
+        acquisition_module, "ArtifactAcquisitionService", _FakeAcquisitionService
+    )
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        for _ in range(5):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one(CuratedView)
+
+        # Mimics _confirm_install's own setup (captures the screen before
+        # the worker starts, bypasses real preflight/registry I/O) --
+        # exercising _provision itself directly, on this test's own event
+        # loop rather than a real background thread, so `resume` can pause
+        # it deterministically at an exact point.
+        curated._operation_reference = reference
+        curated._progress_screen = curated.screen
+        curated._service_for_worker = MagicMock()
+        curated._registry_for_worker = MagicMock()
+        curated._source_map = MagicMock(return_value={})
+        fake_report = MagicMock(root=reference)
+
+        provision_task = asyncio.create_task(curated._provision(fake_report))
+        await pilot.pause()
+        await pilot.pause()
+
+        def _progress_text(view: CuratedView) -> str:
+            widget = view.query_one(
+                "#curated-model-install-progress", ModelInstallProgress
+            )
+            detail = widget.query_one("#model-install-progress-detail", Static)
+            return str(detail.renderable)
+
+        assert "encoder.onnx" in _progress_text(curated)
+
+        # A real screen-level recompose (LabScreen.recompose(), not
+        # CuratedView's own internal refresh(recompose=True)) -- see
+        # test_lab_frame.py::test_screen_level_recompose_repopulates_
+        # rail_inspector_and_body for the same multi-pause shape this
+        # mirrors.
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        fresh_window = screen.query_one(LLMManagementWindow)
+        fresh_curated = fresh_window.query_one(CuratedView)
+        assert fresh_curated is not curated, (
+            "test setup bug: recompose did not actually replace CuratedView"
+        )
+
+        # Half 1 of the fix: hydration. The fresh instance was never told
+        # about the install directly -- LLMScreen re-applied the last
+        # known progress to it via _hydrate_curated_progress.
+        assert "encoder.onnx" in _progress_text(fresh_curated)
+
+        # Half 2 of the fix: still updating. This tick is delivered by the
+        # ORIGINAL (now unmounted, orphaned) curated instance's own
+        # worker -- exactly what the real download does after a
+        # mid-install recompose. Without the dual-delivery fix this would
+        # be silently dropped (a closed widget's post_message() is a
+        # no-op) and the fresh view would stay on "encoder.onnx".
+        resume.set()
+        await provision_task
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "decoder.onnx" in _progress_text(fresh_curated)
+
+
+@pytest.mark.asyncio
 async def test_the_inspector_rows_refresh_alongside_the_status_chip():
     """Regression test: `refresh_lab_status` used to update only the chip.
 

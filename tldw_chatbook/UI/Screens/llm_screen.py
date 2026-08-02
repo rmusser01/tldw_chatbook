@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual import on
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -21,9 +22,11 @@ from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
 from ..LLM_Management_Window import LLMManagementWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
+from .model_curated_view import CuratedView
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
 
 #: (section title, ((view key, label), ...)) in rail order. The view keys are
 #: exactly LLMManagementWindow.view_mapping's keys.
@@ -81,6 +84,16 @@ class LLMScreen(LabScreen):
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
+        #: The last ``AcquisitionProgress`` this screen has seen for the
+        #: active curated install, retained so a freshly (re)mounted
+        #: ``CuratedView`` -- a screen-level ``LabScreen.recompose()``
+        #: tears down and rebuilds the whole ``LLMManagementWindow``,
+        #: ``CuratedView`` included, mid-download -- can be hydrated back
+        #: to it immediately instead of starting blank (TASK-596 delta
+        #: port). Mirrors ``LibraryScreen``'s own retained
+        #: ``_parakeet_v2_install_progress``. Cleared whenever the install
+        #: stops (see ``_model_install_status_changed``).
+        self._model_install_last_progress: "AcquisitionProgress | None" = None
         #: Server rows snapshotted for the duration of one
         #: ``refresh_lab_status`` pass; None outside one. See
         #: :meth:`_current_server_rows`.
@@ -160,11 +173,25 @@ class LLMScreen(LabScreen):
 
     @on(InstallProgressed)
     def _model_install_progressed(self, event: InstallProgressed) -> None:
-        """Keep the Lab chip current while a Curated install runs."""
+        """Keep the Lab chip current, and re-render live progress (TASK-596).
+
+        Forwards the event into whichever ``CuratedView`` is currently
+        mounted -- not only the instance that posted it. ``CuratedView``
+        delivers ``InstallProgressed`` both to itself (unchanged, for the
+        common no-recompose case) and, durably, to the screen it was
+        mounted under (see ``CuratedView._progress_screen``'s docstring),
+        so this handler keeps firing with live updates even after a
+        screen-level recompose has replaced the view that started the
+        install with a fresh instance.
+        """
         self._model_install_active = True
         self._model_install_phase = event.progress.phase
         self._model_install_succeeded = None
+        self._model_install_last_progress = event.progress
         self.refresh_lab_status()
+        view = self._curated_view()
+        if view is not None:
+            view.apply_progress(event.progress)
 
     @on(InstallStatusChanged)
     def _model_install_status_changed(self, event: InstallStatusChanged) -> None:
@@ -173,7 +200,24 @@ class LLMScreen(LabScreen):
         self._model_install_succeeded = event.succeeded
         if not event.active:
             self._model_install_phase = None
+            self._model_install_last_progress = None
         self.refresh_lab_status()
+
+    def _curated_view(self) -> "CuratedView | None":
+        """Return the mounted ``CuratedView``, or None if it cannot be found.
+
+        Returns:
+            The view, or None when the window has not mounted yet, or a
+            screen-level recompose has torn down the previous instance and
+            the fresh one is not mounted yet either (see
+            ``LabScreen.recompose()``).
+        """
+        if self.llm_window is None:
+            return None
+        try:
+            return self.llm_window.query_one(CuratedView)
+        except NoMatches:
+            return None
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
@@ -247,6 +291,39 @@ class LLMScreen(LabScreen):
         if not self._status_poll_started:
             self._status_poll_started = True
             self.set_interval(LAB_SERVER_POLL_SECONDS, self.refresh_lab_status)
+        # This fires on every (re)mount of the body -- first mount AND every
+        # later screen-level recompose (see this method's own docstring) --
+        # which is exactly when a fresh CuratedView instance, with no
+        # memory of an install this screen already knows is running, can
+        # appear mid-download (TASK-596 delta port). call_after_refresh
+        # (rather than calling directly) gives the freshly (re)mounted
+        # LLMManagementWindow's own children -- CuratedView included -- a
+        # chance to finish composing before _hydrate_curated_progress
+        # queries for it.
+        if self._model_install_active:
+            self.call_after_refresh(self._hydrate_curated_progress)
+
+    def _hydrate_curated_progress(self) -> None:
+        """Re-apply the last known curated-install progress after a recompose.
+
+        Without this, a freshly (re)mounted ``CuratedView``'s progress
+        widget -- composed hidden every time a new instance is built, see
+        ``CuratedView.compose`` -- would stay hidden for the rest of an
+        install that outlived a screen-level ``LabScreen.recompose()``,
+        even though ``CuratedView`` itself keeps rendering live updates
+        that reach it (see ``_model_install_progressed``). Scheduled via
+        ``call_after_refresh`` from ``on_lab_body_ready`` (which reruns on
+        every recompose, not only first mount) -- mirroring
+        ``LibraryScreen``'s own ``_hydrate_parakeet_v2_progress`` -- so the
+        fresh ``CuratedView`` has actually finished mounting first.
+        """
+        if not self._model_install_active:
+            return
+        if self._model_install_last_progress is None:
+            return
+        view = self._curated_view()
+        if view is not None:
+            view.apply_progress(self._model_install_last_progress)
 
     def _sync_rail_active(self, active_view: str) -> None:
         """Move the rail highlight to the row matching the active view.
