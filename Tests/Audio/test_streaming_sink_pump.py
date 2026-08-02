@@ -40,6 +40,7 @@ import pytest
 from Tests.Audio.test_streaming_sink import BLOCK_MS, RATE, _mk, _pcm
 from tldw_chatbook.Audio.streaming_sink import (
     BUFFER_CAP_SECONDS, SinkBufferFull, SinkStopped, StreamingPcmSink, pump,
+    stop_live_sink,
 )
 
 
@@ -537,3 +538,81 @@ async def test_pump_drain_wait_deadline_expiry_reports_failed(monkeypatch):
     assert result.outcome == "failed"
     assert result.reason
     assert sink.state == "stopped"    # pump's own stop() call landed
+
+
+# ---------------------------------------------------------------------------
+# Task-4: `max_bytes` bound (WAV trailing-chunk data_bytes contract) and the
+# `stop_live_sink()` registry helper the consumer needs for its stop action.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pump_max_bytes_stops_feeding_at_the_bound_even_mid_chunk():
+    """A WAV `data` chunk followed by a trailing chunk (e.g. `LIST`) must
+    never have the trailer's bytes fed as if they were audio -- `skip_bytes`
+    alone only bounds the HEAD of the stream; `max_bytes` bounds the tail.
+    Here the bound lands in the middle of the second of two source chunks,
+    the harder case (a bound landing exactly on a chunk boundary would pass
+    even a naive `chunk[:n]`-only implementation that forgot to also stop
+    reading further chunks).
+    """
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    first = _pcm(2)                      # audio, entirely within budget
+    second = _pcm(2)                     # only half of this is audio
+    trailer = b"NOT-AUDIO-TRAILER-BYTES"
+    budget = len(first) + len(second) // 2
+
+    async def source():
+        yield first
+        yield second + trailer
+
+    task = asyncio.ensure_future(pump(sink, source(), max_bytes=budget))
+    await asyncio.sleep(0)
+    h["s"].tick(20)                      # drain everything fed
+    result = await asyncio.wait_for(task, timeout=1.0)
+
+    assert result.outcome == "drained"
+    assert result.bytes_fed == budget
+    played = b"".join(h["s"].out)
+    assert trailer not in played
+    assert first + second[: len(second) // 2] in played
+
+
+@pytest.mark.asyncio
+async def test_pump_max_bytes_none_is_unbounded_pcm_default():
+    """Raw PCM has no container-declared length -- `max_bytes=None` (the
+    default) must feed everything the source yields, exactly as before this
+    parameter existed.
+    """
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    body = _pcm(8)
+
+    async def source():
+        yield body
+
+    task = asyncio.ensure_future(pump(sink, source()))
+    await asyncio.sleep(0)
+    h["s"].tick(20)
+    result = await asyncio.wait_for(task, timeout=1.0)
+
+    assert result.outcome == "drained"
+    assert result.bytes_fed == len(body)
+
+
+def test_stop_live_sink_stops_whatever_is_currently_registered():
+    events = []
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+
+    stop_live_sink()
+
+    assert sink.state == "stopped"
+    assert sink.terminal_reason == "stopped"
+    assert h["s"].aborted is True
+
+
+def test_stop_live_sink_is_a_no_op_when_nothing_is_live():
+    stop_live_sink()   # must not raise

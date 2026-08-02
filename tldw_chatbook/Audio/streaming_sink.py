@@ -929,6 +929,26 @@ def _clear_live_sink(sink: StreamingPcmSink) -> None:
             _LIVE_SINK = None
 
 
+def stop_live_sink() -> None:
+    """Stop whichever sink is currently registered as live, if any.
+
+    Task-4 (the consumer): the one entry point outside this module that
+    needs to interrupt "whatever is currently playing" without holding a
+    reference to a specific `StreamingPcmSink` instance -- e.g. the
+    existing TTS playback "stop" action, which today only knows about the
+    legacy file player. Deliberately calls only the sink's own public
+    `stop()` method, never touching a stream directly: `stop()` already
+    owns its full teardown (abort, registry clear, event emission) and is
+    non-joining/safe to call from any thread, including the asyncio event
+    loop thread (see `StreamingPcmSink.stop`'s docstring). A no-op when no
+    sink is currently live.
+    """
+    with _LIVE_SINK_LOCK:
+        sink = _LIVE_SINK
+    if sink is not None:
+        sink.stop()
+
+
 #: M3 fix-round: the maximum span of audio, in seconds, `pump` will ever
 #: hand to a single `feed()` call, regardless of how large the chunk it
 #: read from the source was. A chunk larger than `BUFFER_CAP_SECONDS`
@@ -1039,6 +1059,7 @@ async def pump(
     chunks: AsyncIterator[bytes],
     *,
     skip_bytes: int = 0,
+    max_bytes: int | None = None,
 ) -> PumpResult:
     """Feed an async source of PCM chunks into `sink` until stop or exhaustion.
 
@@ -1133,6 +1154,16 @@ async def pump(
         skip_bytes: Number of leading bytes to discard from the head of
             the concatenated chunk stream before any audio is fed to the
             sink -- e.g. to drop a WAV header. Defaults to 0.
+        max_bytes: Maximum number of bytes to feed to the sink, counted
+            AFTER `skip_bytes` has already been dropped -- e.g. a WAV
+            body's `SinkPlan.data_bytes`, so bytes belonging to a chunk
+            that trails the `data` chunk (not audio) are never fed. `None`
+            (the default) feeds everything the source yields, unbounded --
+            the correct choice for raw PCM, which has no container-declared
+            length. Once this many bytes have been fed, `pump` stops
+            reading further chunks from `chunks` entirely and proceeds
+            straight to the same `close()`-and-drain-wait tail used for
+            normal exhaustion, exactly as if the source had ended there.
 
     Returns:
         A `PumpResult` describing how the pump ended and how many bytes
@@ -1149,6 +1180,17 @@ async def pump(
                     continue
                 chunk = chunk[remaining_skip:]
                 remaining_skip = 0
+            if max_bytes is not None:
+                # `bytes_fed` is only ever mutated below, after this whole
+                # chunk has finished feeding (or the function has already
+                # returned) -- so at this point it accurately reflects every
+                # byte fed from every PRIOR chunk, making it safe to compute
+                # the remaining budget once, here, per chunk.
+                remaining_budget = max_bytes - bytes_fed
+                if remaining_budget <= 0:
+                    break
+                if len(chunk) > remaining_budget:
+                    chunk = chunk[:remaining_budget]
             slice_bytes = max(sink.bytes_per_second * _PUMP_SLICE_SECONDS, 1)
             while chunk:
                 state = sink.state
