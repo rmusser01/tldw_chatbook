@@ -1,7 +1,7 @@
 ---
 id: TASK-1843
 title: 'Console reports two contradictory tool counts, and Review tool call is permanently dead'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-01 19:30'
 labels:
@@ -28,10 +28,10 @@ PRODUCT.md: "advanced capabilities must be honest -- unavailable, WIP, dry-run, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No Console surface reports a tool count that another Console surface contradicts
-- [ ] #2 The count is derived once at a shared source, not fixed independently at each call site
-- [ ] #3 Review tool call either opens a real trace or is removed, with no surface still advertising it
-- [ ] #4 A test asserts the chip label and the Inspector row derive from the same value
+- [x] #1 No Console surface reports a tool count that another Console surface contradicts
+- [x] #2 The count is derived once at a shared source, not fixed independently at each call site
+- [x] #3 Review tool call either opens a real trace or is removed, with no surface still advertising it
+- [x] #4 A test asserts the chip label and the Inspector row derive from the same value
 <!-- AC:END -->
 
 ## Implementation Notes

@@ -2296,3 +2296,29 @@ async def test_collapsed_row_discloses_every_target_in_the_rendered_row():
                 f"{path} is hidden behind the x3 -- the mounted row shows: "
                 f"{rendered!r}"
             )
+
+
+@pytest.mark.asyncio
+async def test_armed_deadline_is_visible_on_the_mounted_card():
+    """TASK-1844: the countdown must reach the SCREEN, not just a helper.
+
+    `set_batch` updates `#approval-deadline` inside `except NoMatches: pass`,
+    so if that Static ever stopped being composed the clock would silently
+    vanish while `format_approval_deadline`'s unit tests stayed green. The
+    controller arms a 120s auto-deny; a deadline the user cannot see is the
+    machine deciding for them.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=120.0)
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 2:00"
+        assert deadline.display, "the countdown is composed but not displayed"
+
+        # No deadline armed -> say nothing rather than invent a number.
+        card.set_batch(_sample_calls(), timeout_seconds=0)
+        await pilot.pause()
+        assert not app.query_one("#approval-deadline", Static).display

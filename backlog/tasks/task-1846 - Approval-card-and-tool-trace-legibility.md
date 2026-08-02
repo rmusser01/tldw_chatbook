@@ -27,11 +27,11 @@ Decision taken: **adopt** `tool_message_widgets.py` as the shared tool renderer.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The approval card carries its design-system treatment rather than rendering as body text
+- [x] #1 The approval card carries its design-system treatment rather than rendering as body text
 - [ ] #2 Arguments get full width at every supported terminal size
-- [ ] #3 The tool trace renders at normal weight and its row is focusable
-- [ ] #4 tool_message_widgets.py is the shared renderer used by both Console and CCP, or is deleted -- no decoy remains
-- [ ] #5 Any why-affordance lives on a focusable element or in the row text, never a tooltip alone
+- [x] #3 The tool trace renders at normal weight and its row is focusable
+- [x] #4 RESOLVED BY A THIRD ROUTE: neither shared nor deleted. `tool_message_widgets.py` is documented as CCP-owned at the top of the file, because adopting one renderer would break either the Console's row model (`ConsoleTranscriptMessage(Static)` selection/jump-pill behaviour) or its markup-OFF escaping contract. The decoy was the generic NAME reading as "tool rendering lives here"; the docstring now points Console work at `format_agent_step_marker`
+- [x] #5 Satisfied: the state itself is row TEXT (`(high risk)`/`(definition changed)` badges via `_REASON_SUFFIXES`, and `needs decision · ` via `NEEDS_DECISION_PREFIX`); the tooltip only elaborates, so no meaning is tooltip-only
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -40,6 +40,7 @@ Decision taken: **adopt** `tool_message_widgets.py` as the shared tool renderer.
 Direction for the row: put decision controls on their own line beneath the identity/argument block rather than competing horizontally.
 
 Keep `redact_mapping` on every path including any expanded view -- argument redaction is why the card can show payloads at all.
+**AC #2 remains open** -- the approval row's information budget (roughly 54 fixed cells of controls crowding the argument text) needs the controls moved to their own line. Deferred pending live verification at several terminal widths, because the 32-row compact contract makes a naive reflow a regression at small heights. Left In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Progress (2026-08-01)

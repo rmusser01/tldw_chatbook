@@ -1,7 +1,7 @@
 ---
 id: TASK-1844
 title: 'Approval deadline is invisible and its verdict is unlabelled'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-01 19:30'
 labels:
@@ -22,10 +22,10 @@ When it expires, `format_agent_step_marker` (`console_agent_bridge.py:354-369`) 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The remaining time is visible on the card whenever a deadline is armed
-- [ ] #2 An expired approval produces a distinct transcript marker, worded to distinguish a system timeout from a user denial
-- [ ] #3 If the deadline is not surfaced, the parameter and its docstring claim are removed instead
-- [ ] #4 A test asserts the timeout path produces its own marker text
+- [x] #1 The remaining time is visible on the card whenever a deadline is armed
+- [x] #2 An expired approval produces a distinct transcript marker, worded to distinguish a system timeout from a user denial
+- [x] #3 n/a -- the #1 route was taken (deadline surfaced), so the remove-the-parameter alternative never applied
+- [x] #4 A test asserts the timeout path produces its own marker text
 <!-- AC:END -->
 
 ## Implementation Notes
