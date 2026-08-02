@@ -2494,3 +2494,59 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     assert verdicts.get("c-no", "proceed") != "proceed", (
         f"secrets.md must still be refused per call: {verdicts}"
     )
+
+
+@pytest.mark.unit
+def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
+    """TASK-1861: per-call rows can disagree on SCOPE, not just allow/refuse.
+
+    A session or always grant belongs to the TOOL, so the stamp can hold only
+    one scope per name. Collapsing them last-write-wins silently downgraded
+    "Approve for session" to "approve once" whenever a later row of the same
+    tool was approved once -- dropping the grant the user explicitly asked
+    for and re-prompting for it on the next call.
+
+    The user picking "for session" on any call of a tool IS choosing to grant
+    that tool for the session (that is what the control means, and the label
+    says so), so the broadest chosen scope wins.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): stamped.append((name, decision))
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return SimpleNamespace(name=name)
+
+    def request_approvals(pending):
+        # Broad scope FIRST, narrow second -- the ordering that used to lose it.
+        return {
+            row.call_id: (
+                "approve_session" if row.call_id == "c1" else "approve_once"
+            )
+            for row in pending
+        }
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    hook([
+        ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
+        ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
+    ])
+
+    assert stamped == [("read_file", "approve_session")], (
+        "the session grant the user chose was downgraded to approve_once, so "
+        f"the next call re-prompts: {stamped}"
+    )

@@ -146,6 +146,17 @@ _LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
 #: the same whether it was stopped here or at the gate.
 USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
 
+#: TASK-1861: how broad each approval scope is. A session/always grant is
+#: recorded against a tool NAME, so when per-call rows of one tool are
+#: approved at different scopes only one can be stamped -- and it must be the
+#: broadest the user chose, or the grant they asked for is silently dropped
+#: and re-prompted. Unknown values rank 0 (narrower than anything known).
+_APPROVAL_SCOPE_RANK: dict[str, int] = {
+    "approve_once": 1,
+    "approve_session": 2,
+    "always_allow": 3,
+}
+
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -568,7 +579,20 @@ def build_tool_review_hook(
                     continue
                 if decision == "deny":
                     denied.add(row.llm_name)
-                else:
+                    continue
+                # Per-call rows can disagree on SCOPE, not just allow/refuse,
+                # and only one scope per name can be stamped. Taking the last
+                # silently downgraded "Approve for session" to "approve once"
+                # whenever a later row of the same tool was approved once --
+                # dropping the grant the user asked for and re-prompting on
+                # the next call. Choosing "for session" on ANY call of a tool
+                # is choosing to grant that tool for the session (that is what
+                # the control means, and its label says so), so the broadest
+                # chosen scope wins.
+                current = approvals.get(row.llm_name)
+                if current is None or _APPROVAL_SCOPE_RANK.get(
+                    decision, 0
+                ) > _APPROVAL_SCOPE_RANK.get(current, 0):
                     approvals[row.llm_name] = decision
             stamps = dict(approvals)
             for name in denied:
