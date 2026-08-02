@@ -1,6 +1,7 @@
 """Tests for the Watchlists items pane."""
 
 import pytest
+from rich.markup import escape as escape_markup
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select
 
@@ -64,6 +65,35 @@ async def test_items_pane_renders_table_and_toolbar():
         assert pane.query_one("#items-search-input", Input)
         assert pane.query_one("#items-status-select", Select)
         assert pane.query_one("#items-table", DataTable)
+
+
+@pytest.mark.asyncio
+async def test_markup_shaped_item_text_is_escaped_at_the_datatable_boundary(sample_items):
+    """`DataTable` markup-parses `str` cells, and item title / source name are
+    remote feed content -- so `[bold red]BREAKING[/]` in a feed title would be
+    interpreted as Rich markup rather than shown as text (TASK-1348 AC#1). The
+    escape at the `add_row` boundary keeps the markup delimiters as data. This
+    test fails if that escape is removed: the raw tag form would sit in the
+    cell instead of the escaped one."""
+    hostile_title = "[bold red]BREAKING[/] news"
+    hostile_source = "[link=http://evil.test]Feed[/link]"
+    items = [dict(sample_items[0], title=hostile_title, source_name=hostile_source)]
+
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        row = table.get_row(str(items[0]["id"]))
+        # The cell holds the escaped form (delimiters survive as literal data,
+        # never consumed as Rich tags) -- and NOT the raw markup that would be
+        # parsed if the boundary escape were gone.
+        assert row[0] == escape_markup(hostile_title)
+        assert row[1] == escape_markup(hostile_source)
+        assert row[0] != hostile_title
+        assert row[1] != hostile_source
 
 
 @pytest.mark.asyncio

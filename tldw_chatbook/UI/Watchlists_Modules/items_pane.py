@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -116,11 +117,20 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         filtered = self._filtered_items()
         self._rendered_items = filtered
         for item in filtered:
+            # `DataTable` markup-parses `str` cells, so item-derived free text
+            # (a feed title such as `[bold red]`, a source name) would be
+            # INTERPRETED rather than displayed -- and remote feed content
+            # reaches these cells verbatim (TASK-1348 AC#1). Escape at this
+            # boundary, following the rule `content_pane.render_article`
+            # states in full: defend where the parser actually is. `status`,
+            # `created_at` and the queued glyph are app-controlled, but they
+            # are escaped too so every non-constant cell is uniformly safe and
+            # nobody has to re-audit which columns happen to carry remote text.
             table.add_row(
-                str(item.get("title") or "Untitled"),
-                str(item.get("source_name") or "-"),
-                str(item.get("status") or "-"),
-                str(item.get("created_at") or "-"),
+                escape_markup(str(item.get("title") or "Untitled")),
+                escape_markup(str(item.get("source_name") or "-")),
+                escape_markup(str(item.get("status") or "-")),
+                escape_markup(str(item.get("created_at") or "-")),
                 self._QUEUED_GLYPH if item.get("queued_for_briefing") else "",
                 key=str(item.get("id") or id(item)),
             )
