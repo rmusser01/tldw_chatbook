@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,6 +11,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_state import (
     ConsolePromptsState,
@@ -101,6 +102,7 @@ class _PromptBackend:
         self.usage_mutations = 0
         self.search_result: Any = []
         self.detail_result: Any = _detail()
+        self.save_result: Any = None
         self.list_error: Exception | None = None
         self.search_error: Exception | None = None
         self.detail_error: Exception | None = None
@@ -136,7 +138,7 @@ class _PromptBackend:
 
     async def save(self, **payload: Any) -> Any:
         self.save_calls.append(payload)
-        return payload
+        return payload if self.save_result is None else self.save_result
 
 
 class _Harness(App):
@@ -145,16 +147,21 @@ class _Harness(App):
         backend: _PromptBackend,
         *,
         improve_unavailable_reason: str = "",
+        configure_provider: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__()
         self.backend = backend
         self.improve_unavailable_reason = improve_unavailable_reason
+        self.configure_provider = configure_provider
 
     def compose(self) -> ComposeResult:
         yield Input(id="console-native-composer")
 
     async def on_mount(self) -> None:
         self.query_one("#console-native-composer", Input).focus()
+        kwargs: dict[str, Any] = {}
+        if self.configure_provider is not None:
+            kwargs["configure_provider"] = self.configure_provider
         await self.push_screen(
             ConsolePromptsModal(
                 capabilities=self.backend.capabilities,
@@ -163,6 +170,7 @@ class _Harness(App):
                 detail=self.backend.detail,
                 save=self.backend.save,
                 improve_unavailable_reason=self.improve_unavailable_reason,
+                **kwargs,
             )
         )
 
@@ -612,3 +620,283 @@ async def test_root_escape_dismisses_and_restores_composer_focus() -> None:
         await pilot.pause()
 
         assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+@pytest.mark.asyncio
+async def test_late_local_detail_cannot_open_after_switching_to_server() -> None:
+    backend = _PromptBackend()
+    local_started = asyncio.Event()
+    release_local = asyncio.Event()
+
+    async def detail(source: str, identifier: str) -> Mapping[str, Any]:
+        if source == "local":
+            local_started.set()
+            await release_local.wait()
+        return {
+            **_detail(identifier=identifier),
+            "backend": source,
+        }
+
+    app = _Harness(backend)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._detail = detail
+
+        late_open = asyncio.create_task(modal.open_artifact("late-local"))
+        await local_started.wait()
+        await modal.switch_source("server")
+        release_local.set()
+        await late_open
+        await pilot.pause()
+
+        assert modal.state.source == "server"
+        assert modal.state.mode == "browse"
+        assert modal.state.selected_identity != "late-local"
+        assert modal._selected_record is None
+
+
+@pytest.mark.asyncio
+async def test_late_first_detail_cannot_replace_newer_selection() -> None:
+    backend = _PromptBackend()
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def detail(source: str, identifier: str) -> Mapping[str, Any]:
+        if identifier == "prompt-a":
+            first_started.set()
+            await release_first.wait()
+        return {
+            **_detail(identifier=identifier),
+            "name": f"Name {identifier}",
+            "backend": source,
+        }
+
+    app = _Harness(backend)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._detail = detail
+
+        first_open = asyncio.create_task(modal.open_artifact("prompt-a"))
+        await first_started.wait()
+        await modal.open_artifact("prompt-b")
+        release_first.set()
+        await first_open
+        await pilot.pause()
+
+        assert modal.state.selected_identity == "prompt-b"
+        assert modal._selected_record is not None
+        assert modal._selected_record["name"] == "Name prompt-b"
+        assert modal.state.mode_stack == ("browse", "edit")
+
+
+@pytest.mark.asyncio
+async def test_source_switch_clears_foreign_rows_before_unavailable_result() -> None:
+    backend = _PromptBackend(
+        pages={
+            1: {
+                "items": [_brief("local-only")],
+                "page": 1,
+                "total_pages": 1,
+                "total_items": 1,
+            }
+        }
+    )
+    server_started = asyncio.Event()
+    release_server = asyncio.Event()
+
+    async def list_page(source: str, page: int) -> Mapping[str, Any]:
+        if source == "server":
+            server_started.set()
+            await release_server.wait()
+            raise ValueError("Server Prompt source is unavailable.")
+        return backend.pages[page]
+
+    app = _Harness(backend)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._list_page = list_page
+        assert modal.query("#console-prompts-result-local-only")
+
+        switch = asyncio.create_task(modal.switch_source("server"))
+        await server_started.wait()
+        foreign_rows_visible_while_loading = bool(
+            modal.query("#console-prompts-result-local-only")
+        )
+        owner_while_loading = modal.browse_result.source
+        release_server.set()
+        await switch
+        await pilot.pause()
+
+        assert foreign_rows_visible_while_loading is False
+        assert owner_while_loading == "server"
+        assert modal.browse_result.source == "server"
+        assert modal.browse_result.items == ()
+        assert not modal.query("#console-prompts-result-local-only")
+        assert "Server Prompt source is unavailable" in str(
+            modal.query_one("#console-prompts-browse-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
+    backend = _PromptBackend()
+    backend.detail_result = _detail(artifact_type="recipe")
+    backend.save_result = {
+        **_detail(
+            artifact_type="prompt",
+            identifier="local:prompt:new-77",
+            version=9,
+        ),
+        "source_id": "new-77",
+        "name": "Saved Prompt",
+        "backend": "local",
+    }
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("recipe-1")
+        await pilot.pause()
+        assert modal.state.working_copy_unsaved is True
+
+        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert modal.state.working_copy_unsaved is False
+        assert modal.state.selected_identity == "local:prompt:new-77"
+        assert modal.state.selected_version == 9
+        assert modal.state.selected_source == "local"
+        assert modal._selected_record is not None
+        assert modal._selected_record["name"] == "Saved Prompt"
+        assert "Saved Prompt" in str(
+            modal.query_one("#console-prompts-location", Static).renderable
+        )
+        update = modal.query_one("#prompt-editor-update-original", Button)
+        assert update.disabled is False
+
+        update.press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert backend.save_calls[1]["prompt_identifier"] == "local:prompt:new-77"
+    assert backend.save_calls[1]["expected_version"] == 9
+    assert backend.save_calls[1]["name"] == "Saved Prompt"
+
+
+@pytest.mark.asyncio
+async def test_stale_compiled_text_warns_that_definition_wins_and_save_repairs() -> (
+    None
+):
+    backend = _PromptBackend()
+    backend.detail_result = {
+        **_detail(),
+        "system_prompt": "STALE COMPILED SYSTEM",
+        "user_prompt": "STALE COMPILED USER",
+    }
+    backend.save_result = _detail(
+        identifier="local:prompt:repaired",
+        version=5,
+    )
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("prompt-1")
+        await pilot.pause()
+
+        warnings = list(modal.query("#console-prompts-compatibility-stale"))
+        assert warnings
+        warning_copy = str(warnings[0].renderable)
+        assert "definition is authoritative" in warning_copy
+        assert "Saving repairs" in warning_copy
+
+        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert warnings[0].display is False
+
+    assert backend.save_calls[0]["system_prompt"] != "STALE COMPILED SYSTEM"
+    assert "Be exact." in backend.save_calls[0]["system_prompt"]
+    assert backend.save_calls[0]["user_prompt"] == "Answer the question."
+
+
+@pytest.mark.asyncio
+async def test_host_apply_deferral_replaces_ready_copy_and_has_no_apply_path() -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("prompt-1")
+        await pilot.pause()
+
+        apply_button = modal.query_one("#prompt-editor-apply", Button)
+        apply_copy = str(
+            modal.query_one("#prompt-editor-apply-reason", Static).renderable
+        )
+        assert apply_button.disabled is True
+        assert "Apply unavailable" in apply_copy
+        assert "save the Prompt" in apply_copy
+        assert "Ready" not in apply_copy
+        apply_button.press()
+        await pilot.pause()
+
+    assert backend.model_calls == 0
+    assert backend.usage_mutations == 0
+    assert backend.save_calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_unavailable_configure_action_is_focusable_and_injected() -> (
+    None
+):
+    backend = _PromptBackend()
+    configure_calls: list[bool] = []
+
+    async def configure_provider() -> None:
+        configure_calls.append(True)
+
+    app = _Harness(
+        backend,
+        improve_unavailable_reason="No active provider or model is configured.",
+        configure_provider=configure_provider,
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        configure = modal.query_one("#console-prompts-configure-provider", Button)
+        assert configure.disabled is False
+        configure.focus()
+        await pilot.pause()
+        assert app.focused is configure
+
+        configure.press()
+        await pilot.pause()
+
+        assert configure_calls == [True]
+        assert modal.state.mode == "browse"
+        assert modal.query_one("#console-prompts-search", Input).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_source_switch_cancels_pending_query_debounce() -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._query_requested(ConsolePromptsBrowse.QueryChanged("alpha"))
+        await modal.switch_source("server")
+        await asyncio.sleep(0.23)
+        await pilot.pause()
+
+    assert backend.search_calls.count(("server", "alpha")) == 1

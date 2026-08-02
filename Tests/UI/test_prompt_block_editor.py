@@ -306,6 +306,38 @@ async def test_update_original_source_unavailable_reason_is_preserved() -> None:
 
 
 @pytest.mark.asyncio
+async def test_host_can_enable_guarded_update_without_reconstructing_editor() -> None:
+    app = BlockEditorHarness(_state(), can_update_original=False)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+        update = app.query_one("#prompt-editor-update-original", Button)
+
+        assert update.disabled is True
+        assert (
+            "no guarded version update"
+            in str(
+                app.query_one("#prompt-editor-update-reason", Static).renderable
+            ).lower()
+        )
+
+        editor.set_update_original_available(True)
+        await pilot.pause()
+
+        assert update.disabled is False
+        assert (
+            str(app.query_one("#prompt-editor-update-reason", Static).renderable) == ""
+        )
+        update.press()
+        await pilot.pause()
+
+        assert [type(message) for message in app.messages] == [
+            PromptBlockEditor.UpdateOriginalRequested
+        ]
+
+
+@pytest.mark.asyncio
 async def test_update_original_source_unavailable_reason_precedes_validation() -> None:
     invalid = update_block(_state(), "goal", syntax="xml", xml_tag="bad tag")
     app = BlockEditorHarness(invalid, can_update_original=False)

@@ -5765,6 +5765,7 @@ class ChatScreen(BaseAppScreen):
                 detail=detail,
                 save=save,
                 improve_unavailable_reason=self._console_provider_blocker_copy(),
+                configure_provider=self._open_console_provider_recovery,
             ),
             callback=restore_focus,
         )

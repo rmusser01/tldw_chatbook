@@ -40,6 +40,8 @@ class ConsolePromptsState:
     query: str = ""
     page: int = 1
     search_token: int = 0
+    detail_token: int = 0
+    pending_identity: str | None = None
     selected_source: PromptSource | None = None
     selected_identity: str | None = None
     selected_version: int | None = None
@@ -102,6 +104,8 @@ class ConsolePromptsState:
             source=cast(PromptSource, source),
             page=1,
             search_token=self.search_token + 1,
+            detail_token=self.detail_token + 1,
+            pending_identity=None,
         )
 
     def begin_search(self) -> "ConsolePromptsState":
@@ -109,6 +113,20 @@ class ConsolePromptsState:
 
     def accepts(self, token: int, source: str) -> bool:
         return token == self.search_token and source == self.source
+
+    def begin_detail(self, identity: str) -> "ConsolePromptsState":
+        return replace(
+            self,
+            detail_token=self.detail_token + 1,
+            pending_identity=str(identity),
+        )
+
+    def accepts_detail(self, token: int, source: str, identity: str) -> bool:
+        return bool(
+            token == self.detail_token
+            and source == self.source
+            and str(identity) == self.pending_identity
+        )
 
     def select(
         self,

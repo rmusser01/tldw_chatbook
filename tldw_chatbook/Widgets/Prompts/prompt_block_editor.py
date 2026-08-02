@@ -427,6 +427,15 @@ class PromptBlockEditor(Vertical):
         """Return the immutable editor working copy."""
         return self._state
 
+    def set_update_original_available(self, available: bool) -> None:
+        """Refresh a host-owned guarded-update capability in place."""
+        available = bool(available)
+        if available == self._can_update_original:
+            return
+        self._can_update_original = available
+        if self.is_mounted:
+            self._sync_footer()
+
     @staticmethod
     def widget_token_for_block_id(block_id: str) -> str:
         """Return a deterministic legal token without title/index dependence."""

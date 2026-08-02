@@ -92,6 +92,14 @@ def _record_version(record: Mapping[str, Any]) -> int | None:
     return value if type(value) is int else None
 
 
+def _saved_record_identifier(record: Mapping[str, Any]) -> str:
+    """Return a durable identity from a normalized save response."""
+    value = record.get("id") or record.get("uuid") or record.get("source_id")
+    if value in (None, ""):
+        raise ValueError("Saved Prompt response has no durable identity.")
+    return str(value)
+
+
 class ConsolePromptsModal(ModalScreen[None]):
     """One responsive modal shell with internal prompt-workbench modes."""
 
@@ -127,6 +135,7 @@ class ConsolePromptsModal(ModalScreen[None]):
         detail: Callable[[str, str], Any],
         save: Callable[..., Any],
         improve_unavailable_reason: str = "",
+        configure_provider: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -136,6 +145,7 @@ class ConsolePromptsModal(ModalScreen[None]):
         self._detail = detail
         self._save = save
         self._improve_unavailable_reason = improve_unavailable_reason.strip()
+        self._configure_provider = configure_provider
         self.state = ConsolePromptsState.initial()
         self.browse_result = PromptBrowseResult(
             source="local", items=(), page=1, total_pages=1, total_items=0
@@ -176,6 +186,7 @@ class ConsolePromptsModal(ModalScreen[None]):
             query=self.state.query,
             page=self.state.page,
             improve_unavailable_reason=self._improve_unavailable_reason,
+            can_configure_provider=self._configure_provider is not None,
             id="console-prompts-browse",
         )
 
@@ -262,6 +273,14 @@ class ConsolePromptsModal(ModalScreen[None]):
             await browse.show_result(self.browse_result, query=self.state.query)
         elif mode == "edit":
             if self._editor_state is not None:
+                if self._decoded is not None and self._decoded.compatibility_stale:
+                    await body.mount(
+                        Static(
+                            "Saved compiled text differs from the blocks. The block definition is authoritative; Saving repairs the compiled System and User fields.",
+                            id="console-prompts-compatibility-stale",
+                            markup=False,
+                        )
+                    )
                 editor = PromptBlockEditor(
                     self._editor_state,
                     can_update_original=self._can_update_original(),
@@ -280,6 +299,9 @@ class ConsolePromptsModal(ModalScreen[None]):
         parts = ["Prompts", mode.title()]
         if mode == "edit" and self.state.selected_source:
             parts.append(self.state.selected_source.title())
+            selected_name = str((self._selected_record or {}).get("name") or "").strip()
+            if selected_name:
+                parts.append(selected_name)
             if self._decoded is not None:
                 parts.append(self._decoded.artifact_type.title())
             if self.state.working_copy_unsaved:
@@ -347,6 +369,7 @@ class ConsolePromptsModal(ModalScreen[None]):
                 editor = self.query_one(PromptBlockEditor)
             except NoMatches:
                 return
+        editor.set_update_original_available(self._can_update_original())
         has_issues = bool(editor.state.issues)
         for artifact_type, selector, kind in (
             ("prompt", "#prompt-editor-save-prompt", "block_prompt"),
@@ -370,6 +393,11 @@ class ConsolePromptsModal(ModalScreen[None]):
         apply_button = editor.query_one("#prompt-editor-apply", Button)
         apply_button.disabled = True
         apply_button.tooltip = "Applying to the composer is unavailable in this stage; save the Prompt instead."
+        apply_reason = editor.query_one("#prompt-editor-apply-reason", Static)
+        apply_reason.update(
+            "Apply unavailable in this stage — save the Prompt instead."
+        )
+        apply_reason.add_class("blocked")
 
     async def _mount_compatibility(self, body: Vertical) -> None:
         record = self._selected_record or {}
@@ -405,8 +433,28 @@ class ConsolePromptsModal(ModalScreen[None]):
     async def switch_source(self, source: PromptSource) -> None:
         if source == self.state.source:
             return
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+            self._debounce_timer = None
         self.state = self.state.with_source(source)
+        await self._clear_cross_source_results(source)
         await self.reload_browse(token_already_started=True)
+
+    async def _clear_cross_source_results(self, source: PromptSource) -> None:
+        if self.browse_result.source == source:
+            return
+        self.browse_result = PromptBrowseResult(
+            source=source,
+            items=(),
+            page=1,
+            total_pages=1,
+            total_items=0,
+        )
+        try:
+            browse = self.query_one(ConsolePromptsBrowse)
+        except NoMatches:
+            return
+        await browse.show_result(self.browse_result, query=self.state.query)
 
     async def reload_browse(self, *, token_already_started: bool = False) -> None:
         if not token_already_started:
@@ -416,6 +464,7 @@ class ConsolePromptsModal(ModalScreen[None]):
         query = self.state.query.strip()
         try:
             browse = self.query_one(ConsolePromptsBrowse)
+            await self._clear_cross_source_results(source)
             browse.show_loading(source=source, query=query)
         except NoMatches:
             return
@@ -504,6 +553,8 @@ class ConsolePromptsModal(ModalScreen[None]):
 
     async def open_artifact(self, identifier: str) -> None:
         source = self.state.source
+        self.state = self.state.begin_detail(identifier)
+        detail_token = self.state.detail_token
         browse = self.query_one(ConsolePromptsBrowse)
         browse.show_status(
             f"Loading latest {source.title()} detail before editing…",
@@ -519,10 +570,15 @@ class ConsolePromptsModal(ModalScreen[None]):
             if capabilities is None:
                 capabilities = await _maybe_await(self._capabilities(source))
         except Exception:
+            if not self.state.accepts_detail(detail_token, source, identifier):
+                return
             browse.show_status(
                 "The selected artifact was changed or deleted before its latest detail could be loaded — Retry the Library or choose another item.",
                 retry=True,
             )
+            return
+
+        if not self.state.accepts_detail(detail_token, source, identifier):
             return
 
         try:
@@ -596,6 +652,14 @@ class ConsolePromptsModal(ModalScreen[None]):
         event.stop()
         if not self._improve_unavailable_reason:
             await self.enter_mode("improve")
+
+    @on(ConsolePromptsBrowse.ConfigureProviderRequested)
+    async def _configure_provider_requested(
+        self, event: ConsolePromptsBrowse.ConfigureProviderRequested
+    ) -> None:
+        event.stop()
+        if self._configure_provider is not None:
+            await _maybe_await(self._configure_provider())
 
     @on(ConsolePromptsBrowse.SourceChanged)
     async def _source_requested(
@@ -734,15 +798,48 @@ class ConsolePromptsModal(ModalScreen[None]):
             return
         self.state = self.state.with_dirty(False)
         if isinstance(saved, Mapping):
+            saved_record = dict(saved)
             try:
-                self.state = self.state.select(
-                    identity=_record_identifier(saved),
-                    version=_record_version(saved),
-                    source=self.state.selected_source or self.state.source,
+                identity = _saved_record_identifier(saved_record)
+            except ValueError:
+                self.notify(
+                    "Prompt saved, but its new identity was not returned. Reload the Library before updating it.",
+                    severity="warning",
+                )
+                return
+            source_value = str(saved_record.get("backend") or "")
+            selected_source: PromptSource = (
+                source_value
+                if source_value in {"local", "server"}
+                else self.state.selected_source or self.state.source
+            )  # type: ignore[assignment]
+            self._selected_record = saved_record
+            try:
+                self._decoded = decode_prompt_artifact(saved_record)
+            except (TypeError, ValueError):
+                self._decoded = None
+            if self._decoded is not None and not self._decoded.compatibility_stale:
+                try:
+                    self.query_one(
+                        "#console-prompts-compatibility-stale", Static
+                    ).display = False
+                except NoMatches:
+                    pass
+            self._editor_state = editor_state
+            self.state = (
+                self.state.select(
+                    identity=identity,
+                    version=_record_version(saved_record),
+                    source=selected_source,
                     capabilities=self.state.selected_capabilities,
                 )
-            except ValueError:
-                pass
+                .as_unsaved_copy(False)
+                .with_dirty(False)
+            )
+            self.query_one("#console-prompts-location", Static).update(
+                self._location_copy(self.state.mode)
+            )
+            self._sync_editor_host_gates()
         self.notify("Prompt saved.")
 
     @on(Button.Pressed)

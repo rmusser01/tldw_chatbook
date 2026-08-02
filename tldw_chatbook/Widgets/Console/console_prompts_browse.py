@@ -32,6 +32,9 @@ class ConsolePromptsBrowse(Vertical):
     class ImproveRequested(Message):
         """Open model-assisted prompt choices."""
 
+    class ConfigureProviderRequested(Message):
+        """Open the host Console's provider/model recovery surface."""
+
     class SourceChanged(Message):
         def __init__(self, source: PromptSource) -> None:
             self.source = source
@@ -62,6 +65,7 @@ class ConsolePromptsBrowse(Vertical):
         query: str,
         page: int,
         improve_unavailable_reason: str = "",
+        can_configure_provider: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -69,6 +73,7 @@ class ConsolePromptsBrowse(Vertical):
         self._query = query
         self._page = page
         self._improve_unavailable_reason = improve_unavailable_reason.strip()
+        self._can_configure_provider = bool(can_configure_provider)
         self._row_ids: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
@@ -91,6 +96,12 @@ class ConsolePromptsBrowse(Vertical):
             id="console-prompts-model-status",
             markup=False,
         )
+        if self._improve_unavailable_reason:
+            yield Button(
+                "Configure provider / model",
+                id="console-prompts-configure-provider",
+                disabled=not self._can_configure_provider,
+            )
         with Horizontal(id="console-prompts-browse-controls"):
             yield Select(
                 (("Local", "local"), ("Server", "server")),
@@ -198,6 +209,9 @@ class ConsolePromptsBrowse(Vertical):
         if button_id == "console-prompts-improve":
             event.stop()
             self.post_message(self.ImproveRequested())
+        elif button_id == "console-prompts-configure-provider":
+            event.stop()
+            self.post_message(self.ConfigureProviderRequested())
         elif button_id == "console-prompts-retry":
             event.stop()
             self.post_message(self.RetryRequested())

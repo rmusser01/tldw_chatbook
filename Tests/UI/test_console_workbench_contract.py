@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -489,6 +489,35 @@ def test_prompts_does_not_add_a_standalone_composer_or_top_action() -> None:
 
     state = build_console_workbench_state(control_state=_control_state())
     assert "prompts" not in {action.id for action in state.actions}
+
+
+@pytest.mark.asyncio
+async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        recovery = AsyncMock()
+        console._open_console_provider_recovery = recovery
+        console._console_provider_blocker_copy = lambda: (
+            "No active provider or model is configured."
+        )
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        configure = modal.query_one("#console-prompts-configure-provider")
+        configure.focus()
+        await pilot.pause()
+        assert host.focused is configure
+
+        configure.press()
+        await pilot.pause()
+
+        recovery.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
