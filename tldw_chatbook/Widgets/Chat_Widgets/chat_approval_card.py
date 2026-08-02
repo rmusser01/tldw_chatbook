@@ -352,7 +352,7 @@ class ChatApprovalCard(Container):
         self._batch_names: list[str] = []
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
-        self._batch_rows: list[Horizontal] = []
+        self._batch_rows: list[Vertical] = []
         #: The current batch's fast-approval buttons (task-1234 review
         #: round 1), if any -- membership-guards `on_button_pressed`
         #: against a stale press the same way `_on_batch_row_select_
@@ -489,7 +489,7 @@ class ChatApprovalCard(Container):
         names: list[str] = []
         selects: list[Select] = []
         legal_values: list[list[str]] = []
-        rows: list[Horizontal] = []
+        rows: list[Vertical] = []
         fast_buttons: list[Button] = []
         for index, entry in enumerate(grouped):
             # The verdict key must match what the RUNTIME looks up, and it
@@ -522,15 +522,26 @@ class ChatApprovalCard(Container):
             header_tooltip = _row_header_tooltip(entry)
             if header_tooltip:
                 header_static.tooltip = header_tooltip
-            row_children: list[Any] = [
-                header_static,
-                Static(
-                    _summarize_row_arguments(entry),
-                    markup=False,
-                    classes="approval-row-args",
-                ),
-                select,
-            ]
+            # TASK-1846 AC#2: the controls are FIXED width (26 + 14 + 14 =
+            # 54 cells), so sharing one line with the text left the arguments
+            # 10 cells on an 80-column terminal -- `{"path":"~/` of
+            # `{"path":"~/notes/secrets.md"}`. Since TASK-1861 the card offers
+            # one decision per TARGET, so telling those apart IS the row's
+            # job. Header, arguments and controls each get their own full
+            # width line.
+            #
+            # Keeping the header BESIDE the controls was tried and is wrong:
+            # in the Console's ~52-cell chat pane those 54 fixed cells starve
+            # the header to ONE cell, which wraps to nine lines and pushes the
+            # arguments out of the card entirely -- worse than the layout it
+            # replaced. Only a real terminal showed that; every mounted-widget
+            # measurement at 80/120/212 looked fine.
+            control_children: list[Any] = [select]
+            args_static = Static(
+                _summarize_row_arguments(entry),
+                markup=False,
+                classes="approval-row-args",
+            )
             if single_row:
                 fast_approve = Button(
                     "Approve once",
@@ -555,11 +566,16 @@ class ChatApprovalCard(Container):
                     ),
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
-                row_children.append(fast_approve)
-                row_children.append(fast_deny)
+                control_children.append(fast_approve)
+                control_children.append(fast_deny)
             rows.append(
-                Horizontal(
-                    *row_children,
+                Vertical(
+                    header_static,
+                    args_static,
+                    Horizontal(
+                        *control_children,
+                        classes="approval-row-controls",
+                    ),
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )

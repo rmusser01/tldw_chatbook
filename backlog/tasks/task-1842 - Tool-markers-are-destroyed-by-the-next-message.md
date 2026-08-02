@@ -1,7 +1,7 @@
 ---
 id: TASK-1842
 title: 'Tool markers are destroyed by the next message (data loss)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 19:30'
 labels:
@@ -31,7 +31,7 @@ This matters more given that tools are the agent's route to the outside world: t
 <!-- AC:BEGIN -->
 - [x] #1 Tool markers survive subsequent messages in the same session
 - [x] #2 Tool markers survive session switch and app restart, or are re-derived from AgentRunsDB on resume
-- [ ] #3 The full tool result is reachable from the transcript without navigating to a collapsed rail section
+- [x] #3 Delivered by TASK-1860 (PR #1196): `o` on a selected marker expands it to the full result
 - [x] #4 A failed or denied tool call retains its output rather than being replaced
 - [x] #5 A regression test appends a message after tool markers and asserts they are still present -- the exact reproduction above
 <!-- AC:END -->

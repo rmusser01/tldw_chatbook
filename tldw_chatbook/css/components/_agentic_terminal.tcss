@@ -5418,8 +5418,41 @@ Button.mcp-callout {
 #approval-batch-rows {
     height: auto;
     min-height: 0;
+    /* TASK-1846: bound the rows so the action bar below them is reachable
+       at ANY row count. The card is `height: auto` inside a plain Container
+       (`ChatTaskCards`), so before this a long batch simply grew past the
+       viewport and took Submit/Approve-all/Deny-all with it -- measured on
+       an 80x24 terminal, five rows already pushed Submit to y=24. Splitting
+       arguments onto their own line costs a line per row and would have
+       moved that cliff from five rows to four, so the cap fixes the older
+       bug rather than inheriting it. 15 leaves room for the header, the
+       deadline and the action bar at 24 rows; taller batches scroll. */
+    max-height: 15;
+    overflow-y: auto;
 }
 .approval-row {
+    height: auto;
+    min-height: 1;
+    width: 1fr;
+}
+/* TASK-1846 AC#2: `.approval-row` is now a Vertical of two lines --
+   header, arguments, and `.approval-row-controls` each on their own FULL
+   width line. Before the split all four shared one Horizontal, and the
+   controls' 26 + 14 + 14 = 54 fixed cells left the arguments 10 cells at 80
+   columns: `{"path":"~/` of `{"path":"~/notes/secrets.md"}`. Since
+   TASK-1861 the card offers one decision per TARGET, so that clipped text
+   was the decision.
+
+   Keeping the header BESIDE the controls was tried and is wrong: in the
+   Console's ~52-cell chat pane those 54 fixed cells starve the header to
+   one cell, which wraps to nine lines and pushes the arguments out of the
+   card -- caught only by looking at a real terminal.
+
+   The controls row is a Horizontal and needs the SAME `height: auto` as
+   `.approval-row` above -- a Horizontal defaults to `height: 1fr`, the
+   fr-inside-flex bug this block already documents, and left at the default
+   it balloons to the card height and takes the args line off screen. */
+.approval-row-controls {
     height: auto;
     min-height: 1;
     width: 1fr;
