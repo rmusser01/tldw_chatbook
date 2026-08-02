@@ -1180,9 +1180,11 @@ class ChatbookImporter:
                 status.add_error(f"Error importing media {media_id}: {str(e)}")
                 logger.error(f"Error importing media {media_id}: {e}")
 
-    # Mirrors ChatbookCreator._KEPT_SCRIPTS_EXPORT_LIMIT: a page-sized read of
-    # one briefing's kept scripts comfortably covers any realistic cast
-    # history without an unbounded fetch.
+    # Mirrors ChatbookCreator._KEPT_SCRIPTS_EXPORT_PAGE_SIZE, but this read is
+    # only used to de-duplicate scripts with no `source_script_id` against
+    # rows already present in the *target* DB (see the match loop below), not
+    # to enumerate every script for export -- a single page is intentional
+    # here, unlike the paginated export path.
     _KEPT_SCRIPTS_IMPORT_LIMIT = 1000
 
     @staticmethod
@@ -1208,7 +1210,14 @@ class ChatbookImporter:
         """True if a locally-existing kept briefing is byte-identical to an
         incoming one sharing the same `source_briefing_id` (already-present,
         safe to skip silently) vs. genuinely different content (a conflict
-        that must never be silently overwritten)."""
+        that must never be silently overwritten).
+
+        `kept_at` is deliberately excluded from this comparison: it is
+        provenance of *when* the briefing was kept, not part of the
+        briefing's content, so the same artifact kept at different moments
+        (e.g. re-exported from a second device) must still compare equal
+        and skip as already-present rather than spuriously conflict.
+        """
         plain_fields = (
             "watchlist_name",
             "body_markdown",
@@ -1233,7 +1242,13 @@ class ChatbookImporter:
         cls, existing: Mapping[str, Any], payload: Mapping[str, Any]
     ) -> bool:
         """Same byte-identity check as `_kept_briefing_content_matches`, for
-        one kept script."""
+        one kept script.
+
+        `kept_at` is deliberately excluded here too, for the same reason:
+        it is provenance of the keeping, not content, so a script kept at
+        different moments must still skip as already-present rather than
+        spam a conflict.
+        """
         plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
         if any(existing.get(f) != payload.get(f) for f in plain_fields):
             return False

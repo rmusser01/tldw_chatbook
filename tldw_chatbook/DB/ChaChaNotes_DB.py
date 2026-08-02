@@ -13025,12 +13025,6 @@ UPDATE db_schema_version
             raise InputError(
                 f"origin must be one of {self._ALLOWED_KEPT_BRIEFING_ORIGINS}, got {origin!r}."
             )
-        columns = [
-            "source_briefing_id", "watchlist_name", "body_markdown",
-            "covers_through_item_id", "covers_from_ts", "selection_mode",
-            "model_used", "item_count", "featured_count", "overflow_count",
-            "origin", "original_created_at",
-        ]
         params: List[Any] = [
             source_briefing_id,
             watchlist_name,
@@ -13044,13 +13038,15 @@ UPDATE db_schema_version
             overflow_count,
             origin,
             original_created_at,
+            kept_at,
         ]
-        if kept_at is not None:
-            columns.append("kept_at")
-            params.append(kept_at)
         query = (
-            f"INSERT INTO kept_briefings({', '.join(columns)}) "
-            f"VALUES ({', '.join(['?'] * len(columns))})"
+            "INSERT INTO kept_briefings("
+            "source_briefing_id, watchlist_name, body_markdown, "
+            "covers_through_item_id, covers_from_ts, selection_mode, "
+            "model_used, item_count, featured_count, overflow_count, "
+            "origin, original_created_at, kept_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))"
         )
         try:
             with self.transaction() as cursor:
@@ -13198,11 +13194,6 @@ UPDATE db_schema_version
                 an existing kept briefing (foreign key violation), or for
                 other database errors.
         """
-        columns = [
-            "kept_briefing_id", "source_script_id", "preset_name",
-            "roster_snapshot_json", "turns_json", "model_used",
-            "original_created_at",
-        ]
         params: List[Any] = [
             kept_briefing_id,
             source_script_id,
@@ -13211,13 +13202,14 @@ UPDATE db_schema_version
             turns_json,
             model_used,
             original_created_at,
+            kept_at,
         ]
-        if kept_at is not None:
-            columns.append("kept_at")
-            params.append(kept_at)
         query = (
-            f"INSERT INTO kept_scripts({', '.join(columns)}) "
-            f"VALUES ({', '.join(['?'] * len(columns))})"
+            "INSERT INTO kept_scripts("
+            "kept_briefing_id, source_script_id, preset_name, "
+            "roster_snapshot_json, turns_json, model_used, "
+            "original_created_at, kept_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))"
         )
         try:
             with self.transaction() as cursor:

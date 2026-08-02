@@ -214,6 +214,72 @@ def test_export_with_no_kept_briefings_selected_produces_no_kept_section(
         )
 
 
+def test_export_paginates_past_page_size_no_silent_truncation(
+    monkeypatch, tmp_path, chachanotes_template_db
+):
+    """`_collect_kept_briefings` must page through every kept script rather
+    than fetching a single capped page -- a briefing with more scripts than
+    one page previously exported silently incomplete, with no signal to the
+    user (task-1870 Qodo fix: FIX 1).
+
+    The page size is shrunk to 2 (well below the 5 scripts seeded here) so
+    this exercises multiple pages, including a final short page, without
+    needing to seed anywhere near the real 1000-row page size."""
+    import shutil
+
+    monkeypatch.setattr(ChatbookCreator, "_KEPT_SCRIPTS_EXPORT_PAGE_SIZE", 2)
+
+    db_paths = _db_paths(tmp_path / "source")
+    shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
+    db = CharactersRAGDB(db_paths["ChaChaNotes"], "test-source")
+    kept_id = db.create_kept_briefing(
+        source_briefing_id=201,
+        watchlist_name="Paginated Watch",
+        body_markdown="# Body",
+        origin="manual",
+    )
+    for i in range(5):
+        db.create_kept_script(
+            kept_id,
+            source_script_id=1000 + i,
+            preset_name=f"preset-{i}",
+            roster_snapshot_json=json.dumps({"roster": [f"R{i}"]}),
+            turns_json=json.dumps([{"speaker": f"S{i}", "text": f"turn {i}"}]),
+        )
+    db.close_connection()
+
+    output = _create_chatbook(db_paths, kept_id, tmp_path, name="paginated.zip")
+
+    with zipfile.ZipFile(output) as zf:
+        payload = json.loads(
+            zf.read(f"content/kept_briefings/kept_briefing_{kept_id}.json")
+        )
+        scripts = payload["scripts"]
+        assert len(scripts) == 5
+        by_source = {s["source_script_id"]: s for s in scripts}
+        assert set(by_source.keys()) == {1000 + i for i in range(5)}
+        for i in range(5):
+            assert by_source[1000 + i]["preset_name"] == f"preset-{i}"
+
+    dest_paths = _db_paths(tmp_path / "dest")
+    importer = ChatbookImporter(dest_paths)
+    ok, message = importer.import_chatbook(
+        output,
+        content_selections={ContentType.KEPT_BRIEFING: [str(kept_id)]},
+    )
+    assert ok, message
+
+    dest_db = _dest_db(dest_paths)
+    restored = dest_db.get_kept_briefing_by_source(201)
+    assert restored is not None
+    restored_scripts = dest_db.list_kept_scripts(restored["id"])
+    assert len(restored_scripts) == 5
+    by_source_restored = {s["source_script_id"]: s for s in restored_scripts}
+    assert set(by_source_restored.keys()) == {1000 + i for i in range(5)}
+    for i in range(5):
+        assert by_source_restored[1000 + i]["preset_name"] == f"preset-{i}"
+
+
 # --- Import: round trip -------------------------------------------------
 
 

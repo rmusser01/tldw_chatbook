@@ -1341,10 +1341,11 @@ class ChatbookCreator:
                 logger.error(f"Error collecting prompt {prompt_id}: {e}")
 
     # Kept scripts per briefing are denormalized, small text blobs (preset
-    # name + two JSON strings) -- a page-sized fetch comfortably covers any
-    # realistic cast history for one briefing without risking an unbounded
-    # read on a pathological row.
-    _KEPT_SCRIPTS_EXPORT_LIMIT = 1000
+    # name + two JSON strings). Export must never silently truncate a
+    # briefing's cast history, so `_collect_kept_briefings` pages through
+    # `list_kept_scripts` this many rows at a time (rather than a single
+    # capped fetch) until a short page signals the end.
+    _KEPT_SCRIPTS_EXPORT_PAGE_SIZE = 1000
 
     @staticmethod
     def _kept_datetime_to_iso(value: Any) -> Optional[str]:
@@ -1402,9 +1403,19 @@ class ChatbookCreator:
                     )
                     continue
 
-                scripts = db.list_kept_scripts(
-                    kept_id, limit=self._KEPT_SCRIPTS_EXPORT_LIMIT
-                )
+                scripts: List[Dict[str, Any]] = []
+                page_offset = 0
+                while True:
+                    page = db.list_kept_scripts(
+                        kept_id,
+                        limit=self._KEPT_SCRIPTS_EXPORT_PAGE_SIZE,
+                        offset=page_offset,
+                    )
+                    scripts.extend(page)
+                    if len(page) < self._KEPT_SCRIPTS_EXPORT_PAGE_SIZE:
+                        break
+                    page_offset += self._KEPT_SCRIPTS_EXPORT_PAGE_SIZE
+
                 script_payloads = [
                     {
                         "source_script_id": script.get("source_script_id"),
