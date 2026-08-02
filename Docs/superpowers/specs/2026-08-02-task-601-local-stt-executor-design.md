@@ -77,11 +77,12 @@ The protocol consists of frozen, picklable data objects with no native runtime
 imports:
 
 - `ModelIdentity`: provider, model, managed root revision when present,
-  dependency-closure fingerprint when present, precision, device, and a
-  private local-source snapshot token when needed.
+  dependency-closure fingerprint when present, precision, effective execution
+  target, and a private local-source snapshot token when needed.
 - `ExecutorRequest`: generation, attempt and Library job identities, source or
-  bounded buffer description, resolved transcription options, and model
-  identity.
+  bounded buffer description, existing batch/retry context, resolved
+  transcription options, and model identity. Model and media paths use
+  redacted repr fields.
 - `ExecutorEvent`: generation, attempt identity, stable phase, and optional
   bounded progress.
 - `ExecutorResult`: generation, attempt identity, and the existing picklable
@@ -104,6 +105,8 @@ The controller owns:
 - A session-local unhealthy identity after a relevant native crash.
 - An internal completed-job recycle bound with a constructor test seam, not a
   new user setting.
+- A controller lock that serializes request, cancel, close, and transport send
+  operations.
 
 Before dispatch, the controller attaches the current generation. It accepts a
 worker event only when both generation and attempt identity match the active
@@ -119,6 +122,11 @@ single heavy lane to become available.
 The unhealthy circuit is deliberately small: one relevant native crash pauses
 automatic dispatch for the same model identity. An explicit user retry clears
 that identity once. Unrelated models and providers continue.
+
+`cancel(attempt_id)` sets the generation event only while that exact attempt is
+active. The controller clears the event while holding its lock immediately
+before sending the next request, preventing a late cancellation for a completed
+attempt from cancelling its successor.
 
 ### Worker runtime
 
@@ -153,25 +161,29 @@ remain unchanged.
 
 The canonical resident identity contains:
 
-`(provider, model, root revision, closure fingerprint, precision, device, local snapshot token)`
+`(provider, model, root revision, closure fingerprint, precision, execution target, local snapshot token)`
 
 The local snapshot token is absent for immutable managed artifacts. It is
 private transient data: it must be excluded from reprs, logs, generic errors,
 results, and persisted provenance.
 
-For managed Parakeet bundles, the worker acquires shared leases for the root
-and every loaded dependency in stable artifact-ID order before model load. The
-lease set stays open across idle same-identity reuse and closes only when the
-resident runtime closes or the process exits. The parent does not hold a
-duplicate lease.
+For managed Parakeet bundles, the request carries the managed root
+`ArtifactRef` and expected closure fingerprint, not trusted payload paths. The
+worker opens `ModelArtifactService` over the configured store, calls its
+existing `acquire()` boundary, and equality-checks the returned closure
+fingerprint before model load. The resulting shared root/dependency lease set
+stays open across idle same-identity reuse and closes only when the resident
+runtime closes or the process exits. The parent does not hold a duplicate
+lease.
 
 For a legacy/local Parakeet directory, the required model files are snapshotted
 before dispatch and revalidated immediately before load or reuse. For a
 direct-local GGUF, TASK-597 admission supplies the bounded source identity and
 is rerun inside the worker. A mismatch fails safely instead of reusing the
 resident model. A source that changed between parent snapshot and worker
-admission fails as `ArtifactChanged`; it is not automatically retried against
-different bytes. Unmanaged local files do not pretend to have managed leases.
+admission uses the existing `ARTIFACT_INCOMPATIBLE` failure and is not
+automatically retried against different bytes. Unmanaged local files do not
+pretend to have managed leases.
 
 ## Request Lifecycle
 
@@ -201,9 +213,10 @@ Stable phases remain:
 
 `queued → preparing → loading → transcribing → post-processing → saving → complete`
 
-The worker reports through post-processing. The parent writer owns saving and
-complete. Providers may report real progress but the executor never invents a
-percentage.
+The worker reports bounded phase transitions through post-processing. The
+parent writer owns saving and complete. TASK-601 does not add high-frequency
+percentage transport; a later provider may add real bounded progress without
+changing generation fencing. The executor never invents a percentage.
 
 The parent terminal guard allows exactly one of success, failure, or
 cancellation for an attempt. Duplicate, stale, detached-generation, or
@@ -213,10 +226,11 @@ payload data.
 ## Cancellation, Crash Recovery, and CPU Retry
 
 Each worker generation receives one shared cancellation event at process
-creation. The controller clears it before dispatch and sets it for cooperative
-cancellation. Preparation and providers check it at their supported boundaries.
-This avoids adding a listener thread inside the worker merely to receive a
-cancel command while native inference blocks.
+creation. The controller clears it under the controller lock immediately before
+dispatch and sets it only for the matching active attempt. Preparation and
+providers check it at their supported boundaries. This avoids adding a listener
+thread inside the worker merely to receive a cancel command while native
+inference blocks.
 
 Queued cancellation is handled by the existing Library registry. During active
 work, cooperative cancellation is attempted first. If an uninterruptible native
@@ -228,10 +242,17 @@ call does not return, the UI may invoke force stop. Force stop:
 4. Joins cleanup off the Textual event loop.
 5. Starts a fresh generation only when another request is dispatched.
 
+Step 5 is allowed only after the controller has confirmed the old process tree
+is dead. If containment termination or join cannot prove that, the executor
+enters `unavailable` state and rejects further heavy dispatch instead of
+allowing two worker generations to coexist. Recovery requires app shutdown or
+restart; TASK-601 does not add another reset API or recovery control.
+
 The parent monitors the worker sentinel and remembers the latest phase. A crash
-during loading or transcribing becomes `EngineCrashed`; a crash while preparing
-is reported as a preparation-worker crash and does not mark the model unhealthy.
-Only the active audio/video attempt fails. The general parse pool remains alive.
+during loading or transcribing uses the existing `ENGINE_CRASHED` failure. A
+crash while preparing remains an existing sanitized parse-stage failure and
+does not mark the model unhealthy. Only the active audio/video attempt fails.
+The general parse pool remains alive.
 
 A typed, provider-qualified device failure may retry once on CPU using the same
 attempt identity in a fresh generation. The successful result records the
@@ -242,9 +263,11 @@ retry, and no cross-engine fallback is automatic.
 
 The entire worker generation is the containment unit.
 
-- On POSIX, the worker enters its own session/process group before launching
-  preparation subprocesses. Cooperative cleanup signals the active decoder
-  group before removing temporary files; force stop terminates the worker group.
+- On POSIX, the worker enters its own session/process group, reports the
+  resulting process-group identity, and waits for the parent admission signal
+  before launching preparation subprocesses. Cooperative cleanup signals the
+  active decoder group before removing temporary files; force stop terminates
+  the worker group.
 - On Windows, the parent assigns the spawned worker to a kill-on-close Job
   Object before signalling the worker admission event. Decoder descendants
   then inherit containment. Cooperative cleanup stops the active decoder before
@@ -271,8 +294,9 @@ paths after every release gate passes.
 ## Error and Privacy Rules
 
 - Native exception text never crosses the process boundary.
-- Local paths and filesystem snapshot tokens never appear in reprs, logs,
-  generic errors, UI state, result payloads, or persisted provenance.
+- Model/artifact paths and filesystem snapshot tokens never appear in reprs,
+  logs, generic errors, UI state, result payloads, or persisted provenance.
+  Existing media-source-path handling is unchanged by this task.
 - Existing stable STT error codes and bounded recovery actions remain
   authoritative.
 - Eligible failures may offer explicit **Retry with faster-whisper**; the
@@ -294,6 +318,8 @@ Only TASK-601-related tests and static checks will run.
 - Generation and attempt fencing rejects stale progress, results, and errors.
 - The terminal guard allows exactly one terminal outcome.
 - Cooperative cancel sets the shared event; force stop detaches before kill.
+- A late cancel cannot affect the next attempt, and a failed force stop cannot
+  create a second live generation.
 - Only a typed qualified device failure retries once on CPU in a new generation.
 - Native crashes mark only the relevant identity unhealthy.
 
