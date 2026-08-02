@@ -2,7 +2,7 @@
 id: TASK-2014
 title: >-
   Library ingest canvas keyboard focus is color-only and mostly invisible
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
@@ -28,9 +28,20 @@ job-tick recompose stole their focus. Found in the 2026-08-02 ingest UAT
 
 ## Acceptance Criteria (the what)
 
-- [ ] Every focusable widget on the ingest canvas (path/title/author/keywords
+- [x] Every focusable widget on the ingest canvas (path/title/author/keywords
       inputs, Browse/Start/row-action buttons, option checkboxes/selects/
       inputs, collapsible headers) shows a visible, non-color-only focus
       indicator, verified in a plain monochrome `tmux capture-pane -p` dump.
-- [ ] Focus styling causes no dimension change (DESIGN.md: hover/focus must
+- [x] Focus styling causes no dimension change (DESIGN.md: hover/focus must
       be dimensionally stable).
+
+## Implementation Notes
+
+CSS-only, in `css/components/_agentic_terminal.tcss` (+ regenerated
+bundle): `outline: heavy $accent` on the canvas's `Input:focus`,
+`Button:focus` (plus bold), `Checkbox:focus`, `Select:focus`, and
+`text-style: bold reverse` on `CollapsibleTitle:focus`. Outlines draw over
+edge cells, so no dimension change. Live-verified (2026-08-02, monochrome
+captures): 10 of 10 consecutive Tab stops through the canvas produced a
+visible pane change (heavy ┏━┓ outline box observed), versus 2 of 10 in
+the UAT evidence this task was filed from.

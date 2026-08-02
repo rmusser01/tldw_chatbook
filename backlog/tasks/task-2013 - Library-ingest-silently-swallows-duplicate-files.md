@@ -2,7 +2,7 @@
 id: TASK-2013
 title: >-
   Library ingest silently swallows duplicate files
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
@@ -30,9 +30,11 @@ anywhere. Found in the 2026-08-02 ingest UAT (critique snapshot
 
 ## Acceptance Criteria (the what)
 
-- [ ] A duplicate ingest resolves the existing media item's id (content-hash
+- [x] A duplicate ingest resolves the existing media item's id (content-hash
       fallback after the URL miss), so its done row carries "Open in
-      Library" and opens that item.
+      Library" and opens that item. (Live-verified 2026-08-02: duplicate
+      row's button opened the original "report" item; Media count stayed
+      at 1.)
 - [x] The duplicate row's progress line states the file was already in the
       Library instead of impersonating a fresh ingest.
 - [x] A genuinely fresh ingest keeps its current "Ingested <path>" message.
