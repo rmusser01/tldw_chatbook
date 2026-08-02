@@ -445,7 +445,7 @@ temp file, same file-based playback, same everything:
 - Every legacy-bridge provider (openai, elevenlabs, kokoro, chatterbox,
   alltalk, higgs, ...) — that bridge never populates a response sample
   rate, and without one the sink cannot open. Unblocking these is a filed,
-  three-leg follow-up (plumb a sample rate onto legacy-bridge responses,
+  three-leg follow-up (TASK-1880) (plumb a sample rate onto legacy-bridge responses,
   add a caller-scoped raw-PCM request option, and add a PCM-safe legacy
   fallback) — none of it has shipped yet, so do not expect these providers
   to stream.
