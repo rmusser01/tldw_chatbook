@@ -1166,6 +1166,21 @@ class SpeechSetupStep(SetupStep):
         self._acted_this_run = False
 
     def compose_step(self) -> ComposeResult:
+        """Render the title/prefill/status/action block, then the language
+        and precision catalogs.
+
+        Entirely pure/I/O-free: it builds from ``self`` bookkeeping already
+        in memory and the two catalog helpers in ``first_run_speech_step_state``
+        (backed by ``curated_registry()``, which itself only builds
+        descriptors in memory -- no network or filesystem access happens
+        here). Any I/O (checking installed state) is deferred to ``on_show``.
+
+        Returns:
+            The composed widgets: title, optional prefill line, status line
+            plus its action control, an optional "use as default" affordance,
+            then the language and precision ``RadioSet`` catalogs (see the
+            Review Important 2 note below for the ordering rationale).
+        """
         # Review Important 2: the primary action must be visible at the
         # wizard's own tested 120x40 budget -- title/subtitle/prefill/
         # status/action come FIRST (typically <=6 rows); the informational
@@ -1409,6 +1424,19 @@ class SpeechSetupStep(SetupStep):
 
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:
+        """Trigger the step's one lazy I/O read: is Parakeet v2 installed?
+
+        ``compose_step`` renders synchronously from in-memory state only;
+        this is where the step first asks the artifact service (via
+        ``_ensure_loaded`` -> ``_load_installed_state``, an exclusive
+        background worker) whether a managed Parakeet v2 artifact already
+        exists, so the status line can move past "Checking installed
+        models…". Idempotent: a step already re-shown (rerun navigation)
+        does not re-trigger a redundant load (see ``_ensure_loaded``).
+
+        Returns:
+            None.
+        """
         super().on_show()
         self._ensure_loaded()
 
@@ -1675,6 +1703,43 @@ class SpeechSetupStep(SetupStep):
 
     # -- persistence gate (AC#5 / review Important 3 & 4) -------------------
     async def commit(self) -> tuple[bool, str]:
+        """Persist ``[transcription]`` defaults, but only when it is safe to.
+
+        Called by the wizard on Next/Finish. Writes nothing -- returns the
+        ok-but-skip result ``(True, "")`` -- unless ALL of the following
+        hold, each freshly re-verified rather than trusted from stale
+        widget state:
+
+        * the ``onnx-asr`` runtime extra is importable (Important 4) --
+          persisting a provider the runtime cannot execute is worse than no
+          config change at all;
+        * a managed Parakeet v2 artifact is verified ACTIVE right now
+          (``_check_active``, run off the event loop in an executor, never
+          the possibly-stale ``self._installed_item``);
+        * the user engaged this step THIS wizard run -- installed,
+          activated, or used "use as default" (``self._acted_this_run``) --
+          see ``first_run_speech_step_state.should_persist_speech_config``.
+
+        That last condition is Important 3's core no-clobber guarantee: an
+        artifact that merely happens to be active from an earlier session
+        (for example, installed via the Library screen) is not, on its
+        own, reason to overwrite whatever is already configured in
+        ``[transcription]`` (``remote-whisper``, ``default_language="auto"``,
+        ...) just because the user pressed Next through a re-run without
+        touching this step.
+
+        When it does write, the persisted provider/model/language come
+        from ``first_run_speech_step_state.resolve_speech_selection`` --
+        the PRESSED language/precision radios (read via
+        ``_effective_language``/``_effective_precision``), never a
+        hardcoded recommendation (review finding 2; see that function's
+        docstring for the fallback rules).
+
+        Returns:
+            ``(True, "")`` when nothing needed writing, or the write
+            succeeded; ``(False, <message>)`` only when a write was
+            attempted and ``wizard.commit_config`` reported failure.
+        """
         import asyncio
 
         # Important 4: never persist a provider the runtime cannot execute,
