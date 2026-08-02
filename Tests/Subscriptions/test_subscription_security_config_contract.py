@@ -6,6 +6,8 @@ import ast
 from pathlib import Path
 import tomllib
 
+import pytest
+
 from tldw_chatbook.config import CONFIG_TOML_CONTENT
 from tldw_chatbook.Subscriptions.security import SecurityValidator
 
@@ -37,13 +39,13 @@ def _source_tree(source_path: Path) -> ast.Module:
 def _literal_collection_values(node: ast.AST) -> set[str] | None:
     """Return literal string elements for a supported source collection."""
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        values = {
+        if not all(isinstance(element, ast.Constant) for element in node.elts):
+            return None
+        return {
             element.value
             for element in node.elts
-            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            if isinstance(element.value, str)
         }
-        if len(values) == len(node.elts):
-            return values
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
@@ -53,6 +55,27 @@ def _literal_collection_values(node: ast.AST) -> set[str] | None:
     ):
         return _literal_collection_values(node.args[0])
     return None
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('["file", "ftp", "gopher", "file"]', {"file", "ftp", "gopher"}),
+        ('("file", 1, "ftp", None, "gopher")', {"file", "ftp", "gopher"}),
+        (
+            'frozenset({"file", "ftp", "gopher", "file"})',
+            {"file", "ftp", "gopher"},
+        ),
+        ('["file", scheme, "ftp", "gopher"]', None),
+    ],
+)
+def test_literal_collection_values_handles_static_mixed_collections(
+    source: str, expected: set[str] | None
+) -> None:
+    """Static collections retain string members; dynamic ones are rejected."""
+    node = ast.parse(source, mode="eval").body
+
+    assert _literal_collection_values(node) == expected
 
 
 def test_shipped_subscription_config_has_no_security_child_table() -> None:
