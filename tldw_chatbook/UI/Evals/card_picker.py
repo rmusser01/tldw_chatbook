@@ -181,6 +181,21 @@ class CardPicker(Vertical):
         await rows_container.mount_all(list(self._compose_rows()))
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        """Re-filters the row list as the search box is typed into.
+
+        Guarded on ``#evals-card-search``'s own id even though it is the
+        only `Input` this widget currently mounts, so a future sibling
+        `Input` added to this widget can never be mistaken for the search
+        box. ``event.stop()`` once that guard passes: this widget owns
+        searching its own cards end to end, so the event must not keep
+        bubbling past it to ``CharacterBenchEditor`` (which mounts this
+        picker) or any other ancestor that has no business reacting to a
+        keystroke in this search box.
+
+        Args:
+            event: The search `Input`'s own ``Changed`` message; only its
+                ``input.id``/``value`` are read.
+        """
         if event.input.id != "evals-card-search":
             return
         event.stop()
@@ -193,6 +208,21 @@ class CardPicker(Vertical):
         self.call_after_refresh(self._refresh_rows)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Toggles a card row's selection when ITS button is pressed.
+
+        Guarded on ``isinstance(row, CardRow)`` since ``Button.Pressed``
+        bubbles from any button, not only a card row -- there are none
+        today (this widget mounts only the search `Input` and its own
+        `CardRow` buttons; see ``compose()``), but the guard keeps this
+        handler correct if one is ever added. ``event.stop()`` once that
+        guard passes: a card-row selection is this widget's own concern,
+        so once handled here the event must not keep bubbling to
+        ``CharacterBenchEditor`` or any other ancestor.
+
+        Args:
+            event: The pressed button's own message; ``event.button`` is
+                checked against ``CardRow`` to find the selected card.
+        """
         row = event.button
         if not isinstance(row, CardRow):
             return
