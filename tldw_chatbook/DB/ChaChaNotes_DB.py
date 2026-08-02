@@ -162,7 +162,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 29  # Adds kept_briefings/kept_scripts (task-1780).
+    _CURRENT_SCHEMA_VERSION = 30  # Adds local-only messages.usage_json (cost ticker PR1).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2535,6 +2535,18 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v29_to_v30_message_usage.sql.
+    # NOTE: no trigger DDL. ``usage_json`` is LOCAL-ONLY (Console cost ticker
+    # PR1) and must never reach sync_log, so the messages_sync_* triggers are
+    # left untouched and the column is never added to their payloads. The
+    # schema-version bump is done separately in the runner (not embedded
+    # here) with a rowcount check, matching
+    # ``_update_character_authority_schema_version``.
+    _MIGRATE_V29_TO_V30_SQL = """
+ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -4254,6 +4266,60 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V28 to V29 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _migrate_from_v29_to_v30(self, conn: sqlite3.Connection) -> None:
+        """Migrate schema V29->V30: add the local-only ``usage_json`` column
+        to ``messages`` (Console cost ticker PR1). No sync triggers change --
+        the column is never synced (see v19/v24/v25/v26 local-only
+        precedent)."""
+        if self._get_db_version(conn) != 29:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V29→V30] Migration requires schema version 29"
+            )
+        logger.info(
+            f"Migrating schema from V29 to V30 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        try:
+            conn.executescript(self._MIGRATE_V29_TO_V30_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V29→V30] Migration script executed.")
+
+            version_cursor = conn.execute(
+                """
+                UPDATE db_schema_version
+                   SET version = 30
+                 WHERE schema_name = ?
+                   AND version = 29
+                """,
+                (self._SCHEMA_NAME,),
+            )
+            if version_cursor.rowcount != 1:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V29→V30] Migration version update was not applied"
+                )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 30:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V29→V30] Migration version check failed. Expected 30, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V29→V30] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V29→V30] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V29 to V30 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V29→V30] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V29 to V30 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4413,6 +4479,7 @@ UPDATE db_schema_version
                     26: self._migrate_from_v26_to_v27,
                     27: self._migrate_from_v27_to_v28,
                     28: self._migrate_from_v28_to_v29,
+                    29: self._migrate_from_v29_to_v30,
                 }
 
                 if current_db_version == 0:
@@ -6955,7 +7022,8 @@ UPDATE db_schema_version
             "SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, "
             "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
             "m.version, m.client_id, m.deleted, m.feedback, m.role, "
-            "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants "
+            "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants, "
+            "m.usage_json "
             "FROM messages m "
             "JOIN conversations c ON m.conversation_id = c.id "
             "WHERE m.conversation_id = ? AND m.deleted = 0 "
@@ -7001,7 +7069,8 @@ UPDATE db_schema_version
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
-                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
+                   m.usage_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7034,7 +7103,8 @@ UPDATE db_schema_version
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
-                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
+                   m.usage_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7838,8 +7908,9 @@ UPDATE db_schema_version
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
-                                      timestamp, ranking, last_modified, client_id, version, deleted, role)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
+                                      timestamp, ranking, last_modified, client_id, version, deleted, role,
+                                      usage_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
                 """
         params = (
             msg_id,
@@ -7854,6 +7925,7 @@ UPDATE db_schema_version
             now,
             client_id,
             role,
+            msg_data.get("usage_json"),
         )
         try:
             with self.transaction():
@@ -7906,7 +7978,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -8306,16 +8378,17 @@ UPDATE db_schema_version
         # The query joins with conversations to check its 'deleted' status.
         # Now includes variant fields for message variant support
         query = f"""
-            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
-                   {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   {image_col}, m.image_mime_type, m.timestamp, m.ranking,
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
-                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
+                   m.usage_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
-            WHERE m.conversation_id = ? 
+            WHERE m.conversation_id = ?
               AND m.deleted = 0
               AND c.deleted = 0
-            ORDER BY m.timestamp {order_by_timestamp} 
+            ORDER BY m.timestamp {order_by_timestamp}
             LIMIT ? OFFSET ?
         """
         try:
@@ -8452,6 +8525,7 @@ UPDATE db_schema_version
             "image_data",
             "image_mime_type",
             "feedback",
+            "usage_json",
         ]
 
         # Special handling for clearing image

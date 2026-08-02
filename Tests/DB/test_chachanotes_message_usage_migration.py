@@ -1,0 +1,87 @@
+"""v29 -> v30: local-only messages.usage_json column (cost ticker PR1).
+
+Local-only means: the column must NOT appear in any messages_sync_* trigger
+payload — same precedent as v24/v25/v26 local tables.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+# Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration test
+# (Tests/DB/test_chachanotes_character_authority_migration.py).
+SCHEMA_NAME = "rag_char_chat_schema"
+
+
+def _version(connection) -> int:
+    row = connection.execute(
+        "SELECT version FROM db_schema_version WHERE schema_name = ?",
+        (SCHEMA_NAME,),
+    ).fetchone()
+    return int(row[0])
+
+
+def _message_columns(connection) -> set[str]:
+    return {
+        row[1] for row in connection.execute("PRAGMA table_info(messages)").fetchall()
+    }
+
+
+def _seed_v29_database(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as v29_patch:
+        v29_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 29)
+        db = CharactersRAGDB(path, client_id="migration-seed")
+        connection = db.get_connection()
+        assert _version(connection) == 29
+        assert "usage_json" not in _message_columns(connection)
+        db.close_connection()
+
+
+def test_migration_adds_usage_json_and_bumps_version(tmp_path, monkeypatch):
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v29_database(db_path, monkeypatch)
+
+    db = CharactersRAGDB(db_path, client_id="migration-test")
+    connection = db.get_connection()
+    assert _version(connection) == 30
+    assert "usage_json" in _message_columns(connection)
+    db.close_connection()
+
+
+def test_usage_json_excluded_from_sync_triggers(tmp_path, monkeypatch):
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v29_database(db_path, monkeypatch)
+    db = CharactersRAGDB(db_path, client_id="migration-test")
+    connection = db.get_connection()
+    triggers = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'messages_sync%'"
+    ).fetchall()
+    assert triggers, "expected messages sync triggers to exist"
+    for (sql,) in triggers:
+        assert "usage_json" not in (sql or "")
+    db.close_connection()
+
+
+def test_add_and_update_message_round_trip_usage_json(tmp_path):
+    db = CharactersRAGDB(tmp_path / "fresh.db", client_id="usage-test")
+    conv_id = db.add_conversation({"title": "t"})
+    msg_id = db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "assistant",
+            "content": "hi",
+            "usage_json": '{"uncached_input": 10}',
+        }
+    )
+    row = db.get_message_by_id(msg_id)
+    assert row["usage_json"] == '{"uncached_input": 10}'
+
+    db.update_message(
+        msg_id,
+        {"usage_json": '{"uncached_input": 99}'},
+        expected_version=row["version"],
+    )
+    assert db.get_message_by_id(msg_id)["usage_json"] == '{"uncached_input": 99}'
