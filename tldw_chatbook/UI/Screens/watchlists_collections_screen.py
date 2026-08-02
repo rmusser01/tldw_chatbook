@@ -3635,21 +3635,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `default_briefing_preset_id`/`briefing_cadence_seconds`, as a plain
         dict.
 
-        Raw SQL against `db.conn`, matching `briefing_service._selection_
-        mode`'s own read of the same column -- `WatchlistBundleService.
-        list_watchlists`/`_get` deliberately select a narrower column list
-        that predates these two (Task 1), so there is no existing
-        service-layer getter for them to reuse. `briefing_cadence_seconds`
-        (spec #2 phase 4, Task 4) rides in the same read: one more column
-        on an already-narrow `WHERE id = ?` lookup, not a second query.
-        Always called through `asyncio.to_thread`; never call this
-        directly from the UI thread.
+        Matches `briefing_service._selection_mode`'s own read of the same
+        column -- `WatchlistBundleService.list_watchlists`/`_get`
+        deliberately select a narrower column list that predates these two
+        (Task 1), so there is no existing service-layer getter for them to
+        reuse. `briefing_cadence_seconds` (spec #2 phase 4, Task 4) rides
+        in the same read: one more column on an already-narrow `WHERE id =
+        ?` lookup, not a second query. Reads run inside `with
+        db.transaction() as conn:`, not a bare `db.conn.execute` (Qodo
+        rule 1011851: every accessor this stream has shipped goes through
+        `transaction()`, reads included, so rollback-on-exception is
+        consistently wired even for read paths). Always called through
+        `asyncio.to_thread`; never call this directly from the UI thread.
         """
-        row = db.conn.execute(
-            "SELECT briefing_selection_mode, default_briefing_preset_id, "
-            "briefing_cadence_seconds FROM watchlists WHERE id = ?",
-            (watchlist_id,),
-        ).fetchone()
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT briefing_selection_mode, default_briefing_preset_id, "
+                "briefing_cadence_seconds FROM watchlists WHERE id = ?",
+                (watchlist_id,),
+            ).fetchone()
         return dict(row) if row is not None else {}
 
     @staticmethod

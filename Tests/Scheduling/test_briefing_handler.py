@@ -59,11 +59,21 @@ def _task(watchlist_id: int | str = 7) -> dict[str, Any]:
 
 def _db_with_default_preset(preset_id: int | None):
     """A MagicMock standing in for `SubscriptionsDB`, answering exactly the
-    one query `_default_preset_id` makes."""
+    one query `_default_preset_id` makes.
+
+    `_default_preset_id` reads through `with subscriptions_db.transaction()
+    as conn:` (Qodo rule 1011851), not `subscriptions_db.conn.execute`
+    directly -- `transaction()` is wired here to hand back `db.conn`
+    itself, mirroring the real `SubscriptionsDB.transaction`, which yields
+    `self.conn`. Without this, `conn` inside the handler's `with` block
+    would resolve to an unrelated, unconfigured child mock instead of the
+    one `db.conn.execute` was set up on above.
+    """
     db = MagicMock()
     db.conn.execute.return_value.fetchone.return_value = (
         {"default_briefing_preset_id": preset_id} if preset_id is not None else None
     )
+    db.transaction.return_value.__enter__.return_value = db.conn
     return db
 
 
@@ -173,6 +183,12 @@ async def test_default_preset_id_read_runs_off_the_event_loop_thread():
     generate call receiving `preset_id=5` -- is identical either way); only
     watching which thread actually executed the read can tell the two
     apart.
+
+    `db.transaction()` is wired to hand back `db.conn` on `__enter__` --
+    see `_db_with_default_preset`'s docstring for why: `_default_preset_id`
+    reads through `with subscriptions_db.transaction() as conn:` (Qodo
+    rule 1011851), so the spy has to sit behind that same seam to observe
+    anything.
     """
     loop_thread_id = threading.get_ident()
     read_thread_ids: list[int] = []
@@ -186,6 +202,7 @@ async def test_default_preset_id_read_runs_off_the_event_loop_thread():
         return cursor
 
     db.conn.execute.side_effect = _spy_execute
+    db.transaction.return_value.__enter__.return_value = db.conn
 
     calls = []
 

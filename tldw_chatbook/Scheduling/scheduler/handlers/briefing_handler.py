@@ -124,29 +124,36 @@ class BriefingJobHandler:
     def _default_preset_id(self, watchlist_id: int) -> int | None:
         """The watchlist's stored `default_briefing_preset_id`, or `None`.
 
-        Raw SQL against `subscriptions_db.conn`, matching
-        `watchlists_collections_screen._read_watchlist_briefing_settings`'s
-        own read of the same column -- there is no service-layer getter for
-        it either. That method's own docstring is explicit: "Always called
-        through `asyncio.to_thread`; never call this directly from the UI
-        thread" -- and `_run_generation` (the only caller, review round 1)
-        follows the same rule, NOT `WatchlistCheckHandler.handle`, which
-        calls the service method `get_subscription()`, not raw `.conn` SQL,
-        and reads a table this handler's own spawned generations never
-        write to concurrently. Both distinctions matter here: `SubscriptionsDB`
-        sets no `busy_timeout` (SQLite's 5s default applies), and THIS
-        handler's own `generate_briefing` calls write to `watchlists`'/
-        `briefings`' shared connection from `asyncio.to_thread` workers --
-        so a direct, synchronous call here could block on a lock its own
-        spawned work is holding, self-inflicting exactly the tick stall
-        Locked Decision 3 exists to prevent. Being inside the spawned task
-        (never inside `handle`) means a wait here only delays this one
-        generation's own start, never the scheduler tick.
+        Matches `watchlists_collections_screen._read_watchlist_briefing_
+        settings`'s own read of the same column -- there is no
+        service-layer getter for it either. That method's own docstring is
+        explicit: "Always called through `asyncio.to_thread`; never call
+        this directly from the UI thread" -- and `_run_generation` (the
+        only caller, review round 1) follows the same rule, NOT
+        `WatchlistCheckHandler.handle`, which calls the service method
+        `get_subscription()`, not raw `.conn` SQL, and reads a table this
+        handler's own spawned generations never write to concurrently.
+        Both distinctions matter here: `SubscriptionsDB` sets no
+        `busy_timeout` (SQLite's 5s default applies), and THIS handler's
+        own `generate_briefing` calls write to `watchlists`'/`briefings`'
+        shared connection from `asyncio.to_thread` workers -- so a direct,
+        synchronous call here could block on a lock its own spawned work
+        is holding, self-inflicting exactly the tick stall Locked Decision
+        3 exists to prevent. Being inside the spawned task (never inside
+        `handle`) means a wait here only delays this one generation's own
+        start, never the scheduler tick.
+
+        The read runs inside `with subscriptions_db.transaction() as
+        conn:`, not a bare `subscriptions_db.conn.execute` (Qodo rule
+        1011851: every accessor this stream has shipped goes through
+        `transaction()`, reads included, so rollback-on-exception is
+        consistently wired even for read paths).
         """
-        row = self.subscriptions_db.conn.execute(
-            "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
-            (watchlist_id,),
-        ).fetchone()
+        with self.subscriptions_db.transaction() as conn:
+            row = conn.execute(
+                "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+                (watchlist_id,),
+            ).fetchone()
         if row is None:
             return None
         return row["default_briefing_preset_id"]

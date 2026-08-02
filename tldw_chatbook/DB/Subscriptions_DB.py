@@ -2444,7 +2444,12 @@ class SubscriptionsDB(BaseDB):
           passing `None` explicitly clears `watchlists.briefing_cadence_seconds`
           back to "never scheduled" (Locked Decision 4 of the briefings
           phase 4 plan: scheduled briefings are opt-in per watchlist,
-          `NULL` means never); passing a positive int sets the cadence.
+          `NULL` means never); passing a positive `int` sets the cadence.
+          Must be a genuine `int`, not merely `int`-like: `bool` is a
+          subclass of `int` in Python, so without an explicit
+          `isinstance(..., bool)` exclusion `True` would silently pass as
+          a cadence of one second -- a runaway schedule -- rather than
+          being rejected (Qodo review).
 
         Args:
             watchlist_id: `watchlists.id` of the row to update.
@@ -2453,10 +2458,10 @@ class SubscriptionsDB(BaseDB):
             default_preset_id: A `briefing_presets.id`, `None` to clear, or
                 the `_UNSET` sentinel (default) to leave the current value
                 alone.
-            briefing_cadence_seconds: A positive number of seconds between
-                scheduled briefings, `None` to clear (never scheduled), or
-                the `_UNSET` sentinel (default) to leave the current value
-                alone.
+            briefing_cadence_seconds: A positive `int` number of seconds
+                between scheduled briefings, `None` to clear (never
+                scheduled), or the `_UNSET` sentinel (default) to leave
+                the current value alone.
 
         Returns:
             None.
@@ -2464,7 +2469,8 @@ class SubscriptionsDB(BaseDB):
         Raises:
             ValueError: If `selection_mode` is given and is not one of the
                 valid modes, or if `briefing_cadence_seconds` is given and
-                is not a positive number.
+                is not a positive `int` (a `bool`, a numeric string, a
+                `float`, or a non-positive value all raise).
         """
         # Pact: this tuple must name the exact same three strings, in the
         # same meaning, as `briefing_selection.VALID_MODES`
@@ -2490,11 +2496,15 @@ class SubscriptionsDB(BaseDB):
             updates.append("default_briefing_preset_id = ?")
             values.append(default_preset_id)
         if briefing_cadence_seconds is not _UNSET:
-            if briefing_cadence_seconds is not None and briefing_cadence_seconds <= 0:
+            if briefing_cadence_seconds is not None and (
+                not isinstance(briefing_cadence_seconds, int)
+                or isinstance(briefing_cadence_seconds, bool)
+                or briefing_cadence_seconds <= 0
+            ):
                 raise ValueError(
                     f"set_watchlist_briefing_settings: briefing_cadence_seconds "
-                    f"must be a positive number of seconds or None (never); got "
-                    f"{briefing_cadence_seconds!r}"
+                    f"must be a positive int number of seconds or None (never); "
+                    f"got {briefing_cadence_seconds!r}"
                 )
             updates.append("briefing_cadence_seconds = ?")
             values.append(briefing_cadence_seconds)

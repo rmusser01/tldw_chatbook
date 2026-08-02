@@ -26,6 +26,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 
 #: The one place this project's briefing scheduled-task ids are built AND
@@ -95,7 +96,13 @@ def _parse_iso_timestamp(value: str | datetime | None) -> datetime | None:
 class BriefingProjection:
     """Project `SubscriptionsDB.list_briefing_schedules` rows into tasks."""
 
-    def __init__(self, subscriptions_db):
+    def __init__(self, subscriptions_db: SubscriptionsDB) -> None:
+        """Initialize the projection.
+
+        Args:
+            subscriptions_db: The `SubscriptionsDB` `list_briefing_schedules`
+                is read from.
+        """
         self.subscriptions_db = subscriptions_db
 
     def list_jobs(
@@ -135,6 +142,17 @@ class BriefingProjection:
         than at some indefinitely deferred time -- an opted-in schedule
         with no history should fire on the next tick, not wait a full
         cadence period.
+
+        Args:
+            row: One `list_briefing_schedules` row: `watchlist_id`, `name`,
+                `briefing_cadence_seconds`, `last_completed_at`, and
+                `last_attempt_at`.
+            owner_id: Owner to stamp on the emitted task.
+            now: The "due now" fallback used when the row has neither a
+                completion nor an attempt on record yet.
+
+        Returns:
+            The row projected into a `ScheduledTask`.
         """
         watchlist_id = row["watchlist_id"]
         cadence_seconds = int(row["briefing_cadence_seconds"])

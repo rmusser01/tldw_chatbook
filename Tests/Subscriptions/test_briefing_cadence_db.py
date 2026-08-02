@@ -87,6 +87,26 @@ def test_briefing_cadence_seconds_rejects_non_positive_values_naming_the_value(b
         )
 
 
+@pytest.mark.parametrize("bad_value", [True, "3600", 1.5])
+def test_briefing_cadence_seconds_rejects_non_int_values_naming_the_value(bad_value):
+    """Qodo review: the pre-fix check only tested `<= 0`, which raises a
+    bare `TypeError` for a non-numeric value instead of the documented
+    `ValueError` -- and, worse, silently accepts `True` as a one-second
+    cadence, since `bool` is a subclass of `int` in Python. A schedule that
+    means to be off (or misconfigured) must never resolve to "run every
+    second"; `set_watchlist_briefing_settings` must require a genuine
+    `int` (rejecting `bool`, numeric strings, and floats alike) and name
+    the rejected value in the raised `ValueError`.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = _make_watchlist(db)
+
+    with pytest.raises(ValueError, match=str(bad_value)):
+        db.set_watchlist_briefing_settings(
+            watchlist_id, briefing_cadence_seconds=bad_value
+        )
+
+
 def test_briefing_cadence_seconds_rejected_value_is_not_written():
     """A rejected call must not partially apply -- the column stays
     whatever it was before the raise."""
