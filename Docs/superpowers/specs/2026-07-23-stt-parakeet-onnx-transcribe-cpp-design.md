@@ -4,10 +4,10 @@
 
 **Date:** 2026-07-23
 
-**Related tasks:** TASK-505, TASK-593 through TASK-605, TASK-1861; see the
+**Related tasks:** TASK-505, TASK-593 through TASK-605, TASK-1915; see the
 [delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
-**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md), amended by [ADR-040](../../../backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md) for direct-path-first transcribe.cpp delivery
+**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md), amended by [ADR-041](../../../backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md) for direct-path-first transcribe.cpp delivery
 
 **Primary upstreams reviewed:** `onnx-asr` 0.12.0 and `transcribe.cpp` 0.1.3
 
@@ -16,7 +16,7 @@
 > downloads, copying, and artifact promotion are deferred until that provider
 > works end to end. The first provider reuses the existing spawn-isolated
 > Library parse pool and one-heavy-job gate; the dedicated resident executor is
-> later hardening, not a prerequisite. See ADR-040 and the revised TASK-597
+> later hardening, not a prerequisite. See ADR-041 and the revised TASK-597
 > design.
 
 ## Executive decision
@@ -291,7 +291,7 @@ exact pre-1.0 release. The first provider:
   GGUF…** or an eligible explicit **Retry with faster-whisper**.
 
 TASK-601 later supplies the dedicated resident heavy executor, stronger
-heavy/light isolation, and finer cancellation. TASK-1861 later supplies the
+heavy/light isolation, and finer cancellation. TASK-1915 later supplies the
 curated representative catalog, verified downloads, managed local-file import,
 and artifact lifecycle. Neither is a prerequisite for TASK-604's usable batch
 path, and direct local files never become automatic routing targets.
@@ -991,12 +991,12 @@ provider lists.
 This first path has no managed artifact resolution, lease, resident-model
 reuse, dedicated executor, or runtime-version provenance migration. Its stable
 model identity is `local-gguf:<allowlisted-architecture>`, with null artifact
-identity. TASK-601 and TASK-1861 add the deferred hardening and acquisition
+identity. TASK-601 and TASK-1915 add the deferred hardening and acquisition
 features.
 
 ### Managed Parakeet and hardened-executor batch submission
 
-The following is the later TASK-601/TASK-602/TASK-1861 target and does not gate
+The following is the later TASK-601/TASK-602/TASK-1915 target and does not gate
 TASK-604:
 
 1. Build a canonical request for each selected media item.
@@ -1376,7 +1376,7 @@ Before implementation planning:
 1. Create or select atomic Backlog tasks in dependency order.
 2. Link [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
    from each affected task and plan.
-3. Apply [ADR-040](../../../backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md)
+3. Apply [ADR-041](../../../backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md)
    to transcribe.cpp. Its dependency order is:
    1. TASK-597 admits an explicit local GGUF without native imports or managed
       storage.
@@ -1384,7 +1384,7 @@ Before implementation planning:
       spawn worker and one-heavy-job gate.
    3. TASK-601 may later migrate the provider to the dedicated resident
       executor.
-   4. TASK-1861 adds curated verified downloads and managed local-file import
+   4. TASK-1915 adds curated verified downloads and managed local-file import
       after the direct provider works.
 4. Keep the separate Parakeet/artifact slices independently reviewable:
    qualify Parakeet v2/v3; build shared artifact descriptors and lifecycle; add

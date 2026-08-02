@@ -14,11 +14,11 @@ independently reviewable Backlog tasks.
 leases, STT provider boundaries, process ownership, persistence, dependency
 profiles, routing, migration, and legacy removal.
 
-> **2026-08-02 direct-path amendment:** ADR-040 changes the transcribe.cpp
+> **2026-08-02 direct-path amendment:** ADR-041 changes the transcribe.cpp
 > critical path. TASK-597 now admits an explicit local GGUF without managed
 > storage. TASK-604 delivers real Library batch transcription through the
 > existing spawn-isolated one-heavy-job lane and no longer depends on TASK-601.
-> TASK-601 remains later executor hardening; TASK-1861 adds managed catalog,
+> TASK-601 remains later executor hardening; TASK-1915 adds managed catalog,
 > download, and import last. The amended rows below supersede the original
 > store-first ordering for those tasks.
 
@@ -51,10 +51,10 @@ profiles, routing, migration, and legacy removal.
 | [TASK-603](../../../backlog/tasks/task-603%20-%20Restore-bounded-Parakeet-ONNX-dictation-buffers.md) | Bounded dictation-buffer compatibility | TASK-602 |
 | [TASK-604](../../../backlog/tasks/task-604%20-%20Add-direct-local-transcribe.cpp-batch-STT-provider.md) | Direct-local transcribe.cpp provider plus real Library batch wiring | TASK-597, TASK-599, TASK-600 |
 | [TASK-605](../../../backlog/tasks/task-605%20-%20Promote-Parakeet-ONNX-defaults-and-remove-legacy-providers.md) | Default promotion, config migration, legacy removal | TASK-596, TASK-597, TASK-598, TASK-602, TASK-603, TASK-604 |
-| [TASK-1861](../../../backlog/tasks/task-1861%20-%20Add-managed-transcribe.cpp-GGUF-acquisition-after-provider.md) | Curated catalog, verified download, and managed local GGUF import | TASK-596, TASK-597, TASK-604 |
+| [TASK-1915](../../../backlog/tasks/task-1915%20-%20Add-managed-transcribe.cpp-GGUF-acquisition-after-provider.md) | Curated catalog, verified download, and managed local GGUF import | TASK-596, TASK-597, TASK-604 |
 
 The original independent starting tracks were TASK-505 and TASK-593, with
-TASK-599 also able to proceed without artifact storage. Under ADR-040,
+TASK-599 also able to proceed without artifact storage. Under ADR-041,
 transcribe.cpp's direct-local path is now TASK-597 → TASK-604. It is not
 blocked on the managed artifact or dedicated-executor tracks.
 
@@ -80,7 +80,7 @@ changes them.
 | TASK-603 | Dictation controller integration over `LocalSTTExecutor` | Buffer, coalescing, backpressure, latency, cancellation, and coexistence tests |
 | TASK-604 | `tldw_chatbook/STT/providers/transcribe_cpp.py`, optional extra, provider settings, existing Library ingest selector/routing/service seams | Selection/config privacy, complete production batch path, worker revalidation, native capability, crash containment, and wheel/ABI tests |
 | TASK-605 | Config migration, provider registration removal, dependency cleanup, release docs | Migration fixtures, stale-ID scans, full release-gate evidence |
-| TASK-1861 | Managed GGUF catalog/download/import over the shared artifact core | Download/import integrity, lifecycle, recovery, and platform tests |
+| TASK-1915 | Managed GGUF catalog/download/import over the shared artifact core | Download/import integrity, lifecycle, recovery, and platform tests |
 
 ## Cross-task invariants
 

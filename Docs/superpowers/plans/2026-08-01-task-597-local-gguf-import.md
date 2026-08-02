@@ -15,15 +15,15 @@
 - Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-597-local-gguf-import` on `codex/task-597-local-gguf-import`.
 - Governing design: `Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md`.
 - ADR required: yes.
-- ADR path: `backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md`.
-- Reason: ADR-040 accepts direct local GGUF paths before managed acquisition and amends ADR-025 for this provider.
+- ADR path: `backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md`.
+- Reason: ADR-041 accepts direct local GGUF paths before managed acquisition and amends ADR-025 for this provider.
 - Use `superpowers:test-driven-development` for new behavior and `superpowers:verification-before-completion` before completion claims.
-- Do not add provider configuration, Textual UI, transcribe.cpp imports, inference, routing, downloads, copying, staging, activation, or artifact-store state. The preserved descriptor prototype remains dead reference code until TASK-1861 reviews it.
+- Do not add provider configuration, Textual UI, transcribe.cpp imports, inference, routing, downloads, copying, staging, activation, or artifact-store state. The preserved descriptor prototype remains dead reference code until TASK-1915 reviews it.
 
 ## File map
 
 - Rename `tldw_chatbook/Model_Artifacts/gguf_import.py` to `tldw_chatbook/Model_Artifacts/gguf_admission.py` — bounded GGUF parsing, exact pinned compatibility, and direct-file admission only.
-- Create `tldw_chatbook/Model_Artifacts/_deferred_gguf_managed_import.py` — private, unexported TASK-1861 reference containing the recovered store-facing descriptor prototype and no active registration/call path.
+- Create `tldw_chatbook/Model_Artifacts/_deferred_gguf_managed_import.py` — private, unexported TASK-1915 reference containing the recovered store-facing descriptor prototype and no active registration/call path.
 - Rename `Tests/Model_Artifacts/test_gguf_import.py` to `Tests/Model_Artifacts/test_gguf_admission.py` — retained parser/platform coverage plus new path-boundary, identity, privacy, and import-boundary tests.
 - Keep `Tests/Model_Artifacts/gguf_test_helpers.py` unchanged unless a new deterministic binary fixture is genuinely required.
 - Update `backlog/tasks/task-597 - Validate-explicit-local-transcribe.cpp-GGUF-files.md` through Backlog CLI before implementation and again at closeout.
@@ -142,7 +142,7 @@ def test_admission_import_boundary_accepts_approved_import_shapes(statement):
 Add a source-only deferred-boundary test that expects:
 
 - `_deferred_gguf_managed_import.py` exists and parses;
-- its docstring contains both `DEFERRED` and `TASK-1861`;
+- its docstring contains both `DEFERRED` and `TASK-1915`;
 - its AST assigns `__all__` to an empty tuple;
 - its AST defines the recovered `runtime_constraint_admits_pinned_version`,
   `_eligible_curated_descriptor`, `_local_gguf_descriptor`, and
@@ -172,7 +172,7 @@ git show fd9956903^:tldw_chatbook/Model_Artifacts/gguf_import.py
 
 Create `_deferred_gguf_managed_import.py` with:
 
-- a `DEFERRED TASK-1861` reference-only docstring;
+- a `DEFERRED TASK-1915` reference-only docstring;
 - `__all__: tuple[str, ...] = ()`;
 - a local preserved `TRANSCRIBE_CPP_VERSION = "0.1.3"` and its bounded release
   tuple/constraint grammar rather than changing or depending on the active
@@ -586,7 +586,7 @@ Use `superpowers:requesting-code-review` against the complete TASK-597 diff. Add
 Use Backlog CLI to:
 
 - check all seven acceptance criteria;
-- add concise Implementation Notes naming the rename, retained parser/compatibility boundary, private deferred TASK-1861 prototype, same-handle admission, path privacy, tests, and ADR-040;
+- add concise Implementation Notes naming the rename, retained parser/compatibility boundary, private deferred TASK-1915 prototype, same-handle admission, path privacy, tests, and ADR-041;
 - set TASK-597 to `Done` only after the required tests, static checks, and review pass.
 
 - [ ] **Step 7: Commit closeout metadata and verify the committed branch**
@@ -600,4 +600,4 @@ git status --short
 
 ## Completion boundary
 
-TASK-597 is complete when a caller can validate one explicit local GGUF and receive bounded admission evidence suitable for TASK-604. The preserved TASK-1861 prototype remains private and unreachable. A user still cannot transcribe through transcribe.cpp until TASK-604 adds configuration, Library batch wiring, the pinned native provider, and persisted results.
+TASK-597 is complete when a caller can validate one explicit local GGUF and receive bounded admission evidence suitable for TASK-604. The preserved TASK-1915 prototype remains private and unreachable. A user still cannot transcribe through transcribe.cpp until TASK-604 adds configuration, Library batch wiring, the pinned native provider, and persisted results.

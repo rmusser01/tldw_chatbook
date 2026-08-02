@@ -1,8 +1,8 @@
-# ADR-040: Use explicit local GGUF paths before managed acquisition
+# ADR-041: Use explicit local GGUF paths before managed acquisition
 
 Status: Accepted
 Date: 2026-08-02
-Related Tasks: TASK-597, TASK-601, TASK-604, TASK-1861
+Related Tasks: TASK-597, TASK-601, TASK-604, TASK-1915
 Amends: ADR-025
 
 ## Decision
@@ -39,7 +39,7 @@ The first usable provider reuses the existing Library parse pool and its
 one-heavy-job gate. It does not wait for TASK-601's dedicated resident executor,
 fine-grained cross-process cancellation, artifact leases, or heavy/light pool
 separation. TASK-601 remains later hardening; managed GGUF acquisition remains
-TASK-1861.
+TASK-1915.
 
 ## Context
 
@@ -57,7 +57,7 @@ without changing inference behavior.
 
 - TASK-597 contains parser, compatibility, and direct-file admission only.
 - Existing managed-import prototype code may remain in a private module marked
-  for TASK-1861, but it has no public export, registration, production import,
+  for TASK-1915, but it has no public export, registration, production import,
   call site, or execution path until that later task reviews and activates it.
 - TASK-604 owns file selection/configuration, the real Library batch selector
   and production wiring, and actual transcribe.cpp use.

@@ -14,7 +14,7 @@ dependencies:
   - TASK-600
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
-  - backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md
+  - backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
   - Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md

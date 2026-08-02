@@ -1,5 +1,5 @@
 ---
-id: TASK-1861
+id: TASK-1915
 title: Add managed transcribe.cpp GGUF acquisition after provider
 status: To Do
 assignee: []
@@ -13,7 +13,7 @@ dependencies:
   - TASK-597
   - TASK-604
 references:
-  - backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md
+  - backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md
 documentation:
   - Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md
 priority: medium

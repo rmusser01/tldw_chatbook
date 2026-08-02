@@ -55,7 +55,7 @@ This slice includes:
 - Inspecting GGUF contents or inferring architecture, quantization, language,
   or runtime compatibility.
 - Importing local GGUF files: TASK-597 owns explicit direct-local GGUF
-  admission, while managed local import is deferred to TASK-1861.
+  admission, while managed local import is deferred to TASK-1915.
 - Adding or configuring a Hugging Face token in this screen.
 - Search pagination, result caching, model-card/README rendering, compatibility
   detection, automatic activation, or download recommendations.

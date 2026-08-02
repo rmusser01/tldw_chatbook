@@ -145,7 +145,7 @@ def _assert_deferred_source_contract(source: str) -> None:
     tree = ast.parse(source)
     docstring = ast.get_docstring(tree) or ""
     assert "DEFERRED" in docstring
-    assert "TASK-1861" in docstring
+    assert "TASK-1915" in docstring
 
     assert _import_targets(source) == _DEFERRED_EXPECTED_IMPORT_TARGETS
 
