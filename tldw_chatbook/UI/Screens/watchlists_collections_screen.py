@@ -11,7 +11,7 @@ import asyncio
 import re
 import threading
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -196,17 +196,102 @@ NOISE_SELECTORS_SAVED_TOAST = (
     "A change the page makes before that check will not be reported."
 )
 
-#: Worker group for the two item read/unread status writes. They must
-#: supersede each other (a fast `j` run should not queue up one write per key)
-#: but must NOT supersede unrelated work -- see the note at
-#: `_mark_item_read_on_open`'s `run_worker` call.
-_ITEM_STATUS_WORKER_GROUP = "wl-item-status"
+#: Per-item worker-group prefix for the item-status write drainer (TASK-1541,
+#: Qodo redesign). Ingest, Ignore, the unread toggle, and mark-read-on-open
+#: ALL funnel through `_dispatch_item_status`/`_drain_item_status` now, one
+#: drainer per item id -- see those methods' docstrings.
+#:
+#: This replaces two separate `exclusive=True` "supersede" worker groups an
+#: earlier version of this fix used (one shared cross-item group for the
+#: read/unread pair, one per-item group for Ingest/Ignore): a whole-branch
+#: re-review found that "supersede by cancellation" model unsound for a
+#: durable write, two independent ways, once the write got a genuine
+#: `asyncio.to_thread` suspension point (see `_update_item_status_off_loop`):
+#:
+#: 1. `asyncio.to_thread`'s underlying OS thread is not itself cancellable
+#:    once it has started running -- cancelling the AWAITING coroutine does
+#:    not stop the write. So a superseded write's thread and its
+#:    replacement's thread became two independent, un-ordered writes to the
+#:    SAME row, either able to commit last: rapid Ingest-then-Ignore on one
+#:    item could leave the DATABASE on the FIRST action while the UI (and any
+#:    cache patch) showed the second.
+#: 2. The opposite failure mode: `asyncio.to_thread` CAN be cancelled before
+#:    the executor picks the work item up at all (reachable under a
+#:    saturated default executor, no exotic timing needed) -- in which case
+#:    the write never runs. The old `except asyncio.CancelledError` handler
+#:    assumed "cancelled implies the write is durable" and patched the cache
+#:    to the target status regardless, which is simply false in this case:
+#:    the cache would then claim a status the database never reached.
+#:
+#: Desired-status coalescing (`_ItemStatusIntent`) replaces cancellation
+#: entirely rather than patching either hole: each item gets at most one
+#: QUEUED write (the latest dispatch overwrites the dict entry) plus at most
+#: one IN-FLIGHT write, and the drainer always `await`s a write to genuine
+#: completion -- success or a real exception -- before popping the next
+#: entry for that SAME item, so two writes for one item can never race each
+#: other, and nothing is ever cancelled mid-write. Two DIFFERENT items'
+#: drainers still never interact at all (own group each, `exclusive=False`),
+#: which is the one part of the old design worth keeping: a fast `j`/`k` run
+#: or a rapid Ingest/Ignore burst still costs at most one queued write per
+#: item, not one write per keystroke.
+_ITEM_STATUS_DRAIN_GROUP_PREFIX = "wl-item-status-drain:"
 
 #: Item statuses the reader's "Mark unread" button must never overwrite: they
 #: are not read/unread states at all, and `new` would destroy the record.
 #: A frozenset, since `_blocking_status_for` now asks the backend for the
 #: item's one status and only has to decide whether it is in this set.
 _NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
+
+
+@dataclass(frozen=True)
+class _ItemStatusIntent:
+    """One desired item-status write, captured at the moment it is dispatched.
+
+    TASK-1541 (Qodo redesign). `_dispatch_item_status` stores exactly one of
+    these per item id in `WatchlistsCollectionsScreen._item_status_desired`
+    -- a second dispatch for the same item before the first has been popped
+    OVERWRITES this dict entry rather than queuing a second one, which is
+    the whole of the "coalescing" scheme: at most one write is ever queued
+    per item, and the drainer (`_drain_item_status`) always acts on
+    whichever intent is current when it next looks.
+
+    Fields mirror exactly what `_update_item_status`'s four callers used to
+    pass directly (Ingest, Ignore, the unread toggle, mark-read-on-open) --
+    nothing new was invented, the dispatch-time context just now has to
+    travel through a dict entry instead of a function call.
+
+    Attributes:
+        status: The target `subscription_items.status` value.
+        notify_toast: Whether a successful (or refused/failed) write should
+            surface a toast. `False` only for the silent mark-read-on-open
+            path, matching `_update_item_status`'s previous default.
+        refresh: Whether a successful write should reload `ItemsPane.items`
+            and recompose via `_refresh_overview_data()`. `False` only for
+            mark-read-on-open, which patches `patch_item` in place instead
+            -- see `_mark_item_read_on_open`'s docstring for why a recompose
+            on every item SELECTION was a CRITICAL regression.
+        patch_item: The live dict object (already held by `ItemsPane.items`/
+            `_selected_content_item`/`ContentPane.item`) to mutate in place
+            on a successful write, or `None` when the caller relies on
+            `refresh` instead. Passed by exactly one caller in the whole
+            app, `_mark_item_read_on_open` -- see `handle_unread_toggle_
+            requested`'s docstring for why that matters.
+        gate: Whether the drainer must re-ask the backend
+            (`_blocking_status_for`) immediately before writing and refuse
+            if the item already holds a terminal status
+            (`_NON_READ_STATE_STATUSES`). `True` for the unread toggle and
+            mark-read-on-open, which can otherwise clobber an Ingest/Ignore
+            that neither of those two dispatch paths would ever see coming
+            (Ingest/Ignore pass no `patch_item=`, so nothing patches the
+            cache those two read from). `False` for Ingest/Ignore
+            themselves -- there is nothing to protect an ingest/ignore FROM.
+    """
+
+    status: str
+    notify_toast: bool = True
+    refresh: bool = True
+    patch_item: dict[str, Any] | None = None
+    gate: bool = False
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -608,6 +693,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._last_persisted_collapsed: frozenset[Region] | None = None
         self._pending_persist_layout: RegionLayout | None = None
         self._layout_persist_lock = threading.Lock()
+        # Desired-status coalescing for the four item-status write paths
+        # (Ingest, Ignore, the unread toggle, mark-read-on-open) -- TASK-1541,
+        # Qodo redesign. See `_ItemStatusIntent`'s docstring for the full
+        # unsoundness `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s comment names, and
+        # `_dispatch_item_status`/`_drain_item_status` for the mechanism these
+        # two dicts drive. Event-loop-only state, exactly like every other
+        # in-flight flag on this screen (`_briefing_in_flight` et al. above):
+        # read and written only from the loop thread, never from inside the
+        # `asyncio.to_thread` write itself.
+        #
+        # `_item_status_desired` holds at most one queued write per item id --
+        # a second dispatch for the same item overwrites the entry rather
+        # than adding a second one, which is the whole of the coalescing
+        # scheme. `_item_status_draining` names which items currently have a
+        # drainer worker running, so a dispatch that lands while one is
+        # already draining does not start a second one (and NEVER cancels the
+        # running one) -- it just relies on the running drainer to notice the
+        # new entry on its own next loop.
+        self._item_status_desired: dict[Any, "_ItemStatusIntent"] = {}
+        self._item_status_draining: set[Any] = set()
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -6028,10 +6133,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         `refresh=False` + `patch_item=item` (Task 5 fix round 1, CRITICAL):
         this fires on every single item SELECTION, not just a deliberate
-        button click. `_update_item_status`'s default refresh reloads
-        `ItemsPane.items` and calls `_refresh_overview_data()`, and
-        `overview_data` is `reactive({}, recompose=True)` -- a SCREEN-level
-        recompose, which rebuilds every region via its factory
+        button click. A default `refresh` reloads `ItemsPane.items` and
+        calls `_refresh_overview_data()`, and `overview_data` is
+        `reactive({}, recompose=True)` -- a SCREEN-level recompose, which
+        rebuilds every region via its factory
         (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
         `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
         default refresh, one item selection detached the old `ItemsPane`,
@@ -6041,12 +6146,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_selected_content_item`/`ContentPane.item` in place instead, so a
         later status check sees "reviewed" without forcing a rebuild.
 
-        This reuses the exact status column `_update_item_status` already
-        writes for the deliberate item-status actions (Ingest/Ignore, the
-        unread toggle) -- `SubscriptionsDB.mark_item_status`, keyed by the
+        This reuses the exact status column Ingest/Ignore/the unread toggle
+        already write -- `SubscriptionsDB.mark_item_status`, keyed by the
         item's own row id, not by any (watchlist, item) pair -- so it is
         global by construction: the same article read from "All sources" is
         read in every watchlist whose sources include it.
+
+        The "new" check above is a cheap pre-filter against the CACHED dict
+        only, so a plain non-"new" selection dispatches nothing at all -- but
+        the write itself is gated again, against the BACKEND, immediately
+        before it happens inside `_drain_item_status` (`gate=True` below;
+        fix wave, F2b, Important, and TASK-1541's Qodo redesign afterwards).
+        Ingest/Ignore never patch this dict (they pass no `patch_item=`), so
+        if either ran behind this cache's back -- or the dict went stale for
+        any other reason -- the cached "new" check above cannot see it;
+        asking the backend right before the write, mirroring the unread
+        toggle's own `_blocking_status_for` guard, closes that regardless of
+        the cause.
         """
         if item is None:
             return
@@ -6055,24 +6171,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         item_id = item.get("id")
         if item_id is None:
             return
-        self.run_worker(
-            self._update_item_status(
-                item_id,
-                "reviewed",
+        self._dispatch_item_status(
+            item_id,
+            _ItemStatusIntent(
+                status="reviewed",
                 notify_toast=False,
                 refresh=False,
                 patch_item=item,
+                gate=True,
             ),
-            exclusive=True,
-            # Whole-branch review (Important): `exclusive=True` with no
-            # `group=` lands in the DEFAULT group, which ~25 call sites on
-            # this screen share -- including `_check_now_source`. Since Phase
-            # D this worker fires on every item selection and every `j`/`k`,
-            # so opening an item cancelled an in-flight "Check now" network
-            # fetch the user had just been toasted about. Give both
-            # item-status writes their own group so they only ever supersede
-            # each other.
-            group=_ITEM_STATUS_WORKER_GROUP,
         )
 
     @on(UnreadToggleRequested)
@@ -6090,16 +6197,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `new`, losing the fact of an ingest and dropping the item out of the
         Ingested filter that was the only way to find it again.
 
-        The refusal is decided in `_mark_item_unread`, by asking the backend,
-        NOT from `event.item` (re-review, Important). `event.item` is
+        The refusal is decided by `_drain_item_status`'s gate
+        (`_item_status_write_allowed`), by asking the backend, NOT from
+        `event.item` (re-review, Important). `event.item` is
         `ContentPane.item` -- the dict the screen has held since the item was
         selected -- and `handle_ingest_requested`/`handle_ignore_requested`
-        call `_update_item_status` with no `patch_item=`, so that dict is
-        never updated when they run. `patch_item=` is passed by exactly one
-        caller in the whole app (`_mark_item_read_on_open`) and by neither of
-        those two. Ingest an open item and the reader's dict still says
-        `reviewed`, so a guard reading `event.item` never fires and the button
-        destroys the ingest anyway -- reproduced end to end.
+        dispatch with no `patch_item=`, so that dict is never updated when
+        they run. `patch_item=` is passed by exactly one dispatch path in the
+        whole app (`_mark_item_read_on_open`) and by neither of those two.
+        Ingest an open item and the reader's dict still says `reviewed`, so a
+        guard reading `event.item` never fires and the button destroys the
+        ingest anyway -- reproduced end to end.
         """
         event.stop()
         item = event.item
@@ -6108,16 +6216,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         item_id = item.get("id")
         if item_id is None:
             return
-        self.run_worker(
-            self._mark_item_unread(item_id),
-            exclusive=True,
-            group=_ITEM_STATUS_WORKER_GROUP,
-        )
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
 
-    async def _mark_item_unread(self, item_id: Any) -> None:
-        """Ask the backend for the item's real status, then refuse or write.
+    async def _item_status_write_allowed(
+        self, item_id: Any, intent: "_ItemStatusIntent"
+    ) -> bool:
+        """The backend terminal-status gate, re-asked right before the write.
 
-        Deciding here, from a live query, rather than keeping the screen's
+        TASK-1541 (Qodo redesign). Shared by both gated intents (the unread
+        toggle and mark-read-on-open, `_ItemStatusIntent.gate=True`) --
+        previously this check was duplicated between `_mark_item_unread` and
+        `_confirm_new_then_mark_item_read_on_open`, one per caller; both are
+        gone now, folded into this one method plus `_drain_item_status`'s
+        loop.
+
+        Deciding from a live backend query, rather than keeping the screen's
         cached dicts patched at every status writer (re-review, Important).
         Both were on the table; this leaves strictly fewer places able to
         drift:
@@ -6130,43 +6243,157 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         * Asking has exactly one decision point, and it asks the system of
           record, so it is right no matter who moved the item or when.
 
+        Called from INSIDE `_drain_item_status`, immediately before the
+        write, not once at dispatch time: a desired entry can sit queued for
+        a moment (another item's write draining, or simply the worker not
+        yet scheduled), and only re-asking right before the write catches
+        anything that moved the item to a terminal status during that wait
+        -- including another intent for the SAME item, drained just before
+        this one, that happened to be an Ingest/Ignore.
+
         `_loaded_items` is NOT the system of record and cannot be used here:
         `local_watchlists_service.list_items` collapses `status=None` to
         `status="new"` (verified), so an ingested item is not merely stale in
         that cache -- it is absent from it entirely, along with every other
-        non-`new` item. An earlier version of this fix read `_loaded_items`
-        after an awaited `_load_items()` and still wrote `new` over a live
-        ingest, for exactly that reason.
+        non-`new` item.
 
-        Fails CLOSED. If the backend cannot be asked, the write is refused
-        and the user is told to retry: marking unread is a convenience the
-        user can repeat, whereas overwriting an ingest is not recoverable, so
-        an unanswered question must not resolve in favour of the destructive
-        branch.
+        Fails CLOSED. If the backend cannot be asked, the write is refused:
+        marking unread/read is a convenience the user can repeat, whereas
+        overwriting an ingest is not recoverable, so an unanswered question
+        must not resolve in favour of the destructive branch.
 
         Args:
-            item_id: Normalized id of the item to mark unread.
+            item_id: Normalized id of the item to check.
+            intent: The queued write this gate is deciding whether to allow.
+
+        Returns:
+            `True` if the write may proceed, `False` if it was refused (a
+            toast already fired when `intent.notify_toast`).
         """
+        label = "unread" if intent.status == "new" else intent.status
         try:
             blocking = await self._blocking_status_for(item_id)
         except Exception:
             logger.opt(exception=True).warning(
-                "Could not confirm an item's status before marking it unread."
+                f"Could not confirm an item's status before marking it {label}; "
+                "leaving it unchanged."
             )
-            self.notify(
-                "Could not confirm this item's current status, so it was left "
-                "unchanged. Try again.",
-                severity="warning",
-            )
-            return
+            if intent.notify_toast:
+                self.notify(
+                    "Could not confirm this item's current status, so it was "
+                    "left unchanged. Try again.",
+                    severity="warning",
+                )
+            return False
         if blocking is not None:
-            self.notify(
-                f"This item is marked {blocking}; leaving it as it is rather "
-                "than overwriting that with unread.",
-                severity="warning",
-            )
+            if intent.notify_toast:
+                self.notify(
+                    f"This item is marked {blocking}; leaving it as it is "
+                    f"rather than overwriting that with {label}.",
+                    severity="warning",
+                )
+            return False
+        return True
+
+    def _dispatch_item_status(self, item_id: Any, intent: "_ItemStatusIntent") -> None:
+        """Queue `intent` as `item_id`'s desired write and ensure a drainer runs.
+
+        TASK-1541 (Qodo redesign). Every one of the four item-status dispatch
+        paths (Ingest, Ignore, the unread toggle, mark-read-on-open) calls
+        this instead of directly starting its own worker -- see
+        `_ItemStatusIntent`'s and `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s
+        docstrings for why (cancellation-based "supersede" was unsound for a
+        durable write, two independent ways).
+
+        Overwriting `self._item_status_desired[item_id]` unconditionally is
+        the coalescing: a second dispatch for the same item before the first
+        has been drained simply replaces what the drainer will act on next --
+        there is never more than one write queued per item. If a drainer is
+        already running for this item (`item_id in self._item_status_
+        draining`), nothing further happens here: the running drainer is
+        NEVER cancelled and NEVER told to stop early, it just picks the new
+        entry up itself the next time its loop checks the dict (see
+        `_drain_item_status`). Only when no drainer is currently running is
+        one started, in this item's OWN group -- so a burst of dispatches
+        across MANY different items still gets one independent drainer each,
+        never sharing a group and never able to interact.
+        """
+        self._item_status_desired[item_id] = intent
+        if item_id in self._item_status_draining:
             return
-        await self._update_item_status(item_id, "new")
+        self._item_status_draining.add(item_id)
+        self.run_worker(
+            self._drain_item_status(item_id),
+            group=f"{_ITEM_STATUS_DRAIN_GROUP_PREFIX}{item_id}",
+            exclusive=False,
+        )
+
+    async def _drain_item_status(self, item_id: Any) -> None:
+        """Per-item worker: pop the desired write, perform it, repeat.
+
+        TASK-1541 (Qodo redesign). This is the ONLY worker body that ever
+        writes an item's status now -- Ingest, Ignore, the unread toggle, and
+        mark-read-on-open all reach it through `_dispatch_item_status`, one
+        drainer per item id, never shared across items and never cancelled.
+
+        The invariant that replaces cancellation-based "supersede": pop this
+        item's desired entry, `await` `_update_item_status` (which itself
+        `await`s the actual `asyncio.to_thread` write) to GENUINE completion
+        -- success or a real exception, never a cancellation, since nothing
+        here is ever cancelled -- THEN check the dict again before exiting.
+        If a newer desired entry appeared while that write was in flight
+        (another dispatch for this SAME item, which only ever overwrites the
+        dict rather than starting a second drainer), the loop goes around
+        again and writes THAT instead. Only when the dict holds nothing more
+        for this item does the drainer exit and clear itself from
+        `_item_status_draining`.
+
+        Two consequences fall out of this shape directly:
+
+        * At most one write is ever queued per item (the dict holds a single
+          entry) plus at most one in flight -- the same bound the old
+          cross-item/per-item `exclusive=True` groups gave, without the
+          unsoundness: a fast `j`/`k` run or an Ingest-then-Ignore burst on
+          one item still costs at most two writes, not one per keystroke,
+          but BOTH writes always run to completion in dispatch order, so the
+          LAST action dispatched is always the one the database (and the
+          cache, if `patch_item` is set) settles on -- deterministically,
+          not "whichever OS thread happened to finish last" (the old
+          model's actual behaviour once the write got a genuine suspension
+          point; see `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s docstring).
+        * A gated intent (`intent.gate`, the unread toggle and
+          mark-read-on-open) is re-checked against the backend
+          (`_item_status_write_allowed`) immediately before ITS OWN write,
+          not once at dispatch time -- so an Ingest/Ignore that lands on this
+          same item while a gated entry is still queued is seen, even though
+          neither of those two ever patches the cache this dict's staleness
+          check would otherwise rely on.
+
+        `try`/`finally` around the loop, not just around the body: whatever
+        exits the loop (the normal empty-dict return, or -- not expected in
+        practice, since `_update_item_status` itself catches `Exception` --
+        anything else) must still clear this item from `_item_status_
+        draining`, or the item would be permanently unable to dispatch a new
+        write again for the rest of the screen's life.
+        """
+        try:
+            while True:
+                intent = self._item_status_desired.pop(item_id, None)
+                if intent is None:
+                    return
+                if intent.gate:
+                    allowed = await self._item_status_write_allowed(item_id, intent)
+                    if not allowed:
+                        continue
+                await self._update_item_status(
+                    item_id,
+                    intent.status,
+                    notify_toast=intent.notify_toast,
+                    refresh=intent.refresh,
+                    patch_item=intent.patch_item,
+                )
+        finally:
+            self._item_status_draining.discard(item_id)
 
     async def _blocking_status_for(self, item_id: Any) -> str | None:
         """Which `_NON_READ_STATE_STATUSES` value the backend holds for this item.
@@ -6401,7 +6628,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ingested"), exclusive=True)
+        item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): an id-less entity would otherwise derive
+            # `_dispatch_item_status`'s per-item drain group as
+            # f"{_ITEM_STATUS_DRAIN_GROUP_PREFIX}None", collapsing EVERY
+            # id-less Ingest/Ignore into one shared drainer -- exactly the
+            # cross-item interaction the per-item grouping exists to avoid.
+            # Believed unreachable in practice: `normalize_watchlist_item`
+            # unconditionally sets "id" via `build_watchlist_item_id(source,
+            # "watchlist_item", row["id"])` for every item this screen's own
+            # Items pane produces, and `row["id"]` is the table's `INTEGER
+            # PRIMARY KEY`, never NULL -- so `event.entity` reaching here
+            # without an "id" would mean something other than this screen's
+            # own item pipeline constructed it. Refusing the dispatch (rather
+            # than falling back to a unique per-dispatch suffix) also matches
+            # `_mark_item_read_on_open`'s and `handle_unread_toggle_
+            # requested`'s existing `item_id is None: return` guards.
+            return
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="ingested"))
 
     @on(IgnoreRequested)
     def handle_ignore_requested(self, event: IgnoreRequested) -> None:
@@ -6409,7 +6654,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
+        item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): see the identical guard and comment in
+            # `handle_ingest_requested` just above -- same hazard, same
+            # reachability analysis, same refusal.
+            return
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="ignored"))
 
     @on(ToggleBriefingQueueRequested)
     def handle_toggle_briefing_queue_requested(
@@ -6572,6 +6823,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Move one item to `status` through the shared item-status API.
 
+        Called exactly once per popped `_ItemStatusIntent`, from inside
+        `_drain_item_status`'s loop (TASK-1541, Qodo redesign) -- never
+        directly by a dispatch handler any more. That loop always `await`s
+        this to completion before looking at this item's desired-status dict
+        entry again, so at most one call to this method is ever in flight for
+        a given item at a time.
+
         `notify_toast` is False only for the Task 5 auto-mark-read-on-open
         path -- every other caller (Ingest/Ignore, the unread toggle) is a
         deliberate user action and keeps the toast. The failure toast is
@@ -6594,14 +6852,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
         mutated in place instead, so a later status check already sees the
         new value without forcing a rebuild.
+
+        TASK-1541: the write itself goes through `_update_item_status_
+        off_loop`, not a direct `await self._controller.update_item_status(
+        ...)`. See that method's docstring for why a plain `await` here still
+        ran the transactional `SubscriptionsDB.mark_item_status` UPDATE on
+        the event-loop thread despite this coroutine already being dispatched
+        through `run_worker`.
+
+        No `CancelledError` handling (Qodo redesign; an earlier fix wave had
+        one here -- deleted). That handler assumed a cancellation always
+        meant "the write is durable regardless, just patch the cache to
+        match it", which a later re-review found false in a narrow but real
+        window (the underlying thread can itself raise, or -- worse -- never
+        run at all if cancelled before the executor picked it up; see
+        `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s docstring). The redesign removes
+        the premise instead of patching the handler: nothing that calls this
+        method is ever cancelled any more (`_drain_item_status`'s worker is
+        `exclusive=False` and is never explicitly cancelled), so there is no
+        cancellation path here to handle -- if this coroutine is interrupted
+        at all, it is an external teardown (e.g. the screen unmounting),
+        exactly like every other worker on this screen, not a same-item or
+        cross-item "supersede".
         """
         notify = getattr(self.app_instance, "notify", None)
         try:
-            await self._controller.update_item_status(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-                status=status,
-            )
+            await self._update_item_status_off_loop(item_id=item_id, status=status)
             if patch_item is not None:
                 patch_item["status"] = status
                 # Whole-branch review (Important): the in-place patch is
@@ -6620,6 +6896,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if refresh:
             self.run_worker(self._load_items(), exclusive=True)
             self._refresh_overview_data()
+
+    async def _update_item_status_off_loop(
+        self, *, item_id: Any, status: str
+    ) -> dict[str, Any]:
+        """Drive the item-status write to completion off the UI thread.
+
+        TASK-1541. `_update_item_status` used to `await
+        self._controller.update_item_status(...)` directly, and every layer
+        of that call chain -- `WatchlistsBackendController.update_item_status`
+        -> `WatchlistScopeService.update_item` -> `LocalWatchlistsService.
+        update_item` -> `SubscriptionsDB.mark_item_status` -- is an `async
+        def` with no genuine `await` of its own. `_maybe_await` (the
+        controller's own helper) only awaits a value that is ALREADY
+        awaitable; it never puts a plain synchronous call on a thread. So
+        awaiting that chain runs the whole thing, including the transactional
+        `UPDATE`, synchronously to completion on whichever thread awaits the
+        outermost coroutine -- and `run_worker` only *schedules* a coroutine
+        back onto this SAME event loop, it does not move it to a thread
+        (identical shape to `_toggle_briefing_queue`'s fix, whose docstring
+        names this exact trap). `SubscriptionsDB` sets no `busy_timeout`
+        pragma, so a second app instance (or a background check) contending
+        for the same row blocked the UI thread for the length of the lock
+        wait, not just the write.
+
+        Mirrors `library_screen.py`'s `_run_library_service_call(...,
+        isolate_in_worker=True)`: `asyncio.to_thread` gives the worker thread
+        no event loop of its own, so `asyncio.run` builds a throwaway one
+        there to drive the controller coroutine to completion, rather than
+        resuming it back on this loop. `runtime_backend` is read here, on
+        the calling (event-loop) thread, and passed into the thread body as a
+        plain string -- the worker body itself must never read a screen
+        reactive directly.
+
+        Drain invariant (TASK-1541, Qodo redesign; replaces an earlier,
+        incorrect "last press wins is not guaranteed at the database" caveat
+        that used to live here). This OS thread is genuinely not cancellable
+        once started -- `asyncio.to_thread`'s underlying executor future can
+        only be cancelled before it begins running -- which is exactly why an
+        earlier design (`exclusive=True` "supersede" worker groups) could not
+        safely guarantee write ORDER: a superseded write's thread and its
+        replacement's thread were two independent, un-ordered writes to the
+        same row, either able to commit last. `_drain_item_status` sidesteps
+        that instead of tolerating it: it `await`s this method to genuine
+        completion before ever popping this SAME item's next desired entry,
+        so at most one call to this method is alive for a given item at any
+        time -- there is no second thread for the SAME row to race against.
+        Repeat Ingest/Ignore (or any other item-status action) on one item
+        now has a real "last dispatched action wins" guarantee, at the
+        database, not just at whatever the UI happens to repaint last.
+
+        Returns:
+            The controller's result dict, unused by the only current caller
+            but kept so a future caller does not have to re-add it.
+        """
+        runtime_backend = self.runtime_backend
+
+        def _invoke() -> dict[str, Any]:
+            return asyncio.run(  # policy-exception: worker-thread loop
+                self._controller.update_item_status(
+                    runtime_backend=runtime_backend,
+                    item_id=item_id,
+                    status=status,
+                )
+            )
+
+        return await asyncio.to_thread(_invoke)
 
     def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
         """Push a patched status into the mounted Items table's Status cell."""
@@ -6888,8 +7230,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
         path a mouse click or an arrow-key highlight already uses -- so
         this still inherits the Task 5 fix for free
-        (`_mark_item_read_on_open` calls `_update_item_status(...,
-        refresh=False, patch_item=item)`, patching the item dict in place
+        (`_mark_item_read_on_open` dispatches an `_ItemStatusIntent(refresh=
+        False, patch_item=item)`, patching the item dict in place
         instead of forcing the `overview_data` `reactive(recompose=True)`
         full-screen rebuild that once dropped focus and broke a second
         keypress).
