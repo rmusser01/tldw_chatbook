@@ -932,6 +932,7 @@ async def test_a_concurrent_synthesis_for_the_same_script_is_refused(
 
 
 def test_active_audio_claim_row_ids_is_an_empty_snapshot_by_default():
+    """With no audio claims taken, the row-id snapshot is an empty frozenset."""
     assert active_audio_claim_row_ids() == frozenset()
 
 
@@ -1016,6 +1017,7 @@ async def test_row_scoped_exclude_sweeps_a_same_script_zombie_while_sparing_the_
 
 
 def test_pending_audio_claim_script_ids_is_an_empty_snapshot_by_default():
+    """With no audio claims taken, the pending (unrecorded) set is empty."""
     assert pending_audio_claim_script_ids() == frozenset()
 
 

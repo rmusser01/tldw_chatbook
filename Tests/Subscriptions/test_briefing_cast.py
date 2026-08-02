@@ -886,6 +886,7 @@ async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
 
 
 def test_active_cast_claim_row_ids_is_an_empty_snapshot_by_default():
+    """With no cast claims taken, the row-id snapshot is an empty frozenset."""
     assert active_cast_claim_row_ids() == frozenset()
 
 
@@ -965,6 +966,7 @@ async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_th
 
 
 def test_pending_cast_claim_briefing_ids_is_an_empty_snapshot_by_default():
+    """With no cast claims taken, the pending (unrecorded) set is empty."""
     assert pending_cast_claim_briefing_ids() == frozenset()
 
 
