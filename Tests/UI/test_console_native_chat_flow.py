@@ -399,6 +399,65 @@ class _NativePromptScopeService:
         return deepcopy(self.record)
 
 
+class _CollidingRecipeSourceService:
+    """Expose one raw Recipe ID from both sources with a held Local detail."""
+
+    def __init__(self) -> None:
+        source_id = "shared-recipe"
+        local = _native_prompt_record(
+            artifact_type="recipe",
+            identifier=f"local:prompt:{source_id}",
+            source_id=source_id,
+            version=4,
+        )
+        server = _native_prompt_record(
+            artifact_type="recipe",
+            identifier=f"server:prompt:{source_id}",
+            source_id=source_id,
+            version=9,
+        )
+        server["backend"] = "server"
+        server["user_prompt"] = "Answer from the server Recipe."
+        definition = server["prompt_definition"]
+        assert isinstance(definition, dict)
+        lanes = definition["lanes"]
+        assert isinstance(lanes, list)
+        lanes[1]["blocks"][0]["content"] = "Answer from the server Recipe."
+        self.records = {"local": local, "server": server}
+        self.local_detail_started = asyncio.Event()
+        self.release_late_local_detail = asyncio.Event()
+        self.detail_calls: list[tuple[str, str]] = []
+
+    async def get_capabilities(self, *, mode: str):
+        return SimpleNamespace(
+            structured_kinds=frozenset({(2, "block_prompt"), (2, "block_recipe")}),
+            artifact_types=frozenset({"prompt", "recipe"}),
+            conditional_update=True,
+        )
+
+    async def list_prompts(self, *, mode: str, page: int, per_page: int):
+        return {
+            "items": [deepcopy(self.records[mode])],
+            "page": page,
+            "per_page": per_page,
+            "total_items": 1,
+            "total_pages": 1,
+        }
+
+    async def search_prompts(self, *, mode: str, query: str, limit: int):
+        return [deepcopy(self.records[mode])]
+
+    async def get_prompt(self, *, mode: str, prompt_identifier: str):
+        self.detail_calls.append((mode, prompt_identifier))
+        if mode == "local" and self.detail_calls.count((mode, prompt_identifier)) == 1:
+            self.local_detail_started.set()
+            await self.release_late_local_detail.wait()
+        return deepcopy(self.records[mode])
+
+    async def save_prompt(self, *, mode: str, **payload):
+        return payload
+
+
 @pytest.mark.asyncio
 async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact_draft():
     app = _build_test_app()
@@ -923,6 +982,57 @@ async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
         assert service.usage_calls == (
             [("local", source_id)] if artifact_type == "prompt" else []
         )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _CollidingRecipeSourceService()
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+
+        late_local = asyncio.create_task(modal.open_artifact("shared-recipe"))
+        await service.local_detail_started.wait()
+        await modal.switch_source("server")
+        await modal.open_artifact("shared-recipe")
+        service.release_late_local_detail.set()
+        await late_local
+        await pilot.pause()
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "Answer from the server Recipe."
+        assert service.detail_calls == [
+            ("local", "shared-recipe"),
+            ("server", "shared-recipe"),
+            ("server", "shared-recipe"),
+        ]
         assert gateway.stream_calls == 0
 
 

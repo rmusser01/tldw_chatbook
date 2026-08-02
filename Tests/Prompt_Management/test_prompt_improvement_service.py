@@ -191,6 +191,7 @@ def _snapshot(
         resolution=pinned,
         provider_label=pinned.provider,
         model_label=str(pinned.model),
+        recipe_source="local" if recipe is not None else None,
         recipe_source_id="recipe-source-1" if recipe is not None else None,
         recipe_version=7 if recipe is not None else None,
         recipe_definition=recipe,
@@ -295,6 +296,7 @@ def test_snapshot_rejects_unready_or_modelless_resolution(
     [
         {"system_prompt": "system", "system_fingerprint": None},
         {"system_prompt": None, "system_fingerprint": "sha256:orphan"},
+        {"recipe_source": "local"},
         {"recipe_source_id": "orphan"},
         {"recipe_version": 1},
         {"recipe_definition": _recipe_definition()},
@@ -306,6 +308,24 @@ def test_snapshot_rejects_incomplete_optional_field_groups(
 ) -> None:
     with pytest.raises((TypeError, ValueError)):
         replace(_snapshot(), **changes)
+
+
+def test_saved_recipe_snapshot_requires_source_while_builtin_recipe_omits_it() -> None:
+    saved = _snapshot(mode="recipe", recipe_definition=_recipe_definition())
+
+    assert saved.recipe_source == "local"
+    with pytest.raises(ValueError, match="Local or Server source"):
+        replace(saved, recipe_source=None)
+    with pytest.raises(ValueError, match="Local or Server source"):
+        replace(saved, recipe_source="remote")
+
+    builtin = replace(
+        saved,
+        recipe_source=None,
+        recipe_source_id="builtin:outcome-first",
+        recipe_version=0,
+    )
+    assert builtin.recipe_source is None
 
 
 def test_snapshot_defensively_copies_nested_captured_values() -> None:
@@ -652,6 +672,7 @@ def _inline_file_snapshot() -> PromptImprovementRequestSnapshot:
         resolution=resolution,
         provider_label=resolution.provider,
         model_label=str(resolution.model),
+        recipe_source=None,
         recipe_source_id=None,
         recipe_version=None,
         recipe_definition=None,

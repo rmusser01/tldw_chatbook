@@ -32,7 +32,10 @@ from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsB
 from tldw_chatbook.Widgets.Console.console_prompt_improve_view import (
     ConsolePromptImprovementContext,
 )
-from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_prompts_modal import (
+    ConsolePromptsModal,
+    ConsoleRecipeApplyGuard,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_state import (
     ConsolePromptsState,
     PromptBrowseResult,
@@ -276,6 +279,7 @@ class _ImprovementDriver:
             system_fingerprint=(
                 "system-fingerprint" if values.get("include_system", False) else None
             ),
+            recipe_source=values.get("recipe_source"),
             recipe_source_id=values.get("recipe_source_id"),
             recipe_version=values.get("recipe_version"),
             recipe_definition=values.get("recipe_definition"),
@@ -2115,6 +2119,7 @@ async def test_recipe_fill_mounts_service_block_prompt_as_unsaved_prompt_review(
         assert editor.state.artifact_type == "prompt"
         assert editor.state.definition == filled_prompt
         assert app.screen.state.working_copy_unsaved is True
+        assert driver.requests[-1].recipe_source is None
         assert app.screen._recipe_source_id == "builtin:outcome-first"
         assert app.screen._recipe_source_fingerprint == source_fingerprint
         assert backend.usage_mutations == 0
@@ -2176,6 +2181,91 @@ async def test_recipe_fill_snapshots_current_editor_definition(
 
         assert driver.requests[-1].recipe_definition == expected
         assert driver.requests[-1].recipe_fingerprint is not None
+        assert driver.requests[-1].recipe_source is None
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_ai_fill_snapshots_accepted_source_with_raw_identity() -> None:
+    source_id = "saved-recipe-source"
+    composite_id = f"local:prompt:{source_id}"
+    backend = _PromptBackend(
+        pages={
+            1: {
+                "items": [
+                    {
+                        **_brief(composite_id, artifact_type="recipe"),
+                        "source_id": source_id,
+                    }
+                ],
+                "page": 1,
+                "total_pages": 1,
+                "total_items": 1,
+            }
+        }
+    )
+    backend.detail_result = {
+        **_detail(artifact_type="recipe", identifier=composite_id),
+        "source_id": source_id,
+    }
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(request_id="ignored", kind="no_change")
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+        app.screen.query_one(".console-prompts-result", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert driver.requests[-1].recipe_source == "local"
+        assert driver.requests[-1].recipe_source_id == source_id
+        assert backend.detail_calls == [("local", source_id)]
+
+        app.screen.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        guard = driver.applies[-1][1]
+        assert isinstance(guard, ConsoleRecipeApplyGuard)
+        assert guard.recipe_source == "local"
+        assert guard.recipe_source_id == source_id
+
+
+@pytest.mark.asyncio
+async def test_builtin_recipe_manual_guard_has_no_saved_source() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+        editor = app.screen.query_one(PromptBlockEditor)
+        await editor._change_field("goal", "content", "Answer the question.")
+        await pilot.pause()
+
+        app.screen.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+    guard = driver.applies[-1][1]
+    assert isinstance(guard, ConsoleRecipeApplyGuard)
+    assert guard.recipe_source is None
+    assert guard.recipe_source_id == "builtin:outcome-first"
 
 
 @pytest.mark.asyncio

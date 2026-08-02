@@ -5747,7 +5747,6 @@ class ChatScreen(BaseAppScreen):
     def _open_console_prompts_modal(self) -> None:
         """Open the source-aware Prompt Library without changing the draft."""
         service = getattr(self.app_instance, "prompt_scope_service", None)
-        recipe_sources: dict[str, str] = {}
         composer = self._console_composer_or_none()
         if composer is None:
             return
@@ -5803,17 +5802,7 @@ class ChatScreen(BaseAppScreen):
             method = getattr(service, "get_prompt", None)
             if not callable(method):
                 raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            record = await method(mode=source, prompt_identifier=identifier)
-            recipe_sources[str(identifier)] = source
-            if isinstance(record, Mapping):
-                durable_id = (
-                    record.get("source_id")
-                    or record.get("id")
-                    or record.get("uuid")
-                    or identifier
-                )
-                recipe_sources[str(durable_id)] = source
-            return record
+            return await method(mode=source, prompt_identifier=identifier)
 
         async def save(**payload: Any) -> Any:
             method = getattr(service, "save_prompt", None)
@@ -5950,6 +5939,7 @@ class ChatScreen(BaseAppScreen):
                 resolution=pinned_resolution,
                 provider_label=pinned_resolution.provider,
                 model_label=str(pinned_resolution.model),
+                recipe_source=values.get("recipe_source"),
                 recipe_source_id=values.get("recipe_source_id"),
                 recipe_version=values.get("recipe_version"),
                 recipe_definition=recipe_definition,
@@ -5970,8 +5960,8 @@ class ChatScreen(BaseAppScreen):
             )
             if not recipe_source_id or recipe_source_id.startswith("builtin:"):
                 return
-            source = recipe_sources.get(recipe_source_id)
-            if source is None:
+            source = getattr(captured, "recipe_source", None)
+            if source not in {"local", "server"}:
                 raise ValueError("The selected Recipe source changed.")
             latest = await detail(source, recipe_source_id)
             if not isinstance(latest, Mapping):

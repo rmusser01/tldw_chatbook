@@ -137,6 +137,7 @@ class PromptImprovementRequestSnapshot:
     resolution: ConsoleProviderResolution = field(repr=False)
     provider_label: str
     model_label: str
+    recipe_source: Literal["local", "server"] | None
     recipe_source_id: str | None
     recipe_version: int | None
     recipe_definition: BlockArtifactDefinition | None = field(repr=False)
@@ -181,19 +182,26 @@ class PromptImprovementRequestSnapshot:
             raise TypeError("Captured system prompt fields must be text")
 
         recipe_values = (
+            self.recipe_source,
             self.recipe_source_id,
             self.recipe_version,
             self.recipe_definition,
             self.recipe_fingerprint,
         )
         if self.mode == "recipe":
-            if any(value is None for value in recipe_values):
+            required_recipe_values = recipe_values[1:]
+            if any(value is None for value in required_recipe_values):
                 raise ValueError("Recipe mode requires complete captured Recipe fields")
             if (
                 not isinstance(self.recipe_source_id, str)
                 or not self.recipe_source_id.strip()
             ):
                 raise ValueError("recipe_source_id must be non-empty text")
+            if self.recipe_source_id.startswith("builtin:"):
+                if self.recipe_source is not None:
+                    raise ValueError("Built-in Recipes cannot capture a saved source")
+            elif self.recipe_source not in {"local", "server"}:
+                raise ValueError("Saved Recipes require a Local or Server source")
             if (
                 isinstance(self.recipe_version, bool)
                 or not isinstance(self.recipe_version, int)

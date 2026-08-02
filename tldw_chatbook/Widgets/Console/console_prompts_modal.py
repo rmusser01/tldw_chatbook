@@ -70,6 +70,7 @@ class ConsolePromptsResult:
 class ConsoleRecipeApplyGuard:
     """Captured Recipe identity paired with a manual editor application."""
 
+    recipe_source: PromptSource | None
     recipe_source_id: str
     recipe_version: int
     recipe_definition: BlockArtifactDefinition = field(repr=False)
@@ -254,6 +255,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._captured_improvement_request: Any | None = None
         self._pending_persistence_result: ConsolePromptsResult | None = None
         self._recipe_source_id = "builtin:outcome-first"
+        self._recipe_source: PromptSource | None = None
         self._recipe_version = 0
         self._recipe_definition: BlockArtifactDefinition | None = None
         self._recipe_source_fingerprint: str | None = None
@@ -772,6 +774,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 return
             await self._capture_manual_apply_target()
             self._recipe_selecting = False
+            self._recipe_source = source
             self._recipe_source_id = identity
             self._recipe_version = _record_version(record) or 0
             self._recipe_definition = decoded.definition
@@ -1060,6 +1063,9 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     mode=mode,
                     request_id=request_id,
                     include_system=bool(include_system),
+                    recipe_source=(
+                        self._recipe_source if recipe_definition is not None else None
+                    ),
                     recipe_source_id=(
                         self._recipe_source_id
                         if recipe_definition is not None
@@ -1530,6 +1536,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 kind="block_recipe",
             )
             guard = ConsoleRecipeApplyGuard(
+                recipe_source=self._recipe_source,
                 recipe_source_id=self._recipe_source_id,
                 recipe_version=self._recipe_version,
                 recipe_definition=definition,
@@ -1741,6 +1748,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._apply_review_candidate()
         elif button_id == "console-prompts-recipe-outcome-first":
             event.stop()
+            self._recipe_source = None
             self._recipe_source_id = "builtin:outcome-first"
             self._recipe_version = 0
             definition = outcome_first_recipe()
@@ -1748,6 +1756,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._mount_recipe_editor(definition)
         elif button_id == "console-prompts-recipe-blank":
             event.stop()
+            self._recipe_source = None
             self._recipe_source_id = "builtin:blank"
             self._recipe_version = 0
             definition = blank_recipe()
