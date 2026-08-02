@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-02 14:55'
+updated_date: '2026-08-02 15:54'
 labels:
   - stt
   - gguf
@@ -39,17 +39,13 @@ Validate one user-selected local GGUF for direct use by the optional transcribe.
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Revised design: Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md
+Plan: Docs/superpowers/plans/2026-08-01-task-597-local-gguf-import.md
 
 ADR required: yes
 ADR path: backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md
-Reason: direct local paths now precede managed GGUF acquisition.
+Reason: ADR-040 accepts direct local GGUF paths before managed acquisition and amends ADR-025 for this provider.
 
-1. Retain the reviewed bounded GGUF parser and pinned runtime/platform-candidate admission.
-2. Remove descriptor and managed-store preparation from TASK-597.
-3. Rename the unmerged module to `gguf_admission.py`, then add safe direct-file validation and a compact path-private admission result.
-4. Verify parser, path-boundary, platform-candidate, privacy, and dependency-import tests.
-5. Complete review and hand TASK-604 the validated-path API.
-
-Detailed plan will replace the superseded store-first plan after revised spec review.
+1. Rename gguf_import.py to gguf_admission.py and remove descriptor/store prototype code while preserving the reviewed bounded parser and exact compatibility declarations.
+2. Add one no-follow, same-handle validate_local_gguf boundary with typed path-safe errors, source identity evidence, and normalized wheel-candidate platform output.
+3. Verify focused and full tests, static checks, scope/privacy scans, and independent code review before Backlog closeout.
 <!-- SECTION:PLAN:END -->
