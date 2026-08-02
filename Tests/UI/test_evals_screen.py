@@ -2942,7 +2942,14 @@ async def test_new_character_bench_without_a_resolvable_target_still_creates_a_d
     Add-target control, so this specific bench can never become runnable
     without being recreated after a target is configured. Pinned here so
     a future change silently "fixing" this by raising instead doesn't
-    regress past a real, reachable state without a test noticing."""
+    regress past a real, reachable state without a test noticing.
+
+    Fix-round addition (review finding): the toast must say THIS bench
+    cannot be run and can be deleted, not merely suggest creating another
+    one -- the original wording only ever pointed at "create a new
+    character bench", never told the user this one is stuck, and (before
+    this same fix round) there was no Delete affordance for it to point
+    at anyway."""
     from tldw_chatbook.Evals.character_probe.storage import is_character_bench
 
     async with evals_app.run_test(size=(160, 45)) as pilot:
@@ -2952,10 +2959,11 @@ async def test_new_character_bench_without_a_resolvable_target_still_creates_a_d
         benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
         assert len(benches) == 1
         assert benches[0]["config_data"]["target_ids"] == []
-        assert any(
-            "no llama.cpp target is configured" in message
-            for message, _severity in pilot.app.screen.app_instance.notifications
-        )
+        message, severity = pilot.app.screen.app_instance.notifications[-1]
+        assert severity == "warning"
+        assert "cannot be run" in message
+        assert "no llama.cpp target is configured" in message
+        assert "delete" in message.lower()
 
 
 @pytest.mark.asyncio
@@ -3126,3 +3134,78 @@ async def test_new_character_bench_button_and_its_neighbours_stay_hit_testable(
             f"{size[0]}x{size[1]} -- resolved to {hit!r} instead, pushed "
             "out of reach by the new button above it"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_with_no_resolvable_target_can_be_deleted_through_the_real_affordance(
+    evals_app, evals_db, probe_set_id
+):
+    """Fix round (review finding): closes the "permanent rail clutter"
+    trap -- a character bench created with `target_ids=()` (no resolvable
+    llama.cpp target at creation time) could not previously be deleted,
+    fixed, or hidden through the UI at all. Drives the REAL affordance
+    end to end: rail creation -> `#evals-delete-bench` click -> the real
+    pushed `ConfirmationDialog` -> Confirm -> the row and the underlying
+    `eval_tasks` row are both gone. Mirrors `test_pressing_delete_then_
+    confirming_in_the_real_dialog_deletes_the_bench`'s established
+    end-to-end pattern for a word bench, applied to this bench type."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+
+        # Create the stuck draft (no llama.cpp target configured or
+        # registered) through the real rail button, exactly as a user
+        # would reach this state.
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        bench_id = benches[0]["id"]
+        assert benches[0]["config_data"]["target_ids"] == []
+        assert screen._selection.kind == "character_bench"
+        assert screen._selection.id == bench_id
+
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        delete_button.scroll_visible(animate=False)
+        await pilot.pause()
+        assert not delete_button.disabled
+
+        await pilot.click("#evals-delete-bench")
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+
+        await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: screen._selection.kind == "none")
+        await pilot.pause()
+
+        # Gone from the DB (a live read finds no such row)...
+        assert screen._view_model.character_bench_by_id(bench_id) is None
+        remaining = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert remaining == []
+        # ...and gone from the rail.
+        assert not screen.query("#evals-rail-row-benches-classic-0")
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench deleted. Its runs remain in the Runs section."
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_with_no_duplicate_button_still_offers_delete(
+    evals_app, character_bench_id
+):
+    """Fix round: Duplicate stays word-bench-only this round (see
+    `_compose_inspector_pane`'s own comment on why -- `duplicate_bench`
+    engine call is word-bench-specific), but Delete must be there
+    regardless -- pinned as its own assertion so a future change can't
+    silently drop Delete while "fixing" Duplicate without a test
+    noticing."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        assert not screen.query("#evals-duplicate-bench")
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        assert not delete_button.disabled

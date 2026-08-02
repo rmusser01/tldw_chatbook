@@ -440,11 +440,21 @@ class EvalsScreen(LabScreen):
             )
         else:
             # See this handler's own docstring on why this is a real,
-            # reachable state and not merely defensive copy.
+            # reachable state and not merely defensive copy. Fix-round
+            # correction: THIS bench, not just "a new one", must be named
+            # as the thing that's stuck -- the previous wording only ever
+            # suggested creating another bench and never told the user
+            # this one cannot run and is safe to delete, which left a
+            # one-click-reachable, never-undoable state with no recovery
+            # instruction (review finding, this fix round). Deletion
+            # itself is real as of this same round -- see
+            # `_compose_inspector_pane`'s `"character_bench"` branch.
             self.app_instance.notify(
-                "Character bench created, but no llama.cpp target is "
-                "configured; configure one in Settings, then create a new "
-                "character bench to make this one runnable.",
+                "Character bench created, but it cannot be run: no "
+                "llama.cpp target is configured. This bench cannot be "
+                "made runnable after the fact -- delete it (see the "
+                "Delete button below) and create a new one once a "
+                "target is configured in Settings.",
                 severity="warning",
                 markup=False,
             )
@@ -1040,7 +1050,16 @@ class EvalsScreen(LabScreen):
         """
         event.stop()
         selection = self._selection
-        if selection.kind != "bench" or not selection.id:
+        # Fix round (review finding): a "character_bench" selection uses
+        # this SAME button/handler/flow -- see `_compose_inspector_pane`'s
+        # `"character_bench"` branch, which composes `#evals-delete-bench`
+        # for it too, Delete-only (no Duplicate -- that engine call,
+        # `duplicate_bench`, is word-bench-specific; see this fix round's
+        # own report for why closing "can never be deleted" took priority
+        # over adding duplication). `EvalsDB.delete_task` (called from
+        # `_apply_bench_deletion` below) is a plain soft-delete by id --
+        # it does not care what `config_data.bench_type` the row carries.
+        if selection.kind not in ("bench", "character_bench") or not selection.id:
             return
         if self._bench_delete_disabled_reason(selection.id):
             # Defensive only: `_compose_inspector_pane` already disables
@@ -1050,7 +1069,11 @@ class EvalsScreen(LabScreen):
         if self._bench_delete_pending:
             return
         self._bench_delete_pending = True
-        bench = self._view_model.bench_by_id(selection.id)
+        bench = (
+            self._view_model.character_bench_by_id(selection.id)
+            if selection.kind == "character_bench"
+            else self._view_model.bench_by_id(selection.id)
+        )
         name = str(bench.get("name")) if bench else "Untitled bench"
         self.run_worker(
             self._delete_bench_flow(selection.id, name),
@@ -1444,40 +1467,72 @@ class EvalsScreen(LabScreen):
         # orders these `[ Run bench ]` then `[ Duplicate ]` then
         # `[ Delete ]`, and the original Task 7 placement (right after
         # `EvalsInspector`, ahead of the primary action) inverted that.
-        # Still bench-selection-only, and still gated on a RESOLVED bench
-        # (`bench is not None`, set in the `selection.kind == "bench"`
-        # branch above): an unresolvable bench id renders no
-        # `EvalsInspector` and, per this same guard, neither of these
-        # buttons either -- there is nothing here to duplicate or delete.
+        # Still gated on a RESOLVED bench (`bench is not None`, set in the
+        # `selection.kind == "bench"` branch above): an unresolvable bench
+        # id renders no `EvalsInspector` and, per this same guard, neither
+        # of these buttons either -- there is nothing here to duplicate or
+        # delete.
         if selection.kind == "bench" and bench is not None:
             yield Button("Duplicate", id="evals-duplicate-bench")
-            delete_reason = self._bench_delete_disabled_reason(selection.id)
-            if delete_reason:
-                # Mirrors the primary action's own TASK-1076 convention
-                # just above (a status badge plus an always-visible
-                # callout, not a hover-only tooltip -- see that block's
-                # comment for the accessibility rationale). Not factored
-                # into one shared helper: the primary action's version
-                # also folds in the bench's own NAME (this button's label
-                # never changes).
-                yield Static(
-                    "Delete: Blocked",
-                    id="evals-delete-bench-status",
-                    classes="ds-status-badge evals-status-blocked",
-                    markup=False,
-                )
-                yield Static(
-                    delete_reason,
-                    id="evals-delete-bench-reason",
-                    classes="ds-recovery-callout",
-                    markup=False,
-                )
-            yield Button(
-                "Delete",
-                id="evals-delete-bench",
-                disabled=bool(delete_reason),
-                tooltip=delete_reason,
+            yield from self._compose_delete_bench_button(selection.id)
+        elif selection.kind == "character_bench":
+            # Task 5 fix round (review finding): a character bench had NO
+            # Duplicate/Delete affordance at all -- combined with the
+            # residual no-resolvable-target dead end
+            # (`_on_new_character_bench_requested`'s own docstring), a
+            # bench created that way could never be deleted, fixed, or
+            # hidden through the UI: permanent rail clutter with no
+            # recovery path. Delete-only, deliberately: `duplicate_bench`
+            # (`word_bench.storage`) loads/rebuilds through `BenchConfig`/
+            # `save_bench`, which reject `CharacterProbeConfig`'s stored
+            # shape outright -- a character-bench equivalent does not
+            # exist yet, and inventing one is a bigger, separate change
+            # than closing "can never be deleted" needs. `#evals-delete-
+            # bench` is the SAME id/handler word benches use
+            # (`_on_delete_bench_pressed` now accepts both kinds; see its
+            # own updated comment) -- `EvalsDB.delete_task` is a plain
+            # soft-delete by id and does not care about `bench_type`.
+            character_bench = (
+                self._view_model.character_bench_by_id(selection.id)
+                if selection.id
+                else None
             )
+            if character_bench is not None:
+                yield from self._compose_delete_bench_button(selection.id)
+
+    def _compose_delete_bench_button(self, bench_id: str) -> ComposeResult:
+        """Yields ``#evals-delete-bench`` (plus its Blocked-reason status/
+        callout, when blocked) for ``bench_id`` -- shared by the word-bench
+        and character-bench branches of ``_compose_inspector_pane`` above,
+        which differ only in whether Duplicate is ALSO offered alongside
+        it (word bench only; see that method's own comment)."""
+        delete_reason = self._bench_delete_disabled_reason(bench_id)
+        if delete_reason:
+            # Mirrors the primary action's own TASK-1076 convention above
+            # (a status badge plus an always-visible callout, not a
+            # hover-only tooltip -- see that block's comment for the
+            # accessibility rationale). Not factored into one shared
+            # helper with the primary action: the primary action's own
+            # version also folds in the bench's NAME (this button's label
+            # never changes).
+            yield Static(
+                "Delete: Blocked",
+                id="evals-delete-bench-status",
+                classes="ds-status-badge evals-status-blocked",
+                markup=False,
+            )
+            yield Static(
+                delete_reason,
+                id="evals-delete-bench-reason",
+                classes="ds-recovery-callout",
+                markup=False,
+            )
+        yield Button(
+            "Delete",
+            id="evals-delete-bench",
+            disabled=bool(delete_reason),
+            tooltip=delete_reason,
+        )
 
     def _primary_action_state(self) -> tuple[str, bool, str]:
         """Label, disabled, and tooltip-reason for the primary action button.
