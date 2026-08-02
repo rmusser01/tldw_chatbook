@@ -358,6 +358,15 @@ class SentenceSequencer:
 
     def feed(self, delta: str) -> None:
         """Consume a streamed reply text delta."""
+        if self._drained_fired:
+            # A reused instance whose caller forgot `begin_reply()`: the
+            # symptom is otherwise SILENT (speech still works, but
+            # `on_drained` never fires again, so the loop never reopens the
+            # microphone -- Task-2 re-review N1). Say so once per lapse.
+            logger.warning(
+                "SentenceSequencer.feed() after drain without begin_reply(); "
+                "on_drained will not fire for this reply"
+            )
         self._pending_line += delta
         self._consume_pending_lines(final=False)
         self._scan_content()
@@ -386,12 +395,15 @@ class SentenceSequencer:
         Args:
             ok: Whether the utterance played successfully.
             token: The utterance identity from `current_utterance_token` at
-                the time `speak()` was called for it. `None` (the default)
-                means "whatever is currently in flight" -- kept for simple
-                callers that don't track identity. Passing a real token
-                that no longer matches the in-flight utterance (a LATE
-                signal for an utterance a newer one has already superseded)
-                is ignored rather than misattributed to the current one.
+                the time `speak()` was called for it. Production callers
+                (the hands-free speech entry) MUST thread this token --
+                `None` degrades to "whatever is currently in flight", which
+                cannot distinguish a LATE completion for a superseded
+                utterance from the current one and reopens the double-voice
+                defect (Task-2 review F2). `None` exists only for unit tests
+                that never overlap utterances. A real token that no longer
+                matches the in-flight utterance is ignored rather than
+                misattributed.
         """
         if not self._inflight:
             return  # stale/late signal with nothing in flight (see flush())
