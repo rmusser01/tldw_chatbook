@@ -64,16 +64,31 @@ class BriefingJobHandler:
     `complete`, `_run_generation` auto-mirrors it into ChaChaNotes via
     `briefing_keep.keep_briefing(..., origin="scheduled")` -- see
     `_auto_keep`'s own docstring for the full containment story. This is
-    strictly best-effort: a missing `chachanotes_db` handle or any failure
-    from the keep service never touches the generation outcome or the
+    strictly best-effort: an absent ChaChaNotes handle or any failure from
+    the keep service never touches the generation outcome or the
     `briefings` row.
+
+    Review round 1 (Task 3): the ChaChaNotes handle is taken as a
+    zero-arg **getter**, resolved fresh inside `_auto_keep` every time a
+    generation completes -- never a plain instance captured once at
+    construction time. `app.py` constructs this handler (in
+    `_wire_watchlists_and_notifications_services`) BEFORE its own
+    `self.chachanotes_db` attribute is assigned later in `__init__`;
+    capturing the instance directly at that point would freeze `None`
+    into this handler for the rest of the process's life, making
+    auto-keep permanently inert in production even once
+    `self.chachanotes_db` exists -- "wired but never live", the exact
+    recurring bug class this stream keeps catching. A getter
+    (`lambda: getattr(self, "chachanotes_db", None)`) sidesteps
+    construction order entirely: every keep attempt re-reads whatever the
+    attribute currently holds.
     """
 
     def __init__(
         self,
         subscriptions_db: Any,
         generate: Callable[..., Awaitable[dict[str, Any]]] = generate_briefing,
-        chachanotes_db: CharactersRAGDB | None = None,
+        chachanotes_db_getter: Callable[[], CharactersRAGDB | None] | None = None,
     ) -> None:
         """Initialize the handler.
 
@@ -90,21 +105,22 @@ class BriefingJobHandler:
                 `briefing_service.generate_briefing`; tests inject a fake
                 to control timing and outcome without touching the real
                 claim registry's generation path.
-            chachanotes_db: An open `CharactersRAGDB`, or `None`. When
-                given, every scheduled generation that resolves `complete`
-                is auto-kept into it (`origin="scheduled"`) -- the spec's
-                Keep-service "Auto path". `None` (the default) simply
-                disables auto-keep for this handler: `app.py` passes
-                `None` when the app's own ChaChaNotes handle is not yet
-                constructed at the point this handler is wired up (see
-                `app.py`'s `_wire_watchlists_and_notifications_services`
-                for exactly why that can happen); nothing about
-                generation itself depends on this parameter, so `None` is
-                a silent no-op, never a degraded mode worth surfacing.
+            chachanotes_db_getter: A zero-arg callable returning an open
+                `CharactersRAGDB`, or `None`, or `None` itself (the
+                default). Called fresh every time a generation resolves
+                `complete` (`_auto_keep`), never once at construction time
+                -- see the class docstring's "Review round 1" paragraph
+                for why that distinction is load-bearing, not stylistic.
+                A getter that itself returns `None` (genuinely no
+                ChaChaNotes handle available yet, or ever), and the bare
+                `None` default (no getter configured at all -- every
+                existing test that does not care about auto-keep), both
+                simply disable auto-keep for that attempt; nothing about
+                generation itself depends on this parameter.
         """
         self.subscriptions_db = subscriptions_db
         self._generate = generate
-        self._chachanotes_db = chachanotes_db
+        self._chachanotes_db_getter = chachanotes_db_getter
         #: Strong references to spawned generation tasks, keyed by nothing
         #: in particular -- a plain set, discarded from on completion. See
         #: the class docstring for why this exists at all.
@@ -257,31 +273,34 @@ class BriefingJobHandler:
         deliberate, silent no-op:
 
         - `briefing_row["status"] != STATUS_COMPLETE` (`empty` or
-          `failed`): returned before any thread hop or DB call -- reading
-          `generate_briefing`'s own returned row directly, never
-          re-querying it (that row already knows its own status).
-        - `self._chachanotes_db is None`: no handle configured for this
-          handler instance (see the class/`__init__` docstrings for when
-          that happens in production); logged at DEBUG.
+          `failed`): returned before any thread hop, getter call, or DB
+          call -- reading `generate_briefing`'s own returned row directly,
+          never re-querying it (that row already knows its own status).
+        - `self._chachanotes_db_getter` is `None`, or calling it returns
+          `None`: no ChaChaNotes handle available for this attempt (see
+          the class/`__init__` docstrings for why this is a getter,
+          resolved HERE and not once at construction time); logged at
+          DEBUG.
         - `keep_briefing` itself raises `KeepRefused`: the belt-and-braces
           case -- this method's own status check above already keeps
           `empty`/`failed` rows from ever reaching `keep_briefing`, but the
           service refuses independently too (e.g. a `complete` row whose
           body reads back blank), so this is treated exactly as
           expected-and-benign, not an error.
-        - Any other exception from `keep_briefing`: logged with
-          `type(exc).__name__` only -- never a message, which could embed
-          briefing content or a query fragment -- and swallowed.
+        - Any other exception from `keep_briefing` (or from calling the
+          getter itself): logged with `type(exc).__name__` only -- never
+          a message, which could embed briefing content or a query
+          fragment -- and swallowed.
 
         This coroutine is called from `_run_generation`'s `else` clause
         (i.e. after generation already resolved without raising), and must
         itself never raise: nothing it does may alter `_run_generation`'s
         own `status` var, retroactively look like a generation failure, or
         touch the `briefings` row (`keep_briefing` only reads
-        `subscriptions_db`; every write it makes lands in `chachanotes_db`).
-        A lost mirror costs nothing permanent -- `keep_briefing` is
-        additive-idempotent, so the next scheduled run for this watchlist
-        re-keeps whatever this attempt missed.
+        `subscriptions_db`; every write it makes lands in whatever the
+        getter returned). A lost mirror costs nothing permanent --
+        `keep_briefing` is additive-idempotent, so the next scheduled run
+        for this watchlist re-keeps whatever this attempt missed.
 
         Args:
             briefing_row: Whatever `self._generate` returned for this run
@@ -291,11 +310,16 @@ class BriefingJobHandler:
         try:
             if briefing_row.get("status") != STATUS_COMPLETE:
                 return
-            if self._chachanotes_db is None:
+            chachanotes_db = (
+                self._chachanotes_db_getter()
+                if self._chachanotes_db_getter is not None
+                else None
+            )
+            if chachanotes_db is None:
                 logger.debug(
                     f"Skipping auto-keep for briefing "
                     f"{briefing_row.get('id')!r}: no ChaChaNotes handle "
-                    f"configured for this handler."
+                    f"available for this handler right now."
                 )
                 return
             briefing_id = briefing_row["id"]
@@ -303,7 +327,7 @@ class BriefingJobHandler:
                 await asyncio.to_thread(
                     keep_briefing,
                     self.subscriptions_db,
-                    self._chachanotes_db,
+                    chachanotes_db,
                     briefing_id,
                     origin="scheduled",
                 )

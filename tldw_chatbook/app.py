@@ -4742,23 +4742,27 @@ class TldwCli(
         briefing_handler = None
         if briefing_schedules_enabled:
             briefing_projection = BriefingProjection(subscriptions_db)
-            # `self.chachanotes_db` is assigned later in `__init__`
-            # (after the `notes_service`/prompts/media parallel-init phase
-            # settles), strictly AFTER
-            # `_wire_watchlists_and_notifications_services` (this method,
-            # called earlier in `__init__`) returns -- so it does not exist
-            # as an attribute on `self` yet at this point, and a bare
-            # `self.chachanotes_db` reference would raise `AttributeError`.
-            # `getattr(self, "chachanotes_db", None)` is the same defensive
-            # read already used elsewhere in this file for the identical
-            # reason (`_wire_chat_conversation_services`,
-            # `_local_flashcards_due_count`). The handler tolerates `None`
-            # -- auto-keep (task-1780, Task 3) is simply disabled for this
-            # process; nothing else about scheduled generation depends on
-            # it.
+            # `self.chachanotes_db` is assigned later in `__init__`,
+            # strictly AFTER `_wire_watchlists_and_notifications_services`
+            # (this method, called earlier in `__init__`) returns -- so it
+            # does not exist as an attribute on `self` yet at this point.
+            # A GETTER, not the instance itself, is what makes this safe:
+            # `BriefingJobHandler` calls `chachanotes_db_getter()` fresh
+            # every time a scheduled generation completes (long after
+            # `__init__` has finished), so this lambda's `getattr(self,
+            # "chachanotes_db", None)` re-reads whatever `self.
+            # chachanotes_db` has become by THEN, not whatever it was (or
+            # wasn't) at this wiring call. Passing the instance directly
+            # here (review round 1's finding) would freeze `None` into the
+            # handler forever, making auto-keep permanently inert in
+            # production regardless of what `self.chachanotes_db` later
+            # becomes. The handler tolerates the getter returning `None`
+            # at any given call -- auto-keep (task-1780, Task 3) simply
+            # skips that one attempt; nothing else about scheduled
+            # generation depends on it.
             briefing_handler = BriefingJobHandler(
                 subscriptions_db=subscriptions_db,
-                chachanotes_db=getattr(self, "chachanotes_db", None),
+                chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
             )
 
         handlers: dict[str, Handler] = {

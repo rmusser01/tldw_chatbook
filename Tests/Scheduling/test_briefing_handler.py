@@ -477,13 +477,23 @@ async def test_empty_result_writes_an_empty_row_end_to_end(tmp_path):
 
 # --- Task 3: auto-keep on scheduled completion -------------------------------
 #
-# `BriefingJobHandler` gains an optional `chachanotes_db`; once a spawned
-# generation resolves `complete`, `_run_generation` mirrors it into
+# `BriefingJobHandler` gains an optional `chachanotes_db_getter`; once a
+# spawned generation resolves `complete`, `_run_generation` mirrors it into
 # ChaChaNotes via `briefing_keep.keep_briefing(..., origin="scheduled")`
 # (spec: Keep-service "Auto path"). Every real DB here is file-backed at
 # `tmp_path`, never `:memory:` and never the live user data directory --
 # matching both this file's own convention above and
 # `Tests/Subscriptions/test_briefing_keep.py`'s.
+#
+# Review round 1: the handle is a GETTER, resolved fresh inside `_auto_keep`
+# every time, not a plain instance captured once at construction -- `app.py`
+# builds this handler before its own `self.chachanotes_db` attribute even
+# exists, so capturing the instance directly would freeze `None` into the
+# handler forever. Most tests below pass `lambda: chacha_db` (a closure over
+# an already-real db, standing in for "the attribute already resolved by
+# call time"); `test_a_late_bound_chachanotes_handle_is_still_auto_kept`
+# below is the one that specifically proves resolution happens at CALL time,
+# not at construction time.
 
 
 def _chacha_db(tmp_path) -> CharactersRAGDB:
@@ -554,7 +564,7 @@ async def test_a_complete_scheduled_generation_is_auto_kept_with_scheduled_origi
         handler = BriefingJobHandler(
             subscriptions_db=db,
             generate=functools.partial(generate_briefing, chat=_canned_chat),
-            chachanotes_db=chacha_db,
+            chachanotes_db_getter=lambda: chacha_db,
         )
 
         await handler.handle(_task(watchlist_id))
@@ -588,7 +598,9 @@ async def test_auto_keep_skips_empty_scheduled_results(tmp_path):
         watchlist_id = WatchlistBundleService(db).create(name="Quiet Watch")["id"]
         db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
 
-        handler = BriefingJobHandler(subscriptions_db=db, chachanotes_db=chacha_db)
+        handler = BriefingJobHandler(
+            subscriptions_db=db, chachanotes_db_getter=lambda: chacha_db
+        )
 
         await handler.handle(_task(watchlist_id))
         await _drain(handler)
@@ -636,7 +648,9 @@ async def test_an_auto_keep_failure_never_escapes_and_leaves_the_row_untouched(
             return dict(row_before)
 
         handler = BriefingJobHandler(
-            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+            subscriptions_db=db,
+            generate=fake_generate,
+            chachanotes_db_getter=lambda: chacha_db,
         )
 
         with (
@@ -684,7 +698,9 @@ async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
             return dict(row_before)
 
         handler = BriefingJobHandler(
-            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+            subscriptions_db=db,
+            generate=fake_generate,
+            chachanotes_db_getter=lambda: chacha_db,
         )
 
         debug_lines: list[str] = []
@@ -712,10 +728,11 @@ async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
 
 @pytest.mark.asyncio
 async def test_no_chachanotes_handle_skips_keep_without_crashing():
-    """`chachanotes_db=None` -- the default, and what `app.py` passes when
-    its own ChaChaNotes handle is not yet constructed at the point this
-    handler is wired up -- must never crash the handler and must never
-    attempt a keep; generation still completes normally."""
+    """`chachanotes_db_getter=None` -- the default -- must never crash the
+    handler and must never attempt a keep; generation still completes
+    normally. `test_a_getter_returning_none_at_call_time_skips_keep_
+    without_crashing` below covers the sibling case: a getter that IS
+    configured but itself returns `None` when called."""
 
     async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
         return {"id": 1, "status": "complete", "body_markdown": "irrelevant"}
@@ -723,7 +740,7 @@ async def test_no_chachanotes_handle_skips_keep_without_crashing():
     handler = BriefingJobHandler(
         subscriptions_db=_db_with_default_preset(None), generate=fake_generate
     )
-    assert handler._chachanotes_db is None
+    assert handler._chachanotes_db_getter is None
 
     with (
         patch(
@@ -740,6 +757,100 @@ async def test_no_chachanotes_handle_skips_keep_without_crashing():
     counter.assert_called_once_with(
         "briefing_schedule_runs", labels={"status": "completed"}
     )
+
+
+@pytest.mark.asyncio
+async def test_a_getter_returning_none_at_call_time_skips_keep_without_crashing():
+    """A `chachanotes_db_getter` IS configured (unlike the sibling test
+    above), but returns `None` when actually called -- the genuinely
+    "no handle available right now" case `_auto_keep`'s own docstring
+    documents. Must skip cleanly, exactly like no getter at all."""
+
+    async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+        return {"id": 1, "status": "complete", "body_markdown": "irrelevant"}
+
+    handler = BriefingJobHandler(
+        subscriptions_db=_db_with_default_preset(None),
+        generate=fake_generate,
+        chachanotes_db_getter=lambda: None,
+    )
+
+    with (
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing"
+        ) as keep_mock,
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.log_counter"
+        ) as counter,
+    ):
+        await handler.handle(_task(7))
+        await _drain(handler)
+
+    keep_mock.assert_not_called()
+    counter.assert_called_once_with(
+        "briefing_schedule_runs", labels={"status": "completed"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_late_bound_chachanotes_handle_is_still_auto_kept(tmp_path):
+    """Review round 1's headline liveness proof: a getter that would have
+    returned `None` if called AT CONSTRUCTION TIME, but resolves to a real
+    ChaChaNotes handle by the time the generation actually completes,
+    still gets auto-kept -- exactly `app.py`'s real shape, where
+    `self.chachanotes_db` does not exist yet when
+    `BriefingJobHandler` is built, but does exist by the time any
+    scheduled job actually fires later in the process's life.
+
+    This is the test that REDs against the OLD (pre-review-round-1)
+    instance-param wiring: capturing `chachanotes_db` once at construction
+    would have frozen in whatever `holder.db` was at `BriefingJobHandler(
+    ...)` time -- `None` -- and no later mutation of `holder.db` could
+    ever reach it. The getter, resolved fresh inside `_auto_keep`, sees
+    whatever `holder.db` has become by the time the generation completes.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(db).create(name="Acme Watch")["id"]
+        briefing_id = _seed_complete_briefing(db, watchlist_id)
+        row = db.get_briefing(briefing_id)
+
+        class _LateBoundHolder:
+            """Stands in for `self` in `app.py`: `.db` is `None` at the
+            moment the handler is constructed, mutated to the real
+            ChaChaNotes handle afterward -- before the generation
+            actually completes -- exactly mirroring `self.chachanotes_db`
+            being assigned later in `TldwCli.__init__`, strictly after
+            `BriefingJobHandler` is already built."""
+
+            db: CharactersRAGDB | None = None
+
+        holder = _LateBoundHolder()
+        assert holder.db is None  # the state at construction time
+
+        async def fake_generate(db, watchlist_id, *, preset_id=None, **kwargs):
+            # By the time generation "completes", the attribute has been
+            # assigned -- simulating `__init__` continuing past the point
+            # where the scheduler wiring block ran.
+            holder.db = chacha_db
+            return dict(row)
+
+        handler = BriefingJobHandler(
+            subscriptions_db=db,
+            generate=fake_generate,
+            chachanotes_db_getter=lambda: holder.db,
+        )
+
+        await handler.handle(_task(watchlist_id))
+        await _drain(handler)
+
+        kept = chacha_db.list_kept_briefings()
+        assert len(kept) == 1
+        assert kept[0]["source_briefing_id"] == briefing_id
+        assert kept[0]["origin"] == "scheduled"
+    finally:
+        chacha_db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -766,7 +877,9 @@ async def test_a_second_scheduled_run_auto_keeps_the_new_briefing_too(tmp_path):
             return dict(next(rows_by_call))
 
         handler = BriefingJobHandler(
-            subscriptions_db=db, generate=fake_generate, chachanotes_db=chacha_db
+            subscriptions_db=db,
+            generate=fake_generate,
+            chachanotes_db_getter=lambda: chacha_db,
         )
 
         await handler.handle(_task(watchlist_id))
@@ -781,3 +894,47 @@ async def test_a_second_scheduled_run_auto_keeps_the_new_briefing_too(tmp_path):
         assert {row["origin"] for row in kept} == {"scheduled"}
     finally:
         chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_at_boot():
+    """Review round 1's production-liveness proof, through `app.py`'s
+    REAL wiring (`_wire_watchlists_and_notifications_services`), not a
+    reimplementation of it -- the other tests in this section prove
+    `BriefingJobHandler` itself resolves the getter lazily; this one
+    proves the specific closure `app.py` builds does too.
+
+    `Tests/UI/app_factory._build_test_app` stubs `self.notes_service` to
+    `None` and `get_chachanotes_db_lazy` to return `None` for every test
+    app it builds (by design, for speed and hermeticity across the 90+
+    modules that share it) -- so `app.chachanotes_db` really is `None`
+    immediately after boot in this harness, honestly. Asserting it
+    resolves non-`None` here would therefore be dishonest, not a genuine
+    liveness proof (the premise this test's name would otherwise imply).
+    What CAN be proven honestly, using only the real wiring code the app
+    actually ran: the getter `app.py` built
+    (`lambda: getattr(self, "chachanotes_db", None)`) reads
+    `self.chachanotes_db` FRESH on every call, not whatever it captured at
+    `BriefingJobHandler(...)` construction time. Mutating
+    `app.chachanotes_db` after boot and calling the SAME getter again
+    demonstrates exactly that: the old (pre-review-round-1) instance-param
+    wiring would still report `None` here no matter what `app.chachanotes_db`
+    became afterward.
+    """
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)):
+        # The harness's own honest starting state -- see the docstring above
+        # for why this is stubbed to None rather than a real handle.
+        assert app.chachanotes_db is None
+
+        handler = app.scheduler_loop.handlers["briefing_job"]
+        getter = handler._chachanotes_db_getter
+        assert getter is not None
+        assert getter() is None  # agrees with app.chachanotes_db right now
+
+        sentinel = object()
+        app.chachanotes_db = sentinel  # the real, later __init__ assignment, simulated
+
+        assert getter() is sentinel  # the SAME getter now reads the new value
