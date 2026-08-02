@@ -11901,3 +11901,47 @@ async def test_library_ingest_restore_context_survives_vanished_widget():
             "library-ingest-retry-ingest-job-999", 3, 12.0
         )
         await pilot.pause()  # no exception is the assertion
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_option_value_inputs_carry_visible_labels():
+    """(task-2012) Populated Inputs never show their placeholder, so
+    placeholder-as-label leaves bare "1000"/"100"/"auto" values. Every value
+    field must be preceded by a visible Static label."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        # Stage a generic-group pre-flight with the panel expanded, exactly
+        # as a real .txt pre-flight followed by an expand leaves the form.
+        screen._library_ingest_form.preflight = PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=316,
+            truncated=False,
+            total_files=1,
+        )
+        screen._library_ingest_form.expanded_type_groups = {"generic"}
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#opt-generic-chunk_size")
+
+        labels = [
+            str(w.renderable)
+            for w in screen.query(".type-group-field-label").results(Static)
+        ]
+        caps = get_capabilities("generic")
+        expected = [
+            f.label for f in caps.fields if f.type not in ("checkbox", "select")
+        ]
+        assert expected, "generic group unexpectedly has no value fields"
+        for label in expected:
+            assert label in labels, f"value field {label!r} has no visible label"

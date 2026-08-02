@@ -2,7 +2,7 @@
 id: TASK-2012
 title: >-
   Library ingest options panel renders unlabeled checkbox husks and bare values
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
