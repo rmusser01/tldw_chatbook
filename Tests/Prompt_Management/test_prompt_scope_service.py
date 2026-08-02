@@ -381,6 +381,47 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     assert policy.actions == ["prompts.list.local", "prompts.list.server"]
 
 
+@pytest.mark.parametrize(
+    (
+        "system_flag",
+        "user_flag",
+        "system_prompt",
+        "user_prompt",
+        "expected",
+    ),
+    [
+        (1, 0, None, None, (True, False)),
+        (2, -1, None, None, (False, False)),
+        ("1", "0", None, None, (False, False)),
+        (None, None, "System text", "User text", (True, True)),
+    ],
+)
+def test_prompt_scope_lane_flags_accept_only_boolean_or_sqlite_boolean_values(
+    system_flag,
+    user_flag,
+    system_prompt,
+    user_prompt,
+    expected,
+):
+    normalized = PromptScopeService._normalize_prompt_record(
+        {
+            "id": 7,
+            "uuid": "local-uuid-7",
+            "name": "Lane flags",
+            "has_system_prompt": system_flag,
+            "has_user_prompt": user_flag,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+        },
+        backend="local",
+    )
+
+    assert (
+        normalized["has_system_prompt"],
+        normalized["has_user_prompt"],
+    ) == expected
+
+
 @pytest.mark.asyncio
 async def test_prompt_scope_saves_and_deletes_against_selected_backend():
     policy = FakePolicyEnforcer()

@@ -732,9 +732,7 @@ class PromptsDatabase:
                     CHECK(artifact_type IN ('prompt', 'recipe'))
                     """
                 )
-                conn.execute(
-                    "UPDATE schema_version SET version = 3 WHERE version = 2"
-                )
+                conn.execute("UPDATE schema_version SET version = 3 WHERE version = 2")
                 columns = {
                     row["name"] for row in conn.execute("PRAGMA table_info(Prompts)")
                 }
@@ -863,11 +861,9 @@ class PromptsDatabase:
     @staticmethod
     def _is_busy_snapshot_error(error: BaseException) -> bool:
         """Identify SQLite's WAL stale-snapshot error without masking other I/O errors."""
-        return (
-            isinstance(error, sqlite3.OperationalError)
-            and getattr(error, "sqlite_errorcode", None)
-            == getattr(sqlite3, "SQLITE_BUSY_SNAPSHOT", 517)
-        )
+        return isinstance(error, sqlite3.OperationalError) and getattr(
+            error, "sqlite_errorcode", None
+        ) == getattr(sqlite3, "SQLITE_BUSY_SNAPSHOT", 517)
 
     def _serialize_prompt_definition(self, prompt_definition: Any) -> Optional[str]:
         if prompt_definition is None:
@@ -1693,9 +1689,8 @@ class PromptsDatabase:
                 current_version = existing_prompt_state["version"]
                 is_deleted = existing_prompt_state["deleted"]
 
-                if (
-                    expected_version is not None
-                    and expected_version != int(current_version)
+                if expected_version is not None and expected_version != int(
+                    current_version
                 ):
                     raise ConflictError(
                         "Prompt changed after it was opened.", "Prompts", prompt_id
@@ -2302,7 +2297,7 @@ class PromptsDatabase:
                     # style fetch for a whole page -- this is a single extra
                     # TEXT column on the same query, not a second query.
                     query = f"""SELECT id, name, uuid, author, details, last_modified,
-                                artifact_type,
+                                version, artifact_type,
                                 CASE WHEN length(trim(coalesce(system_prompt, ''))) > 0 THEN 1 ELSE 0 END
                                     AS has_system_prompt,
                                 CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END

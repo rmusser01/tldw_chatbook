@@ -685,13 +685,13 @@ class PromptScopeService:
         system_flag = source.get("has_system_prompt")
         user_flag = source.get("has_user_prompt")
         normalized["has_system_prompt"] = (
-            system_flag
-            if isinstance(system_flag, bool)
+            bool(system_flag)
+            if isinstance(system_flag, (bool, int)) and system_flag in (0, 1)
             else bool(str(source.get("system_prompt") or "").strip())
         )
         normalized["has_user_prompt"] = (
-            user_flag
-            if isinstance(user_flag, bool)
+            bool(user_flag)
+            if isinstance(user_flag, (bool, int)) and user_flag in (0, 1)
             else bool(str(source.get("user_prompt") or "").strip())
         )
         return normalized

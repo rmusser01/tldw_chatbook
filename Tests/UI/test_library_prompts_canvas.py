@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
@@ -56,6 +56,7 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
@@ -667,6 +668,77 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
         label_text = str(button.label)
         assert "Summarizes text" in label_text
         assert "Alice" not in label_text
+
+
+@pytest.mark.asyncio
+async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes(
+    tmp_path,
+):
+    """Normalized list metadata must survive the Screen's raw-row adapter."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Outcome recipe",
+        author="Author",
+        details="Reusable outcome structure",
+        system_prompt="# Role\n\nBe exact.",
+        user_prompt="# Goal\n\nShip it.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Ship it.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        button = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
+        assert "Recipe · Local · System + User" in str(button.label)
+        _count, records = screen._local_source_records["prompts"]
+        [record] = records
+        assert record["id"] == prompt_id
+        assert record["local_id"] == prompt_id
+        assert record["source_id"] == prompt_uuid
+        assert record["uuid"] == prompt_uuid
+        assert record["version"] == 1
+        assert record["backend"] == "local"
+        assert record["artifact_type"] == "recipe"
+        assert record["has_system_prompt"] is True
+        assert record["has_user_prompt"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1592,6 +1664,80 @@ async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tm
         assert screen._library_prompt_block_state.definition.kind == "block_prompt"
         assert "unsaved Prompt copy" in screen._library_prompt_status
         assert db.fetch_prompt_details(prompt_id)["artifact_type"] == "recipe"
+
+
+@pytest.mark.asyncio
+async def test_library_use_mismatched_structured_prompt_requires_conversion(tmp_path):
+    """A mismatched discriminator cannot execute compatibility User text."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Mismatched artifact",
+        author="Author",
+        details="Outer Prompt, inner Recipe",
+        user_prompt="# Goal\n\nDo not stage this.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Do not stage this.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.stage_console_prompt_insert = Mock()
+    app.notify = Mock()
+    record_usage = AsyncMock()
+    service.record_prompt_usage = record_usage
+    host = LibraryHarness(app)
+    before = db.fetch_prompt_details(prompt_id)
+    session_before = app.get_acp_runtime_session_state()
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "mismatched"
+        )
+        convert = screen.query_one("#library-prompt-convert", Button)
+        assert str(convert.label) == "Convert and save as new Prompt"
+        assert convert.disabled is False
+
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        app.stage_console_prompt_insert.assert_not_called()
+        record_usage.assert_not_awaited()
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
+        assert host.seen_routes == []
+        assert app.get_acp_runtime_session_state() == session_before
+        app.notify.assert_called_once()
+        assert "Convert and save as new Prompt" in app.notify.call_args.args[0]
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_dirty is False
+        after = db.fetch_prompt_details(prompt_id)
+        assert after["version"] == before["version"]
+        assert after["artifact_type"] == "prompt"
 
 
 @pytest.mark.asyncio
@@ -2650,6 +2796,7 @@ def test_library_prompt_insert_console_refuses_while_dirty():
             notify=notify,
             stage_console_prompt_insert=stage,
         ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
         _read_library_prompt_editor_fields=read_fields,
     )
     event = SimpleNamespace(stop=Mock())
@@ -2675,6 +2822,7 @@ def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
             notify=notify,
             stage_console_prompt_insert=stage,
         ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
         _read_library_prompt_editor_fields=lambda: (
             "System Only",
             "",
@@ -2695,3 +2843,46 @@ def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
         severity="warning",
     )
     stage.assert_not_called()
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["legacy", "supported-v2"])
+def test_library_prompt_insert_console_stages_safe_prompt_states(structured):
+    notify = Mock()
+    stage = Mock()
+    editor_state = (
+        _structured_editor_state()
+        if structured
+        else build_prompt_editor_state(
+            {
+                "id": 41,
+                "name": "Legacy Prompt",
+                "system_prompt": "Stay direct.",
+                "user_prompt": "Ship it.",
+            }
+        )
+    )
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _current_library_prompt_editor_state=lambda: editor_state,
+        _read_library_prompt_editor_fields=lambda: (
+            "Prompt",
+            "",
+            "",
+            "Stay direct.",
+            "Ship it.",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    event = SimpleNamespace(stop=Mock())
+
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
+
+    event.stop.assert_called_once_with()
+    notify.assert_not_called()
+    stage.assert_called_once_with("Ship it.")

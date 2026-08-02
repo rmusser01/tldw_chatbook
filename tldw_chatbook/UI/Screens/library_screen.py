@@ -2482,24 +2482,27 @@ class LibraryScreen(BaseAppScreen):
         (composite ``"local:prompt:<id>"`` string ids and a separate integer
         ``local_id``, per ``normalize_prompt_record``) rather than the raw
         ``PromptsDatabase.list_prompts`` row shape
-        ``build_prompts_list_state`` expects -- each item is remapped back
-        to a raw-shaped record (``local_id`` -> ``id``) here so the pure
-        state builder can consume it unchanged.
+        ``build_prompts_list_state`` expects. Each item is remapped to keep
+        the integer display ``id`` while preserving the normalized identity,
+        backend, artifact type, version, and lane-presence metadata used by
+        the row UI. Backward-compatible defaults tolerate older raw-shaped
+        service doubles without hiding Recipe or lane information when the
+        normalized fields are present.
 
-        Note: the raw local ``list_prompts`` DB query selects
-        ``id, name, uuid, author, details, last_modified`` -- it does not
-        join keywords, so every remapped record's ``keywords`` here is the
-        (always empty) list the normalizer defaults to. Bulk-enriching a
-        page of prompts with keywords would need either a new batched-join
-        DB seam or N per-row ``fetch_keywords_for_prompt`` calls; the notes
-        list canvas sets the precedent for skipping this (its own bulk
-        ``list_notes`` fetch has never carried keywords either -- only the
-        single-note editor enriches, via ``_fetch_library_note_keywords``),
-        so this deliberately matches that precedent rather than fetching
-        keywords per row here. ``details``, unlike keywords, IS cheap to
-        carry (a single extra column on the same query, Task 8b D2) --
-        ``build_prompts_list_state``'s filter/secondary-line now use it
-        instead of the never-populated ``keywords``.
+        Note: the raw local ``list_prompts`` DB query selects identity,
+        display fields, version, artifact type, and lane-presence flags, but
+        it does not join keywords. Every remapped record's ``keywords`` here
+        is therefore the (always empty) list the normalizer defaults to.
+        Bulk-enriching a page of prompts with keywords would need either a new
+        batched-join DB seam or N per-row ``fetch_keywords_for_prompt`` calls;
+        the notes list canvas sets the precedent for skipping this (its own
+        bulk ``list_notes`` fetch has never carried keywords either -- only
+        the single-note editor enriches, via
+        ``_fetch_library_note_keywords``), so this deliberately matches that
+        precedent rather than fetching keywords per row here. ``details``,
+        unlike keywords, IS cheap to carry (a single extra column on the same
+        query, Task 8b D2) -- ``build_prompts_list_state``'s filter/secondary-
+        line now use it instead of the never-populated ``keywords``.
 
         Args:
             list_prompts: The bound ``list_prompts`` callable to invoke.
@@ -2507,10 +2510,10 @@ class LibraryScreen(BaseAppScreen):
                 ``per_page``).
 
         Returns:
-            The fetched page's records, raw-shaped for
-            ``build_prompts_list_state`` (``id``, ``name``, ``author``,
-            ``details``, ``keywords``, ``last_modified``, ``version``), or
-            ``()`` on failure or an unrecognized response shape.
+            The fetched page's records, display-shaped for
+            ``build_prompts_list_state`` with normalized identity and
+            artifact metadata preserved, or ``()`` on failure or an
+            unrecognized response shape.
         """
         try:
             response = await self._run_library_service_call(
@@ -2528,15 +2531,53 @@ class LibraryScreen(BaseAppScreen):
         for item in items:
             if not isinstance(item, Mapping):
                 continue
+            raw_id = item.get("id")
+            local_id = item.get("local_id")
+            if local_id is None and isinstance(raw_id, int):
+                local_id = raw_id
+            backend = str(item.get("backend") or "local")
+            source_id = item.get("source_id") or item.get("uuid")
+            if source_id in (None, ""):
+                source_id = item.get("server_id") or local_id or raw_id
+            has_system_prompt = item.get("has_system_prompt")
+            if not isinstance(has_system_prompt, bool):
+                has_system_prompt = bool(
+                    str(
+                        item.get("system_prompt")
+                        or item.get("compiled_system_prompt")
+                        or ""
+                    ).strip()
+                )
+            has_user_prompt = item.get("has_user_prompt")
+            if not isinstance(has_user_prompt, bool):
+                has_user_prompt = bool(
+                    str(
+                        item.get("user_prompt")
+                        or item.get("compiled_user_prompt")
+                        or ""
+                    ).strip()
+                )
             records.append(
                 {
-                    "id": item.get("local_id"),
+                    "id": local_id,
+                    "source_id": (
+                        str(source_id) if source_id not in (None, "") else None
+                    ),
+                    "local_id": local_id,
+                    "server_id": item.get("server_id"),
+                    "uuid": item.get("uuid"),
+                    "backend": backend,
                     "name": item.get("name"),
                     "author": item.get("author"),
                     "details": item.get("details"),
                     "keywords": item.get("keywords"),
                     "last_modified": item.get("last_modified"),
                     "version": item.get("version"),
+                    "artifact_type": (
+                        "recipe" if item.get("artifact_type") == "recipe" else "prompt"
+                    ),
+                    "has_system_prompt": has_system_prompt,
+                    "has_user_prompt": has_user_prompt,
                 }
             )
         return tuple(records)
@@ -11176,23 +11217,30 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if self._library_prompts_view != "editor":
             return
-        block_state = getattr(self, "_library_prompt_block_state", None)
-        if block_state is not None and block_state.artifact_type == "recipe":
+        editor_state = self._current_library_prompt_editor_state()
+        block_state = editor_state.block_editor_state
+        if (
+            editor_state.definition_state not in {"legacy", "supported_v2"}
+            or block_state is None
+        ):
+            if callable(notify):
+                notify(
+                    "This artifact cannot run directly. Use Convert and save as "
+                    "new Prompt first.",
+                    severity="warning",
+                )
+            return
+        if block_state.artifact_type == "recipe":
             self._apply_library_prompt_working_copy(
                 state=block_state,
                 user_prompt=None,
             )
             return
-        detail = getattr(self, "_library_prompt_detail", None)
-        if (
-            block_state is None
-            and isinstance(detail, Mapping)
-            and detail.get("artifact_type") == "recipe"
-        ):
+        if block_state.artifact_type != "prompt":
             if callable(notify):
                 notify(
-                    "Recipes cannot run directly; convert this compatibility "
-                    "artifact to a new Prompt first.",
+                    "This artifact cannot run directly. Use Convert and save as "
+                    "new Prompt first.",
                     severity="warning",
                 )
             return
