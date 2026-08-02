@@ -978,6 +978,44 @@ def _anthropic_caching_enabled() -> bool:
         return True
 
 
+def _without_cache_control(obj: Any) -> Any:
+    """Deep-copy ``obj`` with every ``cache_control`` key removed.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        The same structure minus all ``cache_control`` entries.
+    """
+    if isinstance(obj, dict):
+        return {
+            key: _without_cache_control(value)
+            for key, value in obj.items()
+            if key != "cache_control"
+        }
+    if isinstance(obj, list):
+        return [_without_cache_control(item) for item in obj]
+    return obj
+
+
+def _contains_cache_control(obj: Any) -> bool:
+    """True when any nested dict carries a ``cache_control`` key.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        True when ``cache_control`` appears anywhere within ``obj``.
+    """
+    if isinstance(obj, dict):
+        return "cache_control" in obj or any(
+            _contains_cache_control(value) for value in obj.values()
+        )
+    if isinstance(obj, list):
+        return any(_contains_cache_control(item) for item in obj)
+    return False
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -1335,7 +1373,27 @@ def chat_with_anthropic(
                 stream=current_streaming,
                 timeout=180,
             )
-        response.raise_for_status()
+            if (
+                response.status_code == 400
+                and _contains_cache_control(data)
+                and "cache_control" in (response.text or "")
+            ):
+                # Caching must never break sends (cost-ticker PR2): odd
+                # proxies/gateways can reject cache_control. Retry exactly
+                # once without any breakpoints; every other error path is
+                # untouched. Reading .text here is safe -- it is the error
+                # body, not a stream.
+                logger.warning(
+                    "Anthropic: endpoint rejected cache_control; retrying without prompt caching."
+                )
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=_without_cache_control(data),
+                    stream=current_streaming,
+                    timeout=180,
+                )
+            response.raise_for_status()
 
         if current_streaming:
             logger.debug(
