@@ -151,7 +151,7 @@ async def test_authoring_loop_lights_up_both_cross_target_lenses(
         # docstring and test_evals_empty_states.py's
         # test_import_dataset_file_selected_creates_a_dataset_from_the_file).
         rail = screen.query_one(LibraryRail)
-        rail._handle_dataset_import_file_selected(import_path)
+        await rail._handle_dataset_import_file_selected(import_path)
         await pilot.pause()
         assert screen._selection.kind == "dataset"
         dataset_id = screen._selection.id

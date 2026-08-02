@@ -67,6 +67,7 @@ gate used to offer no bench-creation affordance whatsoever.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -118,6 +119,35 @@ _RAIL_IMPORT_PARSERS = {
 #: eval_datasets.name is UNIQUE with no deleted_at exemption -- a bare
 #: literal default name would collide on a second "+ New dataset" click.
 _NEW_DATASET_BASE_NAME = "Untitled dataset"
+
+
+async def _read_import_file_off_thread(file_path: Path) -> str:
+    """Reads ``file_path``'s full text on a worker thread, never blocking
+    the UI event loop.
+
+    Qodo review (task-1691 phase 2 fix wave), platform compliance rule
+    497164: a plain ``file_path.read_text()`` call runs synchronously on
+    whatever thread calls it, and both rail import handlers below
+    (``_handle_dataset_import_file_selected``, ``_handle_probe_import_
+    file_selected``) are invoked as ``FileOpen`` dismiss callbacks running
+    on Textual's own main/UI thread -- a slow disk or a large file would
+    freeze the whole app for the duration of the read. This is the ONE
+    seam both handlers share (the read itself is byte-for-byte identical
+    between them; only what happens to the text afterward -- snippet
+    parsing vs. probe-set parsing -- differs), so the fix lives here once
+    rather than being duplicated into each handler and risking the two
+    drifting apart again.
+
+    ``asyncio.to_thread`` (not a Textual ``@work`` worker): both call
+    sites are themselves plain callables handed to ``push_screen(...,
+    callback)``, invoked through Textual's own ``invoke()`` helper
+    (``textual._callback``), which already awaits an ``async def``
+    callback -- see that helper's own ``isawaitable`` check. A one-off
+    background-thread hop is all this single blocking call needs; a full
+    worker (with its own cancellation/exclusivity semantics) would be
+    strictly more machinery for no behavioural gain here.
+    """
+    return await asyncio.to_thread(file_path.read_text, encoding="utf-8")
 
 
 def _default_open_sections() -> dict[str, bool]:
@@ -993,13 +1023,19 @@ class LibraryRail(NotifyMixin, Vertical):
             self._handle_dataset_import_file_selected,
         )
 
-    def _handle_dataset_import_file_selected(self, path: Optional[Any]) -> None:
+    async def _handle_dataset_import_file_selected(self, path: Optional[Any]) -> None:
         """Creates a NEW dataset from an imported file in one step -- there
         is no existing dataset to import INTO yet (that is
         ``snippet_editor.SnippetEditor``'s job, once a dataset exists and is
         selected). Public-shaped so a test can drive it directly with a real
         temp file, bypassing the modal picker -- mirrors
         ``SnippetEditor._handle_import_file_selected``.
+
+        ``async`` (Qodo review, task-1691 phase 2 fix wave): the file read
+        below now hops onto a worker thread via ``_read_import_file_off_
+        thread`` -- see that function's own docstring for why, and why an
+        ``async def`` callback here costs nothing extra (``push_screen``'s
+        own ``invoke()`` helper already awaits it).
         """
         if not path:
             return
@@ -1013,7 +1049,7 @@ class LibraryRail(NotifyMixin, Vertical):
             self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
             return
         try:
-            content = file_path.read_text(encoding="utf-8")
+            content = await _read_import_file_off_thread(file_path)
         except (OSError, UnicodeDecodeError) as exc:
             self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
             return
@@ -1060,13 +1096,21 @@ class LibraryRail(NotifyMixin, Vertical):
             self._handle_probe_import_file_selected,
         )
 
-    def _handle_probe_import_file_selected(self, path: Optional[Any]) -> None:
+    async def _handle_probe_import_file_selected(self, path: Optional[Any]) -> None:
         """Creates a NEW probe-set dataset from an imported plain-text file.
 
         Public-shaped (not ``_on_...``) so a test can drive it directly with
         a real temp file, bypassing the modal picker -- mirrors
         ``_handle_dataset_import_file_selected``'s own convention for
         snippet imports.
+
+        ``async`` (Qodo review, task-1691 phase 2 fix wave): the file read
+        below now hops onto a worker thread via ``_read_import_file_off_
+        thread`` -- the SAME helper ``_handle_dataset_import_file_
+        selected`` uses, so the two siblings stay identical on this point
+        rather than diverging. See that function's own docstring for why,
+        and why an ``async def`` callback here costs nothing extra
+        (``push_screen``'s own ``invoke()`` helper already awaits it).
 
         Args:
             path: The chosen file, or ``None``/falsy when the dialog was
@@ -1084,7 +1128,7 @@ class LibraryRail(NotifyMixin, Vertical):
             self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
             return
         try:
-            text = file_path.read_text(encoding="utf-8")
+            text = await _read_import_file_off_thread(file_path)
         except (OSError, UnicodeDecodeError) as exc:
             self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
             return

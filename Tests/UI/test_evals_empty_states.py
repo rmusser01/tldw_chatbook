@@ -686,6 +686,43 @@ def test_the_marker_glyph_is_single_width():
 
 
 @pytest.mark.asyncio
+async def test_reading_an_import_file_never_runs_on_the_event_loop_thread(
+    tmp_path, monkeypatch
+):
+    """Qodo review (task-1691 phase 2 fix wave), Finding 2: platform
+    compliance rule 497164 requires long-running operations (a file read
+    included) to run on a background worker, not the main/UI thread --
+    ``_handle_dataset_import_file_selected``/``_handle_probe_import_file_
+    selected`` used to call ``Path.read_text()`` directly, synchronously,
+    on whatever thread the ``FileOpen`` dismiss callback runs on (Textual's
+    own UI/event-loop thread). Both now share ``_read_import_file_off_
+    thread``; this pins that function directly -- the actual ``read_text``
+    call happens on a DIFFERENT thread than the one awaiting it, not merely
+    that the two callers still work end to end (which the tests just below,
+    and in the continuation/steering/authoring e2e files, already cover)."""
+    import threading
+
+    from tldw_chatbook.UI.Evals.library_rail import _read_import_file_off_thread
+
+    probe_file = tmp_path / "off-thread.txt"
+    probe_file.write_text("hello off-thread world")
+
+    calling_thread = threading.current_thread()
+    read_thread_holder: dict[str, threading.Thread] = {}
+    original_read_text = Path.read_text
+
+    def _spying_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_thread_holder["thread"] = threading.current_thread()
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _spying_read_text)
+    content = await _read_import_file_off_thread(probe_file)
+
+    assert content == "hello off-thread world"
+    assert read_thread_holder["thread"] is not calling_thread
+
+
+@pytest.mark.asyncio
 async def test_importing_a_probe_file_creates_a_marked_probe_set(
     evals_app, evals_db: EvalsDB, tmp_path
 ):
@@ -703,7 +740,7 @@ async def test_importing_a_probe_file_creates_a_marked_probe_set(
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         rail = pilot.app.screen.query_one(LibraryRail)
-        rail._handle_probe_import_file_selected(probe_file)
+        await rail._handle_probe_import_file_selected(probe_file)
         await pilot.pause()
 
         rows = [row for row in evals_db.list_datasets() if is_probe_set(row)]
@@ -728,7 +765,7 @@ async def test_importing_a_malformed_probe_file_notifies_and_creates_nothing(
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         rail = pilot.app.screen.query_one(LibraryRail)
-        rail._handle_probe_import_file_selected(bad)
+        await rail._handle_probe_import_file_selected(bad)
         await pilot.pause()
 
         assert [row for row in evals_db.list_datasets() if is_probe_set(row)] == []
@@ -747,7 +784,7 @@ async def test_importing_a_file_that_cannot_be_read_notifies(
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         rail = pilot.app.screen.query_one(LibraryRail)
-        rail._handle_probe_import_file_selected(tmp_path / "missing.txt")
+        await rail._handle_probe_import_file_selected(tmp_path / "missing.txt")
         await pilot.pause()
 
         assert [row for row in evals_db.list_datasets() if is_probe_set(row)] == []
@@ -780,7 +817,7 @@ async def test_importing_a_probe_file_selects_the_read_only_probe_set_detail(
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         rail = pilot.app.screen.query_one(LibraryRail)
-        rail._handle_probe_import_file_selected(probe_file)
+        await rail._handle_probe_import_file_selected(probe_file)
         await pilot.pause()
 
         screen = pilot.app.screen
@@ -805,7 +842,7 @@ async def test_the_probe_set_detail_renders_every_probe_read_only(
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         rail = pilot.app.screen.query_one(LibraryRail)
-        rail._handle_probe_import_file_selected(probe_file)
+        await rail._handle_probe_import_file_selected(probe_file)
         await pilot.pause()
 
         screen = pilot.app.screen
@@ -1315,7 +1352,7 @@ async def test_import_dataset_file_selected_creates_a_dataset_from_the_file(
         await pilot.pause()
         screen: EvalsScreen = pilot.app.screen
         rail = screen.query_one(LibraryRail)
-        rail._handle_dataset_import_file_selected(csv_path)
+        await rail._handle_dataset_import_file_selected(csv_path)
         await pilot.pause()
 
         datasets = evals_db.list_datasets()

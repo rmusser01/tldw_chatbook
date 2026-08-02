@@ -187,7 +187,7 @@ async def test_continuation_captured_per_cell_and_survives_reload(
         # library_rail.py's own `_handle_dataset_import_file_selected`
         # docstring).
         rail = screen.query_one(LibraryRail)
-        rail._handle_dataset_import_file_selected(import_path)
+        await rail._handle_dataset_import_file_selected(import_path)
         await pilot.pause()
         assert screen._selection.kind == "dataset"
         dataset_id = screen._selection.id
@@ -311,7 +311,7 @@ async def test_flag_off_run_renders_no_continuation_for_the_same_cell(
         screen._sample_bench_client_factory = lambda t: _PerCellContinuationCaptureClient(t)
 
         rail = screen.query_one(LibraryRail)
-        rail._handle_dataset_import_file_selected(import_path)
+        await rail._handle_dataset_import_file_selected(import_path)
         await pilot.pause()
         assert screen._selection.kind == "dataset"
         dataset_id = screen._selection.id
