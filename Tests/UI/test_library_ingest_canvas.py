@@ -1256,3 +1256,27 @@ async def test_backend_state_is_rendered_before_the_switch():
         assert ids.index("library-ingest-server-line") < ids.index(
             "library-ingest-backend-switch"
         ), f"switch rendered before the state line: {ids[:6]}"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_files_summary_pluralizes_correctly():
+    """(task-2015) Plural counts must not read "recorded as a failures"."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"unsupported": ["/tmp/a.xyz", "/tmp/b.xyz"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
+        assert (
+            "2 unsupported files will be recorded as failures."
+            == str(summary.renderable)
+        )

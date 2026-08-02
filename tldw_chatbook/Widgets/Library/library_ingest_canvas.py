@@ -358,9 +358,9 @@ class LibraryIngestCanvas(VerticalScroll):
             if state.unsupported_files:
                 count = len(state.unsupported_files)
                 file_noun = "file" if count == 1 else "files"
-                failure_noun = "failure" if count == 1 else "failures"
+                recorded_as = "a failure" if count == 1 else "failures"
                 yield Static(
-                    f"{count} unsupported {file_noun} will be recorded as a {failure_noun}.",
+                    f"{count} unsupported {file_noun} will be recorded as {recorded_as}.",
                     id="ingest-unsupported-summary",
                     classes="library-ingest-quiet-line",
                     markup=False,
