@@ -118,6 +118,14 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         )
 
     def compose(self) -> ComposeResult:
+        """Build the modal: status copy, query input, scope line, actions.
+
+        The Run action composes disabled when the prefill is blank and is
+        kept in step by the ``Input.Changed`` handler below.
+
+        Yields:
+            The modal's child widgets.
+        """
         with Vertical(id="console-rag-settings"):
             yield Static("Library RAG", classes="console-modal-header")
             yield Static(
@@ -172,6 +180,11 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         self.dismiss(ConsoleRagSettingsResult(query=query, run=True))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dismiss with the run result for Run, or no changes for Cancel.
+
+        Args:
+            event: The pressed action button.
+        """
         button_id = event.button.id or ""
         if button_id == "console-rag-settings-run":
             event.stop()
@@ -205,4 +218,5 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         self.dismiss(None)
 
     def action_dismiss_modal(self) -> None:
+        """Close without changes (Escape), matching the hint copy."""
         self.dismiss(None)
