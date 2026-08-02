@@ -24,8 +24,8 @@ window that fix left open (this branch's own fix wave, Important 1). Both siblin
 in the same family were deliberately left out of that scope and still exclude by the
 coarser key:
 
-- `fail_interrupted_scripts` (`tldw_chatbook/Subscriptions/briefing_cast.py`) excludes by
-  `script_id`, not by the claimed row's own id.
+- `fail_interrupted_scripts` (`tldw_chatbook/Subscriptions/briefing_cast.py`) excluded by
+  `briefing_id` (the claim key), not by the claimed row's own id.
 - `fail_interrupted_audio` (`tldw_chatbook/Subscriptions/briefing_audio.py:1342`, `AND
   script_id NOT IN (...)`) excludes by `script_id` too.
 
@@ -63,7 +63,7 @@ the fix into 1811/1812's own scope.
 - [x] #4 A same-`script_id` crash-zombie script row and a live claim coexist in one sweep: the zombie is failed as interrupted, the live row is untouched (script sweep coexistence test)
 - [x] #5 A same-`script_id` crash-zombie audio row and a live claim coexist in one sweep: the zombie is failed as interrupted, the live row is untouched (audio sweep coexistence test)
 - [x] #6 A claim taken but not yet row-recorded survives a sweep run inside that exact window, for both the script and audio sweeps (window regression tests, mirroring this branch's briefings window test)
-- [x] #7 The Synthesize blocking toast (`watchlists_collections_screen.py`) never names a crash-zombie audio row as "already being synthesized" -- once the audio sweep is row-scoped, a zombie sharing a `script_id` with a live claim is swept before the toast is composed, so only the genuinely live row's label can appear
+- [x] #7 The Synthesize blocking toast (`watchlists_collections_screen.py`) no longer names a crash-zombie audio row as "already being synthesized" once the live claim's row id is recorded -- the row-scoped sweep fails the zombie before the toast is composed, so only the genuinely live row's label appears (in the brief pre-recording window the pending-claim guard deliberately spares the whole script, zombie included -- the same tradeoff as the briefings sweep)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,7 +83,7 @@ briefing_cast.py: added `_ACTIVE_CAST_CLAIM_ROW_IDS` (briefing_id -> script_id),
 
 briefing_audio.py: identical shape, keyed by script_id -> audio_id (`_ACTIVE_AUDIO_CLAIM_ROW_IDS`, `active_audio_claim_row_ids()`, `pending_audio_claim_script_ids()`); `_claim_audio` gained an optional `audio_id` param; `generate_script_audio` records the row id immediately after `db.create_briefing_audio`'s own `to_thread` call returns. `fail_interrupted_audio` gained `exclude_scripts`; `exclude` is now `id NOT IN (...)` (was `script_id NOT IN (...)`).
 
-watchlists_collections_screen.py: both sweep call sites per artifact (`_fail_interrupted_scripts_if_safe`/`_sweep_and_guard_cast`/`_cast_script`, and `_fail_interrupted_audio_if_safe`/`_sweep_and_guard_audio`/`_synthesize_audio`) now snapshot the row-id accessor plus the pending accessor and pass both through. `active_cast_claims`/`active_audio_claims` imports dropped from the screen (no longer what the sweep wants); the coarse accessors themselves stay, unchanged, for their existing "is this key claimed" callers/tests.
+watchlists_collections_screen.py: both sweep call sites per artifact (`_fail_interrupted_scripts_if_safe`/`_sweep_and_guard_cast`/`_cast_script`, and `_fail_interrupted_audio_if_safe`/`_sweep_and_guard_audio`/`_synthesize_audio`) now snapshot the row-id accessor plus the pending accessor and pass both through. `active_cast_claims`/`active_audio_claims` imports dropped from the screen (no longer what the sweep wants); the coarse accessors themselves stay unchanged (test-only consumers now; no production callers remain).
 
 Tests: mirrored test_briefing_service.py's three sections (spares-an-excluded-row-both-directions updated to be row-scoped with a padding-row fixture; new row-scoped coexistence test; new pending-claim-window tests) into test_briefing_cast.py and test_briefing_audio_pipeline.py. Widened 4 stale-signature `_recording_sweep` monkeypatch stubs in test_watchlists_artifacts_pane.py (2 cast, 2 audio) to accept the new exclude_briefings/exclude_scripts kwarg -- these would otherwise TypeError once the screen's own call sites pass it. Added one screen-level test for AC #7 (test_the_blocking_toast_never_names_a_crash_zombie_sharing_the_live_claims_script), pinning that a crash-zombie audio row sharing a script_id with a live claim (recorded row id, via _claim_audio's new audio_id param) never appears in the Synthesize blocking toast -- only the genuinely live row's label does, and the zombie is independently confirmed swept (failed/interrupted) rather than merely absent from the message by coincidence.
 

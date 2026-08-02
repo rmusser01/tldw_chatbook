@@ -3415,8 +3415,11 @@ async def test_the_blocking_toast_never_names_a_crash_zombie_sharing_the_live_cl
     purely because ITS SCRIPT was excluded -- and could then be named by
     the `blocking` toast as if IT, not the genuinely live row, were what
     blocked Synthesize. Row-scoping (task-1890) sweeps the zombie before
-    `blocking` is computed, so only the genuinely live row's label can
-    ever appear.
+    `blocking` is computed, so once the live claim's row id is recorded
+    (as here), only the genuinely live row's label appears. (In the
+    pre-recording window the pending-claim guard spares the whole script,
+    zombie included -- the deliberate tradeoff inherited from the
+    briefings sweep.)
 
     The live claim's row id is recorded via `_claim_audio`'s `audio_id`
     parameter -- unlike the sibling test above (which deliberately leaves

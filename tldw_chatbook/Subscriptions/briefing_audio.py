@@ -1463,8 +1463,10 @@ def fail_interrupted_audio(
             actual live row survives, and a same-script zombie is swept
             exactly as if no claim existed at all. This is what closes the
             gap task-1811 made user-visible: `WatchlistsCollectionsScreen`'s
-            Synthesize refusal toast can no longer name a crash-zombie row
-            shielded by an unrelated live claim on the same script.
+            Synthesize refusal toast no longer names a crash-zombie row
+            shielded by an unrelated live claim on the same script (except
+            during that claim's own pre-recording window below, where the
+            whole script is deliberately spared).
         exclude_scripts: Script ids to spare even though a row reads
             `generating`, regardless of that row's own id (task-1890,
             mirroring `fail_interrupted_briefings`'s `exclude_watchlists`).

@@ -5817,9 +5817,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         fresh synthesis -- the same press both recovers the zombie AND
         synthesizes real audio (`test_synthesizing_recovers_a_zombie_audio_
         row_via_its_own_sweep`). Row-scoping (task-1890) also means this
-        `blocking` toast can no longer name a crash-zombie row shielded by
-        an unrelated live claim on the same script -- the zombie is swept
-        by the same call, before `blocking` is computed.
+        `blocking` toast no longer names a crash-zombie row shielded by an
+        unrelated live claim on the same script -- the zombie is swept by
+        the same call, before `blocking` is computed -- once that claim's
+        row id is recorded. In the brief window before recording, the
+        pending-claim guard deliberately spares the whole script (zombie
+        included), so the toast can still name one there.
         """
         try:
             try:
