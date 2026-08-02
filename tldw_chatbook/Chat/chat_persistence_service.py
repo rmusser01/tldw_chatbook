@@ -387,6 +387,7 @@ class ChatPersistenceService:
         update_parent: bool = False,
         update_feedback: bool = False,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        usage_json: Optional[str] = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -436,6 +437,11 @@ class ChatPersistenceService:
                 ``message_attachments`` table (positions >= 1). ``None``
                 leaves all attachments/images untouched by this call except
                 via the legacy ``image_data``/``image_mime_type`` kwargs.
+            usage_json: Optional normalized provider-usage JSON (Console
+                cost ticker). Only included in the row update when not
+                ``None``, so a content-only update (no usage known yet,
+                e.g. a mid-stream edit) never overwrites an already-persisted
+                value with NULL.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -481,6 +487,14 @@ class ChatPersistenceService:
             update_data["parent_message_id"] = parent_message_id
         if update_feedback:
             update_data["feedback"] = feedback
+        # Only include usage_json when the caller actually has a value to
+        # write -- shared by all three ``self.db.update_message`` call sites
+        # below via this single ``update_data`` dict. Omitting the key (not
+        # writing ``None``) leaves an already-persisted usage value
+        # untouched on a content-only update (e.g. a mid-stream edit before
+        # usage is known).
+        if usage_json is not None:
+            update_data["usage_json"] = usage_json
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -567,6 +581,7 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
         citation_write: SealedCitationWrite | None = None,
+        usage_json: Optional[str] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -624,6 +639,9 @@ class ChatPersistenceService:
                 When present, it is preflighted before the transaction and
                 committed atomically with the message, attachments,
                 generation metadata, and feedback.
+            usage_json: Optional normalized provider-usage JSON (Console
+                cost ticker), written into the row's local-only
+                ``usage_json`` column via ``CharactersRAGDB.add_message``.
 
         Returns:
             The newly created message's id.
@@ -692,6 +710,7 @@ class ChatPersistenceService:
             "image_data": effective_image_data,
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
+            "usage_json": usage_json,
         }
         if prepared_citation is not None:
             with self.db.transaction() as cursor:

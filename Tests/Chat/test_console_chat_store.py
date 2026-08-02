@@ -2625,3 +2625,57 @@ def test_set_message_usage_unknown_id_raises_keyerror():
     store.ensure_session(title="Chat 1")
     with pytest.raises(KeyError):
         store.set_message_usage("missing", ProviderUsage())
+
+
+def test_terminal_flush_passes_usage_json_to_accepting_persistence():
+    """``mark_message_complete`` first materializes the streamed content
+    (a create through ``_persist_pending_message_if_ready``), then flushes
+    the terminal status through ``_persist_existing_message`` -- which now
+    has a ``persisted_message_id`` and so calls ``update_message_content``.
+    Usage set before completion must ride that final update call."""
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    class UsagePersistence(RecordingPersistence):  # RecordingPersistence at :1792
+        def __init__(self):
+            super().__init__()
+            self.update_usage_values = []
+
+        def update_message_content(self, *, usage_json=None, **kwargs):
+            self.update_usage_values.append(usage_json)
+            return super().update_message_content(**kwargs)
+
+    persistence = UsagePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "hello")
+    store.set_message_usage(
+        message.id,
+        ProviderUsage(uncached_input=10, output=2, provider="openai", model="gpt-4o"),
+    )
+
+    store.mark_message_complete(message.id)
+
+    assert persistence.update_usage_values
+    stored = persistence.update_usage_values[-1]
+    assert stored is not None and '"uncached_input": 10' in stored
+
+
+def test_narrow_persistence_without_usage_kwarg_still_works():
+    # FakePersistence (:573) declares keyword-only params and no
+    # **kwargs -- the _persistence_accepts_kwarg probe must skip usage_json.
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "hello")
+    store.set_message_usage(message.id, ProviderUsage(uncached_input=1))
+
+    completed = store.mark_message_complete(message.id)  # must not raise
+    assert completed.status == "complete"

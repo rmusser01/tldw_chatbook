@@ -94,6 +94,7 @@ class ConsoleChatPersistence(Protocol):
         feedback: str | None = None,
         attachments: Sequence[Mapping[str, Any]] | None = None,
         citation_write: SealedCitationWrite | None = None,
+        usage_json: str | None = None,
     ) -> str:
         """Create a persisted message and return its ID.
 
@@ -105,6 +106,11 @@ class ConsoleChatPersistence(Protocol):
         ``citation_write``, when present, is committed atomically with the
         message by citation-aware adapters. Narrow test fakes may omit this
         optional parameter entirely.
+
+        ``usage_json`` (Console cost ticker), when present, is the
+        message's normalized provider-usage JSON. Optional: narrow test
+        fakes may omit this parameter entirely -- the store only passes it
+        to adapters that declare it (see ``_persistence_accepts_kwarg``).
         """
 
     def update_message_content(
@@ -119,6 +125,7 @@ class ConsoleChatPersistence(Protocol):
         update_parent: bool = False,
         update_feedback: bool = False,
         attachments: Sequence[Mapping[str, Any]] | None = None,
+        usage_json: str | None = None,
     ) -> bool:
         """Update persisted message content.
 
@@ -126,6 +133,13 @@ class ConsoleChatPersistence(Protocol):
         ``create_message``; ``None`` (the Console store's edit path always
         passes this) leaves attachments untouched. Optional: fakes used in
         tests may omit this parameter entirely.
+
+        ``usage_json`` (Console cost ticker), when present, overwrites the
+        row's normalized provider-usage JSON. Optional: narrow test fakes
+        may omit this parameter entirely -- the store only passes it to
+        adapters that declare it, and only when usage is actually known,
+        so a content-only update never clobbers an existing value with
+        ``None``.
         """
 
     def get_message_version(self, message_id: str) -> int | None:
@@ -2890,6 +2904,13 @@ class ConsoleChatStore:
                     message.attachments, message.generation_metadata
                 )
             ]
+        # Normalized provider usage (Console cost ticker): forwarded only
+        # when this message actually carries usage AND the adapter declares
+        # the kwarg -- narrow test fakes without it keep working untouched.
+        if message.usage is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "usage_json"
+        ):
+            create_kwargs["usage_json"] = message.usage.to_json()
         if citation_write is not None:
             create_kwargs["citation_write"] = citation_write
         if terminal_persistence:
@@ -2996,6 +3017,15 @@ class ConsoleChatStore:
             self.persistence.update_message_content, "attachments"
         ):
             update_kwargs["attachments"] = None
+        # Normalized provider usage (Console cost ticker): forwarded only
+        # when this message actually carries usage AND the adapter declares
+        # the kwarg. Omitted entirely (never sent as ``None``) so a
+        # content-only update (e.g. a mid-stream edit before usage is known)
+        # never overwrites an already-persisted usage value with NULL.
+        if message.usage is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content, "usage_json"
+        ):
+            update_kwargs["usage_json"] = message.usage.to_json()
         self.persistence.update_message_content(**update_kwargs)
         self._enqueue_sync_v2_message_if_ready(message)
 
