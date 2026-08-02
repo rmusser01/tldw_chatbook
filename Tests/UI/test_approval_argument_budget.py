@@ -67,9 +67,9 @@ def test_short_arguments_are_still_rendered_verbatim():
 def test_secret_redaction_still_applies_after_reordering():
     """Redaction parity must survive the new ordering (TASK-1845)."""
     rendered = _summarize_arguments(
-        {"api_key": "sk-super-secret-value", "path": "~/a.md"}
+        {"api_key": "NOT-A-REAL-KEY-placeholder", "path": "~/a.md"}
     )
-    assert "sk-super-secret-value" not in rendered
+    assert "NOT-A-REAL-KEY-placeholder" not in rendered
     assert "***" in rendered
 
 
@@ -137,3 +137,20 @@ def test_the_destination_survives_when_it_is_the_last_of_many_arguments():
         f"the destination was clipped off the end of a long argument list: "
         f"{rendered!r}"
     )
+
+
+@pytest.mark.unit
+def test_a_non_string_argument_key_never_crashes_rendering():
+    """`_summarize_arguments` must survive any payload the model emits.
+
+    The old implementation put everything inside one guarded `json.dumps`.
+    Hoisting moved key inspection OUT of that guard, and `_snake_case`'s
+    `re.sub` raises TypeError on a non-string key -- so a malformed payload
+    took down the approval row instead of rendering it. An approval card
+    that crashes is an approval the user cannot answer, and the run blocks
+    until the auto-deny fires.
+    """
+    rendered = _summarize_arguments({1: "a", "path": "/x", None: "b"})
+
+    assert "/x" in rendered, rendered
+    assert isinstance(rendered, str)

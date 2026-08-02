@@ -241,12 +241,25 @@ _DESTINATION_TOKENS: frozenset[str] = frozenset(
 )
 
 
-def _snake_case(key: str) -> str:
-    """Return ``key`` lowercased with camelCase split into ``_`` tokens."""
-    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).lower()
+def _snake_case(key: Any) -> str:
+    """Return ``key`` lowercased with camelCase split into ``_`` tokens.
+
+    Takes ``Any``, not ``str``: these keys come straight from model output,
+    where a malformed payload can carry a non-string key. `re.sub` raises
+    TypeError on one, which used to take down the whole approval row -- an
+    approval the user cannot answer, blocking the run until the auto-deny
+    fires. Coerced here, at the boundary.
+
+    Args:
+        key: One argument name from a tool call, of any type.
+
+    Returns:
+        The key as a lowercase, ``_``-separated string.
+    """
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key)).lower()
 
 
-def _is_destination_key(key: str) -> bool:
+def _is_destination_key(key: Any) -> bool:
     """Whether ``key`` names WHERE a call acts, rather than what it carries.
 
     TASK-695: these are the arguments an approval decision actually turns
@@ -255,7 +268,8 @@ def _is_destination_key(key: str) -> bool:
     never push the destination off the end of the summary.
 
     Args:
-        key: One argument name from the model's tool call.
+        key: One argument name from the model's tool call. Any type -- see
+            `_snake_case` for why this is not narrowed to ``str``.
 
     Returns:
         True when the name looks like a destination/target.
@@ -318,7 +332,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     # a fixed per-value cap only moves the cliff along by one key.
     destinations = [kv for kv in ordered if _is_destination_key(kv[0])]
     payloads = [kv for kv in ordered if not _is_destination_key(kv[0])]
-    overhead = sum(len(json.dumps(key)) + 2 for key, _ in ordered) + 2
+    overhead = sum(len(json.dumps(str(key))) + 2 for key, _ in ordered) + 2
     spent = sum(len(_render(v, _ARGS_VALUE_LIMIT)) for _, v in destinations)
     share = _ARGS_VALUE_LIMIT
     if payloads:
@@ -326,7 +340,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
         share = max(_ARGS_MIN_VALUE_LIMIT, min(_ARGS_VALUE_LIMIT, remaining // len(payloads)))
 
     parts = [
-        f"{json.dumps(key)}:"
+        f"{json.dumps(str(key))}:"
         f"{_render(value, _ARGS_VALUE_LIMIT if _is_destination_key(key) else share)}"
         for key, value in ordered
     ]
