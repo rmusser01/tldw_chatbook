@@ -542,7 +542,7 @@ def test_name_keyed_verdicts_still_apply_to_every_matching_call():
 
     `MCPToolProvider.apply_batch_decisions` and every current test emit
     name-keyed verdicts, and the fence path builds ToolCalls with NO call_id
-    at all (`agent_runtime._fence_call`). A name-keyed verdict must therefore
+    at all (`agent_runtime.parse_tool_call`). A name-keyed verdict must therefore
     still stop every matching call, or this change breaks the MCP gate.
     """
     calls = [

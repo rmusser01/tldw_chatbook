@@ -394,7 +394,9 @@ class MCPToolProvider:
 
     # -- gate resolution for the batch-review hook (worker thread) --------
 
-    def pending_gate_for(self, llm_name: str, args: dict) -> MCPPendingCall | None:
+    def pending_gate_for(
+        self, llm_name: str, args: dict, call_id: str = ""
+    ) -> MCPPendingCall | None:
         """Resolve one call's gate; return a pending descriptor iff it needs asking.
 
         Direct (not main-loop-submitted) call to `gate_tool_test` -- see the
@@ -415,6 +417,12 @@ class MCPToolProvider:
                 the incoming `ToolCall.name`.
             args: The tool call's raw arguments, copied verbatim into the
                 returned `MCPPendingCall.arguments` (never mutated).
+            call_id: The provider's per-call id, carried onto the row so the
+                approval card can offer one decision per TARGET rather than
+                one per tool name. Empty when the model's payload had no id
+                (`ensure_tool_call_ids` fills those in for the native path);
+                an empty id makes the row collapse by name, which shares one
+                verdict across every same-name call in the batch.
 
         Returns:
             An `MCPPendingCall` describing what needs asking, or `None`
@@ -443,6 +451,10 @@ class MCPToolProvider:
             tool_name=tool.name,
             server_label=tool.server_label,
             arguments=dict(args or {}),
+            # TASK-1861: carry the per-call key through, or the card collapses
+            # every same-name MCP call into one `xN` row with one verdict --
+            # the defect the per-call re-key fixed for built-in tools.
+            call_id=call_id,
             reason=_pending_reason(state),
         )
 

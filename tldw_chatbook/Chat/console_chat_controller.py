@@ -138,6 +138,14 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
 #: `uuid4()` id -- every genuine round id is a UUID string; this is not.
 _LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
 
+#: TASK-1861: the tool result a call gets when the user refused it at the
+#: approval card. The runtime turns any non-"proceed" verdict string into the
+#: call's result without dispatching it, so this text is what the MODEL reads
+#: and must say who refused and which tool -- matching the wording
+#: `BuiltinToolGate.check` already uses for a denied tool, so a refusal reads
+#: the same whether it was stopped here or at the gate.
+USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
+
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -201,7 +209,9 @@ def _collect_mcp_pending(
     """
     pending: list["MCPPendingCall"] = []
     for call in calls:
-        gate = provider.pending_gate_for(call.name, call.args)
+        gate = provider.pending_gate_for(
+            call.name, call.args, str(getattr(call, "call_id", "") or "")
+        )
         if gate is not None:
             pending.append(gate)
     return pending
@@ -534,25 +544,63 @@ def build_tool_review_hook(
                 return decisions[key]
             return decisions.get(row.llm_name)
 
-        if mcp_provider is not None:
-            mcp_decisions: dict[str, str] = {}
-            for row in mcp_pending:
-                if row.llm_name not in mcp_claimed_names:
-                    continue
+        def _stamps_for(rows: "list[MCPPendingCall]") -> dict[str, str]:
+            """Name-keyed stamps for `rows`: approvals win, all-denied denies.
+
+            TASK-1861. A refusal must NOT be stamped against the name when a
+            sibling call of the same tool was approved -- the stamp is what
+            `invoke()` peeks at, and it cannot express "allow this one,
+            refuse that one", so stamping the refusal would also stop the
+            call the user allowed. Refusals are enforced per call by the
+            verdict map below instead.
+
+            Stamping the approval is safe even with a refused sibling,
+            because that sibling is stopped before dispatch and never
+            reaches `invoke()`. When EVERY call of a name was refused there
+            is no approval to preserve, so "deny" is stamped as defense in
+            depth for any path that bypasses the verdict map.
+            """
+            approvals: dict[str, str] = {}
+            denied: set[str] = set()
+            for row in rows:
                 decision = _decision_for(row)
-                if decision is not None:
-                    # Last write wins when several calls of one MCP tool got
-                    # different verdicts: the provider's grant is per NAME, so
-                    # it cannot express "allow this one, refuse that one" --
-                    # the per-call refusals are still enforced by the runtime,
-                    # which reads the call-id keys directly.
-                    mcp_decisions[row.llm_name] = decision
-            mcp_provider.apply_batch_decisions(mcp_decisions)
-        for row in builtin_pending:
-            decision = _decision_for(row)
-            if decision is not None:
-                builtin_gate.stamp(row.llm_name, decision)
-        return {row.llm_name: "proceed" for row in all_pending}
+                if decision is None:
+                    continue
+                if decision == "deny":
+                    denied.add(row.llm_name)
+                else:
+                    approvals[row.llm_name] = decision
+            stamps = dict(approvals)
+            for name in denied:
+                stamps.setdefault(name, "deny")
+            return stamps
+
+        if mcp_provider is not None:
+            mcp_provider.apply_batch_decisions(
+                _stamps_for(
+                    [r for r in mcp_pending if r.llm_name in mcp_claimed_names]
+                )
+            )
+        for name, decision in _stamps_for(builtin_pending).items():
+            builtin_gate.stamp(name, decision)
+
+        # The refusal half, enforced HERE rather than through the stamps.
+        # The runtime resolves `call_id` before name and turns any
+        # non-"proceed" verdict string into that call's result without
+        # dispatching it, so this is the only layer that can refuse one
+        # target while running another.
+        verdicts: dict[str, str] = {row.llm_name: "proceed" for row in all_pending}
+        for row in all_pending:
+            if _decision_for(row) != "deny":
+                continue
+            # Prefer the per-call key. A row with no `call_id` -- the fence
+            # path, or an MCP row whose provider omitted an id -- can only be
+            # addressed by name, which stops every same-name call in the
+            # batch. That is fail-closed, and the only honest option when the
+            # runtime cannot tell those calls apart.
+            key = str(getattr(row, "call_id", "") or "") or row.llm_name
+            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+        return verdicts
 
     return review_tool_calls
 
