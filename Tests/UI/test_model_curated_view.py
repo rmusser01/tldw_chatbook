@@ -166,7 +166,12 @@ def _install_buttons(app: App) -> list[Button]:
 async def test_ensure_loaded_triggers_the_catalog_load_and_marks_installed_rows(
     tmp_path: Path,
 ) -> None:
-    """An installed reference is marked as such, never offered a redundant Install."""
+    """An installed reference is marked as such, never offered a redundant Install.
+
+    Args:
+        tmp_path: pytest fixture; the managed store root and the on-disk
+            source directory the installed descriptor is installed from.
+    """
     installed_ref = ArtifactRef("model-a", "a" * 40, "int8")
     not_installed_ref = ArtifactRef("model-b", "b" * 40, "int8")
     installed_descriptor = _descriptor(installed_ref, b"payload-a")
@@ -206,6 +211,14 @@ async def test_ensure_loaded_triggers_the_catalog_load_and_marks_installed_rows(
 async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """A second ``ensure_loaded()`` without ``force=True`` must not repeat
+    the ``list_installed()`` read; ``force=True`` must.
+
+    Args:
+        tmp_path: pytest fixture; the managed store root.
+        monkeypatch: pytest fixture; wraps ``ModelArtifactService.
+            list_installed`` to record each real invocation.
+    """
     calls: list[str] = []
     original_list_installed = ModelArtifactService.list_installed
 
@@ -242,6 +255,11 @@ async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
 
 @pytest.mark.asyncio
 async def test_no_user_visible_string_contains_artifact(tmp_path: Path) -> None:
+    """No rendered Static text says "artifact" -- the UI says "model" throughout.
+
+    Args:
+        tmp_path: pytest fixture; the managed store root.
+    """
     registry = _registry_with(_descriptor(ArtifactRef("model-a", "a" * 40, "int8")))
     service = ModelArtifactService(tmp_path / "store")
     view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
@@ -266,6 +284,12 @@ async def test_install_click_reaches_the_shared_consent_modal(
     """A real Install click -- not a direct call to an internal method --
     resolves a plan (through a stubbed acquisition service, so this stays
     network-free) and pushes the exact shared ``ModelInstallModal``.
+
+    Args:
+        tmp_path: pytest fixture; the managed store root and the report's
+            destination path.
+        monkeypatch: pytest fixture; stubs ``ArtifactAcquisitionService``
+            so preflight resolves without real network I/O.
     """
     reference = ArtifactRef("model-a", "a" * 40, "int8")
     descriptor = _descriptor(reference)
@@ -323,6 +347,11 @@ async def test_install_click_reaches_the_shared_consent_modal(
 def test_preflight_failure_notifies_and_does_not_push_a_modal(monkeypatch) -> None:
     """The sibling success path is test_curated_preflight_result_opens_the_
     shared_modal in test_model_installed_view.py; this is its failure branch.
+
+    Args:
+        monkeypatch: pytest fixture; replaces the read-only ``app`` property
+            on the ``CuratedView`` class with a ``MagicMock`` for this bare,
+            unmounted view.
     """
     fake_app = MagicMock()
     # Class-level property patch (Screen/Widget.app is read-only) -- safe

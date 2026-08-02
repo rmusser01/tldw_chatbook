@@ -341,9 +341,7 @@ class CuratedView(Widget):
         this code posted before ``_progress_screen`` existed.
         ``post_message`` returns ``False`` without raising once this
         instance is closed (torn down by a screen-level recompose, see
-        ``_progress_screen``'s docstring) -- only THEN does this fall back
-        to the captured screen, so the durable channel is used exactly
-        when needed, never in addition to the normal path.
+        ``_progress_screen``'s docstring) -- only THEN does this fall back.
 
         Review Important #1 (this delta port's first round): posting to
         both targets unconditionally, every tick, meant ``LLMScreen``'s own
@@ -355,16 +353,50 @@ class CuratedView(Widget):
         three ``apply_progress`` calls for one tick. Exactly one message
         is posted per tick now, so ``LLMScreen`` renders exactly once.
 
+        Review Important #2 (PR #1185 automated review, fix round 2): the
+        fallback used to post directly at the captured Screen. Textual
+        only bubbles a message UP from wherever it is posted -- never back
+        down -- and ``LLMManagementWindow`` (which owns the
+        ``InstallProgressed``/``InstallStatusChanged`` handlers that mirror
+        progress and lifecycle into ``InstalledView``) sits BELOW the
+        Screen in the tree. Posting at the Screen therefore entered the
+        tree above that mirroring node, so it silently never ran after a
+        recompose: Curated kept updating via ``LLMScreen``, but Installed
+        stopped receiving ticks/completion until some later, unrelated
+        refresh. The fallback now re-enters the tree below that node
+        instead -- at the live ``CuratedView`` if one is mounted (the
+        normal case, restoring the FULL path: mirror at
+        ``LLMManagementWindow``, then render at ``LLMScreen``, in one
+        message), or at the live ``LLMManagementWindow`` if a fresh
+        ``CuratedView`` has not finished (re)mounting yet (the same
+        nested-mount window ``apply_progress`` itself tolerates), and only
+        as a last resort -- neither found -- at the Screen itself, exactly
+        as the reviewer specified.
+
         Args:
             message: The event to deliver; a fresh instance per call (never
-                reused across the two targets, so no Message ever needs
-                its ``_prevent`` set merged across two different posts).
+                reused across two different posts, so no Message ever
+                needs its ``_prevent`` set merged from two different
+                targets).
         """
         if self.post_message(message):
             return
         screen = self._progress_screen
-        if screen is not None:
-            screen.post_message(message)
+        if screen is None:
+            return
+        # Local import: avoids a module-scope cycle with
+        # LLM_Management_Window, which itself only imports this module
+        # locally (inside its own compose()), for the same reason.
+        from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+
+        try:
+            target: Widget = screen.query_one(CuratedView)
+        except NoMatches:
+            try:
+                target = screen.query_one(LLMManagementWindow)
+            except NoMatches:
+                target = screen
+        target.post_message(message)
 
     async def _provision(self, report):
         """Provision the consented report on the worker's event loop."""

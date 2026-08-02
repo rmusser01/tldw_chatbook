@@ -346,6 +346,9 @@ async def test_plan_panel_survives_bracket_bearing_repository_and_license_text(
     markup and eat them. ModelPlanPanel renders the whole plan as one
     ``Static(..., markup=False)`` -- this pins that the raw bracket text
     actually reaches the screen, not just that construction doesn't raise.
+
+    Args:
+        tmp_path: pytest fixture; used only as the plan's destination path.
     """
     report = _report(
         tmp_path / "managed",

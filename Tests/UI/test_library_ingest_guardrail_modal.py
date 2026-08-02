@@ -97,6 +97,12 @@ async def test_guardrail_modal_escape_dismisses(sample_warnings, sample_counts):
     through ``pilot.press`` -- not the mapped Python callable directly --
     so it would have caught the bug: before the fix, this raises instead
     of reaching the ``assert``.
+
+    Args:
+        sample_warnings: Fixture; two representative guardrail warnings
+            (PDF processing, OCR extraction) the modal renders.
+        sample_counts: Fixture; per-feature affected-file counts shown
+            alongside each warning.
     """
     app = GuardrailApp()
     async with app.run_test() as pilot:

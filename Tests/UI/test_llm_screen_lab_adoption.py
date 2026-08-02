@@ -232,6 +232,11 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
     See test_curated_install_progress_renders_exactly_once_per_tick below
     for the call-counting half of this fix (Review Important #1, fix
     round 1).
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture, used to stub the
+            network-capable acquisition service so this test never
+            performs real I/O; reverted automatically after the test.
     """
     import asyncio
     from unittest.mock import MagicMock
@@ -259,14 +264,36 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         Only ``.provision`` is exercised; it delivers one progress tick,
         waits for the test to force a screen-level recompose, then
         delivers a second tick -- all through the real ``progress``
-        callback ``CuratedView._provision`` built, so the dual-delivery
-        fix under test runs unmodified.
+        callback ``CuratedView._provision`` built, so ``_deliver``'s fix
+        under test runs unmodified.
         """
 
         def __init__(self, _service) -> None:
-            pass
+            """Accept and discard the managed-store service the real
+            constructor takes.
+
+            Args:
+                _service: The managed-store service (unused by the fake).
+            """
 
         async def provision(self, root, consent, registry, *, sources, progress):
+            """Deliver two progress ticks with the recompose in between.
+
+            Args:
+                root: The reference this closure is rooted at (unused; the
+                    fake never inspects it beyond receiving it).
+                consent: The granted consent object (unused).
+                registry: The curated registry (unused).
+                sources: File source map (unused).
+                progress: The real ``deliver`` callback ``CuratedView.
+                    _provision`` built; called synchronously, twice, exactly
+                    as the real acquisition service would call it from its
+                    own await points.
+
+            Returns:
+                A sentinel standing in for the real installed-path result;
+                its value is never asserted on.
+            """
             progress(first_progress)
             await resume.wait()
             progress(second_progress)
@@ -349,6 +376,140 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
 
 
 @pytest.mark.asyncio
+async def test_curated_install_progress_after_recompose_still_mirrors_into_installed_view(
+    monkeypatch,
+):
+    """PR #1185 automated review, Important #1 (fix round 2).
+
+    ``CuratedView._deliver``'s durable fallback used to post straight at
+    the captured Screen. Textual only ever bubbles a message UP from
+    wherever it is posted, never back down, and ``LLMManagementWindow``
+    (which owns the ``InstallProgressed``/``InstallStatusChanged``
+    handlers that mirror progress and lifecycle into ``InstalledView``,
+    see ``LLM_Management_Window.py``) sits BELOW the Screen. Posting at
+    the Screen therefore entered the tree above that mirroring node, so
+    it silently never ran after a recompose: Curated kept updating (the
+    two tests above only ever checked Curated), while Installed silently
+    stopped receiving ticks/completion. This test is the one the review
+    asked for: it checks the MIRRORING handler's own effect on
+    ``InstalledView``, not the curated side, after a real recompose.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture, used to stub the
+            network-capable acquisition service so this test never
+            performs real I/O; reverted automatically after the test.
+    """
+    import asyncio
+    from unittest.mock import MagicMock
+
+    import tldw_chatbook.Model_Artifacts.acquisition as acquisition_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "encoder.onnx", 100 * 1024 * 1024, 600 * 1024 * 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "decoder.onnx", 400 * 1024 * 1024, 600 * 1024 * 1024
+    )
+    resume = asyncio.Event()
+
+    class _FakeAcquisitionService:
+        """Stands in for the real, network-capable acquisition service."""
+
+        def __init__(self, _service) -> None:
+            """Accept and discard the managed-store service the real
+            constructor takes.
+
+            Args:
+                _service: The managed-store service (unused by the fake).
+            """
+
+        async def provision(self, root, consent, registry, *, sources, progress):
+            """Deliver two progress ticks with the recompose in between.
+
+            Args:
+                root: The reference this closure is rooted at (unused).
+                consent: The granted consent object (unused).
+                registry: The curated registry (unused).
+                sources: File source map (unused).
+                progress: The real ``deliver`` callback ``CuratedView.
+                    _provision`` built.
+
+            Returns:
+                A sentinel standing in for the real installed-path result;
+                its value is never asserted on.
+            """
+            progress(first_progress)
+            await resume.wait()
+            progress(second_progress)
+            return object()
+
+    monkeypatch.setattr(
+        acquisition_module, "ArtifactAcquisitionService", _FakeAcquisitionService
+    )
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        for _ in range(5):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one(CuratedView)
+        installed = window.query_one(InstalledView)
+
+        curated._operation_reference = reference
+        curated._progress_screen = curated.screen
+        curated._service_for_worker = MagicMock()
+        curated._registry_for_worker = MagicMock()
+        curated._source_map = MagicMock(return_value={})
+        fake_report = MagicMock(root=reference)
+
+        provision_task = asyncio.create_task(curated._provision(fake_report))
+        await pilot.pause()
+        await pilot.pause()
+
+        # Sanity check on the normal (no-recompose) path: the FIRST tick
+        # already reaches InstalledView's own mirroring, via the exact
+        # bubble chain _deliver's docstring describes (CuratedView ->
+        # LLMManagementWindow -> LLMScreen).
+        assert installed._install_progress == first_progress
+        assert installed._install_active is True
+
+        screen.refresh(recompose=True)
+        for _ in range(5):
+            await pilot.pause()
+
+        fresh_window = screen.query_one(LLMManagementWindow)
+        fresh_installed = fresh_window.query_one(InstalledView)
+        assert fresh_installed is not installed, (
+            "test setup bug: recompose did not actually replace InstalledView"
+        )
+
+        # The tick under test: delivered by the ORIGINAL (now unmounted,
+        # orphaned) CuratedView instance's own worker, through _deliver's
+        # fallback -- exactly what the real download does after a
+        # mid-install recompose. Before this fix, _deliver posted straight
+        # at the Screen, which never reaches LLMManagementWindow's
+        # mirroring handler; fresh_installed would still show the FIRST
+        # tick's byte counts (or nothing), never the second's.
+        resume.set()
+        await provision_task
+        for _ in range(3):
+            await pilot.pause()
+
+        assert fresh_installed._install_progress == second_progress, (
+            "InstalledView's mirroring handler never observed the "
+            "post-recompose tick -- _deliver's fallback bypassed "
+            "LLMManagementWindow"
+        )
+        assert fresh_installed._install_active is True
+
+
+@pytest.mark.asyncio
 async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatch):
     """TASK-596 delta port, fix round 1 (Review Important #1).
 
@@ -366,6 +527,11 @@ async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatc
     before this fix. The recompose test above only ever asserted eventual
     CONTENT, which cannot distinguish one render from three; this counts
     the actual number of ``apply_progress`` calls instead.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture, used to wrap
+            ``CuratedView.apply_progress`` with a call-counting shim;
+            reverted automatically after the test.
     """
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
