@@ -33,6 +33,47 @@ from tldw_chatbook.Workspaces.display_state import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
+class ConsoleBrowserSearchInput(Input):
+    """Search input whose initial value never echoes as a user edit.
+
+    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` recomposes
+    unconditionally (see its own docstring for why an equality guard is
+    unsafe), so every sync re-mounts a fresh search input. Textual's
+    `Input._watch_value` posts `Changed` for a constructor-set value
+    unconditionally -- its `_initial_value` flag only positions the cursor --
+    and that echo travels the message pump, so on a busy machine it lands
+    AFTER the user typed a newer query. The screen's `Changed` handler
+    cannot tell an echo from typing: it overwrote the newer query with the
+    older one and bumped the search token, silently discarding the fresh
+    in-flight search. Symptom at user level: type "alpha", then quickly
+    "beta" -- the search reverts to "alpha".
+
+    The fix removes the echo at the source instead of teaching the handler
+    to guess: the value is applied in `on_mount` inside
+    `self.prevent(Input.Changed)`, Textual's documented mechanism for a
+    programmatic set without a message. The invariant the handler relies on
+    -- every `Changed` from this box is a real edit -- becomes true.
+    """
+
+    def __init__(self, *args: object, initial_value: str = "", **kwargs: object) -> None:
+        """Store the display value without arming the reactive.
+
+        Args:
+            *args: Forwarded to `Input` unchanged.
+            initial_value: Query text to display once mounted. Deliberately
+                NOT passed to `Input(value=...)` -- that is the echo path.
+            **kwargs: Forwarded to `Input` unchanged.
+        """
+        super().__init__(*args, **kwargs)
+        self._initial_display_value = initial_value
+
+    def on_mount(self) -> None:
+        """Apply the initial value silently, then behave like any Input."""
+        if self._initial_display_value:
+            with self.prevent(Input.Changed):
+                self.value = self._initial_display_value
+
+
 # One vocabulary for persisted-but-not-archived chats across surfaces:
 # "saved chat". Rows reach this map with either a workspace-membership role
 # ("workspace-thread"/"workspace") or a persisted conversation state
@@ -1025,8 +1066,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             id="console-workspace-conversation-search-row",
             classes="console-workspace-conversation-search-row",
         ):
-            search_input = Input(
-                value=browser.query,
+            search_input = ConsoleBrowserSearchInput(
+                initial_value=browser.query,
                 placeholder="Search conversations",
                 id="console-workspace-conversation-search",
                 classes="console-workspace-conversation-search",
