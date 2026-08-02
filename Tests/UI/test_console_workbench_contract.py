@@ -373,7 +373,16 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
 
 
 @pytest.mark.asyncio
-async def test_console_approvals_chip_activation_focuses_batch_submit_button():
+async def test_console_approvals_chip_activation_focuses_the_decision_not_submit():
+    """TASK-1845: the chip must NOT land the keyboard on the commit control.
+
+    This test previously asserted focus on `#approval-submit`, which made the
+    documented keyboard route jump-to-card + Enter -- one keystroke from
+    granting a tool access to a call the user had not read. Rows are pre-armed
+    to `approve_once` (correct: a blank Select breaks `allow_blank=False`), so
+    the fix was to move the FOCUS target, not the default. The contract is now
+    the row's decision Select, via `ChatApprovalCard.first_focus_widget_id`.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -406,7 +415,13 @@ async def test_console_approvals_chip_activation_focuses_batch_submit_button():
         await pilot.pause(0.1)
 
         focused = host.focused
-        assert getattr(focused, "id", None) == "approval-submit"
+        assert getattr(focused, "id", None) != "approval-submit", (
+            "focus landed on the commit control: Enter would approve an "
+            "unread call"
+        )
+        assert "approval-row-decision" in getattr(focused, "classes", set()), (
+            f"expected the row's decision Select, got {focused!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -508,19 +523,19 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
 
         status_index = ordered_ids.index("console-inspector-run-status-summary")
         approval_action_index = ordered_ids.index("console-inspector-review-approval")
-        tool_action_index = ordered_ids.index("console-inspector-review-tool-call")
         save_action_index = ordered_ids.index("console-inspector-save-chatbook")
         first_secondary_heading_index = ordered_ids.index(
             "console-inspector-selected-conversation-heading"
         )
 
         assert status_index < approval_action_index < first_secondary_heading_index
-        assert status_index < tool_action_index < first_secondary_heading_index
+        # TASK-1843 removed `console-inspector-review-tool-call`: it gated on
+        # a counter nothing ever assigned, so it was permanently disabled
+        # while permanently claiming a reason, and its handler was a notify()
+        # stub. It must stay gone rather than be re-added as a stub.
+        assert "console-inspector-review-tool-call" not in ordered_ids
         assert status_index < save_action_index < first_secondary_heading_index
         assert console.query_one("#console-inspector-review-approval").disabled is False
-        assert (
-            console.query_one("#console-inspector-review-tool-call").disabled is False
-        )
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 
 
