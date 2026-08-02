@@ -732,10 +732,20 @@ async def test_remote_gguf_flows_through_managed_install_without_activation(
     payload_sha256 = hashlib.sha256(payload).hexdigest()
     commit = "c" * 40
     requests: list[tuple[str, str]] = []
+    metadata_url = "https://huggingface.co/api/models/acme/model?blobs=true"
+    payload_url = f"https://huggingface.co/acme/model/resolve/{commit}/tiny-model.gguf"
+    expected_requests = [
+        ("GET", metadata_url),
+        ("HEAD", payload_url),
+        ("GET", payload_url),
+    ]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, str(request.url)))
-        if request.method == "GET" and request.url.path == "/api/models/acme/model":
+        received = (request.method, str(request.url))
+        if len(requests) >= len(expected_requests) or received != expected_requests[len(requests)]:
+            pytest.fail(f"unexpected network request: {request.method} {request.url}")
+        requests.append(received)
+        if received == expected_requests[0]:
             return httpx.Response(
                 200,
                 json=_model_info(
@@ -744,12 +754,9 @@ async def test_remote_gguf_flows_through_managed_install_without_activation(
                     card_data=None,
                 ),
             )
-        if request.url.path == f"/acme/model/resolve/{commit}/tiny-model.gguf":
-            if request.method == "HEAD":
-                return httpx.Response(200, headers={"etag": '"tiny-v1"'})
-            if request.method == "GET":
-                return httpx.Response(200, content=payload, headers={"etag": '"tiny-v1"'})
-        pytest.fail(f"unexpected network request: {request.method} {request.url}")
+        if received == expected_requests[1]:
+            return httpx.Response(200, headers={"etag": '"tiny-v1"'})
+        return httpx.Response(200, content=payload, headers={"etag": '"tiny-v1"'})
 
     async def allow_mocked_egress(*_args, **_kwargs) -> None:
         return None
@@ -800,8 +807,4 @@ async def test_remote_gguf_flows_through_managed_install_without_activation(
     assert artifact.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
     assert artifact.consumer == "unassigned"
     assert not core.active_path(artifact.reference.artifact_id).exists()
-    assert [(method, httpx.URL(url).path) for method, url in requests] == [
-        ("GET", "/api/models/acme/model"),
-        ("HEAD", f"/acme/model/resolve/{commit}/tiny-model.gguf"),
-        ("GET", f"/acme/model/resolve/{commit}/tiny-model.gguf"),
-    ]
+    assert requests == expected_requests
