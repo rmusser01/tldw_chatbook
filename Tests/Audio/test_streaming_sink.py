@@ -112,10 +112,20 @@ def test_underrun_after_start_is_counted_and_throttled():
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     h["s"].tick(16)                          # started, buffer now empty, NOT closed
-    h["s"].tick(5)                            # 5 empty callbacks
+    h["s"].tick(5)                            # 5 empty callbacks: 1 immediate alert, no repeat yet
     unders = [e for e in events if isinstance(e, SinkUnderrun)]
-    assert unders and unders[-1].count >= 5
-    assert len(unders) <= 2, "underrun events must be throttled, not per-callback"
+    assert len(unders) == 1
+    assert unders[0].frames == 1 * FRAMES, "the immediate alert fires on the very first empty block"
+    # Cross the _UNDERRUN_THROTTLE_BLOCKS (50-block) window to force a second,
+    # genuinely-throttled report. Its value must reflect every frame missed
+    # since the sink opened -- an implementation that stopped counting after
+    # the first empty block (or that hard-codes/forgets to accumulate) would
+    # fail this, unlike a bare ">= 5" bound that a single stale event already
+    # satisfies trivially.
+    h["s"].tick(46)                          # 5 + 46 = 51 empty callbacks total
+    unders = [e for e in events if isinstance(e, SinkUnderrun)]
+    assert len(unders) == 2, "underrun events must be throttled, not per-callback"
+    assert unders[-1].frames == 51 * FRAMES, "must keep counting for the full throttle window"
 
 
 def test_feed_caps_and_reports_once():

@@ -90,14 +90,14 @@ class SinkUnderrun:
     """Emitted when the device callback runs dry after playback has started.
 
     Attributes:
-        count: Cumulative number of audio frames the device callback
+        frames: Cumulative number of audio frames the device callback
             requested but could not fill with real audio (silence played
             in their place) since this sink was opened, as of the moment
             this event was emitted. Frames, not callback invocations, so
             the value is meaningful even when a single throttled event
             covers a short burst of consecutive underruns.
     """
-    count: int
+    frames: int
 
 
 @dataclass(frozen=True)
@@ -502,7 +502,7 @@ class StreamingPcmSink:
         self._underruns += frames
         if self._block_index - self._underrun_last_emit_block >= _UNDERRUN_THROTTLE_BLOCKS:
             self._underrun_last_emit_block = self._block_index
-            self._emit(SinkUnderrun(count=self._underruns))
+            self._emit(SinkUnderrun(frames=self._underruns))
 
     @property
     def state(self) -> str:
