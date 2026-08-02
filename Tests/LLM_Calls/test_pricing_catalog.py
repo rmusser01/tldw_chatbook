@@ -7,7 +7,6 @@ tokens instead of a fabricated price). Local providers => $0.00 pricing.
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import (
     CostBreakdown,
-    ModelPricing,
     PricingCatalog,
 )
 
