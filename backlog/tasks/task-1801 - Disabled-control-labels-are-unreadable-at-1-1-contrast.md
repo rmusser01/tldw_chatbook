@@ -1,7 +1,7 @@
 ---
 id: TASK-1801
 title: 'Disabled control labels are unreadable at ~1.1:1 contrast'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 13:20'
 labels:
@@ -59,9 +59,18 @@ themes fall below 3:1, including `high_contrast_yellow_black`.
 - A screen's `DEFAULT_CSS` cannot override `Button`'s — same tier, Button wins.
   Disabled overrides must go in the app stylesheet.
 
-**STILL OPEN — the shared Workbench action bar** measures 1.45:1 with the same
-class of defect, but is styled by a different rule; editing
-`.console-action-disabled` produced no measurable change there, so that edit was
-reverted rather than shipped unverified. Needs its own pass to identify the
-actual owning rule and re-measure.
+**Workbench action bar: FIXED** — 1.45:1 -> 6.74:1. It stacked THREE dimmers
+(`$ds-text-disabled` alpha + `.is-disabled { opacity: 0.55 }` + Textual's
+`bold dim`/`color: auto 50%`). The owning class is `is-disabled`, NOT
+`console-action-disabled` — which is exactly why the earlier speculative edit
+measured nothing and was reverted. The test now pins the class.
+
+**Both surfaces measured in a running terminal (AC#4):**
+
+| surface | before | after |
+| --- | --- | --- |
+| composer menu rows | 1.25:1 | 4.80:1 |
+| Workbench action bar | 1.45:1 | 6.74:1 |
+
+Enabled controls measure 10.6-12.6:1, so disabled stays plainly distinct (AC#3).
 <!-- SECTION:PROGRESS:END -->
