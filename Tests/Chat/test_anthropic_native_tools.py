@@ -197,7 +197,15 @@ def test_openai_tool_history_converts_to_anthropic_blocks(mock_post):
     assert sent[2]["role"] == "user"
     assert sent[2]["content"] == [
         {"type": "tool_result", "tool_use_id": "toolu_A", "content": "4"},
-        {"type": "tool_result", "tool_use_id": "toolu_B", "content": "6"},
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_B",
+            "content": "6",
+            # claude-3-opus (the fixture's default model) supports caching, so
+            # the last content block of the FINAL message picks up the
+            # per-turn breakpoint (task-323 PR2).
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
     assert len(sent) == 3
 
@@ -231,6 +239,8 @@ def test_assistant_text_plus_tool_calls_keeps_text_block_first(mock_post):
             "id": "toolu_1",
             "name": "calculator",
             "input": {"expression": "2+2"},
+            # last block of the FINAL message: per-turn breakpoint (PR2).
+            "cache_control": {"type": "ephemeral"},
         },
     ]
 
@@ -254,7 +264,14 @@ def test_malformed_tool_call_arguments_become_empty_input(mock_post):
     sent = _call_anthropic(mock_post, messages)["messages"]
 
     assert sent[1]["content"] == [
-        {"type": "tool_use", "id": "toolu_1", "name": "calculator", "input": {}}
+        {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "calculator",
+            "input": {},
+            # last block of the FINAL message: per-turn breakpoint (PR2).
+            "cache_control": {"type": "ephemeral"},
+        }
     ]
 
 
@@ -269,7 +286,17 @@ def test_plain_chat_payload_unchanged(mock_post):
     assert "tools" not in sent
     assert sent["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        {"role": "assistant", "content": [{"type": "text", "text": "there"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "there",
+                    # last block of the FINAL message: per-turn breakpoint (PR2).
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
     ]
 
 
@@ -291,7 +318,14 @@ def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     sent = _call_anthropic(mock_post, messages)["messages"]
 
     assert sent[1]["role"] == "assistant"
-    assert sent[1]["content"] == [{"type": "text", "text": "hello"}]
+    assert sent[1]["content"] == [
+        {
+            "type": "text",
+            "text": "hello",
+            # last block of the FINAL message: per-turn breakpoint (PR2).
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 @patch("requests.Session.post")
@@ -323,6 +357,8 @@ def test_junk_tool_call_skipped_among_valid_entries(mock_post):
             "id": "toolu_1",
             "name": "calculator",
             "input": {"expression": "2+2"},
+            # last block of the FINAL message: per-turn breakpoint (PR2).
+            "cache_control": {"type": "ephemeral"},
         }
     ]
 
@@ -792,7 +828,7 @@ def test_streaming_two_interleaved_tool_blocks_reassemble_distinctly(mock_post):
     assert json.loads(calls[1]["function"]["arguments"]) == {}
 
 
-def _sent_anthropic(mock_post, model, **extra):
+def _sent_anthropic(mock_post, model, messages_payload=None, **extra):
     """Drive chat_with_anthropic with an explicit model; return the sent JSON."""
     mock_response = Mock()
     mock_response.json.return_value = _anthropic_text_response()
@@ -801,7 +837,9 @@ def _sent_anthropic(mock_post, model, **extra):
     mock_post.return_value = mock_response
     chat_api_call(
         "anthropic",
-        messages_payload=[{"role": "user", "content": "hi"}],
+        messages_payload=messages_payload
+        if messages_payload is not None
+        else [{"role": "user", "content": "hi"}],
         api_key="test-key",
         model=model,
         streaming=False,
@@ -892,3 +930,66 @@ def test_caching_default_on_when_section_absent(mock_post):
     sent = _sent_anthropic(mock_post, "claude-sonnet-4-6", system_message="be terse")
     assert isinstance(sent["system"], list)
     assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def _count_cache_controls(obj):
+    """Count every cache_control key anywhere in the payload."""
+    if isinstance(obj, dict):
+        return ("cache_control" in obj) + sum(
+            _count_cache_controls(v) for v in obj.values()
+        )
+    if isinstance(obj, list):
+        return sum(_count_cache_controls(item) for item in obj)
+    return 0
+
+
+@patch("requests.Session.post")
+def test_caching_model_marks_last_message_block(mock_post):
+    """The final message's LAST content block carries the per-turn breakpoint;
+    earlier messages and earlier blocks of the final message carry none."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        messages_payload=[
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+        ],
+    )
+    messages = sent["messages"]
+    assert messages[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert _count_cache_controls(messages[:-1]) == 0
+    assert _count_cache_controls(messages[-1]["content"][:-1]) == 0
+
+
+@patch("requests.Session.post")
+def test_breakpoint_budget_never_exceeds_four(mock_post):
+    """system + last-tool + per-turn = 3 total, within Anthropic's 4-cap."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        system_message="be terse",
+        tools=OPENAI_TOOLS,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent) == 3
+
+
+@patch("requests.Session.post")
+def test_non_caching_model_gets_no_message_breakpoint(mock_post):
+    sent = _sent_anthropic(
+        mock_post, "claude-2.1", messages_payload=[{"role": "user", "content": "hi"}]
+    )
+    assert _count_cache_controls(sent) == 0
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_never_emits_ttl_key(mock_post):
+    """5-minute default only — a ttl key would double the write premium."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert sent["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "ttl" not in json.dumps(sent)

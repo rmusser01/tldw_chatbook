@@ -1283,6 +1283,25 @@ def chat_with_anthropic(
     if output_config is not None:
         data["output_config"] = output_config
 
+    if (
+        caching_active
+        and anthropic_messages
+        and isinstance(anthropic_messages[-1].get("content"), list)
+        and anthropic_messages[-1]["content"]
+    ):
+        # Per-turn breakpoint (cost-ticker PR2): mark the last content block
+        # of the final message so the WHOLE conversation prefix becomes a
+        # reusable cache entry next turn -- the task-323 system/tools
+        # breakpoints alone never cache message history. Budget:
+        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        # Fresh dict so no caller-held block is mutated (same rule as the
+        # tools breakpoint above).
+        last_content = anthropic_messages[-1]["content"]
+        last_content[-1] = {
+            **last_content[-1],
+            "cache_control": {"type": "ephemeral"},
+        }
+
     api_url = (
         anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
         + "/messages"
