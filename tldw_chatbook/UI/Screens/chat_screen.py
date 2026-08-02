@@ -13516,6 +13516,16 @@ class ChatScreen(BaseAppScreen):
                 attachment.display_name
                 for attachment in getattr(message, "attachments", ())
             ],
+            # Normalized provider usage (Console cost ticker): carried as the
+            # same JSON string persistence uses, so a screen-state round trip
+            # (navigate away and back) keeps a turn's real cost instead of
+            # silently zeroing it. `getattr` tolerates plain-object stand-ins
+            # that predate the field, like the neighbours above.
+            "usage_json": (
+                usage.to_json()
+                if (usage := getattr(message, "usage", None)) is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -13581,6 +13591,9 @@ class ChatScreen(BaseAppScreen):
             image_mime_type=image_mime_type,
             attachment_label=attachment_label,
             attachments=attachments,
+            # `from_json` returns None for missing/legacy/corrupt payloads,
+            # which is exactly the "no usage known" state.
+            usage=ProviderUsage.from_json(payload.get("usage_json")),
         )
 
     # App-object attribute holding staged-but-unsent attachments across screen

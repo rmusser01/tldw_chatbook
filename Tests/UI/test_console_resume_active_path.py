@@ -629,3 +629,61 @@ def test_resume_tolerates_null_and_garbage_usage_json():
         )
     finally:
         db.close_connection()
+
+
+def test_screen_state_round_trip_preserves_usage():
+    """F6: navigating away and back serializes the transcript to a JSON-safe
+    snapshot. That snapshot dropped `usage`, so a session that had already
+    recorded real spend came back reading $0 / "no usage" until the
+    conversation was reloaded from the DB (and never, for unsaved sessions).
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    usage = ProviderUsage(
+        uncached_input=904,
+        cache_read=4096,
+        cache_write=128,
+        output=42,
+        provider="anthropic",
+        model="claude-sonnet-5",
+        partial=True,
+    )
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        usage=usage,
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+    assert payload["usage_json"] is not None
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.usage == usage
+
+
+def test_screen_state_round_trip_tolerates_missing_and_broken_usage():
+    """Legacy snapshots have no `usage_json` key at all; a corrupt one must
+    degrade to "no usage known", never raise mid-restore."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+
+    without_usage = ChatScreen._serialize_console_message(
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a")
+    )
+    assert without_usage["usage_json"] is None
+    assert ChatScreen._restore_console_message(without_usage).usage is None
+
+    legacy = {"role": "assistant", "content": "a", "status": "complete"}
+    assert ChatScreen._restore_console_message(legacy).usage is None
+
+    corrupt = {**legacy, "usage_json": "{not json"}
+    assert ChatScreen._restore_console_message(corrupt).usage is None
