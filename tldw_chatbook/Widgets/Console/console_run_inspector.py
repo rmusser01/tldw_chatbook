@@ -11,6 +11,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+    CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -133,6 +134,7 @@ _ACTION_GROUPS = {
     # handler was a notify() stub. The Tools ROW stays -- it reports a real
     # count -- but it no longer carries a control the user cannot use.
     "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
+    "Changes": (CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,),
 }
 
 

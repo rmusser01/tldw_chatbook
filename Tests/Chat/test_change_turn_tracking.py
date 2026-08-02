@@ -485,3 +485,286 @@ def test_carveout_survives_a_symlink_spelled_root(tmp_path):
     assert ".env" in [c.path for c in changed], (
         "the carve-out silently died for a symlink-spelled root"
     )
+
+
+# -- TASK-1972: the transcript summary row ----------------------------------
+
+
+def _tool_rows(store, session):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    return [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+
+
+def test_a_change_turn_emits_the_summary_row_with_real_counts(
+    tmp_path, root, tracker
+):
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("one\ntwo\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+
+    run_id, _ = _run(bridge, session, aid, root)
+
+    rows = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
+    assert len(rows) == 1
+    assert "1 file" in rows[0].content
+    assert "+2" in rows[0].content
+    assert rows[0].change_review_run_id == run_id, (
+        "the row does not know WHICH turn it reviews"
+    )
+
+
+def test_a_clean_turn_emits_no_summary_row(tmp_path, root, tracker):
+    gateway = _SideEffectGateway([["done."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    _run(bridge, session, aid, root)
+    assert not [
+        m for m in _tool_rows(store, session) if m.content.startswith("✎")
+    ]
+
+
+def test_tracking_failure_emits_the_warning_row(tmp_path, root):
+    broken = ChangeTurnTracker(
+        service=ShadowRepoService(
+            data_dir=tmp_path / "app", git_executable="/nonexistent/git"
+        )
+    )
+    gateway = _SideEffectGateway([["fine."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, broken)
+    _run(bridge, session, aid, root)
+    warns = [
+        m
+        for m in _tool_rows(store, session)
+        if "change tracking failed" in m.content
+    ]
+    assert len(warns) == 1, "a tracking failure must be DISCLOSED in the transcript"
+
+
+def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
+    """TASK-1842's whole arc: display-only rows must survive recompute."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    _run(bridge, session, aid, root)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="follow-up"
+    )
+    rows = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
+    assert len(rows) == 1, "the summary row was destroyed by the next message"
+
+
+def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracker):
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_id, _ = _run(bridge, session, aid, root)
+    live = [
+        m for m in _tool_rows(store, session) if m.content.startswith("✎")
+    ]
+    assert live, "precondition"
+
+    fresh = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m
+        for _anchor, block in fresh.resume_marker_messages("conv-1")
+        for m in block
+        if m.content.startswith("✎")
+    ]
+    assert [m.content for m in resumed] == [m.content for m in live]
+    assert resumed[0].change_review_run_id == run_id
+
+
+def test_review_changes_action_offered_only_for_summary_rows():
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.console_message_actions import (
+        ConsoleMessageActionService,
+    )
+
+    summary = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="✎ Edited 1 file  +2 −0 — review with `v`",
+        change_review_run_id="run-1",
+    )
+    plain_marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL, content="⚙ calculator → 42"
+    )
+    svc = ConsoleMessageActionService()
+    assert "review-changes" in [
+        a.action_id for a in svc.available_actions(summary)
+    ]
+    assert "review-changes" not in [
+        a.action_id for a in svc.available_actions(plain_marker)
+    ]
+
+
+def test_bridge_exposes_a_provider_for_the_review_screen(
+    tmp_path, root, tracker
+):
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    run_id, _ = _run(bridge, session, aid, root)
+
+    provider = bridge.change_review_provider("conv-1")
+    assert provider is not None
+    turns = provider.turns()
+    assert [t.run_id for t in turns] == [run_id]
+
+    untracked = ConsoleAgentBridge = None  # noqa: F841 -- reuse import below
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        ConsoleAgentBridge as _B,
+    )
+
+    no_tracker = _B(agent_runs_db=db, store=store, provider_gateway=gateway)
+    assert no_tracker.change_review_provider("conv-1") is None
+
+
+@pytest.mark.asyncio
+async def test_the_opener_pushes_the_screen_and_selects_the_turn(
+    tmp_path, root, tracker
+):
+    """The `v`/inspector opener on the PRODUCTION ChatScreen: derives the
+    run-store conversation id, builds the provider through the bridge, pushes
+    the Review screen, and selects THAT turn. The opener is where an invented
+    method name already slipped in once during this task -- it needs a test
+    on the real screen object, not a reading.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from textual.app import App
+
+    from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    # run_reply spins its own event loop; inside an async test that loop
+    # collides with pytest-asyncio's ("Cannot run the event loop while
+    # another loop is running"). Production calls it via asyncio.to_thread
+    # -- so does this test.
+    import asyncio as _asyncio
+
+    run_id, outcome = await _asyncio.to_thread(_run, bridge, session, aid, root)
+    assert outcome.status not in ("error",), outcome.steps
+    assert db.change_snapshots_for_run(run_id), "precondition: the run recorded rows"
+
+    class _ConsoleHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self.app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(ChatScreen(self.app_instance))
+
+    app = _build_test_app()
+    # Same native-ready configuration the workbench harness applies -- the
+    # Console controller is built lazily and stays None without it.
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "local-model",
+            },
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    harness = _ConsoleHarness(app)
+    async with harness.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        chat_screen = harness.screen_stack[-1]
+        assert isinstance(chat_screen, ChatScreen)
+        # The harness app has no chachanotes db, so its own bridge factory
+        # returns None by design -- substitute THIS test's real bridge
+        # (real tracker, real db, real turn) at the accessor seam.
+        chat_screen._ensure_console_agent_bridge = lambda: bridge
+        chat_screen._ensure_console_chat_controller()
+        controller = chat_screen._console_chat_controller
+        assert controller is not None
+        controller.store.ensure_session()
+        # The run-store id for the harness's session is the session id
+        # itself (no persisted conversation) -- point the bridge's provider
+        # at the id the run actually recorded under instead.
+        chat_screen._console_chat_controller._agent_conversation_id = (
+            lambda _sid: "conv-1"
+        )
+
+        chat_screen._open_change_review(run_id)
+        review = await _wait_for_screen(harness, pilot, ChangeReviewScreen)
+        assert review is not None, "the opener never pushed the Review screen"
+
+        turns = review._provider.turns()
+        assert [t.run_id for t in turns] == [run_id]
+
+
+async def _wait_for_screen(harness, pilot, screen_type, timeout: float = 8.0):
+    import time as _t
+
+    deadline = _t.monotonic() + timeout
+    while _t.monotonic() < deadline:
+        if isinstance(harness.screen, screen_type):
+            return harness.screen
+        await pilot.pause(0.05)
+    return None
+
+
+def test_resume_re_derives_the_failure_row_too(tmp_path, root):
+    """Review finding: live emitted the ⚠ tracking-failed row but resume
+    did not -- a resumed transcript silently hid that a turn's tracking
+    failed, breaking the byte-identical marker parity rule."""
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    broken = ChangeTurnTracker(
+        service=ShadowRepoService(
+            data_dir=tmp_path / "app", git_executable="/nonexistent/git"
+        )
+    )
+    gateway = _SideEffectGateway([["fine."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, broken)
+    _run(bridge, session, aid, root)
+    live = [
+        m.content
+        for m in _tool_rows(store, session)
+        if "change tracking failed" in m.content
+    ]
+    assert live, "precondition: the live run disclosed the failure"
+
+    fresh = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m.content
+        for _anchor, block in fresh.resume_marker_messages("conv-1")
+        for m in block
+        if "change tracking failed" in m.content
+    ]
+    assert resumed == live, "the failure disclosure vanished on resume"

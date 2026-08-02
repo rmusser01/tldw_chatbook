@@ -185,9 +185,24 @@ class ChangeReviewScreen(Screen):
         Binding("enter", "focus_diff", "View diff", show=False),
     ]
 
-    def __init__(self, provider: AgentRunsChangeReviewProvider) -> None:
+    def __init__(
+        self,
+        provider: AgentRunsChangeReviewProvider,
+        initial_run_id: str | None = None,
+    ) -> None:
+        """Args are stored; all loading happens in ``on_mount``.
+
+        Args:
+            provider: The conversation's turn/diff data source.
+            initial_run_id: Turn to open on, or ``None`` for the latest.
+                Constructor state rather than a post-push ``select_turn``
+                call: the opener's ``call_after_refresh`` fired before this
+                screen had composed (NoMatches on the Select) -- the test
+                that pinned the opener caught it.
+        """
         super().__init__()
         self._provider = provider
+        self._initial_run_id = initial_run_id
         self._turns: list[ReviewTurn] = []
         self._active_turn: ReviewTurn | None = None
         #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
@@ -236,17 +251,33 @@ class ChangeReviewScreen(Screen):
             )
 
     def on_mount(self) -> None:
-        """Load turn history and open on the latest turn."""
+        """Defer the initial load until this screen's children exist.
+
+        ``on_mount`` can fire before composed children are queryable when
+        the screen is pushed onto a LIVE app (the standalone harness passed
+        by timing luck; the opener wiring test caught NoMatches on the
+        Select). Same deferral pattern as ``ChatApprovalCard.on_mount``.
+        """
+        self.call_after_refresh(self._initialize_turns)
+
+    def _initialize_turns(self) -> None:
+        """Load turn history and open on the requested (or latest) turn."""
+        try:
+            select = self.query_one("#change-review-turn-select", Select)
+        except Exception:  # noqa: BLE001 -- screen dismissed before refresh
+            return
         self._turns = self._provider.turns()
-        select = self.query_one("#change-review-turn-select", Select)
         select.set_options(
             (turn.label, turn.run_id) for turn in self._turns
         )
         if self._turns:
+            wanted = self._initial_run_id
+            if wanted and not any(t.run_id == wanted for t in self._turns):
+                wanted = None
             # Setting the value posts Select.Changed; the handler is the ONE
             # loader (review finding: value-set + direct _load_turn loaded
             # every turn twice -- doubled git work per open).
-            select.value = self._turns[0].run_id
+            select.value = wanted or self._turns[0].run_id
         else:
             self._show_empty("No file changes recorded for this conversation.")
 

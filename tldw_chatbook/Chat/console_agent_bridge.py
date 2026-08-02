@@ -17,7 +17,12 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        AgentRunsChangeReviewProvider,
+    )
 
 from loguru import logger
 
@@ -379,6 +384,44 @@ def full_step_output(
 #: step exists -- but it renders through the same formatter so live and
 #: resumed transcripts stay byte-identical.
 STEP_APPROVAL_TIMEOUT = "approval_timeout"
+
+
+def format_change_summary_marker(
+    files_changed: int, adds: int, dels: int
+) -> str:
+    """The change-summary transcript row for one turn (TASK-1972).
+
+    Shared by the live emit (run_reply's finally) and resume re-derivation
+    (`resume_marker_messages`) so both render byte-identical -- the same
+    discipline `format_agent_step_marker` documents. Kept raw / markup-off
+    like every transcript marker.
+
+    Args:
+        files_changed: Changed-file count across the turn's roots.
+        adds: Total added lines.
+        dels: Total deleted lines.
+
+    Returns:
+        The row text.
+    """
+    noun = "file" if files_changed == 1 else "files"
+    return (
+        f"✎ Edited {files_changed} {noun}  +{adds} −{dels}"
+        " — review with `v`"
+    )
+
+
+def format_change_tracking_failure_marker(root: str, error: str) -> str:
+    """The disclosure row for a root whose tracking failed (TASK-1972).
+
+    Args:
+        root: The root whose snapshot failed.
+        error: The recorded tracking error.
+
+    Returns:
+        The row text ("⚠ change tracking failed ...").
+    """
+    return f"⚠ change tracking failed for {root}: {error}"
 
 
 def format_agent_step_marker(
@@ -1915,6 +1958,9 @@ class ConsoleAgentBridge:
                                 dels=_rec.dels,
                                 tracking_error=_rec.tracking_error,
                             )
+                        self._append_change_markers(
+                            session_id, run_id, _records
+                        )
                     elif _records:
                         logger.warning(
                             "change_review: run crashed before a run row "
@@ -2241,6 +2287,17 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
+        # TASK-1972 review round: ONE conversation-level query, grouped in
+        # memory -- the per-run lookup was an N+1 over sqlite on every
+        # resume (finding 3).
+        snap_by_run: dict[str, list[dict]] = {}
+        try:
+            for _row in self._db.change_snapshots_for_conversation(
+                conversation_id
+            ):
+                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+        except Exception:  # noqa: BLE001 -- resume must not die on this
+            snap_by_run = {}
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
@@ -2267,10 +2324,114 @@ class ConsoleAgentBridge:
                             ),
                         )
                     )
+            snap_rows = snap_by_run.get(str(record.get("id")), [])
+            clean = [r for r in snap_rows if not r.get("tracking_error")]
+            files = sum(int(r.get("files_changed") or 0) for r in clean)
+            if files:
+                block.append(
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_change_summary_marker(
+                            files,
+                            sum(int(r.get("adds") or 0) for r in clean),
+                            sum(int(r.get("dels") or 0) for r in clean),
+                        ),
+                        status="complete",
+                        change_review_run_id=str(record.get("id")),
+                    )
+                )
+            # Parity for the FAILURE shape too (review finding 2): live
+            # emits a disclosure row per failed root; resume must render
+            # byte-identical or a resumed transcript hides that a turn's
+            # tracking failed.
+            for _row in snap_rows:
+                if _row.get("tracking_error"):
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_change_tracking_failure_marker(
+                                str(_row.get("root", "")),
+                                str(_row.get("tracking_error", "")),
+                            ),
+                            status="complete",
+                        )
+                    )
             blocks.append((record.get("assistant_message_id"), block))
         return blocks
 
     # -- internals ------------------------------------------------------
+
+    def _append_change_markers(
+        self, session_id: str, run_id: str, records: list
+    ) -> None:
+        """Append the turn's change rows to the transcript (TASK-1972).
+
+        One counts row when anything changed, plus one disclosure row per
+        tracking failure. Display-only TOOL markers -- same anchoring rules
+        as every other marker (TASK-1842's arc), so they survive recompute
+        and session switch. Never raises.
+
+        Args:
+            session_id: The run's owning session.
+            run_id: The run the rows review (carried on the counts row).
+            records: The turn's ``TurnChangeRecord`` list.
+        """
+        try:
+            changed = [r for r in records if not r.tracking_error]
+            files = sum(r.files_changed for r in changed)
+            if files:
+                self._store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.TOOL,
+                    content=format_change_summary_marker(
+                        files,
+                        sum(r.adds for r in changed),
+                        sum(r.dels for r in changed),
+                    ),
+                    change_review_run_id=run_id,
+                )
+            for rec in records:
+                if rec.tracking_error:
+                    self._store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_change_tracking_failure_marker(
+                            rec.root, rec.tracking_error
+                        ),
+                    )
+        except Exception:  # noqa: BLE001 -- a marker must never fail the run
+            logger.opt(exception=True).warning(
+                "change_review: could not append transcript rows"
+            )
+
+    @property
+    def change_tracking_enabled(self) -> bool:
+        """Whether this bridge tracks changes (tracker present = git found)."""
+        return self._change_tracker is not None
+
+    def change_review_provider(
+        self, conversation_id: str
+    ) -> "AgentRunsChangeReviewProvider | None":
+        """Build the Review screen's data provider for a conversation.
+
+        Args:
+            conversation_id: The conversation whose turns are reviewable.
+
+        Returns:
+            An ``AgentRunsChangeReviewProvider``, or ``None`` when change
+            tracking is disabled on this bridge (no tracker / no git).
+        """
+        if self._change_tracker is None:
+            return None
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            AgentRunsChangeReviewProvider,
+        )
+
+        return AgentRunsChangeReviewProvider(
+            db=self._db,
+            service=self._change_tracker.service,
+            conversation_id=conversation_id,
+        )
 
     def _append_marker(
         self, session_id: str, text: str, *, full_output: str | None = None

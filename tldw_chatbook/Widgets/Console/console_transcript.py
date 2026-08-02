@@ -75,6 +75,7 @@ _ACTION_TOOLTIPS = {
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
     "save-image": "Save image to disk.",
     "tool-output": "Show or hide this tool call's full result (o).",
+    "review-changes": "Open the Change Review screen for this turn (v).",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -584,6 +585,7 @@ class ConsoleTranscript(VerticalScroll):
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
+        ("v", "invoke_selected_action('review-changes')", "Review changes"),
     ]
 
     PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset(
