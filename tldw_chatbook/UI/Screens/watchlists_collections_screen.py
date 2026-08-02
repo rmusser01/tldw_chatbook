@@ -33,6 +33,7 @@ from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_SECTION,
     WATCHLISTS_SECTION_RUNS,
 )
+from ...config import get_cli_setting
 from ...runtime_policy.types import PolicyDeniedError
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
@@ -58,7 +59,7 @@ from ...Subscriptions.briefing_service import (
     GenerationInFlightError,
     STATUS_COMPLETE,
     STATUS_GENERATING,
-    active_briefing_claims,
+    active_briefing_claim_row_ids,
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
@@ -1456,6 +1457,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
             artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
+            artifacts_pane.briefing_schedules_enabled = (
+                self._briefing_schedules_enabled()
+            )
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
             artifacts_pane.script_audio = self._loaded_script_audio
@@ -3260,6 +3264,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return getattr(self.app_instance, "chachanotes_db", None)
 
+    def _briefing_schedules_enabled(self) -> bool:
+        """Whether `[scheduling] briefing_schedules_enabled` is on for this
+        run (task-1812, AC #1).
+
+        The identical config read `app.py`'s `_wire_watchlists_and_
+        notifications_services` uses to decide whether to build a
+        `BriefingProjection`/`BriefingJobHandler` pair at all -- read
+        directly via `get_cli_setting` (the "queries config helper"
+        convention several other screens/windows already use, e.g.
+        `Tools_Settings_Window`/`STTS_Window`) rather than through a live
+        handle on `self.app_instance`: unlike `chachanotes_db`, nothing on
+        the app instance currently mirrors this decision back, because there
+        is no UI control for the flag today and so no prior seam existed to
+        reuse. Defaults to `True`, matching `app.py`'s own default, so a
+        watchlist with a stored cadence still reads as scheduled unless an
+        operator has explicitly turned the flag off.
+        """
+        return bool(
+            get_cli_setting("scheduling", "briefing_schedules_enabled", True)
+        )
+
     def _briefing_scope_label(self) -> str:
         """The pane's one-line statement of what it is showing, and from where."""
         watchlist_id = self._briefing_watchlist_id()
@@ -3276,8 +3301,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # scheduled) with `None`, so "on request" stays the honest default;
         # anything else names the actual cadence, "while the app is open"
         # and all -- see that function's own docstring for why the phrase
-        # is worded that way.
-        cadence_phrase = cadence_scope_phrase(self._briefing_cadence_seconds)
+        # is worded that way. `schedules_enabled` (task-1812, AC #1) closes
+        # a second honesty gap the same reasoning missed: with the app-level
+        # kill switch off, nothing in this process would ever read a stored
+        # cadence back, so a phrase implying an active schedule would be a
+        # lie of the identical shape.
+        cadence_phrase = cadence_scope_phrase(
+            self._briefing_cadence_seconds,
+            schedules_enabled=self._briefing_schedules_enabled(),
+        )
         provenance = (
             f"written on this device — {cadence_phrase}"
             if cadence_phrase is not None
@@ -3647,6 +3679,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
         pane.briefing_cadence_seconds = self._briefing_cadence_seconds
+        pane.briefing_schedules_enabled = self._briefing_schedules_enabled()
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
         pane.script_audio = self._loaded_script_audio
@@ -4994,20 +5027,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _zombie_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_briefings` may run right now.
 
-        `fail_interrupted_briefings`'s own `exclude` (phase 4) now spares any
-        watchlist a LIVE in-process claim holds -- this screen's own, or a
-        future scheduled run's -- so it no longer fails EVERY `generating`
-        row unconditionally the way it did before claims existed. This flag
-        is a narrower, purely local check on top of that: it answers "is
-        THIS screen instance mid-generation", which the Generate path
-        (`_sweep_and_guard`) never needs -- it always runs at the very front
-        of `_generate_briefing`, before that worker's own row is inserted,
-        so there is nothing of "its own" yet to protect. The Artifacts-load
-        path (`_load_briefings`) has no such ordering guarantee -- it can
-        run at any time, including while a generation THIS screen started is
-        still mid-flight -- so it consults this flag too, on top of the
-        claim-aware `exclude`, rather than relying on the claim alone
-        (whole-branch review fix 3).
+        `fail_interrupted_briefings`'s own `exclude` (phase 4) now spares the
+        specific row a LIVE in-process claim is writing -- this screen's
+        own, or a future scheduled run's (task-1812, AC #3: row-scoped, not
+        merely watchlist-scoped, so a genuine crash zombie for the SAME
+        watchlist is not incidentally shielded too) -- so it no longer fails
+        EVERY `generating` row unconditionally the way it did before claims
+        existed. This flag is a narrower, purely local check on top of that:
+        it answers "is THIS screen instance mid-generation", which the
+        Generate path (`_sweep_and_guard`) never needs -- it always runs at
+        the very front of `_generate_briefing`, before that worker's own row
+        is inserted, so there is nothing of "its own" yet to protect. The
+        Artifacts-load path (`_load_briefings`) has no such ordering
+        guarantee -- it can run at any time, including while a generation
+        THIS screen started is still mid-flight -- so it consults this flag
+        too, on top of the claim-aware `exclude`, rather than relying on the
+        claim alone (whole-branch review fix 3).
         """
         return not self._briefing_in_flight
 
@@ -5022,18 +5057,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_zombie_sweep_is_safe` so a load racing a live generation this
         screen started cannot clobber that generation's own row.
 
-        `active_briefing_claims()` is snapshotted HERE, on the UI thread,
-        before the sweep is dispatched to a worker thread (Locked decision
-        2): the claim set is mutated only on the event loop, so a live read
-        of it from the executor thread `asyncio.to_thread` uses would be
-        racy in a way this snapshot never is. Passed through as `exclude`
-        so a genuinely live claim -- e.g. a scheduled run once phase 4's
-        scheduler exists -- survives an Artifacts open instead of being
-        falsified as interrupted (survey finding (a)).
+        `active_briefing_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched to a worker thread (Locked
+        decision 2): the claim registry is mutated only on the event loop,
+        so a live read of it from the executor thread `asyncio.to_thread`
+        uses would be racy in a way this snapshot never is. Passed through
+        as `exclude` so a genuinely live claim's OWN row -- e.g. a scheduled
+        run once phase 4's scheduler exists -- survives an Artifacts open
+        instead of being falsified as interrupted (survey finding (a)).
+        Row-scoped, not watchlist-scoped (task-1812, AC #3): a crash-zombie
+        row from a prior process for this SAME watchlist must still be
+        swept even while a fresh claim is live, and only naming the live
+        row itself (not its whole watchlist) lets that happen.
         """
         if not self._zombie_sweep_is_safe():
             return 0
-        claims = active_briefing_claims()
+        claims = active_briefing_claim_row_ids()
         return await asyncio.to_thread(
             fail_interrupted_briefings, db, watchlist_id, exclude=claims
         )
@@ -5049,17 +5088,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         only then asks whether anything is still generating. A row orphaned
         by a crashed worker can therefore never wedge the guard shut.
 
-        `exclude` -- the caller's `active_briefing_claims()` snapshot,
+        `exclude` -- the caller's `active_briefing_claim_row_ids()` snapshot,
         taken before this whole method was dispatched to a worker thread --
         is passed straight to `fail_interrupted_briefings`. This screen's
         own claim for THIS watchlist has not been taken yet at this point
         (`generate_briefing` takes it, later, inside the same worker), so
         the only thing `exclude` can protect here is ANOTHER in-process
-        caller's live claim on the same watchlist. A row that survives the
+        caller's live row on the same watchlist. A row that survives the
         sweep for that reason is not a crash zombie -- it is a live
         generation this screen must not duplicate -- and it correctly ends
         up in `blocking`, triggering the existing refusal toast rather than
         letting Generate proceed over the top of it (survey finding (b)).
+        Row-scoped (task-1812, AC #3): a crash-zombie row for THIS watchlist
+        left by a prior process is swept here even while that other live
+        row survives, rather than the whole watchlist being spared.
 
         Returns:
             `(recovered, blocking)` -- labels for the rows this sweep failed
@@ -5113,7 +5155,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             try:
                 recovered, blocking = await asyncio.to_thread(
-                    self._sweep_and_guard, db, watchlist_id, active_briefing_claims()
+                    self._sweep_and_guard,
+                    db,
+                    watchlist_id,
+                    active_briefing_claim_row_ids(),
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(

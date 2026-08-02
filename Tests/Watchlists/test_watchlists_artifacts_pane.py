@@ -78,6 +78,7 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     SynthesizeAudioRequested,
     _audio_file_is_playable,
     audio_file_path_is_safe,
+    cadence_scope_phrase,
 )
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
@@ -636,7 +637,12 @@ async def test_a_claimed_watchlist_survives_an_artifacts_open():
         assert not screen._briefing_in_flight, (
             "this scenario is a claim with no screen dispatch behind it"
         )
-        with briefing_service._claim_briefing(watchlist_id):
+        # `briefing_id=live_id`: task-1812 (AC #3) made the sweep's exclude
+        # row-scoped rather than watchlist-scoped, so simulating "a live
+        # claim protects this row" now requires telling the claim which row
+        # that is -- exactly what `generate_briefing` itself records mid-
+        # block once its own row exists (see `_claim_briefing`'s docstring).
+        with briefing_service._claim_briefing(watchlist_id, briefing_id=live_id):
             await screen._load_briefings()
             assert db.get_briefing(live_id)["status"] == "generating", (
                 "a claimed watchlist must survive an Artifacts open"
@@ -676,7 +682,11 @@ async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_th
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
         live_id = db.insert_briefing(watchlist_id)
-        with briefing_service._claim_briefing(watchlist_id):
+        # `briefing_id=live_id`: see the identical note in
+        # `test_a_claimed_watchlist_survives_an_artifacts_open` -- the sweep
+        # now excludes by row id (task-1812, AC #3), so the claim must name
+        # the row it protects.
+        with briefing_service._claim_briefing(watchlist_id, briefing_id=live_id):
             await _press_generate(screen, pilot, app, watchlist_id)
 
         assert chat.calls == [], "nothing may be generated while claimed elsewhere"
@@ -1772,6 +1782,128 @@ async def test_an_out_of_catalog_cadence_gets_a_synthetic_select_option_and_an_h
         # app is open" promise verbatim, not a silent "on request" lie.
         assert "scheduled every 3600s while the app is open" in pane.scope_label
         assert "on request" not in pane.scope_label
+
+
+# --- 6c. The app-level scheduling kill switch (task-1812, AC #1/#2) --------
+#
+# `[scheduling] briefing_schedules_enabled` gates whether `app.py` ever
+# builds anything that reads a stored cadence back at all -- but nothing on
+# this pane reflected that: the picker stayed enabled and the scope label
+# kept claiming an active schedule even with the flag off. These three
+# tests pin both directions of that fix, plus the activation-delay copy the
+# same review round asked for (AC #2).
+
+
+@pytest.mark.asyncio
+async def test_the_kill_switch_off_disables_the_cadence_select_and_states_scheduling_is_off(
+    monkeypatch,
+):
+    """With a stored cadence and the flag off, the picker must not merely
+    look pickable while nothing would ever act on it: the Select is
+    disabled, and the scope label states scheduling is off at the app
+    level instead of implying an active schedule.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=43_200)
+
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "scheduling" and key == "briefing_schedules_enabled":
+            return False
+        return default
+
+    monkeypatch.setattr(screen_module, "get_cli_setting", _fake_get_cli_setting)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        assert cadence_select.disabled is True, (
+            "the flag being off must disable the cadence picker, not "
+            "merely explain it"
+        )
+        assert cadence_select.value == 43_200, (
+            "the stored cadence must still be shown, inert, never silently "
+            "cleared"
+        )
+        assert "off for this app" in pane.scope_label
+        assert "scheduled every 12h while the app is open" not in pane.scope_label
+
+
+@pytest.mark.asyncio
+async def test_the_kill_switch_on_leaves_the_cadence_picker_unchanged(monkeypatch):
+    """The other direction: with the flag on (the default), behavior must
+    be unchanged from before this fix -- pinned against the SAME stored
+    cadence as the off-direction test above.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=43_200)
+
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "scheduling" and key == "briefing_schedules_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(screen_module, "get_cli_setting", _fake_get_cli_setting)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        assert cadence_select.disabled is False
+        assert cadence_select.value == 43_200
+        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "off for this app" not in pane.scope_label
+
+
+@pytest.mark.asyncio
+async def test_the_cadence_pickers_tooltip_states_the_activation_delay():
+    """Task-1812, AC #2: a freshly picked cadence is not instant -- the
+    running scheduler only re-reads schedules once per `queue_reload_
+    interval_ticks` (`Scheduling/scheduler/loop.py`), so a pick made right
+    now can sit inert for up to that long. Pinned against the picker's own
+    enabled-state tooltip, the smallest honest surface for it.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        tooltip = str(cadence_select.tooltip)
+        assert "~30 minutes" in tooltip
+        assert "reload cycle" in tooltip
+
+
+def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_off():
+    """Direct pin of `cadence_scope_phrase`'s own `schedules_enabled`
+    branch (task-1812, AC #1) -- the two async tests above exercise it
+    through the whole screen; this is the fast, no-app-needed pin of the
+    function itself.
+    """
+    assert cadence_scope_phrase(43_200, schedules_enabled=False) == (
+        "stored to run every 12h, but scheduled briefings are turned off "
+        "for this app -- this schedule will not fire"
+    )
+    # `None` (never scheduled) reads identically regardless of the flag --
+    # there is nothing stored to describe either way.
+    assert cadence_scope_phrase(None, schedules_enabled=False) is None
+    assert cadence_scope_phrase(None, schedules_enabled=True) is None
+    # The flag defaults to `True`, so every pre-task-1812 caller (and every
+    # OTHER existing test of this function) reads unchanged.
+    assert (
+        cadence_scope_phrase(43_200) == "scheduled every 12h while the app is open"
+    )
 
 
 # --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------

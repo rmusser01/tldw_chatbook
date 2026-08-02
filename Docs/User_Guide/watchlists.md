@@ -79,6 +79,10 @@ A few things worth knowing before turning it on:
   next period — but it also doesn't retry right away. The next attempt
   lands one cadence period after the failure, the same timing a normal
   run would have used.
+- **A freshly picked cadence can take up to ~30 minutes to start.** The
+  running scheduler only re-reads watchlists' cadences periodically, not
+  the instant you change one, so a cadence you just picked can sit inert
+  for up to one reload cycle before the schedule actually takes effect.
 
 The Artifacts section's scope line states plainly which of these applies:
 "on request" when scheduling is off, or the actual cadence — "scheduled
