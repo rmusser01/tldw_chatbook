@@ -383,10 +383,21 @@ enabled = true
 default_check_interval = 3600
 max_concurrent_checks = 10
 
-[subscriptions.security]
-enable_xxe_protection = true
-enable_ssrf_protection = true
+[web_security]
+enabled = true
+allowed_hosts = []
 ```
+
+`[web_security]` controls shared egress/SSRF enforcement; `allowed_hosts` is
+the explicit override. TLS verification is configured per subscription with
+`ssl_verify`, not through a global subscriptions security key. Redirect bounds
+are owned by the shared guarded-fetch helpers, not by a configuration setting.
+
+Production subscription parser modules prefer optional `defusedxml`; their
+existing, module-specific fallback behavior uses the standard-library XML parser
+when it is unavailable. `SecurityValidator.validate_xml_content` is not on the
+active parsing path. Legacy subscriptions security tables in existing user
+configuration files are ignored and may be safely deleted.
 
 ## Performance Considerations
 
