@@ -87,9 +87,11 @@ TASK-597 excludes:
 - provider configuration, UI, native import, model load, or transcription;
 - semantic default routing or silent fallback.
 
-Any descriptor/store code already prototyped on the TASK-597 branch is removed
-before the task merges. The reviewed bounded parser and compatibility
-declaration remain.
+Any descriptor/store code already prototyped on the TASK-597 branch is retained
+only as a private deferred reference module for TASK-1861. It is not exported,
+registered, imported, called, or tested as active TASK-597 behavior. The
+reviewed bounded parser and compatibility declaration remain in the active
+admission module.
 
 ## Components
 
@@ -113,6 +115,25 @@ the final component, uses `lstat`, rejects symlinks and non-regular files, opens
 with no-follow behavior where available, compares `fstat`, inspects through the
 same handle, and returns a bounded result. It closes the handle before return;
 the result is admission evidence, not a lease or immutable guarantee.
+
+### `Model_Artifacts/_deferred_gguf_managed_import.py`
+
+The already-written store-facing descriptor prototype is preserved here for
+TASK-1861 instead of being deleted. This file is deliberately dead in the
+current release:
+
+- its module docstring names TASK-1861 and says it is deferred reference code;
+- `__all__` is empty;
+- `Model_Artifacts/__init__.py` does not export it;
+- no production module imports it and it has no registration or call site;
+- TASK-597 does not use it for validation, descriptors, hashing, copying,
+  activation, or routing; and
+- it may import the active admission metadata/compatibility values rather than
+  duplicate the bounded parser.
+
+The file is retained source, not a supported API or a partially enabled managed
+feature. TASK-1861 must review and test it against its then-current artifact
+contracts before activation; preservation does not pre-approve the prototype.
 
 ### TASK-604 provider/configuration
 
@@ -327,7 +348,10 @@ TASK-597 tests cover:
 - same-handle `lstat`/`fstat` identity and typed path-safe errors;
 - a successful validated direct-path result; and
 - path exclusion from result representations and errors; and
-- no artifact descriptor/store/native/UI imports.
+- no artifact descriptor/store/native/UI imports in the active admission
+  module; and
+- the deferred prototype is private, unexported, and has no active production
+  import or call site.
 
 TASK-604 tests later cover:
 
@@ -361,7 +385,8 @@ usable release, and defers curated/managed acquisition.
 
 TASK-597 is complete when a local GGUF can be safely admitted and described for
 the pinned runtime without copying or registering it. It does not claim user
-transcription by itself.
+transcription by itself. Preserving the private TASK-1861 prototype does not
+make managed GGUF import part of TASK-597 or an active application capability.
 
 The delivery order is TASK-597 admission, then TASK-604 usable Library batch
 transcription through the existing isolated worker. TASK-601 is later executor

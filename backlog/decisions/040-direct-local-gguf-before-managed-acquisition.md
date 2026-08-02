@@ -56,6 +56,9 @@ without changing inference behavior.
 ## Consequences
 
 - TASK-597 contains parser, compatibility, and direct-file admission only.
+- Existing managed-import prototype code may remain in a private module marked
+  for TASK-1861, but it has no public export, registration, production import,
+  call site, or execution path until that later task reviews and activates it.
 - TASK-604 owns file selection/configuration, the real Library batch selector
   and production wiring, and actual transcribe.cpp use.
 - The ingestion worker revalidates immediately before native model load but

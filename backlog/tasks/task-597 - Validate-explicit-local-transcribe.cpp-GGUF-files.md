@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-02 15:54'
+updated_date: '2026-08-02 16:17'
 labels:
   - stt
   - gguf
@@ -34,6 +34,7 @@ Validate one user-selected local GGUF for direct use by the optional transcribe.
 - [ ] #4 A successful result contains only the explicit non-repr path, bounded metadata, source identity snapshot, and normalized platform pair; it creates no descriptor, copy, hash, stage, install, activation, or routing state.
 - [ ] #5 Missing, malformed, incompatible, or replaced-during-admission files fail with typed path-safe errors suitable for **Choose another GGUF…** recovery.
 - [ ] #6 Focused tests cover valid admission, parser bounds and truncation, symlinks, irregular files, path replacement, identity checks, platform-candidate admission, path-safe representations/errors, and import boundaries excluding artifact-store, native-runtime, and UI dependencies.
+- [ ] #7 The existing managed-import descriptor prototype is preserved in a private module explicitly deferred to TASK-1861, with an empty public surface and no export, registration, production import, call site, or active TASK-597 behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
