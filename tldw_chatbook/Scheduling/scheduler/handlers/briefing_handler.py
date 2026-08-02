@@ -16,7 +16,16 @@ from tldw_chatbook.Subscriptions.briefing_service import (
     generate_briefing,
 )
 
-_STATUS_DISPATCHED = "dispatched"
+#: What `_run_generation` measures: this label fires once, in the `finally`,
+#: whenever the spawned coroutine ran to completion without either of the
+#: two exception branches below catching something -- i.e. `generate_briefing`
+#: returned (whatever status it wrote to the row: complete, empty, or its own
+#: internally-handled `failed`). It does NOT mean "was dispatched": nothing is
+#: recorded at the moment `handle` spawns the task, only when it finishes, so
+#: a generation still in flight -- or one whose process is killed before this
+#: `finally` runs -- is never counted here at all. Review round 1 caught the
+#: previous name (`"dispatched"`) claiming the opposite.
+_STATUS_COMPLETED = "completed"
 _STATUS_SKIPPED_CLAIMED = "skipped_claimed"
 _STATUS_RACED = "raced"
 _STATUS_ERROR = "error"
@@ -31,10 +40,12 @@ class BriefingJobHandler:
     quick HTTP fetch. Awaiting `generate_briefing` here would stall every
     other due task -- reminders, watchlist checks, and every other briefing
     -- behind whichever provider is slowest. `handle` therefore does only
-    synchronous, in-memory or single-row work (the claim snapshot check,
-    one `default_briefing_preset_id` read) and spawns the generation as an
-    independent `asyncio.Task`, returning before it has had a chance to run
-    at all.
+    synchronous, in-memory work (the claim snapshot check) and spawns the
+    generation as an independent `asyncio.Task`, returning before it has had
+    a chance to run at all. The one DB read the generation itself needs
+    (`default_briefing_preset_id`) is deliberately NOT done in `handle` --
+    see `_default_preset_id`'s own docstring for why it moved inside the
+    spawned task instead (review round 1).
 
     The stateless-handler shape follows `WatchlistCheckHandler`: all
     persistent state lives in `SubscriptionsDB` and in `briefing_service`'s
@@ -106,8 +117,7 @@ class BriefingJobHandler:
             )
             return
 
-        preset_id = self._default_preset_id(watchlist_id)
-        spawned = asyncio.create_task(self._run_generation(watchlist_id, preset_id))
+        spawned = asyncio.create_task(self._run_generation(watchlist_id))
         self._pending_generations.add(spawned)
         spawned.add_done_callback(self._pending_generations.discard)
 
@@ -117,10 +127,21 @@ class BriefingJobHandler:
         Raw SQL against `subscriptions_db.conn`, matching
         `watchlists_collections_screen._read_watchlist_briefing_settings`'s
         own read of the same column -- there is no service-layer getter for
-        it either. Read synchronously on the event loop: a single indexed
-        SELECT is not the multi-minute cost `handle` exists to avoid
-        blocking on, and `WatchlistCheckHandler.handle` reads its own
-        subscription row the same way.
+        it either. That method's own docstring is explicit: "Always called
+        through `asyncio.to_thread`; never call this directly from the UI
+        thread" -- and `_run_generation` (the only caller, review round 1)
+        follows the same rule, NOT `WatchlistCheckHandler.handle`, which
+        calls the service method `get_subscription()`, not raw `.conn` SQL,
+        and reads a table this handler's own spawned generations never
+        write to concurrently. Both distinctions matter here: `SubscriptionsDB`
+        sets no `busy_timeout` (SQLite's 5s default applies), and THIS
+        handler's own `generate_briefing` calls write to `watchlists`'/
+        `briefings`' shared connection from `asyncio.to_thread` workers --
+        so a direct, synchronous call here could block on a lock its own
+        spawned work is holding, self-inflicting exactly the tick stall
+        Locked Decision 3 exists to prevent. Being inside the spawned task
+        (never inside `handle`) means a wait here only delays this one
+        generation's own start, never the scheduler tick.
         """
         row = self.subscriptions_db.conn.execute(
             "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
@@ -130,7 +151,7 @@ class BriefingJobHandler:
             return None
         return row["default_briefing_preset_id"]
 
-    async def _run_generation(self, watchlist_id: int, preset_id: int | None) -> None:
+    async def _run_generation(self, watchlist_id: int) -> None:
         """Run one generation to completion, containing every failure.
 
         This coroutine is the whole body of the spawned task, so nothing
@@ -146,10 +167,18 @@ class BriefingJobHandler:
         anything beyond the exception's type name: briefing content must
         never reach a log line, and a database error's own message could
         embed a query fragment carrying it.
+
+        The `default_briefing_preset_id` read lives here, off the event
+        loop (`asyncio.to_thread`), rather than in `handle` -- see
+        `_default_preset_id`'s own docstring. A DB error surfacing from
+        that read is contained by the same `except Exception` branch below
+        as a DB error from `generate_briefing` itself; either way, nothing
+        escapes this task.
         """
         start = time.time()
-        status = _STATUS_DISPATCHED
+        status = _STATUS_COMPLETED
         try:
+            preset_id = await asyncio.to_thread(self._default_preset_id, watchlist_id)
             await self._generate(
                 self.subscriptions_db, watchlist_id, preset_id=preset_id
             )
