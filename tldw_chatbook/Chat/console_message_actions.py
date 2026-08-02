@@ -67,6 +67,13 @@ class ConsoleMessageActionService:
         ("feedback", "Feedback"),
         ("delete", "🗑"),
     )
+    #: TASK-1860: reveals the FULL tool result behind a truncated marker.
+    #: Offered only for a TOOL marker that actually carries more than its
+    #: `content` shows -- an expand control that opens an identical view is
+    #: the same dead affordance TASK-1843 removed from the Inspector.
+    _TOOL_OUTPUT_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("tool-output", "Full output"),
+    )
     _VARIANT_NAV_ACTIONS: tuple[tuple[str, str], ...] = (
         ("variant-previous", "<"),
         ("variant-next", ">"),
@@ -79,6 +86,17 @@ class ConsoleMessageActionService:
     _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
         ("view-original-attempt", "View original attempt"),
     )
+
+    @staticmethod
+    def _has_tool_output(message: ConsoleChatMessage) -> bool:
+        """Whether this row hides tool output its `content` does not show."""
+        if message.role is not ConsoleMessageRole.TOOL:
+            return False
+        # Deliberately NOT "is the full text absent from content": an
+        # EXPANDED row does contain it, and that must not remove the control
+        # that collapses it again. Whether there is more to show is settled
+        # once, when the marker is built.
+        return bool(message.tool_output_full)
 
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
@@ -171,6 +189,8 @@ class ConsoleMessageActionService:
             extra_actions.extend(self._VARIANT_NAV_ACTIONS)
         if extra_actions:
             completed_actions = self._base_actions_with(tuple(extra_actions))
+        if self._has_tool_output(message):
+            completed_actions = completed_actions + list(self._TOOL_OUTPUT_ACTIONS)
         if self._has_image(message):
             completed_actions = (
                 completed_actions

@@ -325,6 +325,53 @@ def _truncate_step_text(text: str, *, limit: int) -> str:
     return f"{cut}… (+{hidden} chars)"
 
 
+def full_step_output(
+    kind: str,
+    *,
+    result: Any = None,
+    summary: str | None = None,
+    marker_text: str | None = None,
+) -> str | None:
+    """Return the FULL text behind a step's marker, or None when there is none.
+
+    TASK-1860. `format_agent_step_marker` collapses a result to a preview
+    capped by the Console display setting, so the whole result was
+    unreachable from the transcript. This is the untruncated counterpart,
+    shared by the live run and by resume re-derivation so an expanded marker
+    reads identically either way.
+
+    A FAILED or errored step returns its summary: "whatever output it did
+    produce" is exactly what the user asks for when a call fails, and for an
+    error step the summary IS the produced text.
+
+    Args:
+        kind: The ``AgentStep`` kind this marker was built from.
+        result: The step's raw tool result, for ``STEP_TOOL_RESULT``.
+        summary: The step's summary text, for ``STEP_ERROR``.
+        marker_text: The marker as it will be displayed. When the full text
+            already appears there, ``None`` is returned -- an expand control
+            that opens an identical view is a dead affordance.
+
+    Returns:
+        The untruncated text behind the marker, or ``None`` when the marker
+        already shows everything (or the kind carries no output at all).
+    """
+    if kind == STEP_TOOL_RESULT:
+        text = str(result if result is not None else "")
+    elif kind == STEP_ERROR:
+        text = str(summary or "")
+    else:
+        return None
+    if not text:
+        return None
+    if marker_text is not None and text in marker_text:
+        # The marker already shows the whole thing -- carrying it again would
+        # light up an expand control that opens an identical view, the dead
+        # affordance TASK-1843 removed from the Inspector.
+        return None
+    return text
+
+
 #: TASK-1844: transcript marker kind for an approval that expired. Not an
 #: `AgentStep` kind -- the timeout happens in the approval round, before any
 #: step exists -- but it renders through the same formatter so live and
@@ -1655,7 +1702,16 @@ class ConsoleAgentBridge:
                     summary=step.summary,
                 )
                 if marker_text is not None:
-                    self._append_marker(session_id, marker_text)
+                    self._append_marker(
+                        session_id,
+                        marker_text,
+                        full_output=full_step_output(
+                            step.kind,
+                            result=step.result,
+                            summary=step.summary,
+                            marker_text=marker_text,
+                        ),
+                    )
             # Diagnostic logging for every tool call and result. The actual
             # tool invocation lives inside AgentService, so we observe it
             # through the step stream it emits.
@@ -2128,6 +2184,14 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=text,
                             status="complete",
+                            # AC#5: a resumed marker is as expandable as a
+                            # live one -- the step rows carry the full result.
+                            tool_output_full=full_step_output(
+                                str(step.get("kind") or ""),
+                                result=step.get("result"),
+                                summary=step.get("summary"),
+                                marker_text=text,
+                            ),
                         )
                     )
             blocks.append((record.get("assistant_message_id"), block))
@@ -2135,7 +2199,9 @@ class ConsoleAgentBridge:
 
     # -- internals ------------------------------------------------------
 
-    def _append_marker(self, session_id: str, text: str) -> None:
+    def _append_marker(
+        self, session_id: str, text: str, *, full_output: str | None = None
+    ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
         # Content.assemble (never markup-parsed) and chat_screen.py's legacy
@@ -2145,7 +2211,10 @@ class ConsoleAgentBridge:
         # `fetch \[docs]`).
         try:
             self._store.append_message(
-                session_id, role=ConsoleMessageRole.TOOL, content=text
+                session_id,
+                role=ConsoleMessageRole.TOOL,
+                content=text,
+                tool_output_full=full_output,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

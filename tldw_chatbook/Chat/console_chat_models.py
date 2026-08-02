@@ -424,6 +424,14 @@ class ConsoleChatMessage:
     generation_metadata: tuple["GenerationVariantMeta", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
+    #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
+    #: ``content`` is a preview capped by the Console display setting, so
+    #: without this the whole result was unreachable from the transcript --
+    #: the user could not tell a complete result from its first N characters,
+    #: and a failed call showed only its failure line. None for every message
+    #: that is not a tool marker, and for a marker whose result was short
+    #: enough that ``content`` already shows all of it.
+    tool_output_full: str | None = None
 
 
 @dataclass(frozen=True)
