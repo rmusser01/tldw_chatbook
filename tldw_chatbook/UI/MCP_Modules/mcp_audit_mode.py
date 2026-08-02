@@ -84,6 +84,7 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Approved", "approved"),
     ("Denied", "denied"),
     ("Denied (timeout)", "denied-timeout"),
+    ("Denied (no decision)", "denied-unresolved"),
     ("Downgraded", "downgraded"),
 ]
 
@@ -93,7 +94,7 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
     ("System", "system"),
 ]
 
-_BLOCKED_DECISIONS = {"denied", "denied-timeout"}
+_BLOCKED_DECISIONS = {"denied", "denied-timeout", "denied-unresolved"}
 
 # Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
 # Outcome columns -- "allowed"/"approved" reached the tool (ready);

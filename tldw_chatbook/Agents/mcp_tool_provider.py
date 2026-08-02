@@ -646,8 +646,12 @@ class MCPToolProvider:
             return ToolResult(ok=False, error=USER_DENY_REFUSAL)
         # An unrecognized or MISSING verdict fails closed -- but blaming the
         # user here would be the same provenance lie in the other direction:
-        # nobody decided anything. Neutral copy, still a refusal.
-        self._record_decision_safe(tool, decision="denied")
+        # nobody decided anything. Neutral copy, still a refusal -- and the
+        # AUDIT record agrees with the transcript (review finding: the first
+        # version recorded plain "denied" here, so Decision-filtered audit
+        # views reported an explicit denial nobody made). Mirrors the
+        # existing "denied-timeout" vocabulary.
+        self._record_decision_safe(tool, decision="denied-unresolved")
         return ToolResult(ok=False, error=UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(

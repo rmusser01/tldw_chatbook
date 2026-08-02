@@ -503,6 +503,9 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
             "approved",
             "denied",
             "denied-timeout",
+            # TASK-294: an unresolved verdict is audited as its own decision
+            # so Decision filtering cannot mistake it for an explicit denial.
+            "denied-unresolved",
             "downgraded",
         }
         assert initiator_values == {"test", "agent", "system"}

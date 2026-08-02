@@ -60,3 +60,33 @@ def test_audit_when_column_renders_local_time_not_raw_utc():
     # Defensive paths unchanged.
     assert _format_when("") == "—"
     assert _format_when("not-a-date") == "not-a-date"
+
+
+@pytest.mark.unit
+def test_an_unresolved_verdict_is_not_audited_as_an_explicit_denial():
+    """The audit log must agree with the transcript (review finding).
+
+    The first version of the provenance split fixed the model-facing STRING
+    but still recorded `decision="denied"` for a missing verdict -- so
+    Decision-based audit filtering reported an explicit denial nobody made.
+    The same principle, one layer deeper: `denied-unresolved` mirrors the
+    existing `denied-timeout` vocabulary, and the audit view treats it as
+    Blocked (the call never reached the tool).
+    """
+    import inspect
+
+    from tldw_chatbook.Agents import mcp_tool_provider as mtp
+    from tldw_chatbook.UI.MCP_Modules import mcp_audit_mode as audit
+
+    src = inspect.getsource(mtp.MCPToolProvider._apply_verdict)
+    assert '"denied-unresolved"' in src, (
+        "the unresolved branch records plain 'denied' -- the audit log "
+        "reports an explicit denial nobody made"
+    )
+    assert "denied-unresolved" in audit._BLOCKED_DECISIONS, (
+        "the audit Outcome column would route an unresolved refusal through "
+        "the attempted-run failure template"
+    )
+    assert any(
+        value == "denied-unresolved" for _label, value in audit._DECISION_OPTIONS
+    ), "the Decision filter cannot select unresolved refusals"
