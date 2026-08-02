@@ -4573,12 +4573,19 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        # TASK-1971 (Agent Change Review): the tracker is None when git is
+        # absent -- the bridge then skips tracking entirely, and runs behave
+        # exactly as before the feature existed (spec gating decision).
+        from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+        change_tracker = ChangeTurnTracker()
         self._console_agent_bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db,
             store=self._ensure_console_chat_store(),
             provider_gateway=self._ensure_console_provider_gateway(),
             skills_service=getattr(self.app_instance, "skills_scope_service", None),
             native_tools_enabled=self._console_native_tool_calls_enabled,
+            change_tracker=change_tracker if change_tracker.available else None,
         )
         return self._console_agent_bridge
 

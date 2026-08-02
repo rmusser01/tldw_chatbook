@@ -16,7 +16,8 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Sequence
 
 from loguru import logger
 
@@ -58,6 +59,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -1222,8 +1224,13 @@ class ConsoleAgentBridge:
         clock: Callable[[], float] = time.monotonic,
         skills_service: Any | None = None,
         native_tools_enabled: Callable[[], bool] | None = None,
+        change_tracker: Any | None = None,
     ) -> None:
         self._db = agent_runs_db
+        # TASK-1971: optional Agent Change Review turn tracker. None (the
+        # default, and every pre-existing construction site) disables
+        # tracking entirely.
+        self._change_tracker = change_tracker
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
@@ -1285,6 +1292,7 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        change_roots: Sequence[Path] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
@@ -1773,6 +1781,32 @@ class ConsoleAgentBridge:
             if scope is not None
         ]
         review_state_scope = _combine_state_scopes(_scopes)
+
+        # TASK-1971 (Agent Change Review): kick the baseline snapshot in the
+        # background NOW -- it rides the model's first-token latency -- and
+        # gate tool dispatch on its completion by wrapping the review hook,
+        # which the runtime invokes before every tool batch executes. A tool
+        # writing before B settles would race its own change into the
+        # baseline and vanish from the diff. Tracking failures never block
+        # the run (spec failure posture): begin_turn cannot raise, and the
+        # wrapper's await records timeouts as per-root disclosures.
+        change_handle = None
+        if self._change_tracker is not None and change_roots:
+            try:
+                change_handle = self._change_tracker.begin_turn(change_roots)
+            except Exception:  # noqa: BLE001 -- tracking must never block a run
+                logger.opt(exception=True).warning(
+                    "change_review: begin_turn failed; turn untracked"
+                )
+        if change_handle is not None:
+            _inner_review = review_tool_calls
+            _handle = change_handle
+
+            def review_tool_calls(calls):  # type: ignore[no-redef]
+                _handle.await_baseline()
+                if _inner_review is None:
+                    return {}
+                return _inner_review(calls)
         service = AgentService(
             self._db,
             registry,
@@ -1852,6 +1886,45 @@ class ConsoleAgentBridge:
             )
         finally:
             run_loop.close()
+            # TASK-1971: E snapshot on EVERY terminal path -- completed,
+            # failed, cancelled, or crashed. A run that died halfway through
+            # editing is when review matters most. `run_id` is unbound when
+            # run_turn itself raised before creating the run row; the
+            # records are then logged instead of stored (nothing to attach
+            # them to), and the exception still propagates unchanged.
+            if change_handle is not None:
+                try:
+                    _steps = (
+                        outcome.steps if "outcome" in locals() else []
+                    )
+                    _records = self._change_tracker.end_turn(
+                        change_handle,
+                        touched_paths=ChangeTurnTracker.tool_touched_paths(
+                            _steps
+                        ),
+                    )
+                    if "run_id" in locals():
+                        for _rec in _records:
+                            self._db.record_change_snapshot(
+                                run_id=run_id,
+                                root=_rec.root,
+                                baseline_sha=_rec.baseline_sha,
+                                end_sha=_rec.end_sha,
+                                files_changed=_rec.files_changed,
+                                adds=_rec.adds,
+                                dels=_rec.dels,
+                                tracking_error=_rec.tracking_error,
+                            )
+                    elif _records:
+                        logger.warning(
+                            "change_review: run crashed before a run row "
+                            f"existed; {len(_records)} change record(s) "
+                            "not stored"
+                        )
+                except Exception:  # noqa: BLE001 -- never mask the run's outcome
+                    logger.opt(exception=True).warning(
+                        "change_review: end_turn failed; turn changes untracked"
+                    )
         for step in outcome.steps:
             logger.info(
                 "agent run step",

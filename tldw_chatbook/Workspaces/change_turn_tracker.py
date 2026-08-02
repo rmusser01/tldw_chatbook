@@ -1,0 +1,307 @@
+"""Per-turn B/E snapshot orchestration for Agent Change Review (TASK-1971).
+
+Wraps :mod:`tldw_chatbook.Workspaces.change_tracking`'s per-root shadow
+repos around one agent run:
+
+* :meth:`ChangeTurnTracker.begin_turn` kicks the baseline (**B**) snapshot on
+  a background thread and returns immediately — B rides the model's own
+  first-token latency instead of adding send latency (spec §2);
+* :meth:`TurnHandle.await_baseline` is the tool-dispatch gate: it must
+  complete before the FIRST tool touches disk, or the tool's own write races
+  into the baseline and vanishes from the diff;
+* :meth:`ChangeTurnTracker.end_turn` takes the end (**E**) snapshot on every
+  terminal path — including failed and cancelled runs, which is when review
+  matters most — and returns one record per root that actually changed.
+
+Known window (spec §2's trade, characterized while testing): a write that
+lands during the FIRST provider stream — before B settles — is swallowed
+into the baseline and never appears in the diff. Production has no writer
+in that window: every writer, scripts included, is a tool, and tools sit
+behind the await-B gate. Only a non-tool writer (another app, the user's
+editor) racing the first token can hit it, and those are already documented
+attribution limits (spec §5).
+
+Failure posture (spec §2): tracking NEVER blocks or fails the agent reply.
+Every error becomes a per-root record carrying ``tracking_error`` for the
+card to disclose; nothing here raises out of ``begin_turn``/``end_turn``.
+
+The ``.gitignore`` carve-out (spec §1): paths the run's WRITE tools touched
+are force-added before E, so a direct agent edit to an ignored file (`.env`
+is the canonical case) always surfaces. Read tools are deliberately NOT
+included — force-adding a merely-read, pre-existing ignored file would lie
+an "Added" row into the review.
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+from loguru import logger
+
+from tldw_chatbook.Workspaces.change_tracking import (
+    ChangeTrackingError,
+    ShadowRepoService,
+)
+
+#: Tools whose path arguments are force-added at E time (the .gitignore
+#: carve-out). WRITE tools only — see the module docstring for why reads
+#: must not be here.
+WRITE_TOOL_NAMES: frozenset[str] = frozenset({"write_file"})
+
+#: Argument keys that carry the written path for tools in
+#: :data:`WRITE_TOOL_NAMES`.
+_PATH_ARG_KEYS: tuple[str, ...] = ("file_path", "path")
+
+#: Upper bound on waiting for the baseline thread. Generous — snapshots are
+#: seconds — but bounded, so a pathological root cannot hang the run.
+_BASELINE_TIMEOUT_SECONDS = 120.0
+
+
+@dataclass(frozen=True)
+class TurnChangeRecord:
+    """One root's outcome for one turn.
+
+    Attributes:
+        root: Canonical root path (string, for storage).
+        baseline_sha: The B snapshot tip ("" when tracking failed).
+        end_sha: The E snapshot tip ("" when tracking failed).
+        files_changed: Count of changed files between B and E.
+        adds: Total added lines.
+        dels: Total deleted lines.
+        tracking_error: Non-empty when tracking failed for this root; the
+            record then exists to be DISCLOSED, not rendered as a diff.
+    """
+
+    root: str
+    baseline_sha: str = ""
+    end_sha: str = ""
+    files_changed: int = 0
+    adds: int = 0
+    dels: int = 0
+    tracking_error: str = ""
+
+
+class TurnHandle:
+    """The in-flight state of one turn's baseline snapshots."""
+
+    def __init__(self, roots: list[Path]) -> None:
+        self.roots = roots
+        self.baselines: dict[str, str] = {}
+        self.errors: dict[str, str] = {}
+        self._thread: threading.Thread | None = None
+
+    def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
+        """Block until every root's B snapshot settled (or errored).
+
+        The tool-dispatch gate: called before the first tool executes and
+        again defensively by ``end_turn``. Never raises — a timeout is
+        recorded as a per-root error and disclosed downstream.
+        """
+        thread = self._thread
+        if thread is None:
+            return
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            for root in self.roots:
+                key = str(root)
+                if key not in self.baselines and key not in self.errors:
+                    self.errors[key] = (
+                        f"baseline snapshot still running after {timeout:.0f}s"
+                    )
+
+
+class ChangeTurnTracker:
+    """Orchestrates B/E snapshots for agent turns. One instance per app."""
+
+    def __init__(self, service: ShadowRepoService | None = None) -> None:
+        """Args:
+        service: Shadow-repo service; a default (app data dir, PATH git)
+            is built when omitted.
+        """
+        self.service = service if service is not None else ShadowRepoService()
+
+    @property
+    def available(self) -> bool:
+        """Whether tracking can work at all (git binary present)."""
+        return self.service.available
+
+    # -- turn lifecycle ----------------------------------------------------
+
+    def begin_turn(self, roots: Sequence[Path | str]) -> TurnHandle:
+        """Kick baseline snapshots for ``roots`` in the background.
+
+        Returns immediately; never raises. Non-directory roots are recorded
+        as errors rather than dropped silently.
+
+        Args:
+            roots: The run's workspace folder roots.
+
+        Returns:
+            A handle for :meth:`TurnHandle.await_baseline` / :meth:`end_turn`.
+        """
+        handle = TurnHandle([Path(r) for r in roots])
+
+        def _baseline() -> None:
+            for root in handle.roots:
+                key = str(root)
+                try:
+                    repo = self.service.repo_for_root(root)
+                    handle.baselines[key] = repo.snapshot("turn baseline")
+                except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
+                    handle.errors[key] = str(exc)[:400]
+
+        if handle.roots:
+            thread = threading.Thread(
+                target=_baseline, name="change-review-baseline", daemon=True
+            )
+            handle._thread = thread
+            thread.start()
+        return handle
+
+    def end_turn(
+        self,
+        handle: TurnHandle,
+        touched_paths: Sequence[str] = (),
+    ) -> list[TurnChangeRecord]:
+        """Take E snapshots and return one record per root that changed.
+
+        Runs on every terminal path. Never raises: per-root failures become
+        records with ``tracking_error`` set; a clean root with ``B == E``
+        yields NO record (spec: no changes, no card).
+
+        Args:
+            handle: The turn's :class:`TurnHandle` from :meth:`begin_turn`.
+            touched_paths: Absolute paths the run's WRITE tools touched
+                (see :meth:`tool_touched_paths`) — force-added before E so
+                ignored-but-edited files surface.
+
+        Returns:
+            Records for roots with changes or tracking errors.
+        """
+        handle.await_baseline()
+        records: list[TurnChangeRecord] = []
+        for root in handle.roots:
+            key = str(root)
+            if key in handle.errors:
+                records.append(
+                    TurnChangeRecord(root=key, tracking_error=handle.errors[key])
+                )
+                continue
+            baseline = handle.baselines.get(key, "")
+            if not baseline:
+                records.append(
+                    TurnChangeRecord(
+                        root=key,
+                        tracking_error="baseline snapshot missing",
+                    )
+                )
+                continue
+            try:
+                repo = self.service.repo_for_root(root)
+                in_root = self._paths_within(root, touched_paths)
+                if in_root:
+                    repo.force_add(in_root)
+                end = repo.snapshot("turn end")
+                if end == baseline:
+                    continue
+                changed = repo.changed_files(baseline, end)
+                records.append(
+                    TurnChangeRecord(
+                        root=key,
+                        baseline_sha=baseline,
+                        end_sha=end,
+                        files_changed=len(changed),
+                        adds=sum(c.adds for c in changed),
+                        dels=sum(c.dels for c in changed),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
+                records.append(
+                    TurnChangeRecord(
+                        root=key,
+                        baseline_sha=baseline,
+                        tracking_error=str(exc)[:400],
+                    )
+                )
+        return records
+
+    # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _paths_within(root: Path, paths: Iterable[str]) -> list[str]:
+        """Relativize ``paths`` to ``root``, dropping those outside it."""
+        out: list[str] = []
+        for raw in paths:
+            try:
+                rel = Path(raw).expanduser().resolve().relative_to(root)
+            except (ValueError, OSError):
+                continue
+            out.append(str(rel))
+        return out
+
+    @staticmethod
+    def tool_touched_paths(steps: Iterable[Any]) -> list[str]:
+        """Extract WRITE-tool path arguments from a run's recorded steps.
+
+        Args:
+            steps: ``AgentStep``-shaped objects (``tool_name``/``args``
+                attributes) or equivalent dicts.
+
+        Returns:
+            Path strings in step order, de-duplicated, WRITE tools only —
+            a read touch here would force-add a pre-existing ignored file
+            and lie an "Added" row into the review.
+        """
+        seen: set[str] = set()
+        out: list[str] = []
+        for step in steps:
+            tool = getattr(step, "tool_name", None)
+            args = getattr(step, "args", None)
+            if tool is None and isinstance(step, dict):
+                tool = step.get("tool_name")
+                args = step.get("args")
+            if tool not in WRITE_TOOL_NAMES or not isinstance(args, dict):
+                continue
+            for arg_key in _PATH_ARG_KEYS:
+                value = args.get(arg_key)
+                if isinstance(value, str) and value and value not in seen:
+                    seen.add(value)
+                    out.append(value)
+                    break
+        return out
+
+
+def initial_snapshot_in_background(root: Path | str) -> threading.Thread | None:
+    """Best-effort background initial snapshot for a newly registered root.
+
+    Spec §2: the FIRST snapshot of a root happens at registration time, so
+    first-send latency never absorbs the cost of hashing a whole tree.
+    Failures log and are disclosed on first use instead; never raises.
+
+    Args:
+        root: The just-registered folder root.
+
+    Returns:
+        The started thread (for tests to join), or ``None`` when tracking
+        is unavailable.
+    """
+    service = ShadowRepoService()
+    if not service.available:
+        return None
+
+    def _snapshot() -> None:
+        try:
+            service.repo_for_root(root).snapshot("root registered")
+        except Exception:  # noqa: BLE001 -- best-effort by design
+            logger.opt(exception=True).warning(
+                f"change_review: initial snapshot failed for {root}"
+            )
+
+    thread = threading.Thread(
+        target=_snapshot, name="change-review-initial-snapshot", daemon=True
+    )
+    thread.start()
+    return thread
