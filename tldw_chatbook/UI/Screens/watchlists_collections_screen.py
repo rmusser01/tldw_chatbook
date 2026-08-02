@@ -37,15 +37,17 @@ from ...config import get_cli_setting
 from ...runtime_policy.types import PolicyDeniedError
 from ...Subscriptions.briefing_audio import (
     AudioGenerationError,
-    active_audio_claims,
+    active_audio_claim_row_ids,
     fail_interrupted_audio,
     generate_script_audio,
+    pending_audio_claim_script_ids,
 )
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
-    active_cast_claims,
+    active_cast_claim_row_ids,
     fail_interrupted_scripts,
     generate_script,
+    pending_cast_claim_briefing_ids,
 )
 from ...Subscriptions.briefing_export import (
     BriefingExportError,
@@ -5290,7 +5292,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # runs in the same TWO seams it always has: `_load_briefings` whenever
     # Artifacts loads (gated on `_cast_sweep_is_safe`), and `_cast_script`
     # below at the front of every cast -- both now claim-aware via
-    # `active_cast_claims()`, exactly like Generate's own sweeps.
+    # `active_cast_claim_row_ids()`, exactly like Generate's own sweeps
+    # (task-1890: row-scoped, not merely briefing-scoped, mirroring
+    # task-1812's briefings-side fix).
 
     def _cast_sweep_is_safe(self) -> bool:
         """Whether `fail_interrupted_scripts` may run right now.
@@ -5309,15 +5313,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
         to one briefing's scripts rather than one watchlist's briefings.
 
-        `active_cast_claims()` is snapshotted HERE, on the UI thread, before
-        the sweep is dispatched -- see that method's own docstring for why
-        a snapshot, not a live read, is required.
+        `active_cast_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched -- see `_fail_interrupted_
+        briefings_if_safe`'s own docstring for why a snapshot, not a live
+        read, is required, and row-scoped rather than briefing-scoped
+        (task-1890, mirroring task-1812's `active_briefing_claim_row_ids`).
+
+        `pending_cast_claim_briefing_ids()` is snapshotted here too, same
+        thread, same instant, closing the window `exclude` alone cannot: a
+        claim taken but whose row id has not yet been recorded, still
+        inside `_start_script`'s own `to_thread` hop. Passed as `exclude_
+        briefings`, never in place of `exclude`.
         """
         if not self._cast_sweep_is_safe():
             return 0
-        claims = active_cast_claims()
+        claims = active_cast_claim_row_ids()
+        pending = pending_cast_claim_briefing_ids()
         return await asyncio.to_thread(
-            fail_interrupted_scripts, db, briefing_id, exclude=claims
+            fail_interrupted_scripts,
+            db,
+            briefing_id,
+            exclude=claims,
+            exclude_briefings=pending,
         )
 
     @staticmethod
@@ -5332,13 +5349,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _sweep_and_guard_cast(
-        self, db: Any, briefing_id: int, exclude: Collection[int]
+        self,
+        db: Any,
+        briefing_id: int,
+        exclude: Collection[int],
+        exclude_briefings: Collection[int] = (),
     ) -> tuple[list[str], list[str]]:
         """Zombie sweep, then the generating-check, for a cast. Runs off the
         UI thread. Sibling of `_sweep_and_guard` -- see that method's own
         docstring for the full reasoning; this is the identical shape,
         scoped to one briefing's scripts instead of one watchlist's
-        briefings (phase 4 Task 1, survey finding (c)).
+        briefings (phase 4 Task 1, survey finding (c); row-scoped since
+        task-1890).
+
+        `exclude_briefings` -- the caller's `pending_cast_claim_briefing_
+        ids()` snapshot, taken at the same instant as `exclude` -- closes
+        the same window `exclude` alone cannot for another in-process
+        caller: if it is still inside `_start_script`'s own `to_thread`
+        hop, its row (once inserted) reads `generating` but has no id
+        recorded yet, so only naming its briefing (not yet its row) spares
+        it here.
 
         Returns:
             `(recovered, blocking)`, exactly like `_sweep_and_guard`.
@@ -5348,7 +5378,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for row in db.list_briefing_scripts(briefing_id)
             if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
         ]
-        fail_interrupted_scripts(db, briefing_id, exclude=exclude)
+        fail_interrupted_scripts(
+            db, briefing_id, exclude=exclude, exclude_briefings=exclude_briefings
+        )
         blocking = [
             self._script_row_label(row)
             for row in db.list_briefing_scripts(briefing_id)
@@ -5522,7 +5554,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             try:
                 _recovered, blocking = await asyncio.to_thread(
-                    self._sweep_and_guard_cast, db, briefing_id, active_cast_claims()
+                    self._sweep_and_guard_cast,
+                    db,
+                    briefing_id,
+                    active_cast_claim_row_ids(),
+                    pending_cast_claim_briefing_ids(),
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(
@@ -5595,9 +5631,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
     # audio` below sweeps again at its own front, exactly where `_cast_
     # script` sweeps for Cast. Both are now claim-aware via
-    # `active_audio_claims()` (phase 4 Task 1), so a live in-process render
-    # -- this screen's own, or another in-process caller's -- survives
-    # either sweep unconditionally.
+    # `active_audio_claim_row_ids()` (phase 4 Task 1; row-scoped, not
+    # merely script-scoped, since task-1890 -- mirroring task-1812's
+    # briefings-side fix), so a live in-process render -- this screen's
+    # own, or another in-process caller's -- survives either sweep
+    # unconditionally.
     #
     # Phase 4 Task 1 investigated whether Synthesize needs the SAME
     # `blocking` refusal Cast just gained (survey finding (c)'s sibling
@@ -5624,16 +5662,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
         one script's audio renders rather than one briefing's scripts.
 
-        `active_audio_claims()` is snapshotted HERE, on the UI thread,
-        before the sweep is dispatched -- see `_fail_interrupted_briefings_
-        if_safe`'s own docstring for why a snapshot, not a live read, is
-        required.
+        `active_audio_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched -- see `_fail_interrupted_
+        briefings_if_safe`'s own docstring for why a snapshot, not a live
+        read, is required, and row-scoped rather than script-scoped
+        (task-1890, mirroring task-1812's `active_briefing_claim_row_ids`).
+
+        `pending_audio_claim_script_ids()` is snapshotted here too, same
+        thread, same instant, closing the window `exclude` alone cannot: a
+        claim taken but whose row id has not yet been recorded, still
+        inside `generate_script_audio`'s own `db.create_briefing_audio`
+        `to_thread` call. Passed as `exclude_scripts`, never in place of
+        `exclude`.
         """
         if not self._audio_sweep_is_safe():
             return 0
-        claims = active_audio_claims()
+        claims = active_audio_claim_row_ids()
+        pending = pending_audio_claim_script_ids()
         return await asyncio.to_thread(
-            fail_interrupted_audio, db, script_id, exclude=claims
+            fail_interrupted_audio,
+            db,
+            script_id,
+            exclude=claims,
+            exclude_scripts=pending,
         )
 
     @staticmethod
@@ -5648,14 +5699,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _sweep_and_guard_audio(
-        self, db: Any, script_id: int, exclude: Collection[int]
+        self,
+        db: Any,
+        script_id: int,
+        exclude: Collection[int],
+        exclude_scripts: Collection[int] = (),
     ) -> tuple[list[str], list[str]]:
         """Zombie sweep, then the generating-check, for a synthesis. Runs
         off the UI thread. Sibling of `_sweep_and_guard_cast` -- see that
         method's own docstring for the full reasoning; this is the
         identical shape, scoped to one script's audio renders instead of
         one briefing's scripts (task-1811, mirroring Cast's own `blocking`
-        refusal from phase 4 Task 1 onto Synthesize).
+        refusal from phase 4 Task 1 onto Synthesize; row-scoped `exclude`
+        plus `exclude_scripts` since task-1890 -- see `_sweep_and_guard_
+        cast`'s own docstring for the identical `exclude_briefings`
+        reasoning).
 
         Returns:
             `(recovered, blocking)`, exactly like `_sweep_and_guard_cast`.
@@ -5665,7 +5723,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for row in db.list_briefing_audio(script_id)
             if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
         ]
-        fail_interrupted_audio(db, script_id, exclude=exclude)
+        fail_interrupted_audio(
+            db, script_id, exclude=exclude, exclude_scripts=exclude_scripts
+        )
         blocking = [
             self._audio_row_label(row)
             for row in db.list_briefing_audio(script_id)
@@ -5744,24 +5804,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         own docstring), not a database failure to hide behind a generic
         toast.
 
-        The sweep is claim-aware (`active_audio_claims()`), like every
-        other sweep call site (phase 4 Task 1), and is now followed by a
-        `blocking` check, mirroring `_cast_script`'s own (task-1811): a row
-        that SURVIVES `_sweep_and_guard_audio`'s sweep because it is
-        claimed by a live in-process synthesis refuses THIS attempt
-        instead of starting a second, concurrent one over the top of it.
-        Unlike `_cast_script`'s own `recovered` branch, there is no
-        one-COMPLETE-row-per-script invariant here either (a script may be
-        synthesized many times), so a zombie this sweep actually recovers
-        (i.e. NOT `blocking`) does not itself refuse a fresh synthesis --
-        the same press both recovers the zombie AND synthesizes real audio
-        (`test_synthesizing_recovers_a_zombie_audio_row_via_its_own_
-        sweep`).
+        The sweep is claim-aware (`active_audio_claim_row_ids()`, row-scoped
+        since task-1890), like every other sweep call site (phase 4 Task
+        1), and is now followed by a `blocking` check, mirroring `_cast_
+        script`'s own (task-1811): a row that SURVIVES `_sweep_and_guard_
+        audio`'s sweep because it is claimed by a live in-process synthesis
+        refuses THIS attempt instead of starting a second, concurrent one
+        over the top of it. Unlike `_cast_script`'s own `recovered` branch,
+        there is no one-COMPLETE-row-per-script invariant here either (a
+        script may be synthesized many times), so a zombie this sweep
+        actually recovers (i.e. NOT `blocking`) does not itself refuse a
+        fresh synthesis -- the same press both recovers the zombie AND
+        synthesizes real audio (`test_synthesizing_recovers_a_zombie_audio_
+        row_via_its_own_sweep`). Row-scoping (task-1890) also means this
+        `blocking` toast can no longer name a crash-zombie row shielded by
+        an unrelated live claim on the same script -- the zombie is swept
+        by the same call, before `blocking` is computed.
         """
         try:
             try:
                 _recovered, blocking = await asyncio.to_thread(
-                    self._sweep_and_guard_audio, db, script_id, active_audio_claims()
+                    self._sweep_and_guard_audio,
+                    db,
+                    script_id,
+                    active_audio_claim_row_ids(),
+                    pending_audio_claim_script_ids(),
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(

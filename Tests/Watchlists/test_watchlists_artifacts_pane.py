@@ -2352,9 +2352,16 @@ async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
+        def _recording_sweep(
+            db_arg, briefing_id_arg=None, *, exclude=(), exclude_briefings=()
+        ):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
+            return real_sweep(
+                db_arg,
+                briefing_id_arg,
+                exclude=exclude,
+                exclude_briefings=exclude_briefings,
+            )
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -2411,9 +2418,16 @@ async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_scripts
 
-        def _recording_sweep(db_arg, briefing_id_arg=None, *, exclude=()):
+        def _recording_sweep(
+            db_arg, briefing_id_arg=None, *, exclude=(), exclude_briefings=()
+        ):
             in_flight_at_call.append(bool(screen._cast_in_flight))
-            return real_sweep(db_arg, briefing_id_arg, exclude=exclude)
+            return real_sweep(
+                db_arg,
+                briefing_id_arg,
+                exclude=exclude,
+                exclude_briefings=exclude_briefings,
+            )
 
         monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
 
@@ -3392,6 +3406,72 @@ async def test_a_synthesis_press_during_a_claimed_script_refuses_not_run_concurr
 
 
 @pytest.mark.asyncio
+async def test_the_blocking_toast_never_names_a_crash_zombie_sharing_the_live_claims_script(
+    monkeypatch,
+):
+    """Task-1890, AC #7: before row-scoping, `fail_interrupted_audio`'s
+    `exclude` was script-granular, so a crash-zombie audio row sharing a
+    `script_id` with a live claim survived `_sweep_and_guard_audio`'s sweep
+    purely because ITS SCRIPT was excluded -- and could then be named by
+    the `blocking` toast as if IT, not the genuinely live row, were what
+    blocked Synthesize. Row-scoping (task-1890) sweeps the zombie before
+    `blocking` is computed, so only the genuinely live row's label can
+    ever appear.
+
+    The live claim's row id is recorded via `_claim_audio`'s `audio_id`
+    parameter -- unlike the sibling test above (which deliberately leaves
+    it unrecorded to pin the pending-claim window), this test pins the
+    steady-state row-scoped case AC #7 names: a claim whose row IS known.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    db = app.watchlist_bundle_service.db
+
+    fake_audio = _FakeAudioService()
+    _use_fake_audio_service(monkeypatch, fake_audio)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        # A crash-zombie row: no claim in THIS process will ever name it --
+        # its own claim died with whatever process left it behind.
+        zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+        # The live claim's OWN row, recorded exactly as a real in-flight
+        # `generate_script_audio` call would (`_claim_audio`'s `audio_id`
+        # parameter, task-1890).
+        live_audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+        with briefing_audio._claim_audio(script_id, audio_id=live_audio_id):
+            await _press_synthesize(screen, pilot, app, script_id)
+
+        assert fake_audio.calls == [], (
+            "nothing may be synthesized while claimed elsewhere"
+        )
+        assert app.notify.called, "the refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert f"audio {live_audio_id} " in message, (
+            "the toast must name the genuinely live row"
+        )
+        assert f"audio {zombie_id} " not in message, (
+            "the toast must never name a crash zombie merely sharing the "
+            "live claim's script_id"
+        )
+        assert db.get_briefing_audio(live_audio_id)["status"] == "generating", (
+            "the live claim's row must not be falsified as interrupted"
+        )
+        assert db.get_briefing_audio(zombie_id)["status"] == "failed", (
+            "the zombie must be swept BEFORE the toast is composed, not "
+            "merely spared alongside the live row"
+        )
+        assert db.get_briefing_audio(zombie_id)["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
 async def test_the_audio_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_cast_guard_
     is_claimed_before_the_worker_runs`: the handler is synchronous with no
@@ -3521,9 +3601,13 @@ async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_l
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
+        def _recording_sweep(
+            db_arg, script_id_arg=None, *, exclude=(), exclude_scripts=()
+        ):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg, exclude=exclude)
+            return real_sweep(
+                db_arg, script_id_arg, exclude=exclude, exclude_scripts=exclude_scripts
+            )
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 
@@ -3574,9 +3658,13 @@ async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkey
         in_flight_at_call: list[bool] = []
         real_sweep = screen_module.fail_interrupted_audio
 
-        def _recording_sweep(db_arg, script_id_arg=None, *, exclude=()):
+        def _recording_sweep(
+            db_arg, script_id_arg=None, *, exclude=(), exclude_scripts=()
+        ):
             in_flight_at_call.append(bool(screen._audio_in_flight))
-            return real_sweep(db_arg, script_id_arg, exclude=exclude)
+            return real_sweep(
+                db_arg, script_id_arg, exclude=exclude, exclude_scripts=exclude_scripts
+            )
 
         monkeypatch.setattr(screen_module, "fail_interrupted_audio", _recording_sweep)
 

@@ -47,10 +47,12 @@ from tldw_chatbook.Subscriptions.briefing_audio import (
     STATUS_FAILED,
     STATUS_GENERATING,
     AudioGenerationError,
+    active_audio_claim_row_ids,
     active_audio_claims,
     briefing_audio_dir,
     fail_interrupted_audio,
     generate_script_audio,
+    pending_audio_claim_script_ids,
 )
 from tldw_chatbook.Subscriptions.briefing_audio import TurnSynthesisError
 from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
@@ -739,19 +741,35 @@ def test_active_audio_claims_is_an_empty_snapshot_by_default():
     assert active_audio_claims() == frozenset()
 
 
-def test_fail_interrupted_audio_spares_a_claimed_script_both_directions(tmp_path):
-    """Survey finding (a)'s audio-scoped sibling."""
+def test_fail_interrupted_audio_spares_an_excluded_row_both_directions(tmp_path):
+    """Survey finding (a)'s audio-scoped sibling, updated for task-1890
+    (mirroring task-1812): `exclude` now names the audio ROW to spare, not
+    its script -- a row survives the sweep when its id is passed via
+    `exclude`, and is swept once it is not.
+
+    A padding row is inserted (and finished) first so the row under test's
+    own id is NOT the same integer as the script's id -- proving
+    `exclude={live_row}` protects because of the ROW id, not a
+    coincidental match with the script id (see `test_briefing_service.py`'s
+    identical fixture reasoning).
+    """
     db = _db(tmp_path)
     roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
     script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
-    zombie = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    padding = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(padding, status="complete", file_path="/tmp/x.wav")
+    live_row = db.create_briefing_audio(  # stands in for a live claim's own row
+        script_id, voice_snapshot_json="[]"
+    )
+    assert live_row != script_id, "the fixture must not coincidentally align the ids"
 
-    assert fail_interrupted_audio(db, exclude={script_id}) == 0
-    assert db.get_briefing_audio(zombie)["status"] == "generating"
+    assert fail_interrupted_audio(db, exclude={live_row}) == 0
+    assert db.get_briefing_audio(live_row)["status"] == "generating"
 
+    assert fail_interrupted_audio(db, exclude={live_row}) == 0
     assert fail_interrupted_audio(db) == 1
-    assert db.get_briefing_audio(zombie)["status"] == "failed"
-    assert db.get_briefing_audio(zombie)["error"] == "interrupted"
+    assert db.get_briefing_audio(live_row)["status"] == "failed"
+    assert db.get_briefing_audio(live_row)["error"] == "interrupted"
 
 
 async def test_a_second_synthesis_for_a_claimed_script_raises_before_any_row_insert(
@@ -898,3 +916,226 @@ async def test_a_concurrent_synthesis_for_the_same_script_is_refused(
     row = await first
     assert row["status"] == STATUS_COMPLETE
     assert script_id not in active_audio_claims()
+
+
+# --- Row-scoped sweep exclusion (task-1890, generalizing task-1812) ---------
+#
+# `fail_interrupted_audio`'s `exclude` used to be script-granular: ANY
+# `generating` audio row for a script named in `exclude` survived, on the
+# reasoning that such a row is "a LIVE, in-process render" -- true only if a
+# script can have at most one `generating` audio row at a time. It cannot: a
+# crash-zombie row left by a PRIOR process (that process's own claim died
+# with it) can coexist with a freshly-claimed live row for the SAME script,
+# and script-scoped exclusion incidentally shielded the zombie too. `active_
+# audio_claim_row_ids()` names the live ROW instead, so a same-script
+# zombie is swept exactly as if nothing were claimed at all.
+
+
+def test_active_audio_claim_row_ids_is_an_empty_snapshot_by_default():
+    assert active_audio_claim_row_ids() == frozenset()
+
+
+async def test_row_scoped_exclude_sweeps_a_same_script_zombie_while_sparing_the_live_row(
+    tmp_path, monkeypatch
+) -> None:
+    """The coexistence case the docstring used to over-claim protection
+    for: a crash-zombie audio row and a genuinely live claim, both
+    `generating`, both rendered from the SAME script, in the same sweep.
+    Row-scoped `exclude` must fail the zombie and leave the live row alone
+    -- script-scoped `exclude` (the pre-task-1890 shape) cannot tell them
+    apart and would spare both.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    # Stands in for a row a PRIOR process left behind mid-render: its own
+    # claim died with that process, so nothing in THIS process's
+    # `_ACTIVE_AUDIO_CLAIM_ROW_IDS` will ever name it.
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    # The live claim now protects its OWN row, not merely its script.
+    live_ids = active_audio_claim_row_ids()
+    assert live_ids, "a live claim's row must be recorded by the time synthesis runs"
+    assert zombie_id not in live_ids, (
+        "the zombie's id must never be recorded by a claim it did not make"
+    )
+
+    swept = fail_interrupted_audio(db, exclude=live_ids)
+
+    assert swept == 1
+    assert db.get_briefing_audio(zombie_id)["status"] == "failed"
+    assert db.get_briefing_audio(zombie_id)["error"] == "interrupted"
+    live_id = next(iter(live_ids))
+    assert db.get_briefing_audio(live_id)["status"] == "generating", (
+        "row-scoped exclude must not falsify the row a live claim is "
+        "actually writing"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+
+
+# --- The unrecorded-claim sweep window (task-1890, generalizing the ---------
+# whole-branch review fix in chore/briefings-residuals-1810-1812) -----------
+#
+# `generate_script_audio` records `_ACTIVE_AUDIO_CLAIM_ROW_IDS[script_id]`
+# only after `db.create_briefing_audio`'s own `to_thread` call returns. For
+# the span before that call runs (script load, pydub check, voice
+# resolution) no audio row exists yet at all; once the `INSERT` itself has
+# run but before the coroutine resumes to record the id, the row exists,
+# reads `generating`, and `active_audio_claim_row_ids()` alone names
+# nothing that protects it. A sweep at that exact instant used to falsify
+# the row. `pending_audio_claim_script_ids()` closes the window: `_claim_
+# audio(script_id)` with no `audio_id` reproduces the registry state
+# mid-window directly, with no need to block inside `generate_script_audio`
+# itself.
+
+
+def test_pending_audio_claim_script_ids_is_an_empty_snapshot_by_default():
+    assert pending_audio_claim_script_ids() == frozenset()
+
+
+def test_an_audio_claim_with_no_recorded_row_id_yet_is_named_pending(tmp_path):
+    """Direct pin of the accessor: a claim taken via `_claim_audio` without
+    an `audio_id` (exactly the registry state before `generate_script_
+    audio` resumes to record one after `db.create_briefing_audio`'s own
+    `to_thread` call) must appear in `pending_audio_claim_script_ids()`,
+    and must disappear the instant a row id IS recorded.
+    """
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    with briefing_audio._claim_audio(script_id):
+        assert active_audio_claim_row_ids() == frozenset(), (
+            "no row id has been recorded yet -- this is the window itself"
+        )
+        assert script_id in pending_audio_claim_script_ids()
+
+    assert script_id not in pending_audio_claim_script_ids(), (
+        "the claim released -- nothing should still read as pending"
+    )
+
+    live_row = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    with briefing_audio._claim_audio(script_id, audio_id=live_row):
+        assert script_id not in pending_audio_claim_script_ids(), (
+            "a claim whose row id IS recorded is no longer pending"
+        )
+
+
+def test_an_audio_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
+    tmp_path,
+):
+    """The window itself, closed: a `generating` audio row for a script
+    whose claim exists but whose row id is not yet recorded must survive a
+    sweep run at that exact instant -- reproducing the same regression
+    `test_briefing_service.py`'s own analogous test pins for briefings.
+
+    Without `exclude_scripts`, `active_audio_claim_row_ids()` alone is
+    empty here (nothing recorded yet) and the row would be swept as a
+    false zombie -- exactly the regression this pins.
+    """
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+    # Stands in for the row `db.create_briefing_audio` just wrote, before
+    # `generate_script_audio` resumes on the event loop to record its id.
+    live_row = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    with briefing_audio._claim_audio(script_id):
+        row_ids = active_audio_claim_row_ids()
+        pending = pending_audio_claim_script_ids()
+        assert row_ids == frozenset(), "the row id is not recorded in this window"
+        assert script_id in pending
+
+        swept = fail_interrupted_audio(db, exclude=row_ids, exclude_scripts=pending)
+
+    assert swept == 0
+    assert db.get_briefing_audio(live_row)["status"] == "generating", (
+        "a claim whose row id has not been recorded yet must still spare "
+        "its own row from a concurrent sweep"
+    )
+
+
+async def test_row_scoped_exclude_still_sweeps_a_same_script_zombie_once_the_id_lands(
+    tmp_path, monkeypatch
+) -> None:
+    """The task-1890 coexistence fix, re-asserted alongside the new guard:
+    once a claim's row id IS recorded, `pending_audio_claim_script_ids()`
+    no longer names its script, so `exclude_scripts` goes back to being a
+    no-op for it and row-scoped `exclude` alone decides -- a same-script
+    crash zombie is still swept even though the script itself has a live
+    claim.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    row_ids = active_audio_claim_row_ids()
+    pending = pending_audio_claim_script_ids()
+    assert row_ids, "the live claim's row id must be recorded by the time synthesis runs"
+    assert script_id not in pending, (
+        "once the row id lands, the script is no longer 'pending'"
+    )
+
+    swept = fail_interrupted_audio(db, exclude=row_ids, exclude_scripts=pending)
+
+    assert swept == 1
+    assert db.get_briefing_audio(zombie_id)["status"] == "failed"
+    live_id = next(iter(row_ids))
+    assert db.get_briefing_audio(live_id)["status"] == "generating", (
+        "the live row must survive even with exclude_scripts passed "
+        "alongside row-scoped exclude"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
