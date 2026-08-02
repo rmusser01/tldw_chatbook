@@ -135,10 +135,12 @@ class ShadowRepoService:
         data_dir: Path | None = None,
         git_executable: str | None = None,
     ) -> None:
-        """Args:
-        data_dir: Base directory for shadow repos; defaults to the app
-            data dir's ``change_review/`` subtree.
-        git_executable: Override for tests; defaults to ``git`` on PATH.
+        """Create the service.
+
+        Args:
+            data_dir: Base directory for shadow repos; defaults to the app
+                data dir's ``change_review/`` subtree.
+            git_executable: Override for tests; defaults to ``git`` on PATH.
         """
         if data_dir is None:
             from tldw_chatbook.Utils.paths import get_user_data_dir
@@ -493,6 +495,24 @@ class ShadowRepo:
         if proc.returncode != 0:
             return None
         return bytes(proc.stdout or b"")
+
+    def force_add(self, paths: Sequence[str]) -> None:
+        """Stage ``paths`` even when ignore rules would exclude them.
+
+        TASK-1971's ``.gitignore`` carve-out: a WRITE tool's edit to an
+        ignored file (``.env``) must surface in the turn's diff. Missing
+        paths are skipped (the tool may have deleted its own file) rather
+        than failing the snapshot.
+
+        Args:
+            paths: Root-relative paths to stage with ``add -f``.
+        """
+        existing = [p for p in paths if (self.root / p).exists()]
+        if not existing:
+            return
+        with self._locked():
+            self.ensure_initialized()
+            self._run("add", "-f", "--", *existing)
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 

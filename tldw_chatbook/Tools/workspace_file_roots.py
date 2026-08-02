@@ -69,6 +69,51 @@ def _default_registry_factory():
 _registry_factory = _default_registry_factory
 
 
+def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
+    """Return a workspace's bound folder roots (all access levels).
+
+    TASK-1971: the Agent Change Review tracker's root list. Unlike
+    ``allowed_file_roots`` this includes READ-ONLY bindings (a script can
+    write into an ro root -- the tools cannot, but tracking is about what
+    happened on disk, not what tools were permitted) and never appends the
+    sandbox root (app-managed scratch; retained script outputs live there
+    deliberately and would be pure review noise).
+
+    Args:
+        workspace_id: The run's workspace, or ``None`` for none.
+
+    Returns:
+        Existing, resolved root directories; empty when the workspace has
+        no usable bindings or the registry is unavailable.
+    """
+    if not workspace_id:
+        return ()
+    roots: list[Path] = []
+    try:
+        registry = _registry_factory()
+        for binding in registry.list_folder_bindings(workspace_id):
+            folder = Path(binding.locator)
+            if not folder.is_dir():
+                continue
+            if folder.is_symlink() or folder.resolve() != folder:
+                # Same drift exclusion `allowed_file_roots` applies: a
+                # binding that no longer resolves to its bound path is
+                # stale config, and tracking its TARGET could snapshot an
+                # unintended (potentially huge) tree.
+                logger.warning(
+                    "folder_binding_roots: excluding drifted root {!r}",
+                    binding.locator,
+                )
+                continue
+            roots.append(folder)
+    except Exception:
+        logger.opt(exception=True).debug(
+            "folder_binding_roots: registry unavailable"
+        )
+        return ()
+    return tuple(roots)
+
+
 @contextmanager
 def run_workspace(workspace_id: str | None) -> Iterator[None]:
     """Bind the current run's workspace for the duration of a tool call.

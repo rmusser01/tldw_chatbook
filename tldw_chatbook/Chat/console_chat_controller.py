@@ -6756,6 +6756,22 @@ class ConsoleChatController:
             kill_switch=self._console_tool_kill_switch_reader(),
         )
 
+        # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
+        # same workspace folder bindings the file tools resolve against.
+        # Best-effort: an unavailable registry yields no roots and an
+        # untracked (but otherwise normal) run.
+        change_roots: list = []
+        try:
+            from tldw_chatbook.Tools.workspace_file_roots import (
+                folder_binding_roots,
+            )
+
+            change_roots = list(folder_binding_roots(review_workspace_id))
+        except Exception:  # noqa: BLE001 -- tracking must never block a send
+            logger.opt(exception=True).debug(
+                "change_review: workspace roots unavailable; run untracked"
+            )
+
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
         # polled between chunks/steps inside the bridge, never preempts the
@@ -6783,6 +6799,7 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 review_tool_calls=review_hook,
+                change_roots=change_roots,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=functools.partial(
