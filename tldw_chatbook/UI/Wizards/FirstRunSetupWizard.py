@@ -1181,16 +1181,38 @@ class SpeechSetupStep(SetupStep):
             )
             prefill_text = self._prefill_status_text()
             if prefill_text:
+                # NEW-1 (review): persisted values (and, below, the runtime-
+                # missing message's bracketed extras names) may contain
+                # literal "[...]" -- markup=False, same fix already applied
+                # to "#setup-summary-rows" for the identical trap.
                 yield Static(
-                    prefill_text, id="setup-speech-prefill", classes="setup-subtitle"
+                    prefill_text,
+                    id="setup-speech-prefill",
+                    classes="setup-subtitle",
+                    markup=False,
                 )
             status_text, action_widget = self._status_and_action()
-            yield Static(status_text, id="setup-speech-status", classes="setup-subtitle")
+            yield Static(
+                status_text,
+                id="setup-speech-status",
+                classes="setup-subtitle",
+                markup=False,
+            )
             progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
             progress.display = self._operation == "install" and self._progress is not None
             yield progress
             if action_widget is not None:
                 yield action_widget
+            if self._use_as_default_offer():
+                # Review NEW-2: installed + active + configured elsewhere is
+                # the one state where neither "install" nor "activate" is a
+                # real action -- offer the affordance the prefill sentence
+                # actually promises instead of leaving it undeliverable.
+                yield Button(
+                    "Use Parakeet v2 as my default",
+                    id="setup-speech-use-as-default",
+                    variant="primary",
+                )
             yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
             with RadioSet(id="setup-speech-language-choice", classes="setup-choice-list"):
@@ -1247,17 +1269,56 @@ class SpeechSetupStep(SetupStep):
             if descriptor.model_id == policy.parakeet_v2_model_id
         )
 
+    def _prefill(self) -> Any:
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        return speech_state.read_speech_prefill(app_config)
+
+    def _installed_active(self) -> bool:
+        item = self._installed_item
+        return bool(item is not None and item.active)
+
     def _prefill_status_text(self) -> str:
         """AC#5's "re-run prefills" clause: show what is already persisted.
 
         Reads ``self.wizard.app_instance.app_config`` directly -- the same
         in-memory, already-loaded dict other steps read synchronously in
         compose_step() (e.g. RagStep._embedding_model_ids()) -- so this
-        needs no worker.
+        needs no worker. ``installed_active``/``acted_this_run`` make the
+        copy state-aware (review NEW-2): the "installing or activating"
+        promise is only shown when one of those is still a real action.
         """
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        prefill = speech_state.read_speech_prefill(app_config)
-        return speech_state.speech_prefill_status(prefill)
+        return speech_state.speech_prefill_status(
+            self._prefill(),
+            installed_active=self._installed_active(),
+            acted_this_run=self._acted_this_run,
+        )
+
+    def _use_as_default_offer(self) -> bool:
+        """Review NEW-2: offer the real affordance the prefill sentence
+        promises -- installed AND active (so neither Install nor Activate
+        is available), a DIFFERENT provider is currently persisted, the
+        runtime can actually run Parakeet, and the user has not already
+        opted in this run (once acted, commit() already persists on Next).
+        """
+        if self._acted_this_run:
+            return False
+        if not self._runtime_installed():
+            return False
+        if not self._installed_active():
+            return False
+        prefill = self._prefill()
+        return prefill.provider_id != speech_state.routing_policy().parakeet_provider_id
+
+    @property
+    def _lifecycle_pending(self) -> bool:
+        """Review NEW-3: a forced reload in flight must ALSO disable the
+        install/activation controls, not just an explicit operation --
+        otherwise a just-deleted (or just-installed) artifact's stale
+        ``_installed_item`` briefly re-renders with enabled controls before
+        the reload's own callback replaces it (InstalledView's own pending
+        computation includes its loading flag for the identical reason).
+        """
+        return self._operation is not None or self._loading
 
     def _status_and_action(self) -> tuple[str, Optional[Widget]]:
         # Review Important 4: gate BEFORE the installed-state load so a
@@ -1283,7 +1344,7 @@ class SpeechSetupStep(SetupStep):
                 "Review and install…",
                 id="setup-speech-install",
                 variant="primary",
-                disabled=self._operation is not None,
+                disabled=self._lifecycle_pending,
             )
         if item.error is not None or not item.ready:
             # Review Important 5: reuse the SAME 596 control instead of a
@@ -1296,7 +1357,7 @@ class SpeechSetupStep(SetupStep):
                     self._reference,
                     active=item.active,
                     ready=item.ready,
-                    pending=self._operation is not None,
+                    pending=self._lifecycle_pending,
                 ),
             )
         status = "Installed and active." if item.active else "Installed, not yet active."
@@ -1304,7 +1365,7 @@ class SpeechSetupStep(SetupStep):
             self._reference,
             active=item.active,
             ready=item.ready,
-            pending=self._operation is not None,
+            pending=self._lifecycle_pending,
         )
 
     # -- lazy installed-state load ----------------------------------------
@@ -1373,7 +1434,7 @@ class SpeechSetupStep(SetupStep):
     # -- install: preflight -> consent modal -> provision ------------------
     @on(Button.Pressed, "#setup-speech-install")
     def _install_pressed(self) -> None:
-        if self._operation is not None:
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
             return
         self._operation = "install"
         self.refresh(recompose=True)
@@ -1382,6 +1443,22 @@ class SpeechSetupStep(SetupStep):
     @on(Button.Pressed, "#setup-speech-retry")
     def _retry_pressed(self) -> None:
         self._ensure_loaded(force=True)
+
+    @on(Button.Pressed, "#setup-speech-use-as-default")
+    def _use_as_default_pressed(self) -> None:
+        """Review NEW-2: make the affordance real. Sets the SAME
+        ``_acted_this_run`` flag install/activate success sets -- nothing
+        is written to disk here (matches every other step: only commit()
+        on Next writes), but the pending choice is now genuine, and the
+        prefill sentence updates to say so."""
+        if self._lifecycle_pending or not self._use_as_default_offer():
+            return
+        self._acted_this_run = True
+        self.notify(
+            "Parakeet v2 will become your default when you continue.",
+            severity="information",
+        )
+        self.refresh(recompose=True)
 
     @work(thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False)
     def _preflight_install(self) -> None:
@@ -1486,7 +1563,7 @@ class SpeechSetupStep(SetupStep):
     @on(ActivationRequested)
     def _activation_requested(self, event: ActivationRequested) -> None:
         event.stop()
-        if self._operation is not None:
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
             return
         self._operation = "activate"
         self.refresh(recompose=True)
@@ -1508,7 +1585,7 @@ class SpeechSetupStep(SetupStep):
     @on(DeletionRequested)
     def _deletion_requested(self, event: DeletionRequested) -> None:
         event.stop()
-        if self._operation is not None:
+        if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
             return
         self.app.push_screen(
             DeleteConfirmationDialog(
@@ -1523,7 +1600,7 @@ class SpeechSetupStep(SetupStep):
         )
 
     def _confirm_deletion(self, confirmed: bool) -> None:
-        if not confirmed or self._operation is not None:
+        if not confirmed or self._lifecycle_pending:
             return
         self._operation = "delete"
         self.refresh(recompose=True)
@@ -2105,7 +2182,8 @@ class SummaryStep(SetupStep):
     """
 
     def __init__(self, wizard=None, config=None, *, load_config=None,
-                 rag_deps_installed=None, speech_installed=None, **kwargs):
+                 rag_deps_installed=None, speech_installed=None,
+                 speech_runtime_installed=None, **kwargs):
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._load_config = load_config
         self._rag_deps_installed = rag_deps_installed
@@ -2113,6 +2191,10 @@ class SummaryStep(SetupStep):
         # -- defaults to a real, off-loop-safe check of the managed Parakeet
         # v2 artifact's installed/active state.
         self._speech_installed = speech_installed
+        # Review Important 4 residual: same shape again -- defaults to the
+        # real onnx-asr runtime probe so Summary agrees with the Speech
+        # step's own runtime gate instead of only checking files-on-disk.
+        self._speech_runtime_installed = speech_runtime_installed
         self.exit_route: Optional[str] = None
 
     def compose_step(self) -> ComposeResult:
@@ -2185,9 +2267,18 @@ class SummaryStep(SetupStep):
                     return False
                 return active_managed_parakeet_v2_dir() is not None
 
+        speech_runtime_check = self._speech_runtime_installed
+        if speech_runtime_check is None:
+            from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
+
+            speech_runtime_check = parakeet_onnx_deps_installed
+
         config = await asyncio.get_running_loop().run_in_executor(None, load)
         speech_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_installed_check
+        )
+        speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
+            None, speech_runtime_check
         )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
@@ -2196,6 +2287,7 @@ class SummaryStep(SetupStep):
             dict(os.environ),
             rag_deps_installed=deps(),
             speech_installed=speech_installed,
+            speech_runtime_installed=speech_runtime_installed,
         )
         # Static.update() parses "[...]" as Rich markup by default, so any
         # bracketed literal in a label/detail (e.g. a package extra name)
