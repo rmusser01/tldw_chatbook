@@ -2322,3 +2322,231 @@ async def test_armed_deadline_is_visible_on_the_mounted_card():
         card.set_batch(_sample_calls(), timeout_seconds=0)
         await pilot.pause()
         assert not app.query_one("#approval-deadline", Static).display
+
+
+@pytest.mark.unit
+def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
+    """A per-call REFUSAL must reach the runtime, not be flattened away.
+
+    TASK-1861. Verdicts are keyed per `call_id` so the user can allow
+    `spec.md` and refuse `secrets.md` in one batch -- but both enforcement
+    consumers are name-keyed (`builtin_gate.stamp` records a grant against a
+    tool NAME; `apply_batch_decisions` takes llm_names), and the hook
+    returned a flat `{name: "proceed"}`. So two rows of one tool disagreeing
+    resolved LAST-WRITE-WINS on a single name:
+
+        stamped: [("read_file", "deny"), ("read_file", "approve_once")]
+
+    Refuse `secrets.md` first, approve `spec.md` second, and the surviving
+    stamp is `approve_once` -- the file the user explicitly refused is read.
+    This fails OPEN, which is why it is pinned rather than left to the
+    round-trip tests: the card offers a decision the pipeline could not
+    honour.
+
+    The fix enforces refusals PER CALL at the runtime hook (the runtime
+    resolves `call_id` before name, and a non-"proceed" verdict string
+    becomes the call's result without dispatch), leaving the name-keyed
+    stamps to carry only what was APPROVED.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): stamped.append((name, decision))
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return SimpleNamespace(name=name)
+
+    def request_approvals(pending):
+        by_path = {
+            row.call_id: (row.arguments or {}).get("path") for row in pending
+        }
+        # Refuse secrets.md; allow spec.md. Refusal FIRST is the fail-open
+        # ordering -- the later approval used to overwrite it.
+        return {
+            call_id: ("deny" if path == "secrets.md" else "approve_once")
+            for call_id, path in by_path.items()
+        }
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    verdicts = hook([
+        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
+        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
+    ])
+
+    refusal = verdicts.get("call-1")
+    assert refusal and refusal != "proceed", (
+        "the refusal of secrets.md never reached the runtime, so the "
+        f"name-keyed approval of spec.md let it through: {verdicts}"
+    )
+    assert verdicts.get("call-2", "proceed") == "proceed", (
+        f"approving spec.md must still let it run: {verdicts}"
+    )
+    assert ("read_file", "deny") not in stamped, (
+        "a refusal must not be stamped against the NAME -- that would also "
+        f"stop the call the user approved: {stamped}"
+    )
+
+
+@pytest.mark.unit
+def test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions():
+    """TASK-1861: MCP rows dropped the call id, so `xN` still hid targets.
+
+    `_collect_mcp_pending` walks the batch and calls
+    `provider.pending_gate_for(call.name, call.args)` -- the call's
+    `call_id` was discarded at that boundary, so every MCP pending row
+    carried `call_id=""`. The card then collapsed all same-name MCP calls
+    into ONE `xN` row with one verdict, which is the exact defect the
+    per-call re-key fixed for built-in tools and left standing for MCP.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import _collect_mcp_pending
+
+    class _Provider:
+        def pending_gate_for(self, llm_name, args, call_id=""):
+            return MCPPendingCall(
+                llm_name=llm_name,
+                server_key="local:fs",
+                tool_name="read_file",
+                server_label="FS",
+                arguments=dict(args or {}),
+                call_id=call_id,
+                reason="ask",
+            )
+
+    rows = _collect_mcp_pending(
+        _Provider(),
+        [
+            ToolCall(name="mcp__fs__read", args={"path": "spec.md"}, call_id="c1"),
+            ToolCall(name="mcp__fs__read", args={"path": "secrets.md"}, call_id="c2"),
+        ],
+    )
+    assert [r.call_id for r in rows] == ["c1", "c2"], (
+        f"the call ids never reached the MCP rows: {[r.call_id for r in rows]}"
+    )
+
+
+@pytest.mark.unit
+def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
+    """TASK-1861, the other ordering -- and the one that fails CLOSED.
+
+    Approve `spec.md`, then refuse `secrets.md`. Both rows share the tool
+    NAME, and the stamp is what `invoke()` peeks at, so stamping the refusal
+    would block the call the user just approved.
+
+    This case is separate because the sibling test cannot catch it: there
+    the refusal is decided FIRST, so a bug that stamps refusals is masked by
+    the later approval overwriting it. Mutation-checked -- stamping every
+    decision regardless of verdict passes that test and fails this one.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): stamped.append((name, decision))
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return SimpleNamespace(name=name)
+
+    def request_approvals(pending):
+        return {
+            row.call_id: (
+                "deny" if (row.arguments or {}).get("path") == "secrets.md"
+                else "approve_session"
+            )
+            for row in pending
+        }
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    verdicts = hook([
+        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
+        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
+    ])
+
+    assert stamped == [("read_file", "approve_session")], (
+        "the refusal was stamped against the tool NAME, which also blocks "
+        f"the call the user approved: {stamped}"
+    )
+    assert verdicts.get("c-no", "proceed") != "proceed", (
+        f"secrets.md must still be refused per call: {verdicts}"
+    )
+
+
+@pytest.mark.unit
+def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
+    """TASK-1861: per-call rows can disagree on SCOPE, not just allow/refuse.
+
+    A session or always grant belongs to the TOOL, so the stamp can hold only
+    one scope per name. Collapsing them last-write-wins silently downgraded
+    "Approve for session" to "approve once" whenever a later row of the same
+    tool was approved once -- dropping the grant the user explicitly asked
+    for and re-prompting for it on the next call.
+
+    The user picking "for session" on any call of a tool IS choosing to grant
+    that tool for the session (that is what the control means, and the label
+    says so), so the broadest chosen scope wins.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    stamped: list[tuple[str, str]] = []
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): stamped.append((name, decision))
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return SimpleNamespace(name=name)
+
+    def request_approvals(pending):
+        # Broad scope FIRST, narrow second -- the ordering that used to lose it.
+        return {
+            row.call_id: (
+                "approve_session" if row.call_id == "c1" else "approve_once"
+            )
+            for row in pending
+        }
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals, workspace_id=None
+    )
+    hook([
+        ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
+        ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
+    ])
+
+    assert stamped == [("read_file", "approve_session")], (
+        "the session grant the user chose was downgraded to approve_once, so "
+        f"the next call re-prompts: {stamped}"
+    )

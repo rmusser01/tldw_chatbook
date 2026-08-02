@@ -673,7 +673,7 @@ def run_agent_loop(
             # The name fallback is load-bearing, not legacy politeness:
             # `MCPToolProvider.apply_batch_decisions` emits name-keyed
             # verdicts, and the fence path builds ToolCalls with NO call_id
-            # at all (`_fence_call`), so a name-keyed verdict must still stop
+            # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
             verdict = "proceed"
             if call.call_id and call.call_id in verdicts:

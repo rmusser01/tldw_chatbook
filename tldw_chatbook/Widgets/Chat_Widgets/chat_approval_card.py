@@ -154,7 +154,7 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
     Calls with NO ``call_id`` still collapse by ``llm_name``, and that is
     deliberate rather than a leftover: the fence path builds ToolCalls
-    without ids (``agent_runtime._fence_call``), so the runtime can only
+    without ids (``agent_runtime.parse_tool_call``), so the runtime can only
     apply a NAME-keyed verdict to them. Splitting those into separate rows
     would offer the user a decision the runtime cannot honour -- the row
     would say "deny this one" and every same-name call would stop.
