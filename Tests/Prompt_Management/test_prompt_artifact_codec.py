@@ -70,27 +70,25 @@ def test_valid_console_v2_artifacts_decode_to_typed_definition(
     assert decoded.compatibility_stale
 
 
-@pytest.mark.parametrize("case", json.loads((FIXTURES / "error-cases.json").read_text())["structured"])
-def test_rejected_structured_cases_have_explicit_states(case: dict[str, object]) -> None:
+@pytest.mark.parametrize(
+    "case", json.loads((FIXTURES / "error-cases.json").read_text())["decode_cases"]
+)
+def test_fixture_dispatch_cases_have_explicit_states(case: dict[str, object]) -> None:
     decoded = decode_prompt_artifact(case["record"])
 
     assert decoded.state == case["state"]
-    assert decoded.definition is None
+    assert (decoded.definition is not None) is (case["state"] == "supported_v2")
 
 
-def test_v1_and_future_structured_records_remain_foreign() -> None:
-    v1 = decode_prompt_artifact(_structured_record(version=1, definition={"schema_version": 1}))
-    future = decode_prompt_artifact(_structured_record(version=99, definition={"schema_version": 99}))
+def test_foreign_single_text_recipe_fixture_preserves_raw_definition() -> None:
+    fixture_cases = json.loads((FIXTURES / "error-cases.json").read_text())["decode_cases"]
+    case = next(
+        case for case in fixture_cases if case["name"] == "foreign_single_text_recipe_v2"
+    )
 
-    assert v1.state == "foreign_v1"
-    assert future.state == "unsupported"
+    decoded = decode_prompt_artifact(case["record"])
 
-
-def test_malformed_json_is_an_explicit_decoded_state() -> None:
-    decoded = decode_prompt_artifact(_structured_record(definition="{not json"))
-
-    assert decoded.state == "malformed"
-    assert decoded.raw_definition is None
+    assert decoded.raw_definition == case["record"]["prompt_definition"]
 
 
 def test_invalid_xml_wrapper_is_malformed_not_an_accidental_decode_exception() -> None:
@@ -115,23 +113,6 @@ def test_invalid_xml_wrapper_is_malformed_not_an_accidental_decode_exception() -
 
     assert decoded.state == "malformed"
     assert decoded.definition is None
-
-
-def test_single_text_recipe_v2_is_foreign_not_console_recipe() -> None:
-    record = _structured_record(
-        artifact_type="recipe",
-        definition={
-            "schema_version": 2,
-            "definition_kind": "single_text_recipe",
-            "blocks": [],
-        },
-    )
-
-    decoded = decode_prompt_artifact(record)
-
-    assert decoded.state == "unsupported"
-    assert decoded.definition is None
-    assert decoded.raw_definition == record["prompt_definition"]
 
 
 def test_deserialize_definition_accepts_json_strings_and_mappings_only() -> None:

@@ -17,13 +17,33 @@ from .prompt_artifact_models import (
 _MARKDOWN_HEADING = re.compile(r"(?m)^# ([^\n]+)\n\n")
 _XML_OPEN = re.compile(r"<([A-Za-z_][A-Za-z0-9_.:-]*)>")
 _XML_TOKEN = re.compile(r"</?([A-Za-z_][A-Za-z0-9_.:-]*)\s*/?>")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\n]*)$")
 
 
 def _in_fence(text: str, position: int) -> bool:
-    return len(re.findall(r"(?m)^```[^\n]*$", text[:position])) % 2 == 1
+    active: tuple[str, int] | None = None
+    for line in text[:position].splitlines():
+        match = _FENCE.fullmatch(line)
+        if match is None:
+            continue
+        marker, suffix = match.groups()
+        marker_character = marker[0]
+        if active is None:
+            if marker_character == "`" and "`" in suffix:
+                continue
+            active = (marker_character, len(marker))
+            continue
+        active_character, active_length = active
+        if (
+            marker_character == active_character
+            and len(marker) >= active_length
+            and not suffix.strip()
+        ):
+            active = None
+    return active is not None
 
 
-def _xml_span(text: str, start: int) -> tuple[str, int] | None:
+def _xml_span(text: str, start: int) -> tuple[str, int, int, int] | None:
     opening = _XML_OPEN.match(text, start)
     if opening is None or _in_fence(text, start):
         return None
@@ -38,7 +58,7 @@ def _xml_span(text: str, start: int) -> tuple[str, int] | None:
         if raw_token.startswith("</"):
             depth -= 1
             if depth == 0:
-                return tag, token.end()
+                return tag, opening.end(), token.start(), token.end()
             if depth < 0:
                 return None
         elif raw_token.rstrip().endswith("/>"):
@@ -48,28 +68,32 @@ def _xml_span(text: str, start: int) -> tuple[str, int] | None:
     return None
 
 
-def _candidates(text: str) -> list[tuple[int, int | None, str, str]]:
-    candidates: list[tuple[int, int | None, str, str]] = []
+def _candidates(text: str) -> list[tuple[int, int, str, str, int | None, int | None]]:
+    candidates: list[tuple[int, int, str, str, int | None, int | None]] = []
     for heading in _MARKDOWN_HEADING.finditer(text):
         if not _in_fence(text, heading.start()):
-            candidates.append((heading.start(), heading.end(), "markdown", heading.group(1)))
+            candidates.append(
+                (heading.start(), heading.end(), "markdown", heading.group(1), None, None)
+            )
     for opening in _XML_OPEN.finditer(text):
         if opening.start() and text[opening.start() - 1] != "\n":
             continue
         span = _xml_span(text, opening.start())
         if span is not None:
-            tag, end = span
-            candidates.append((opening.start(), end, "xml", tag))
+            tag, content_start, content_end, end = span
+            candidates.append(
+                (opening.start(), end, "xml", tag, content_start, content_end)
+            )
     candidates.sort(key=lambda candidate: candidate[0])
 
-    accepted: list[tuple[int, int | None, str, str]] = []
+    accepted: list[tuple[int, int, str, str, int | None, int | None]] = []
     covered_until = -1
     for candidate in candidates:
-        start, end, syntax, title = candidate
+        start, end, syntax, _title, _content_start, _content_end = candidate
         if start < covered_until:
             continue
         accepted.append(candidate)
-        if syntax == "xml" and end is not None:
+        if syntax == "xml":
             covered_until = end
     return accepted
 
@@ -79,7 +103,9 @@ def _lane_blocks(lane_id: str, text: str) -> tuple[PromptBlock, ...]:
     cursor = 0
     block_number = 1
     candidates = _candidates(text)
-    for index, (start, marker_end, syntax, title) in enumerate(candidates):
+    for index, (start, end, syntax, title, content_start, content_end) in enumerate(
+        candidates
+    ):
         if start > cursor:
             blocks.append(
                 PromptBlock(
@@ -91,28 +117,25 @@ def _lane_blocks(lane_id: str, text: str) -> tuple[PromptBlock, ...]:
             )
             block_number += 1
         if syntax == "xml":
-            assert marker_end is not None
-            opening_end = text.find(">", start) + 1
-            content = text[opening_end : marker_end - len(title) - 3]
+            assert content_start is not None and content_end is not None
             blocks.append(
                 PromptBlock(
                     id=f"legacy-{lane_id}-{block_number}",
                     title=title,
                     syntax="xml",
                     xml_tag=title,
-                    content=content,
+                    content=text[content_start:content_end],
                 )
             )
-            cursor = marker_end
+            cursor = end
         else:
-            assert marker_end is not None
             next_start = candidates[index + 1][0] if index + 1 < len(candidates) else len(text)
             blocks.append(
                 PromptBlock(
                     id=f"legacy-{lane_id}-{block_number}",
                     title=title,
                     syntax="markdown",
-                    content=text[marker_end:next_start],
+                    content=text[end:next_start],
                 )
             )
             cursor = next_start

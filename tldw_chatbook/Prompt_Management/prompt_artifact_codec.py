@@ -16,6 +16,11 @@ from .prompt_artifact_models import (
 from .prompt_block_compiler import compile_block_artifact
 
 
+def _is_schema_version(value: Any, expected: int) -> bool:
+    """Require JSON integer schema versions without Python bool/float coercion."""
+    return type(value) is int and value == expected
+
+
 def deserialize_definition(value: Any) -> Mapping[str, Any] | None:
     """Return a JSON-object definition, never guessing at non-object input."""
     if isinstance(value, Mapping):
@@ -115,7 +120,7 @@ def decode_console_v2(
     record: Mapping[str, Any], *, artifact_type: ArtifactType, raw: Mapping[str, Any]
 ) -> DecodedPromptArtifact:
     """Decode only the closed Console v2 shape and expose corrupt states safely."""
-    if raw.get("schema_version") != 2:
+    if not _is_schema_version(raw.get("schema_version"), 2):
         return _decoded(
             state="mismatched", record=record, artifact_type=artifact_type, raw=raw
         )
@@ -179,9 +184,9 @@ def decode_prompt_artifact(record: Mapping[str, Any]) -> DecodedPromptArtifact:
 
     raw = deserialize_definition(record.get("prompt_definition"))
     version = record.get("prompt_schema_version")
-    if version == 1:
+    if _is_schema_version(version, 1):
         return foreign_definition(record, artifact_type, raw, state="foreign_v1")
-    if version != 2:
+    if not _is_schema_version(version, 2):
         return foreign_definition(record, artifact_type, raw, state="unsupported")
     if raw is None:
         return malformed_definition(record, artifact_type)
