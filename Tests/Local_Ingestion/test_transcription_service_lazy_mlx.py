@@ -284,7 +284,10 @@ def test_parakeet_file_model_construction_uses_loader(
     than an undeclared test dependency.
 
     Args:
-        service_module: The reloaded transcription service module fixture.
+        service_module: The transcription service module fixture (imports
+            once; returns the cached ``sys.modules`` entry when already
+            loaded, so import-time flags like ``NUMPY_AVAILABLE`` reflect
+            the process's first import).
         monkeypatch: Pytest monkeypatch fixture.
         tmp_path: Temporary directory for the fake audio file.
     """
@@ -337,7 +340,10 @@ def test_parakeet_buffer_model_construction_uses_loader(
     test has to declare the dependency it actually needs.
 
     Args:
-        service_module: The reloaded transcription service module fixture.
+        service_module: The transcription service module fixture (imports
+            once; returns the cached ``sys.modules`` entry when already
+            loaded, so import-time flags like ``NUMPY_AVAILABLE`` reflect
+            the process's first import).
         monkeypatch: Pytest monkeypatch fixture.
     """
 
