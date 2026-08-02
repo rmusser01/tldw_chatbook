@@ -1621,6 +1621,465 @@ class LibraryScreen(BaseAppScreen):
         min-height: 1;
         content-align: center middle;
     }
+
+    /* Presentation-only row wrappers keep the established wide stacked
+       workbench. Compact rules below switch only these wrappers to rows. */
+    #library-notes-filter-row,
+    #library-notes-status-row,
+    #library-note-heading,
+    #library-note-title-row,
+    #library-note-context-keywords-row,
+    #library-notes-create-heading,
+    #library-notes-sync-heading,
+    #library-notes-sync-folder-row,
+    #library-notes-sync-direction-row,
+    #library-notes-sync-conflict-row,
+    #library-notes-sync-actions {
+        layout: vertical;
+        height: auto;
+        min-height: 0;
+    }
+
+    #library-notes-create-viewport,
+    #library-notes-sync-viewport {
+        height: 1fr;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    /* Database Notes compact geometry: at the measured compact breakpoint,
+       the shell becomes a single 15-row workbench and every Notes state
+       assigns surplus height to exactly one scroll owner. */
+    #library-shell-grid.library-notes-compact {
+        padding: 0;
+        margin: 0;
+        border: none;
+    }
+
+    #library-canvas.library-notes-compact {
+        padding: 0;
+        margin: 0;
+        border: none;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-canvas {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        padding: 0;
+        margin: 0;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-header {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-filter-row {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-filter-label {
+        width: 7;
+        height: 1;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-filter {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        margin: 0;
+        padding: 0 1;
+        border: none;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-browse-actions,
+    #library-canvas.library-notes-compact #library-notes-sort-choices,
+    #library-canvas.library-notes-compact #library-notes-transfer-actions,
+    #library-canvas.library-notes-compact #library-notes-selection-actions,
+    #library-canvas.library-notes-compact #library-note-primary-actions,
+    #library-canvas.library-notes-compact #library-note-conflict-actions,
+    #library-canvas.library-notes-compact #library-note-delete-actions {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact .library-canvas-action {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0 1 0 0;
+        padding: 0 1;
+        border: none;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-status-row {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-status {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-filter-clear {
+        width: auto;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-selection-status {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-list {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-empty {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        padding: 0 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-heading {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-editor-title,
+    #library-canvas.library-notes-compact #library-note-preview-title,
+    #library-canvas.library-notes-compact #library-note-context-title,
+    #library-canvas.library-notes-compact #library-note-loading-title,
+    #library-canvas.library-notes-compact #library-notes-create-header,
+    #library-canvas.library-notes-compact #library-notes-sync-header {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-note-editor-region {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-title-row {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-title-label,
+    #library-canvas.library-notes-compact #library-note-context-keywords-label {
+        width: 10;
+        height: 1;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-note-title,
+    #library-canvas.library-notes-compact #library-note-context-keywords,
+    #library-canvas.library-notes-compact #library-notes-sync-folder {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        margin: 0;
+        padding: 0 1;
+        border: none;
+    }
+
+    #library-canvas.library-notes-compact #library-note-body-label {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-note-body {
+        height: 1fr;
+        min-height: 0;
+        max-height: 100%;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-preview-region {
+        height: 1fr;
+        min-height: 0;
+        max-height: 100%;
+        margin: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-preview-body {
+        height: auto;
+        min-height: 0;
+        margin: 0;
+        padding: 0 1;
+        border: none;
+        overflow-y: hidden;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-context-status {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-note-context-region {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-context-region .destination-section,
+    #library-canvas.library-notes-compact #library-note-context-meta,
+    #library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+        height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-context-keywords-row {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-status {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        text-wrap: wrap;
+        text-overflow: clip;
+    }
+
+    #library-canvas.library-notes-compact #library-note-transfer-status,
+    #library-canvas.library-notes-compact #library-note-context-transfer-status {
+        display: none;
+        height: 0;
+        min-height: 0;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-conflict-region {
+        height: 3;
+        min-height: 3;
+        max-height: 3;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-conflict-copy {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        margin: 0;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-note-delete-confirmation {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-create-heading {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-create-viewport {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-heading {
+        layout: horizontal;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-viewport {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-load-state {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-note-load-heading {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-note-loading {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #library-canvas.library-notes-compact #library-note-loading-viewport {
+        height: 1fr;
+        min-height: 0;
+        margin: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-purpose,
+    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
+    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
+    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
+    #library-canvas.library-notes-compact #library-notes-sync-actions,
+    #library-canvas.library-notes-compact #library-notes-sync-status {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-activity {
+        height: auto;
+        min-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
+    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
+    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
+    #library-canvas.library-notes-compact #library-notes-sync-actions {
+        layout: horizontal;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-folder-label,
+    #library-canvas.library-notes-compact #library-notes-sync-direction-label,
+    #library-canvas.library-notes-compact #library-notes-sync-conflict-label {
+        width: 11;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+    }
+
+    #library-canvas.library-notes-compact #library-notes-sync-direction-choices,
+    #library-canvas.library-notes-compact #library-notes-sync-conflict-choices {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        margin: 0;
+        overflow-x: hidden;
+    }
     """
 
     def __init__(
@@ -2548,15 +3007,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_presentation_syncing = True
         try:
             canvas.apply_session_state(self._library_note_presentation_state())
-            body = canvas.query_one("#library-note-body", TextArea)
-            if self._library_notes_compact:
-                body.styles.height = "1fr"
-                body.styles.min_height = 3
-                body.styles.max_height = None
-            else:
-                body.styles.height = "auto"
-                body.styles.min_height = 12
-                body.styles.max_height = 20
         finally:
             self._library_note_presentation_syncing = False
 
@@ -2668,8 +3118,8 @@ class LibraryScreen(BaseAppScreen):
             "editor": "#library-note-body",
             "preview": "#library-note-preview-region",
             "context": "#library-note-context-region",
-            "create": "#library-notes-canvas",
-            "sync": "#library-notes-canvas",
+            "create": "#library-notes-create-viewport",
+            "sync": "#library-notes-sync-viewport",
         }.get(region)
         if selector is None:
             return None
@@ -3066,6 +3516,12 @@ class LibraryScreen(BaseAppScreen):
             return
         for widget in (shell, rail, canvas):
             widget.set_class(self._library_notes_compact, "library-notes-compact")
+        try:
+            notes_canvas = canvas.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            notes_canvas.apply_compact_presentation(self._library_notes_compact)
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
@@ -6755,12 +7211,18 @@ class LibraryScreen(BaseAppScreen):
                     editor_state = self._library_note_editor_state()
                     if editor_state is None:
                         with Vertical(id="library-note-load-state"):
-                            yield Button(
-                                "‹ Back to list",
-                                id="library-note-back",
-                                classes="library-canvas-action",
-                                compact=True,
-                            )
+                            with Horizontal(id="library-note-load-heading"):
+                                yield Button(
+                                    "‹ Notes",
+                                    id="library-note-back",
+                                    classes="library-canvas-action",
+                                    compact=True,
+                                )
+                                yield Static(
+                                    "Edit note",
+                                    id="library-note-loading-title",
+                                    markup=False,
+                                )
                             load_copy = (
                                 self._library_note_load_message
                                 if self._library_note_load_state == "failed"
@@ -6772,17 +7234,19 @@ class LibraryScreen(BaseAppScreen):
                                 classes="destination-purpose",
                                 markup=False,
                             )
-                            if self._library_note_load_state == "failed":
-                                yield Button(
-                                    "Retry",
-                                    id="library-note-load-retry",
-                                    classes="library-canvas-action",
-                                    compact=True,
-                                )
+                            with Vertical(id="library-note-loading-viewport"):
+                                if self._library_note_load_state == "failed":
+                                    yield Button(
+                                        "Retry",
+                                        id="library-note-load-retry",
+                                        classes="library-canvas-action",
+                                        compact=True,
+                                    )
                     else:
                         yield LibraryNotesCanvas(
                             mode="editor",
                             presentation_state=self._library_note_presentation_state(),
+                            compact=self._library_notes_compact,
                             title_placeholder_only=(
                                 self._library_note_pending_blank_gc_id is not None
                                 and self._library_note_pending_blank_gc_id
@@ -6796,6 +7260,7 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryNotesCanvas(
                         mode="sync",
                         sync_state=self._build_library_notes_sync_state(),
+                        compact=self._library_notes_compact,
                         id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "notes":
@@ -6803,11 +7268,13 @@ class LibraryScreen(BaseAppScreen):
                         self._build_library_notes_state(),
                         sort_mode=self._library_notes_sort,
                         filter_value=self._library_notes_filter,
+                        compact=self._library_notes_compact,
                         id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "notes-create":
                     yield LibraryNotesCanvas(
                         mode="create",
+                        compact=self._library_notes_compact,
                         create_running=self._library_note_create_running,
                         create_status=self._library_note_create_status,
                         id="library-notes-canvas",

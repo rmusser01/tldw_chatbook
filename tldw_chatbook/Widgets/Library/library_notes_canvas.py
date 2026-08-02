@@ -29,6 +29,16 @@ from tldw_chatbook.Library.library_notes_sync_state import (
 )
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
+_COMPACT_SYNC_DIRECTION_LABELS = {
+    "bidirectional": "Both",
+    "disk_to_db": "Disk → Lib",
+    "db_to_disk": "Lib → Disk",
+}
+_COMPACT_SYNC_CONFLICT_LABELS = {
+    "newer_wins": "Newest",
+    "disk_wins": "Disk",
+    "db_wins": "Library",
+}
 
 
 @dataclass(frozen=True)
@@ -89,6 +99,7 @@ class LibraryNotesCanvas(Vertical):
             ``_library_note_pending_blank_gc_id``); it never applies to a
             note whose title happens to equal the word "Untitled" by the
             user's own choice.
+        compact: Whether compact, 60-column-safe action labels are active.
         create_running: Whether a Create request is currently in flight.
         create_status: Visible Create completion or recovery status.
     """
@@ -103,6 +114,7 @@ class LibraryNotesCanvas(Vertical):
         presentation_state: LibraryNotePresentationState | None = None,
         sync_state: LibraryNotesSyncState | None = None,
         title_placeholder_only: bool = False,
+        compact: bool = False,
         create_running: bool = False,
         create_status: str = "",
         **kwargs: Any,
@@ -115,10 +127,13 @@ class LibraryNotesCanvas(Vertical):
         self.presentation_state = presentation_state
         self.sync_state = sync_state
         self.title_placeholder_only = title_placeholder_only
+        self.compact = compact
         self.create_running = create_running
         self.create_status = create_status
         self.styles.width = "1fr"
         self.styles.min_width = 40
+        self.add_class(f"library-notes-mode-{mode}")
+        self.set_class(compact, "library-notes-compact")
 
     def compose(self) -> ComposeResult:
         if self.mode == "editor":
@@ -142,10 +157,8 @@ class LibraryNotesCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
-        # LIB-19: Database mode (this view), Files mode, and the Sync
-        # sub-canvas are three distinct folder-notes concepts that were
-        # never related to each other anywhere in the UI -- one placement
-        # sentence per surface, cross-referencing the other two.
+        # Database mode persists notes in the Library; Files edits a folder
+        # directly, while Sync mirrors a folder into this database.
         yield Static(
             "These notes live in the Library's own database — for notes "
             "that live in a folder on disk, switch to Files, or use Sync "
@@ -153,18 +166,12 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-database-purpose",
             markup=False,
         )
-        yield Static("Filter", id="library-notes-filter-label", markup=False)
-        yield Input(
-            placeholder="Filter notes… (Enter)",
-            id="library-notes-filter",
-            value=self.filter_value,
-        )
-        if self.filter_value:
-            yield Button(
-                "Clear filter",
-                id="library-notes-filter-clear",
-                classes="library-canvas-action",
-                compact=True,
+        with Horizontal(id="library-notes-filter-row"):
+            yield Static("Filter", id="library-notes-filter-label", markup=False)
+            yield Input(
+                placeholder="Filter notes… (Enter)",
+                id="library-notes-filter",
+                value=self.filter_value,
             )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
@@ -197,7 +204,11 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    f"Select all {rendered_count} shown",
+                    (
+                        f"All {rendered_count}"
+                        if self.compact
+                        else f"Select all {rendered_count} shown"
+                    ),
                     id="library-notes-select-all",
                     classes="library-canvas-action",
                     compact=True,
@@ -209,7 +220,7 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
                 export_selected = Button(
-                    "Export selected",
+                    "Export" if self.compact else "Export selected",
                     id="library-notes-export-selected",
                     classes="library-canvas-action",
                     compact=True,
@@ -232,6 +243,7 @@ class LibraryNotesCanvas(Vertical):
                 id="library-notes-browse-actions", classes="ds-toolbar"
             )
             browse_actions.styles.height = "auto"
+            browse_actions.display = not list_state.sort_choices_visible
             with browse_actions:
                 yield Button(
                     "New",
@@ -254,6 +266,21 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                     disabled=rendered_count == 0 or list_state.operation_running,
                 )
+            if list_state.sort_choices_visible:
+                sort_choices = Horizontal(
+                    id="library-notes-sort-choices", classes="ds-toolbar"
+                )
+                sort_choices.styles.height = "auto"
+                with sort_choices:
+                    for mode, label in _SORT_LABELS.items():
+                        button = Button(
+                            f"{'✓ ' if mode == self.sort_mode else ''}{label}",
+                            id=f"library-notes-sort-{mode}",
+                            classes="library-canvas-action library-notes-sort-choice",
+                            compact=True,
+                        )
+                        button.sort_mode = mode
+                        yield button
             transfer_actions = Horizontal(
                 id="library-notes-transfer-actions", classes="ds-toolbar"
             )
@@ -271,22 +298,24 @@ class LibraryNotesCanvas(Vertical):
                         compact=True,
                         disabled=list_state.operation_running,
                     )
-            if list_state.sort_choices_visible:
-                sort_choices = Horizontal(
-                    id="library-notes-sort-choices", classes="ds-toolbar"
+        status_row = Horizontal(id="library-notes-status-row")
+        status_row.styles.height = "auto"
+        status_row.display = not select_mode
+        with status_row:
+            status = Static(
+                list_state.status_copy,
+                id="library-notes-status",
+                markup=False,
+            )
+            status.display = not select_mode
+            yield status
+            if self.filter_value:
+                yield Button(
+                    "Clear filter",
+                    id="library-notes-filter-clear",
+                    classes="library-canvas-action",
+                    compact=True,
                 )
-                sort_choices.styles.height = "auto"
-                with sort_choices:
-                    for mode, label in _SORT_LABELS.items():
-                        button = Button(
-                            f"{'✓ ' if mode == self.sort_mode else ''}{label}",
-                            id=f"library-notes-sort-{mode}",
-                            classes="library-canvas-action library-notes-sort-choice",
-                            compact=True,
-                        )
-                        button.sort_mode = mode
-                        yield button
-        yield Static(list_state.status_copy, id="library-notes-status", markup=False)
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
@@ -337,37 +366,112 @@ class LibraryNotesCanvas(Vertical):
         metadata_line = presentation_state.metadata_line
         status_line = presentation_state.status_line
 
-        yield Button(
-            "‹ Back to list",
-            id="library-note-back",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        with Vertical(id="library-note-editor-region"):
-            yield Static("Title", id="library-note-title-label", markup=False)
-            yield Input(
-                value="" if self.title_placeholder_only else title,
-                placeholder="Untitled" if self.title_placeholder_only else "",
-                id="library-note-title",
-            )
-            yield Static("Body", id="library-note-body-label", markup=False)
-            yield TextArea(content, id="library-note-body")
-
-        # TASK-1993: consume YAML front matter (file-synced notes carry it)
-        # instead of rendering the --- block as noise; None falls back to
-        # the default parser when mdit-py-plugins is absent.
+        # File-synced notes may carry YAML front matter; consume it instead
+        # of rendering the delimiter block as note content.
         from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
-        with VerticalScroll(id="library-note-preview-region", can_focus=True):
+        with Horizontal(id="library-note-heading"):
+            yield Button(
+                "‹ Notes",
+                id="library-note-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "‹ Note",
+                id="library-note-context-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static(
+                "Edit note",
+                id="library-note-editor-title",
+                markup=False,
+            )
             yield Static(
                 ellipsize_note_title_cells(title, 72),
                 id="library-note-preview-title",
                 markup=False,
             )
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-context-title",
+                markup=False,
+            )
+        with Vertical(id="library-note-editor-region"):
+            with Horizontal(id="library-note-title-row"):
+                yield Static("Title", id="library-note-title-label", markup=False)
+                yield Input(
+                    value="" if self.title_placeholder_only else title,
+                    placeholder="Untitled" if self.title_placeholder_only else "",
+                    id="library-note-title",
+                )
+            yield Static("Body", id="library-note-body-label", markup=False)
+            yield TextArea(content, id="library-note-body")
+
+        with VerticalScroll(id="library-note-preview-region", can_focus=True):
             yield Markdown(
                 content,
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
+            )
+        yield Static(
+            status_line,
+            id="library-note-context-status",
+            markup=False,
+        )
+        with VerticalScroll(id="library-note-context-region"):
+            yield Static("Properties", classes="destination-section", markup=False)
+            with Horizontal(id="library-note-context-keywords-row"):
+                yield Static(
+                    "Keywords", id="library-note-context-keywords-label", markup=False
+                )
+                yield Input(
+                    value=keywords_text,
+                    placeholder="Comma-separated keywords",
+                    id="library-note-context-keywords",
+                )
+            yield Static("Metadata", classes="destination-section", markup=False)
+            yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            yield Static("Chatbook", classes="destination-section", markup=False)
+            yield Button(
+                "Use in Console",
+                id="library-note-context-use-in-console",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static("Utilities", classes="destination-section", markup=False)
+            yield Button(
+                "Copy",
+                id="library-note-context-copy",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export Markdown",
+                id="library-note-context-export-md",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export text",
+                id="library-note-context-export-txt",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Static(
+                presentation_state.transfer_status
+                if presentation_state is not None
+                else "",
+                id="library-note-context-transfer-status",
+                markup=False,
+            )
+            yield Static("Danger zone", classes="destination-section", markup=False)
+            yield Button(
+                "Delete",
+                id="library-note-context-delete",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
             )
         yield Static(status_line, id="library-note-status", markup=False)
 
@@ -451,71 +555,6 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
 
-        with VerticalScroll(id="library-note-context-region"):
-            yield Button(
-                "‹ Note",
-                id="library-note-context-back",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Static(
-                ellipsize_note_title_cells(title, 72),
-                id="library-note-context-title",
-                markup=False,
-            )
-            yield Static(status_line, id="library-note-context-status", markup=False)
-            yield Static("Properties", classes="destination-section", markup=False)
-            yield Static(
-                "Keywords", id="library-note-context-keywords-label", markup=False
-            )
-            yield Input(
-                value=keywords_text,
-                placeholder="Comma-separated keywords",
-                id="library-note-context-keywords",
-            )
-            yield Static("Metadata", classes="destination-section", markup=False)
-            yield Static(metadata_line, id="library-note-context-meta", markup=False)
-            yield Static("Chatbook", classes="destination-section", markup=False)
-            yield Button(
-                "Use in Console",
-                id="library-note-context-use-in-console",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Static("Utilities", classes="destination-section", markup=False)
-            yield Button(
-                "Copy",
-                id="library-note-context-copy",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Export Markdown",
-                id="library-note-context-export-md",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Export text",
-                id="library-note-context-export-txt",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Static(
-                presentation_state.transfer_status
-                if presentation_state is not None
-                else "",
-                id="library-note-context-transfer-status",
-                markup=False,
-            )
-            yield Static("Danger zone", classes="destination-section", markup=False)
-            yield Button(
-                "Delete",
-                id="library-note-context-delete",
-                classes="library-canvas-action library-media-action-danger",
-                compact=True,
-            )
-
         with Vertical(id="library-note-conflict-region"):
             yield Static(
                 "This note changed elsewhere — Overwrite saves your text; "
@@ -524,7 +563,9 @@ class LibraryNotesCanvas(Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
-            conflict_actions = Horizontal(classes="ds-toolbar")
+            conflict_actions = Horizontal(
+                id="library-note-conflict-actions", classes="ds-toolbar"
+            )
             conflict_actions.styles.height = "auto"
             with conflict_actions:
                 yield Button(
@@ -546,7 +587,9 @@ class LibraryNotesCanvas(Vertical):
                 id="library-note-delete-confirm-copy",
                 markup=False,
             )
-            delete_actions = Horizontal(classes="ds-toolbar")
+            delete_actions = Horizontal(
+                id="library-note-delete-actions", classes="ds-toolbar"
+            )
             delete_actions.styles.height = "auto"
             with delete_actions:
                 yield Button(
@@ -564,8 +607,59 @@ class LibraryNotesCanvas(Vertical):
 
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
+        self.apply_compact_presentation(self.compact)
         if self.mode == "editor" and self.presentation_state is not None:
             self.apply_session_state(self.presentation_state)
+
+    def apply_compact_presentation(self, compact: bool) -> None:
+        """Update responsive copy and classes without remounting the canvas."""
+        self.compact = compact
+        self.set_class(compact, "library-notes-compact")
+        if not self.is_mounted:
+            return
+        if self.mode == "list" and self.list_state is not None:
+            rendered_count = len(self.list_state.rows)
+            select_all = self.query("#library-notes-select-all")
+            if select_all:
+                select_all.first(Button).label = (
+                    f"All {rendered_count}"
+                    if compact
+                    else f"Select all {rendered_count} shown"
+                )
+            export_selected = self.query("#library-notes-export-selected")
+            if export_selected:
+                export_selected.first(Button).label = (
+                    "Export" if compact else "Export selected"
+                )
+            return
+        if self.mode != "sync" or self.sync_state is None:
+            return
+        for value in ("bidirectional", "disk_to_db", "db_to_disk"):
+            label = (
+                _COMPACT_SYNC_DIRECTION_LABELS[value]
+                if compact
+                else sync_direction_label(value)
+            )
+            prefix = "✓ " if value == self.sync_state.direction else ""
+            choices = self.query(f"#library-notes-sync-direction-{value}")
+            if choices:
+                choices.first(Button).label = f"{prefix}{label}"
+        for value in ("newer_wins", "disk_wins", "db_wins"):
+            label = (
+                _COMPACT_SYNC_CONFLICT_LABELS[value]
+                if compact
+                else sync_conflict_label(value)
+            )
+            prefix = "✓ " if value == self.sync_state.conflict else ""
+            choices = self.query(f"#library-notes-sync-conflict-{value}")
+            if choices:
+                choices.first(Button).label = f"{prefix}{label}"
+        auto_label = auto_sync_label(self.sync_state.auto_sync)
+        if compact:
+            auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
+        auto = self.query("#library-notes-sync-auto")
+        if auto:
+            auto.first(Button).label = auto_label
 
     @staticmethod
     def _static_text(widget: Static) -> str:
@@ -581,8 +675,10 @@ class LibraryNotesCanvas(Vertical):
         """
         if self.mode != "editor" or not self.is_mounted:
             self.presentation_state = state
+            self.compact = state.compact
             return
         self.presentation_state = state
+        self.compact = state.compact
         snapshot = state.snapshot
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
@@ -628,10 +724,15 @@ class LibraryNotesCanvas(Vertical):
         # unbounded hidden-render backlog.
         if show_preview and preview_body.source != snapshot.body:
             preview_body.update(snapshot.body)
+        compact_status = (
+            state.transfer_status
+            if state.compact and state.transfer_status
+            else state.status_line
+        )
         for selector in ("#library-note-status", "#library-note-context-status"):
             widget = self.query_one(selector, Static)
-            if self._static_text(widget) != state.status_line:
-                widget.update(state.status_line)
+            if self._static_text(widget) != compact_status:
+                widget.update(compact_status)
         for selector in ("#library-note-meta", "#library-note-context-meta"):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != state.metadata_line:
@@ -643,13 +744,20 @@ class LibraryNotesCanvas(Vertical):
             transfer = self.query_one(selector, Static)
             if self._static_text(transfer) != state.transfer_status:
                 transfer.update(state.transfer_status)
-            transfer.display = bool(state.transfer_status)
+            transfer.display = bool(state.transfer_status) and not state.compact
 
-        self.set_class(state.compact, "library-notes-compact")
+        self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
         self.query_one("#library-note-back").display = not show_context
+        self.query_one("#library-note-context-back").display = show_context
+        self.query_one("#library-note-editor-title").display = (
+            show_editor and state.compact
+        )
+        self.query_one("#library-note-preview-title").display = show_preview
+        self.query_one("#library-note-context-title").display = show_context
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
+        self.query_one("#library-note-context-status").display = show_context
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-status").display = not show_context
         self.query_one("#library-note-primary-actions").display = (
@@ -744,59 +852,61 @@ class LibraryNotesCanvas(Vertical):
         fields via ``_library_note_template_fields`` -- this widget only
         needs the key and a human label, never the raw title/content.
         """
-        yield Button(
-            "‹ Back to notes",
-            id="library-notes-create-back",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=self.create_running,
-        )
-        yield Static(
-            "New note",
-            id="library-notes-create-header",
-            classes="destination-section",
-            markup=False,
-        )
-        yield Button(
-            "Blank note",
-            id="library-notes-create-blank",
-            classes="library-notes-create-row",
-            compact=True,
-            disabled=self.create_running,
-        )
-        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
-
-        # The pure builder excludes the "blank" template (it duplicates the
-        # Blank note action above) and pre-resolves each template's title so
-        # the row's muted secondary line shows the exact title the created
-        # note will get (date placeholders already substituted).
-        rows = build_library_note_template_rows(NOTE_TEMPLATES)
-        yield Static(
-            "From a template",
-            id="library-notes-template-section",
-            classes="destination-section",
-            markup=False,
-        )
-        for index, row in enumerate(rows):
-            label = (
-                f"{row.label}\n{row.resolved_title}"
-                if row.resolved_title
-                else row.label
-            )
-            button = Button(
-                label,
-                id=f"library-notes-template-{index}",
-                classes="library-notes-create-row library-notes-template-row",
+        with Horizontal(id="library-notes-create-heading"):
+            yield Button(
+                "‹ Notes",
+                id="library-notes-create-back",
+                classes="library-canvas-action",
                 compact=True,
+                disabled=self.create_running,
             )
-            button.template_key = row.template_key
-            button.disabled = self.create_running
-            yield button
-        yield Static(
-            self.create_status,
-            id="library-notes-create-status",
-            markup=False,
-        )
+            yield Static(
+                "New note",
+                id="library-notes-create-header",
+                classes="destination-section",
+                markup=False,
+            )
+        with VerticalScroll(id="library-notes-create-viewport"):
+            yield Button(
+                "Blank note",
+                id="library-notes-create-blank",
+                classes="library-notes-create-row",
+                compact=True,
+                disabled=self.create_running,
+            )
+            from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+            # The pure builder excludes the "blank" template (it duplicates the
+            # Blank note action above) and pre-resolves each template's title so
+            # the row's muted secondary line shows the exact title the created
+            # note will get (date placeholders already substituted).
+            rows = build_library_note_template_rows(NOTE_TEMPLATES)
+            yield Static(
+                "From a template",
+                id="library-notes-template-section",
+                classes="destination-section",
+                markup=False,
+            )
+            for index, row in enumerate(rows):
+                label = (
+                    f"{row.label}\n{row.resolved_title}"
+                    if row.resolved_title
+                    else row.label
+                )
+                button = Button(
+                    label,
+                    id=f"library-notes-template-{index}",
+                    classes="library-notes-create-row library-notes-template-row",
+                    compact=True,
+                )
+                button.template_key = row.template_key
+                button.disabled = self.create_running
+                yield button
+            yield Static(
+                self.create_status,
+                id="library-notes-create-status",
+                markup=False,
+            )
 
     def _compose_sync(self) -> ComposeResult:
         """Render the notes sync panel: folder, direction, conflicts, activity.
@@ -809,111 +919,132 @@ class LibraryNotesCanvas(Vertical):
         sync_state = self.sync_state
         if sync_state is None:
             return
-        yield Button(
-            "‹ Back to notes",
-            id="library-notes-sync-back",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=sync_state.running,
-        )
-        yield Static(
-            "Notes sync",
-            id="library-notes-sync-header",
-            classes="destination-section",
-            markup=False,
-        )
-        # LIB-19: relates this surface to Database mode and Files mode --
-        # see library_notes_canvas.py's _compose_list and
-        # library_file_notes_workspace.py's compose() for their own
-        # placement sentences.
-        yield Static(
-            "Mirror notes between a folder on disk and the Library — "
-            "unlike Files mode, which edits that folder directly without "
-            "mirroring it in.",
-            id="library-notes-sync-purpose",
-            markup=False,
-        )
-        yield Static("folder", id="library-notes-sync-folder-label", markup=False)
-        yield Input(
-            value=sync_state.folder,
-            placeholder="Folder to sync…",
-            id="library-notes-sync-folder",
-            disabled=sync_state.running,
-        )
-        yield Button(
-            "Browse…",
-            id="library-notes-sync-browse",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=sync_state.running,
-        )
-        yield Static("Direction", id="library-notes-sync-direction-label", markup=False)
-        direction_choices = Horizontal(
-            id="library-notes-sync-direction-choices", classes="ds-toolbar"
-        )
-        direction_choices.styles.height = "auto"
-        with direction_choices:
-            for value in ("bidirectional", "disk_to_db", "db_to_disk"):
-                button = Button(
-                    f"{'✓ ' if value == sync_state.direction else ''}"
-                    f"{sync_direction_label(value)}",
-                    id=f"library-notes-sync-direction-{value}",
-                    classes=(
-                        "library-canvas-action library-notes-sync-direction-choice"
-                    ),
+        with Horizontal(id="library-notes-sync-heading"):
+            yield Button(
+                "‹ Notes",
+                id="library-notes-sync-back",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=sync_state.running,
+            )
+            yield Static(
+                "Notes sync",
+                id="library-notes-sync-header",
+                classes="destination-section",
+                markup=False,
+            )
+        with VerticalScroll(id="library-notes-sync-viewport"):
+            yield Static(
+                "Mirror notes between a folder on disk and the Library — "
+                "unlike Files mode, which edits that folder directly without "
+                "mirroring it in.",
+                id="library-notes-sync-purpose",
+                markup=False,
+            )
+            with Horizontal(id="library-notes-sync-folder-row"):
+                yield Static(
+                    "Folder", id="library-notes-sync-folder-label", markup=False
+                )
+                yield Input(
+                    value=sync_state.folder,
+                    placeholder="Folder to sync…",
+                    id="library-notes-sync-folder",
+                    disabled=sync_state.running,
+                )
+                yield Button(
+                    "Browse…",
+                    id="library-notes-sync-browse",
+                    classes="library-canvas-action",
                     compact=True,
                     disabled=sync_state.running,
                 )
-                button.choice_value = value
-                yield button
-        yield Static("Conflicts", id="library-notes-sync-conflict-label", markup=False)
-        conflict_choices = Horizontal(
-            id="library-notes-sync-conflict-choices", classes="ds-toolbar"
-        )
-        conflict_choices.styles.height = "auto"
-        with conflict_choices:
-            for value in ("newer_wins", "disk_wins", "db_wins"):
-                button = Button(
-                    f"{'✓ ' if value == sync_state.conflict else ''}"
-                    f"{sync_conflict_label(value)}",
-                    id=f"library-notes-sync-conflict-{value}",
-                    classes=(
-                        "library-canvas-action library-notes-sync-conflict-choice"
-                    ),
+            with Horizontal(id="library-notes-sync-direction-row"):
+                yield Static(
+                    "Direction", id="library-notes-sync-direction-label", markup=False
+                )
+                direction_choices = Horizontal(
+                    id="library-notes-sync-direction-choices", classes="ds-toolbar"
+                )
+                direction_choices.styles.height = "auto"
+                with direction_choices:
+                    for value in ("bidirectional", "disk_to_db", "db_to_disk"):
+                        label = (
+                            _COMPACT_SYNC_DIRECTION_LABELS[value]
+                            if self.compact
+                            else sync_direction_label(value)
+                        )
+                        button = Button(
+                            f"{'✓ ' if value == sync_state.direction else ''}{label}",
+                            id=f"library-notes-sync-direction-{value}",
+                            classes=(
+                                "library-canvas-action "
+                                "library-notes-sync-direction-choice"
+                            ),
+                            compact=True,
+                            disabled=sync_state.running,
+                        )
+                        button.choice_value = value
+                        yield button
+            with Horizontal(id="library-notes-sync-conflict-row"):
+                yield Static(
+                    "Conflicts", id="library-notes-sync-conflict-label", markup=False
+                )
+                conflict_choices = Horizontal(
+                    id="library-notes-sync-conflict-choices", classes="ds-toolbar"
+                )
+                conflict_choices.styles.height = "auto"
+                with conflict_choices:
+                    for value in ("newer_wins", "disk_wins", "db_wins"):
+                        label = (
+                            _COMPACT_SYNC_CONFLICT_LABELS[value]
+                            if self.compact
+                            else sync_conflict_label(value)
+                        )
+                        button = Button(
+                            f"{'✓ ' if value == sync_state.conflict else ''}{label}",
+                            id=f"library-notes-sync-conflict-{value}",
+                            classes=(
+                                "library-canvas-action "
+                                "library-notes-sync-conflict-choice"
+                            ),
+                            compact=True,
+                            disabled=sync_state.running,
+                        )
+                        button.choice_value = value
+                        yield button
+            with Horizontal(id="library-notes-sync-actions"):
+                auto_label = auto_sync_label(sync_state.auto_sync)
+                if self.compact:
+                    auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
+                yield Button(
+                    auto_label,
+                    id="library-notes-sync-auto",
+                    classes="library-canvas-action",
                     compact=True,
                     disabled=sync_state.running,
                 )
-                button.choice_value = value
-                yield button
-        yield Button(
-            auto_sync_label(sync_state.auto_sync),
-            id="library-notes-sync-auto",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=sync_state.running,
-        )
-        yield Button(
-            "Syncing…" if sync_state.running else "Sync now",
-            id="library-notes-sync-run",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=sync_state.running,
-        )
-        # ``sync_status_line``'s own tested contract is that a failed status
-        # always starts with the literal prefix "failed" -- safe to key the
-        # error styling off that prefix here.
-        yield Static(
-            sync_state.status_line,
-            id="library-notes-sync-status",
-            classes=(
-                "library-notes-sync-status-failed"
-                if sync_state.status_line.startswith("failed")
-                else ""
-            ),
-            markup=False,
-        )
-        yield Static(
-            "\n".join(sync_state.activity_lines),
-            id="library-notes-sync-activity",
-            markup=False,
-        )
+                yield Button(
+                    "Syncing…" if sync_state.running else "Sync now",
+                    id="library-notes-sync-run",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=sync_state.running,
+                )
+            # ``sync_status_line``'s own tested contract is that a failed status
+            # always starts with the literal prefix "failed" -- safe to key the
+            # error styling off that prefix here.
+            yield Static(
+                sync_state.status_line,
+                id="library-notes-sync-status",
+                classes=(
+                    "library-notes-sync-status-failed"
+                    if sync_state.status_line.startswith("failed")
+                    else ""
+                ),
+                markup=False,
+            )
+            yield Static(
+                "\n".join(sync_state.activity_lines),
+                id="library-notes-sync-activity",
+                markup=False,
+            )

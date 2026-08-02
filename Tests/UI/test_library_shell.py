@@ -11609,6 +11609,595 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
             message="Failed discard did not release its destructive admission.",
         )
         assert screen._library_note_shortcut_status == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-1333 Task 8: exact compact Notes geometry and dynamic-state budgets.
+
+
+def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
+    """Pin the terminal-level 3 + 1 + 15 + 1 row allocation."""
+    navigation = screen.query_one("MainNavigationBar")
+    header = screen.query_one("#library-header-line")
+    shell = screen.query_one("#library-shell-grid")
+    canvas = screen.query_one("#library-canvas")
+    notes = (
+        screen.query("#library-notes-canvas").first()
+        if screen.query("#library-notes-canvas")
+        else screen.query_one("#library-note-load-state")
+    )
+    footer = screen.query_one("#screen-footer-status")
+
+    assert screen.region.height == 20
+    assert navigation.region.height == 3
+    assert header.region.height == 1
+    assert shell.region.height == 15
+    assert shell.content_region.height == 15
+    assert canvas.region.height == 15
+    assert canvas.content_region.height == 15
+    assert notes.region.height == 15
+    assert footer.region.height == 1
+    assert (
+        navigation.region.height
+        + header.region.height
+        + shell.region.height
+        + footer.region.height
+        == 20
+    )
+    assert screen.query_one("#screen-content").virtual_size.width <= screen.region.width
+    assert shell.virtual_size.width <= shell.region.width
+    assert canvas.virtual_size.width <= canvas.region.width
+
+
+async def _assert_task8_rows(
+    screen: LibraryScreen,
+    pilot,
+    expected: dict[str, int],
+    *,
+    focused_selector: str,
+) -> None:
+    """Assert exact visible row heights, bounds, and focus visibility."""
+    _assert_task8_compact_chrome(screen)
+    for selector, height in expected.items():
+        widget = screen.query_one(selector)
+        assert widget.display is True, selector
+        assert widget.region.height == height, (selector, widget.region)
+        assert widget.region.width > 0, (selector, widget.region)
+        assert widget.region.x >= 0, (selector, widget.region)
+        assert widget.region.y >= 0, (selector, widget.region)
+        assert widget.region.right <= screen.region.right, (selector, widget.region)
+        assert widget.region.bottom <= screen.region.bottom - 1, (
+            selector,
+            widget.region,
+        )
+
+    notes_root = (
+        screen.query("#library-notes-canvas").first()
+        if screen.query("#library-notes-canvas")
+        else screen.query_one("#library-note-load-state")
+    )
+    for control in notes_root.query("*"):
+        if not control.can_focus or not control.is_on_screen:
+            continue
+        assert control.region.width > 0 and control.region.height > 0, control
+        assert control.region.x >= 0 and control.region.right <= screen.region.right, (
+            control,
+            control.region,
+        )
+    focused = screen.query_one(focused_selector)
+    focused.focus(scroll_visible=True)
+    await pilot.pause()
+    assert screen.focused is focused
+    assert focused.region.width > 0 and focused.region.height > 0
+    assert focused.region.x >= 0 and focused.region.right <= screen.region.right
+    assert focused.region.y >= 0 and focused.region.bottom <= screen.region.bottom - 1
+
+
+async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
+    screen.query_one("#library-row-browse-notes").press()
+    await _wait_for_selector(screen, pilot, "#library-notes-filter")
+    if state == "normal":
+        return
+    if state == "filtered-empty":
+        screen._library_notes_filter = "[none] Ω very long filter query"
+        screen._library_notes_filter_records = []
+    elif state == "sort-choice":
+        screen._library_notes_sort_choices_visible = True
+    elif state == "selection":
+        screen._library_notes_select_mode = True
+    else:
+        raise AssertionError(f"Unsupported Navigator state: {state}")
+    screen.refresh(recompose=True)
+    await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected", "focused_selector"),
+    (
+        (
+            "normal",
+            {
+                "#library-notes-header": 1,
+                "#library-notes-filter-row": 1,
+                "#library-notes-browse-actions": 1,
+                "#library-notes-transfer-actions": 1,
+                "#library-notes-status-row": 1,
+                "#library-notes-list": 10,
+            },
+            "#library-notes-filter",
+        ),
+        (
+            "filtered-empty",
+            {
+                "#library-notes-header": 1,
+                "#library-notes-filter-row": 1,
+                "#library-notes-browse-actions": 1,
+                "#library-notes-transfer-actions": 1,
+                "#library-notes-status-row": 1,
+                "#library-notes-empty": 10,
+            },
+            "#library-notes-filter-clear",
+        ),
+        (
+            "sort-choice",
+            {
+                "#library-notes-header": 1,
+                "#library-notes-filter-row": 1,
+                "#library-notes-sort-choices": 1,
+                "#library-notes-transfer-actions": 1,
+                "#library-notes-status-row": 1,
+                "#library-notes-list": 10,
+            },
+            "#library-notes-sort-newest",
+        ),
+        (
+            "selection",
+            {
+                "#library-notes-header": 1,
+                "#library-notes-filter-row": 1,
+                "#library-notes-selection-actions": 1,
+                "#library-notes-selection-status": 1,
+                "#library-notes-list": 11,
+            },
+            "#library-notes-select-toggle",
+        ),
+    ),
+)
+async def test_library_note_60x20_navigator_state_allocation(
+    state: str, expected: dict[str, int], focused_selector: str
+) -> None:
+    app = _build_test_app()
+    notes = _two_notes() + [
+        {
+            "id": f"geometry-{index}",
+            "title": f"Geometry note {index}",
+            "content": f"Body {index}",
+            "last_modified": f"2026-06-{30 - index:02d}T12:00:00+00:00",
+            "version": 1,
+            "keywords": [],
+        }
+        for index in range(3, 18)
+    ]
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await _enter_task8_navigator_state(screen, pilot, state)
+
+        await _assert_task8_rows(
+            screen,
+            pilot,
+            expected,
+            focused_selector=focused_selector,
+        )
+        if state == "selection":
+            assert screen.query_one("#library-notes-status").display is False
+        if state == "sort-choice":
+            assert screen.query_one("#library-notes-browse-actions").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ("create", "sync"))
+async def test_library_note_60x20_temporary_region_allocation(state: str) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        if state == "create":
+            screen.query_one("#library-row-create-note").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+            heading = "#library-notes-create-heading"
+            viewport = "#library-notes-create-viewport"
+            focus = "#library-notes-create-blank"
+        else:
+            screen.query_one("#library-row-browse-notes").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+            screen.query_one("#library-notes-sync-open").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
+            heading = "#library-notes-sync-heading"
+            viewport = "#library-notes-sync-viewport"
+            focus = "#library-notes-sync-folder"
+
+        _assert_task8_compact_chrome(screen)
+        owner = screen.query_one("#library-notes-canvas")
+        header = screen.query_one(heading)
+        assert header.region.height == 1
+        await _assert_task8_rows(
+            screen,
+            pilot,
+            {heading: 1, viewport: 14, "#library-notes-canvas": 15},
+            focused_selector=focus,
+        )
+        scroll_owner = screen.query_one(viewport)
+        assert str(owner.styles.overflow_y) == "hidden"
+        assert str(scroll_owner.styles.overflow_y) == "auto"
+        heading_y = header.region.y
+        scroll_owner.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert header.region.y == heading_y
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("region", "selector", "compact_label", "wide_label"),
+    (
+        (
+            "selection",
+            "#library-notes-select-all",
+            "All 2",
+            "Select all 2 shown",
+        ),
+        (
+            "sync",
+            "#library-notes-sync-direction-bidirectional",
+            "✓ Both",
+            "✓ Bidirectional",
+        ),
+    ),
+)
+async def test_library_note_compact_labels_round_trip_without_recompose(
+    region: str, selector: str, compact_label: str, wide_label: str
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        if region == "selection":
+            await _enter_task8_navigator_state(screen, pilot, "selection")
+        else:
+            screen.query_one("#library-row-browse-notes").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+            screen.query_one("#library-notes-sync-open").press()
+            await _wait_for_selector(screen, pilot, selector)
+
+        control = screen.query_one(selector, Button)
+        canvas = screen.query_one("#library-notes-canvas")
+        assert str(control.label) == compact_label
+
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        assert screen.query_one("#library-notes-canvas") is canvas
+        assert str(control.label) == wide_label
+
+        await pilot.resize_terminal(60, 20)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        assert screen.query_one("#library-notes-canvas") is canvas
+        assert str(control.label) == compact_label
+
+
+@pytest.mark.asyncio
+async def test_library_note_60x20_sync_activity_scrolls_below_fixed_heading() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+        screen.query_one("#library-notes-sync-open").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-run")
+        screen._library_notes_sync_activity = tuple(
+            f"Activity line {index}" for index in range(20)
+        )
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-viewport")
+        await pilot.pause()
+
+        heading = screen.query_one("#library-notes-sync-heading")
+        viewport = screen.query_one("#library-notes-sync-viewport")
+        activity = screen.query_one("#library-notes-sync-activity")
+        assert heading.region.height == 1
+        assert viewport.region.height == 14
+        assert activity.region.height >= 20
+        assert int(viewport.max_scroll_y) > 0
+        heading_y = heading.region.y
+        viewport.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert heading.region.y == heading_y
+        assert viewport.scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_library_note_wide_preview_has_one_focusable_scroll_owner() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-body", TextArea).text = "\n\n".join(
+            f"## Section {index}\nLong preview content {index}" for index in range(80)
+        )
+        await pilot.pause()
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_display(screen, pilot, "#library-note-preview-region")
+        outer = screen.query_one("#library-note-preview-region")
+        markdown = screen.query_one("#library-note-preview-body", Markdown)
+        await _wait_for_condition(
+            pilot,
+            lambda: int(outer.max_scroll_y) > 10,
+            message="Wide Preview never assigned long content to its viewport.",
+        )
+
+        assert outer.can_focus is True
+        assert int(markdown.max_scroll_y) == 0
+        outer.focus()
+        before = outer.scroll_y
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert outer.scroll_y > before
+
+
+@pytest.mark.asyncio
+async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    detail_service = _GatedLibraryNoteDetailService(_two_notes())
+    app.notes_scope_service = detail_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        try:
+            await _wait_for_condition(
+                pilot,
+                detail_service.started.is_set,
+                message="Detail service never entered its gated load.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-note-load-state")
+            _assert_task8_compact_chrome(screen)
+            assert screen.query_one("#library-note-load-heading").region.height == 1
+            assert screen.query_one("#library-note-loading").region.height == 1
+            assert (
+                screen.query_one("#library-note-loading-viewport").region.height == 13
+            )
+            back = screen.query_one("#library-note-back")
+            back.focus()
+            await pilot.pause()
+            assert screen.focused is back
+            assert back.region.height == 1
+        finally:
+            detail_service.release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible() -> (
+    None
+):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-discard-new")
+
+        await _assert_task8_rows(
+            screen,
+            pilot,
+            {
+                "#library-note-heading": 1,
+                "#library-note-title-row": 1,
+                "#library-note-body-label": 1,
+                "#library-note-body": 10,
+                "#library-note-status": 1,
+                "#library-note-primary-actions": 1,
+            },
+            focused_selector="#library-note-discard-new",
+        )
+        assert screen.query_one("#library-note-discard-new").display is True
+
+
+@pytest.mark.asyncio
+async def test_library_note_60x20_long_title_header_is_plain_one_row_and_lossless() -> (
+    None
+):
+    raw_title = "Ω [bold]literal[/bold] 👩🏽‍💻 " + "界" * 80
+    notes = [dict(_two_notes()[0], title=raw_title), _two_notes()[1]]
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_display(screen, pilot, "#library-note-preview-region")
+
+        heading = screen.query_one("#library-note-preview-title", Static)
+        rendered = getattr(heading.renderable, "plain", str(heading.renderable))
+        assert heading.region.height == 1
+        assert "[bold]literal[/bold]" in rendered
+        assert rendered.endswith("…")
+        assert screen.query_one("#library-note-title", Input).value == raw_title
+        assert screen._library_note_session.snapshot.title == raw_title
+
+
+async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
+    await _open_note_editor(screen, pilot)
+    body = screen.query_one("#library-note-body", TextArea)
+    body.text = "\n".join(f"geometry body line {index}" for index in range(80))
+    await pilot.pause()
+    if state == "normal":
+        return
+    if state == "validation":
+        screen.query_one("#library-note-title", Input).value = "x" * 301
+        screen.query_one("#library-note-save").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "validation",
+            message="Validation geometry state never appeared.",
+        )
+    elif state == "conflict":
+        _bump_note_version_externally(screen.app_instance.notes_scope_service, "n-1")
+        body.text += "\nnew local edit"
+        await pilot.pause()
+        screen.query_one("#library-note-save").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.snapshot.in_conflict,
+            message="Conflict geometry state never appeared.",
+        )
+    elif state == "delete-confirmation":
+        screen.query_one("#library-note-context").press()
+        await _wait_for_display(screen, pilot, "#library-note-context-region")
+        screen.query_one("#library-note-context-delete").press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+    elif state == "preview":
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_display(screen, pilot, "#library-note-preview-region")
+    elif state == "context":
+        screen.query_one("#library-note-context").press()
+        await _wait_for_display(screen, pilot, "#library-note-context-region")
+    else:
+        raise AssertionError(f"Unsupported Editor state: {state}")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected", "focused_selector"),
+    (
+        (
+            "normal",
+            {
+                "#library-note-heading": 1,
+                "#library-note-title-row": 1,
+                "#library-note-body-label": 1,
+                "#library-note-body": 10,
+                "#library-note-status": 1,
+                "#library-note-primary-actions": 1,
+            },
+            "#library-note-body",
+        ),
+        (
+            "validation",
+            {
+                "#library-note-heading": 1,
+                "#library-note-title-row": 1,
+                "#library-note-body-label": 1,
+                "#library-note-body": 9,
+                "#library-note-status": 2,
+                "#library-note-primary-actions": 1,
+            },
+            "#library-note-title",
+        ),
+        (
+            "conflict",
+            {
+                "#library-note-heading": 1,
+                "#library-note-title-row": 1,
+                "#library-note-body-label": 1,
+                "#library-note-body": 8,
+                "#library-note-status": 1,
+                "#library-note-conflict-copy": 2,
+                "#library-note-conflict-actions": 1,
+            },
+            "#library-note-conflict-copy",
+        ),
+        (
+            "delete-confirmation",
+            {
+                "#library-note-heading": 1,
+                "#library-note-title-row": 1,
+                "#library-note-body-label": 1,
+                "#library-note-body": 9,
+                "#library-note-status": 1,
+                "#library-note-delete-confirm-copy": 1,
+                "#library-note-delete-actions": 1,
+            },
+            "#library-note-delete-cancel",
+        ),
+        (
+            "preview",
+            {
+                "#library-note-heading": 1,
+                "#library-note-preview-region": 12,
+                "#library-note-status": 1,
+                "#library-note-primary-actions": 1,
+            },
+            "#library-note-preview-region",
+        ),
+        (
+            "context",
+            {
+                "#library-note-heading": 1,
+                "#library-note-context-status": 1,
+                "#library-note-context-region": 13,
+            },
+            "#library-note-context-keywords",
+        ),
+    ),
+)
+async def test_library_note_60x20_editor_state_allocation(
+    state: str, expected: dict[str, int], focused_selector: str
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        await _enter_task8_editor_state(screen, pilot, state)
+
+        await _assert_task8_rows(
+            screen,
+            pilot,
+            expected,
+            focused_selector=focused_selector,
+        )
         assert screen._library_note_session.snapshot is not None
 
 
@@ -18589,22 +19178,55 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("region", "owner_selector", "fixed_selectors"),
+    (
+        "region",
+        "owner_selector",
+        "fixed_selectors",
+        "owner_height_at_80x24",
+        "owner_height_at_100x30",
+    ),
     (
         (
             "navigator",
             "#library-notes-list",
-            ("#library-notes-filter", "#library-notes-new"),
+            (
+                "#library-notes-header",
+                "#library-notes-filter-row",
+                "#library-notes-browse-actions",
+                "#library-notes-transfer-actions",
+                "#library-notes-status-row",
+            ),
+            14,
+            20,
         ),
         (
             "editor",
             "#library-note-body",
-            ("#library-note-title", "#library-note-save"),
+            (
+                "#library-note-heading",
+                "#library-note-title-row",
+                "#library-note-body-label",
+                "#library-note-status",
+                "#library-note-primary-actions",
+            ),
+            14,
+            20,
+        ),
+        (
+            "context",
+            "#library-note-context-region",
+            ("#library-note-heading", "#library-note-context-status"),
+            17,
+            23,
         ),
     ),
 )
-async def test_library_note_compact_surplus_rows_expand_only_named_owner(
-    region: str, owner_selector: str, fixed_selectors: tuple[str, ...]
+async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
+    region: str,
+    owner_selector: str,
+    fixed_selectors: tuple[str, ...],
+    owner_height_at_80x24: int,
+    owner_height_at_100x30: int,
 ) -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -18616,9 +19238,12 @@ async def test_library_note_compact_surplus_rows_expand_only_named_owner(
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        if region == "editor":
+        if region in {"editor", "context"}:
             screen.query_one("#library-notes-row-0").press()
             await _wait_for_selector(screen, pilot, "#library-note-body")
+        if region == "context":
+            screen.query_one("#library-note-context").press()
+            await _wait_for_display(screen, pilot, "#library-note-context-region")
 
         owner = screen.query_one(owner_selector)
         owner_height = owner.region.height
@@ -18630,8 +19255,10 @@ async def test_library_note_compact_surplus_rows_expand_only_named_owner(
         await _wait_for_library_notes_compact(screen, pilot, True)
         await pilot.pause()
 
+        assert owner_height == owner_height_at_80x24
+        assert fixed_heights == tuple(1 for _ in fixed_selectors)
         assert screen.query_one(owner_selector) is owner
-        assert owner.region.height > owner_height
+        assert owner.region.height == owner_height_at_100x30
         assert (
             tuple(
                 screen.query_one(selector).region.height for selector in fixed_selectors
@@ -18695,6 +19322,11 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
         screen.query_one("#library-note-preview").press()
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
         preview = screen.query_one("#library-note-preview-region")
+        await _wait_for_condition(
+            pilot,
+            lambda: int(preview.max_scroll_y) > 2,
+            message="Long Preview content never produced a scroll range.",
+        )
         preview.focus()
         screen._mark_library_notes_user_interaction()
         preview.scroll_to(y=2, animate=False, force=True, immediate=True)
@@ -18871,7 +19503,10 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         await _wait_for_selector(screen, pilot, "#library-notes-sync-run")
         sync_owner = screen._library_notes_scroll_owner("sync")
         assert sync_owner is not None
-        assert int(sync_owner.max_scroll_y) > 0
+        # Task 8's exact compact allocation fits the complete default Sync
+        # workflow in its 14-row viewport. Focus-role restoration must work
+        # without depending on accidental chrome overflow.
+        assert int(sync_owner.max_scroll_y) == 0
         screen._library_notes_sync_status = "running · 2 files"
         screen._library_notes_sync_activity = ("Scanned notes", "Writing changes")
         screen.refresh(recompose=True)
@@ -19115,7 +19750,10 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
         body = screen.query_one("#library-note-body", TextArea)
-        body.text = "\n".join(f"focus guard line {index}" for index in range(100))
+        body.text = "\n\n".join(
+            f"## focus guard {index}\ncontent for section {index}"
+            for index in range(100)
+        )
         await pilot.pause()
         body.scroll_to(y=9, animate=False, force=True, immediate=True)
         body.focus()
@@ -19132,6 +19770,11 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
         preview = screen.query_one("#library-note-preview-region")
         screen._mark_library_notes_user_interaction()
         preview.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: int(preview.max_scroll_y) > 2,
+            message="Preview content never produced the expected scroll range.",
+        )
         preview.scroll_to(y=2, animate=False, force=True, immediate=True)
         await _wait_for_condition(
             pilot,
