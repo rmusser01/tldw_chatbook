@@ -476,6 +476,7 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
     if alignment <= 0 or alignment % 8:
         raise GGUFParseError("GGUF alignment must be a positive multiple of 8")
 
+    max_tensor_offset: int | None = None
     for _ in range(tensor_count):
         _read_tensor_name(cursor)
         (dimension_count,) = cursor.unpack("<I")
@@ -486,6 +487,8 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         (tensor_offset,) = cursor.unpack("<Q")
         if tensor_offset % alignment:
             raise GGUFParseError("GGUF tensor offset violates general alignment")
+        if max_tensor_offset is None or tensor_offset > max_tensor_offset:
+            max_tensor_offset = tensor_offset
 
     padding = -cursor.header_bytes % alignment
     data_offset = cursor.header_bytes + padding
@@ -493,6 +496,8 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         raise GGUFBoundsError("GGUF data offset exceeds inspection limit")
     if data_offset > file_size:
         raise GGUFParseError("GGUF header is truncated before data offset")
+    if max_tensor_offset is not None and max_tensor_offset >= file_size - data_offset:
+        raise GGUFParseError("GGUF tensor offset exceeds available payload")
     cursor.skip_exact(padding)
 
     architecture = retained.get("general.architecture")
