@@ -1,5 +1,11 @@
 # TASK-597 Bounded Local GGUF Import Implementation Plan
 
+> **SUPERSEDED 2026-08-02:** Do not execute this store-first plan. The user
+> approved direct local GGUF paths before managed acquisition. See
+> `Docs/superpowers/specs/2026-08-01-task-597-local-gguf-import-design.md` and
+> ADR-040. A replacement implementation plan will be written after the revised
+> spec completes review.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a user explicitly select a compatible local GGUF, inspect it safely, copy and verify it in managed storage, and register an exact manual-only transcribe.cpp artifact from the Installed model view.

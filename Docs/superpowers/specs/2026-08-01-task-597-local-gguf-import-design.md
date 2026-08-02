@@ -1,164 +1,165 @@
-# TASK-597 — Bounded local GGUF artifact import: design
+# TASK-597 — Direct local GGUF admission: revised design
 
-**Date:** 2026-08-01
-**Task:** TASK-597 — Add bounded local GGUF artifact import
-**Parent:** TASK-596 — Renovate the local model artifact browser
-**Depends on:** TASK-594, TASK-595
-**ADR:** `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`
-**Status:** approved section-by-section on 2026-08-01
+**Date:** 2026-08-02
+**Task:** TASK-597 — Validate explicit local transcribe.cpp GGUF files
+**ADR:** `backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md`
+**Status:** revised after user approval to make transcription precede managed GGUF storage
 
 ## Outcome
 
-Add one complete local-import path to **Lab → Models → Installed**. A user can
-select a compatible GGUF file, have Chatbook inspect it without loading a native
-runtime, copy it into managed storage, verify the managed bytes, and register an
-exact immutable artifact for the pinned `transcribe.cpp==0.1.3` runtime.
+Let a user point Chatbook at an existing local GGUF and use that exact file with
+the optional transcribe.cpp provider. Do not make the user wait for copying,
+artifact registration, curated catalogs, or managed downloads before local
+transcription can work.
 
-The selected external file remains untouched and is never a runtime dependency.
-Unknown compatible files are labeled **Local integrity recorded**, receive a
-content-derived identity, and never become automatic STT routing candidates.
+TASK-597 provides the small, native-runtime-free admission boundary that
+TASK-604 will call when the user chooses a file and before request dispatch.
+TASK-604 owns the picker, saved configuration, provider, and actual
+transcription.
 
-TASK-604 still owns the transcribe.cpp provider, curated catalog, optional
-dependency, execution, and model-specific capability checks. Until that task
-lands, successful import reads:
+Managed GGUF import/download remains valuable, but it is a later enhancement
+after the direct-path transcription loop works end to end.
 
-> Imported for transcribe.cpp. Provider setup is required before transcription.
+## Decision
 
-TASK-597 does not claim that the imported model can transcribe immediately.
+Use a direct local path first.
 
-## Existing foundation
+The selected file remains external and is not copied, hashed in full,
+registered as an `ArtifactDescriptor`, activated, or represented as an
+installed managed artifact. Chatbook stores the path only in provider
+configuration. Transcript provenance, notifications, and logs never persist
+the path.
 
-TASK-594 and TASK-595 already provide:
+Before request dispatch, the provider reopens and revalidates the current file.
+If it is unavailable, became a symlink, or no longer passes
+structural/runtime admission, loading fails clearly and the UI offers **Choose
+another GGUF…**.
 
-- strict immutable `ArtifactDescriptor` and `ArtifactRef` values;
-- a format-neutral `ModelArtifactService` as the sole managed-store writer;
-- isolated same-filesystem staging, per-file SHA-256 verification, immutable
-  promotion, atomic active selectors, readiness records, and reconciliation;
-- `install(..., consume_source=True)` for moving a verified service-owned stage
-  into installation without keeping a second model-sized managed copy;
-- an exclusive cross-process `ACQUISITION_SESSION_LEASE_KEY` used by managed
-  downloads and staging reconciliation;
-- Installed-view inventory, disk accounting, progress, activation, deletion,
-  repair, and an off-event-loop legacy-model scan.
+Only `model_path` persists. The source identity snapshot is per-admission and
+is not configuration. If another compatible GGUF replaces the file at the same
+path between requests, Chatbook treats it as the new current file and recycles
+the resident worker model using the new snapshot. The design does not promise
+to reject a compatible replacement across admissions or restarts.
 
-The current Installed view deliberately labels unmanaged files **Import is not
-available yet**. TASK-597 replaces that dead end for GGUF files only.
+This intentionally accepts an external-path dependency. It does not claim the
+immutability, independent digest verification, safe deletion, or recovery
+properties of the managed artifact store.
 
-## Scope
+## Why the order changes
 
-This task includes:
+The previous design completed the artifact-store path before a provider could
+transcribe. That optimized infrastructure sequencing rather than the user
+outcome.
 
-1. One explicit **Import GGUF…** action and `.gguf`-filtered file picker.
-2. Backend enforcement that the selection is a regular, non-symlink file.
+The direct path reuses the standard filesystem and the selected runtime. It
+requires only bounded validation plus provider configuration. Managed copying
+and downloading can later wrap the same provider by supplying a managed path;
+the provider does not need a second inference implementation.
+
+Rejected for this phase:
+
+- **External artifact registration without copying:** adds lifecycle state but
+  still cannot make the external file immutable.
+- **Managed-store-first:** stronger guarantees, but delays usable transcription.
+- **Native parsing in the UI process:** exposes selection-time UI to native
+  parser faults and is unnecessary.
+
+## TASK-597 scope
+
+TASK-597 includes only:
+
+1. A reusable, Textual-free local GGUF admission module.
+2. Safe opening of one explicitly selected `.gguf` regular file.
 3. A bounded standard-library GGUF v3 structural reader.
-4. A pinned declaration of the architecture names accepted by
-   `transcribe.cpp==0.1.3`.
-5. Disk preflight for one managed copy plus a fixed safety margin.
-6. Copy-and-hash into a service-owned, lease-protected local-import stage.
-7. Post-copy source-snapshot and GGUF revalidation.
-8. Exact curated recognition where a suitable descriptor already exists;
-   deterministic local-integrity descriptors otherwise.
-9. Immutable installation, exact artifact activation, progress, cancellation,
-   inventory refresh, and contained staging cleanup.
+4. Exact transcribe.cpp v0.1.3 architecture and wheel-platform admission.
+5. A small validated result containing the selected path, bounded metadata,
+   file identity snapshot, and normalized platform pair.
+6. Typed, path-safe failures and focused cross-platform tests.
 
-## Non-goals
+TASK-597 excludes:
 
-- Importing ONNX, SafeTensors, PyTorch, or arbitrary model bundles.
-- Loading a model or invoking any inference/native GGUF parser during import.
-- Proving that tensor contents are behaviorally correct or malware-safe.
-- Implementing the transcribe.cpp provider, curated model catalog, inference,
-  settings, or first-run setup; TASK-604 owns those outcomes.
-- Making transcribe.cpp a semantic default or silent fallback.
-- Migrating server launch paths or retiring the legacy Download Models surface.
-- Adding per-row import buttons, a second consent modal, resumable local copies,
-  conversion, quantization, benchmarking, or transcription evaluation.
-- Adopting an already-managed arbitrary remote GGUF into a runtime-specific
-  descriptor; this task accepts an explicitly selected local file.
+- artifact descriptors, curated matching, full-file hashing, provenance
+  promotion, staging, copying, disk preflight, installation, activation,
+  reconciliation, deletion, or repair;
+- a model catalog or downloader;
+- provider configuration, UI, native import, model load, or transcription;
+- semantic default routing or silent fallback.
 
-## ADR check
-
-**ADR required:** no
-**ADR path:** `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`
-**Reason:** ADR-025 already authorizes managed local GGUF import, precise local
-provenance, pinned transcribe.cpp compatibility, and curated-only automatic
-routing. This design implements that boundary without changing it.
-
-## Chosen architecture
-
-Use a dedicated, Textual-free local importer composed over the existing
-artifact core.
-
-Rejected alternatives:
-
-- Treating local files as downloads overloads network, credential, resume, and
-  consent semantics with unrelated behavior.
-- Adding a broad generic file-import API to `ModelArtifactService` expands the
-  sealed core before another format needs it.
-- Loading the native transcribe.cpp/ggml parser during selection would expose
-  untrusted files to native code in the UI process and violate TASK-597.
-
-The importer owns only admission, copying, and descriptor construction.
-`ModelArtifactService` remains the sole writer that installs and activates a
-managed artifact.
+Any descriptor/store code already prototyped on the TASK-597 branch is removed
+before the task merges. The reviewed bounded parser and compatibility
+declaration remain.
 
 ## Components
 
 ### `Model_Artifacts/gguf_import.py`
 
-One focused module contains:
+Keep this existing module name to avoid churn, but reduce it to admission only:
 
-- immutable import metadata, plan, progress, and result values;
-- typed local-import errors;
-- the bounded GGUF reader;
-- the pinned transcribe.cpp compatibility declaration;
-- source identity checks, disk preflight, copy/hash, curated matching, local
-  descriptor construction, installation, activation, and cleanup orchestration.
+- typed parser/admission errors;
+- `GGUFMetadata` and a compact source-identity value;
+- bounded `inspect_gguf(handle, file_size=...)`;
+- pinned transcribe.cpp v0.1.3 architecture declaration;
+- pure wheel-platform normalization/admission; and
+- `validate_local_gguf(path)` for the provider boundary.
 
-The module imports no native model runtime and performs no Textual work.
+The module imports no Textual, artifact store, network client, transcribe.cpp,
+ggml, or other native model runtime.
 
-Its public operation is synchronous because Installed runs it in a threaded
-worker. It accepts the selected `Path`, `ModelArtifactService`, curated
-descriptors, a cancellation event, and an optional progress callback.
+`validate_local_gguf` applies the project path validator without resolving away
+the final component, uses `lstat`, rejects symlinks and non-regular files, opens
+with no-follow behavior where available, compares `fstat`, inspects through the
+same handle, and returns a bounded result. It closes the handle before return;
+the result is admission evidence, not a lease or immutable guarantee.
 
-### `Model_Artifacts/service.py`
+### TASK-604 provider/configuration
 
-Make one narrow lifecycle addition: recognize service-created top-level
-`local-import-*` staging directories. Reconciliation may delete such a stage
-only when the global acquisition-session lease is free. A live import holds
-that lease from before stage creation through stage cleanup, installation, and
-activation.
+TASK-604 consumes the admission API and owns the user-visible path:
 
-No descriptor, installed-layout, readiness, activation, or download contract
-changes.
+- **Choose GGUF…** in transcribe.cpp provider settings;
+- the same field exposed to the first-run setup wizard when that wizard lands;
+- `[transcription.transcribe_cpp] model_path` as the explicit configuration;
+- admission when selecting and before request dispatch;
+- lazy import of `transcribe.cpp==0.1.3` in the heavy worker;
+- one active inference through the app-owned local STT executor; and
+- normalized results/provenance without the local path.
 
-### `UI/Screens/model_installed_view.py`
+The path is never an automatic-routing candidate. transcribe.cpp remains an
+exact manual provider. Eligible failures may offer the existing explicit
+**Retry with faster-whisper** action; no fallback runs silently.
 
-Add **Import GGUF…** beside Refresh and Repair. Selection returns intent; the
-view owns the worker and operation lifetime. Parsing, disk probes, copying,
-hashing, installation, and activation remain off the Textual event loop.
+### TASK-1861: later managed GGUF acquisition
 
-While importing, the view shows phase/byte progress and a Cancel action. Other
-lifecycle actions are disabled. The file picker filter is convenience only;
-the importer independently enforces the file contract.
+TASK-1861 owns the deferred work:
 
-Unmanaged `.gguf` rows change their hint to **Use Import GGUF… to manage this
-file**. Other unmanaged formats remain unavailable.
+- representative curated catalog;
+- verified managed downloads;
+- managed local-file copy/import;
+- full-file hashes and descriptor/provenance promotion;
+- activation, recovery, deletion, and artifact-browser integration; and
+- letting the same TASK-604 provider receive a managed path.
 
-### Shared progress display
+Direct local paths continue to work after managed acquisition lands.
 
-Do not pass `AcquisitionProgress` directly into local import. Download progress
-requires an `ArtifactRef`, but local import cannot mint its content-derived ref
-until the copy hash is complete.
+## Data flow
 
-The existing progress widget instead accepts a tiny structural display shape:
-phase, optional filename label, bytes done, and bytes total. Existing download
-events continue to satisfy it. Local import adds `copy`, `verify`, `install`,
-and `activate` phase labels without changing remote acquisition behavior.
+1. User chooses a local `.gguf` in transcribe.cpp settings or the setup wizard.
+2. UI calls TASK-597 admission off the Textual event loop.
+3. On success, configuration stores the explicit path and shows the bounded
+   architecture/model label. No model bytes are copied.
+4. On transcription, TASK-604 reruns admission and compares the current
+   snapshot with the resident worker model identity.
+5. An unchanged snapshot may reuse the resident model; a changed snapshot
+   recycles it. The heavy worker receives the current validated path/snapshot.
+6. The provider loads that path, transcribes normalized 16 kHz mono audio, and
+   returns the provider-neutral STT result.
+7. Provenance records provider, architecture/model label, runtime version,
+   precision reported by the file/runtime where available, device, language,
+   and attempt lineage—but never the local path. `artifact_root` is null and
+   `artifact_dependencies` is empty for direct-local execution.
 
-## Pinned compatibility declaration
+## Pinned compatibility
 
-The admission declaration is derived from the explicit registry in
-`transcribe.cpp` v0.1.3. Accepted `general.architecture` values are exactly:
+Accepted `general.architecture` values for transcribe.cpp v0.1.3 remain exactly:
 
 - `canary`
 - `canary_qwen`
@@ -177,14 +178,7 @@ The admission declaration is derived from the explicit registry in
 - `voxtral_realtime`
 - `whisper`
 
-`general.architecture` must be a string. `stt.variant` is optional in the
-pinned loader; if present it must also be a bounded string. This import gate
-claims only that the file declares a family dispatched by the pinned runtime.
-It does not claim that family-specific tensors, metadata, tasks, or languages
-will load successfully. TASK-604 performs the real managed-handle load and
-capability checks.
-
-The declaration also records the five selected-runtime wheel targets:
+Supported wheel pairs remain:
 
 - Linux x86_64
 - Linux aarch64
@@ -192,27 +186,16 @@ The declaration also records the five selected-runtime wheel targets:
 - macOS arm64
 - macOS x86_64
 
-Import code uses portable Python behavior on all five. An imported descriptor
-records the current normalized supported OS/architecture pair rather than
-flattening this non-Cartesian matrix into inaccurate combinations. An
-unsupported current platform fails before staging.
-
-TASK-604 must import and reuse this declaration rather than creating another
-architecture or platform list.
+Admission means only that the bounded header declares a family dispatched by
+the pinned runtime on a wheel-supported platform. The native provider still
+owns family-specific load and capability validation.
 
 ## Bounded GGUF inspection
 
-The reader uses `struct` and a seekable binary handle. It never imports ggml,
-transcribe.cpp, or a third-party GGUF parser; allocates no tensors; and reads no
-tensor payload.
-
-Initial admission accepts GGUF v3 only. Other versions fail explicitly. The
-reader validates magic, version, counts, typed key/value metadata, tensor-info
-structure, alignment, and that the computed data-section start does not exceed
-the regular file size.
-
-Limits are named constants and checked before allocation, multiplication, or
-iteration:
+The reviewed GGUF v3 parser remains unchanged in intent. It never reads tensor
+payload or imports a native parser. It validates structural types, keys, tensor
+information, alignment, offsets, retained metadata, and these pre-allocation
+limits:
 
 | Boundary | Limit |
 |---|---:|
@@ -225,244 +208,101 @@ iteration:
 | nested array depth | 2 |
 | tensor dimensions | 4 |
 
-Python integers avoid machine-integer wraparound, but every encoded length is
-still compared against the remaining header budget and file size before use.
-Unknown GGUF value types, invalid UTF-8 in retained identity fields, duplicate
-required keys, truncated values, invalid alignment, or excessive structure
-fail closed.
+Only bounded semantic/display values cross the API. Semantic architecture is
+preserved exactly; display labels are separately sanitized and capped.
 
-Only bounded display/admission values are retained:
+## Source boundary and honest limitations
 
-- required `general.architecture`;
-- optional `stt.variant`;
-- optional `general.name`;
-- optional numeric `general.file_type`.
+Admission records device/inode or platform file identity, mode, size,
+modification time, and change time where exposed. It rejects a pathname swap
+between `lstat` and `fstat` and parses through the pinned handle. That snapshot
+exists only for the current admission and worker-residency decision; it is not
+persisted as the expected identity of the configured path.
 
-Other well-formed values are skipped under the same budgets. Display strings
-are stripped of control characters and length-limited before crossing into UI
-state.
+The provider repeats admission before request dispatch, but the native runtime
+ultimately opens a path rather than the validated Python file descriptor. A
+concurrent or privileged mutation after revalidation can therefore race native
+open. This is an accepted direct-path limitation, not hidden as an immutable
+guarantee. A compatible replacement between separate admissions is accepted as
+the current configured model, not reported as tampering.
 
-## Source-file boundary and TOCTOU handling
+The user explicitly selected this local file. The UI says **Local file** rather
+than **Installed** or **Integrity verified**. Managed acquisition later removes
+the external-path and mutation limitations for users who choose it.
 
-The importer applies the project path-validation boundary, then uses `lstat`
-without resolving away the final component. It rejects symlinks and anything
-other than a regular file.
+## Errors
 
-The worker opens the file once, using no-follow behavior where the platform
-provides it, and compares `fstat` with the pre-open identity. That same handle
-is retained through parsing and copying. The source snapshot includes device,
-inode/file identity, mode, size, modification time, and change time where the
-platform exposes them.
+Stable user actions are small and explicit:
 
-After copying, `fstat` must still match the snapshot. A pathname replacement,
-truncate, append, metadata mutation, or ordinary in-place write therefore
-fails before installation. The staged copy is independently reparsed and its
-complete bytes are hashed. Tests inject path replacement and in-place mutation
-rather than claiming protection against a privileged attacker that can forge
-all filesystem metadata.
-
-The external path and original filename are never written to a manifest,
-notification, or log. The staged payload uses the fixed portable name
-`model.gguf` unless an exact curated descriptor requires another single-file
-path.
-
-## Disk preflight and staging ownership
-
-Before stage creation, required free space is:
-
-`selected file size + 64 MiB safety margin`
-
-Free space is probed at the managed artifact root. It is checked once after
-parse and again after acquiring the acquisition-session lease, immediately
-before copying. An `ENOSPC` or other copy error remains authoritative even
-after a successful probe.
-
-The worker acquires the existing global acquisition-session lease
-non-blocking. Contention reports that another model operation is in progress.
-The lease is held across:
-
-1. creation of a mode-0700 `local-import-*` operation directory;
-2. copy/hash and staged verification;
-3. `ModelArtifactService.install(..., consume_source=True)`;
-4. exact activation; and
-5. operation-owned cleanup.
-
-The payload directory passed to `install()` contains only the one declared
-GGUF. Because it lies under the service root, `consume_source=True` moves it
-through the existing install stage and immutable promotion without another
-model-sized retained copy.
-
-On cancellation or failure, cleanup removes only that operation's proven
-service-owned stage. Reconciliation reclaims a crashed `local-import-*` stage
-only after the OS has released the acquisition lease. Arbitrary or
-unrecognized staging entries remain untouched.
-
-## Descriptor and provenance rules
-
-After the staged copy is hashed, the importer searches the curated registry.
-A curated match requires all of the following:
-
-- root artifact role;
-- GGUF format and `transcribe-cpp` consumer;
-- exactly one payload file;
-- no dependencies;
-- exact size and SHA-256 match; and
-- runtime constraint compatible with the pinned v0.1.3 declaration.
-
-A match reuses the complete curated descriptor, including its source, license,
-precision, platform, and provenance. If multiple curated descriptors match the
-same bytes, import fails as an ambiguous registry defect.
-
-Every other admitted file receives a deterministic descriptor:
-
-- artifact ID: `local-gguf-<architecture>-<first-16-sha256>`;
-- revision: the complete lowercase SHA-256;
-- payload path: `model.gguf`;
-- consumer/runtime: `transcribe-cpp` / exact `0.1.3`;
-- model family: bounded `general.architecture`;
-- model label: sanitized `general.name`, otherwise `<architecture> local GGUF`;
-- variant/precision: normalized `general.file_type` number, otherwise
-  `unknown`—never guessed from the filename;
-- provenance: `LOCAL_INTEGRITY_RECORDED` only;
-- license: `NOASSERTION`; embedded model metadata is not trusted as a license
-  attestation;
-- source and license URLs: fixed credential-free `.invalid` sentinels;
-- platform: the current normalized pair, after wheel-target admission; and
-- no dependencies.
-
-No external path, semantic language role, default-provider setting, or
-automatic-routing preference is persisted.
-
-Activation writes only the atomic selector for the unique content-derived
-artifact ID. It does not alter `provider=default`, Parakeet/faster-whisper
-routing, or any STT configuration. Future automatic routing must continue to
-require curated provenance; local-integrity artifacts are manual-only.
-
-## Operation flow and cancellation
-
-The complete flow is:
-
-`Select → validate/open → parse → space check → acquire lease → recheck space →`
-`create stage → copy+hash → source recheck → staged parse → descriptor →`
-`commit point → install → activate exact ID → cleanup → refresh`
-
-Selection itself is explicit consent, so this single-file local operation does
-not add another modal.
-
-Cancellation is observed before stage creation and between copy chunks. It is
-also checked after staged verification, immediately before the commit point.
-Before the commit point, cancellation removes the operation stage and installs
-nothing. Once `install()` begins, Cancel is disabled and finalization runs to a
-defined result; interrupting immutable promotion would be less safe than
-finishing it.
-
-If installation succeeds but activation fails, the complete verified artifact
-remains installed and inactive. The UI reports that activation can be retried
-and refreshes inventory. A complete immutable installation is not a partial
-artifact and is not deleted as rollback.
-
-Repeated import of identical uncurated bytes resolves to the same reference.
-The importer may still copy once to calculate the digest, but core installation
-is idempotent and does not create duplicate immutable artifacts.
-
-## Error contract
-
-Typed errors map to fixed user messages without raw exception or path text:
-
-| Category | User outcome |
+| Failure | User-facing action |
 |---|---|
-| unsafe selection | Select a regular, non-symlink GGUF file. |
-| malformed or excessive GGUF | This GGUF is invalid or exceeds safe inspection limits. |
-| unsupported version | This GGUF version is not supported; version 3 is required. |
-| unsupported architecture | This GGUF does not declare a transcribe.cpp 0.1.3 architecture. |
-| unsupported platform | transcribe.cpp is unavailable for this platform target. |
-| insufficient space | More managed-storage space is required; required and free byte totals are shown. |
-| busy | Another model download or import is in progress. |
-| source changed | The selected file changed during import; select it again. |
-| cancelled | Import cancelled; no model was installed. |
-| installation failure | Import failed during managed installation; see the application log. |
-| activation failure | The model was imported but could not be activated; retry activation from Installed. |
+| no path configured | **Choose GGUF…** |
+| missing/unreadable current file | **Choose another GGUF…** |
+| symlink or irregular file | choose a regular local `.gguf` |
+| malformed/unsupported GGUF | choose a compatible transcribe.cpp v0.1.3 GGUF |
+| unsupported platform | install/use a supported wheel target |
+| optional runtime unavailable | install the transcribe.cpp extra |
+| native load/capability failure | show exact failure; offer eligible explicit faster-whisper retry |
 
-Logs record the phase and typed category, not the selected path or untrusted
-metadata.
+Raw selected paths and raw native exceptions are not logged, persisted in
+provenance, or rendered in generic error copy.
 
-## Testing
+## Direct-local provenance
 
-Tests use small synthesized GGUF byte fixtures. They do not download or execute
-a real model.
+Direct-local execution has no immutable artifact revision and cannot reproduce
+the exact model bytes after the external file changes. It uses the already
+nullable provider-neutral provenance contract:
 
-### Parser tests
+- `artifact_root = null`;
+- `artifact_dependencies = ()`;
+- `model_id` is a bounded provider/model identity derived from admitted
+  architecture and trusted runtime metadata;
+- `precision` is the bounded admitted/runtime-reported value where available;
+- provider, runtime version, device, language, capabilities, warnings, attempt,
+  and retry lineage remain populated; and
+- the path and source snapshot are never persisted.
 
-- supported architecture with required and optional metadata;
-- every pinned architecture spelling;
-- bad magic, non-v3 version, truncation at every structural section;
-- excessive metadata, tensors, strings, arrays, nesting, dimensions, or total
-  header budget;
-- wrong metadata types, invalid UTF-8, duplicate required keys, bad alignment,
-  and header/data offset beyond EOF;
-- unsupported architecture and sanitized display metadata;
-- parser imports no native runtime and does not read tensor data.
+ADR-040 explicitly amends ADR-025's immutable-root expectation for this manual
+direct-local provider only. TASK-1861 restores immutable artifact provenance
+when the user chooses managed acquisition.
 
-### Import-service tests
+## Tests
 
-- curated single-file match reuses the exact descriptor;
-- unknown compatible file creates deterministic local-integrity provenance;
-- ambiguous or ineligible curated matches fail or fall back as specified;
-- symlink, directory, irregular file, wrong extension, and path-validation
-  rejection;
-- pathname replacement and source mutation before/during copy;
-- insufficient first/second space probes and copy-time `ENOSPC`;
-- cancellation before staging, during copy, and immediately before commit;
-- staged reparse failure and corruption detected by core verification;
-- cleanup removes only the operation-owned stage;
-- live import stage survives reconciliation and abandoned stage is reclaimed;
-- duplicate import is idempotent;
-- activation failure retains a complete inactive artifact;
-- no external path or untrusted license value reaches the manifest/log; and
-- no semantic STT default or automatic-routing state changes.
+TASK-597 tests cover:
 
-### UI tests
+- all reviewed parser bounds and truncation cases;
+- exact architecture and platform matrices;
+- missing file, directory, FIFO/irregular file, final symlink, and pre-open
+  replacement;
+- same-handle `lstat`/`fstat` identity and typed path-safe errors;
+- a successful validated direct-path result; and
+- no artifact descriptor/store/native/UI imports.
 
-- **Import GGUF…** opens the filtered picker;
-- composition and mount perform no filesystem work;
-- the import worker runs off the event loop;
-- progress and Cancel states follow the pre-commit/commit boundary;
-- lifecycle buttons are disabled during import;
-- typed errors render without raw path/exception text;
-- success and activation-failure copy is precise;
-- inventory refreshes after every terminal result; and
-- unmanaged GGUF/non-GGUF hints remain distinct.
+TASK-604 tests later cover:
 
-### Platform gate
+- picker/config save and restart round trip;
+- admission rerun before request dispatch;
+- missing/invalid path recovery and worker recycle when a later admission
+  observes a different compatible source snapshot;
+- lazy optional import, load, batch transcription, cancellation, worker crash,
+  and shutdown;
+- no local path in normalized provenance/logs;
+- no automatic routing or silent fallback; and
+- supported wheel-platform provider smoke.
 
-Pure parser/import tests run on every available wheel-supported CI target. Path
-identity helpers receive focused POSIX and Windows-branch tests with injected
-stat/open behavior. Immediate development may collect macOS evidence only;
-Windows/Linux qualification remains a preserved release gate rather than an
-unsupported claim.
+## ADR check
 
-## Acceptance-criteria coverage
+**ADR required:** yes
+**ADR path:** `backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md`
+**Reason:** this changes ADR-025's transcribe.cpp runtime input from managed-only
+artifact handles to an explicitly configured direct local path for the first
+usable release, and defers curated/managed acquisition.
 
-| TASK-597 AC | Design coverage |
-|---|---|
-| #1 explicit regular file, no symlinks/irregular paths | Source-file boundary and UI selection |
-| #2 bounded magic/version/metadata/runtime compatibility | Bounded GGUF inspection and pinned declaration |
-| #3 preflight, stage, revalidate, hash, atomic activation | Disk/staging, operation flow, core install/activate |
-| #4 uncurated local provenance, never automatic | Descriptor and provenance rules |
-| #5 cancellation/mutation/failure containment | Cancellation, cleanup, and error contract |
-| #6 focused security/lifecycle tests | Parser, importer, UI, and platform test sections |
+## Completion boundary
 
-## Backlog alignment
+TASK-597 is complete when a local GGUF can be safely admitted and described for
+the pinned runtime without copying or registering it. It does not claim user
+transcription by itself.
 
-TASK-597 is a child of TASK-596 and depends directly on the landed foundations
-TASK-594 and TASK-595. The task metadata links this design specification.
-
-## References
-
-- [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
-- [Master STT design](2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md)
-- [Model artifact browser design](2026-08-01-task-596-model-artifact-browser-design.md)
-- [TASK-596.1 remote discovery design](2026-08-01-task-596-1-remote-model-discovery-design.md)
-- [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md)
-- [transcribe.cpp v0.1.3 architecture registry](https://github.com/handy-computer/transcribe.cpp/blob/v0.1.3/src/transcribe-arch.cpp)
-- [transcribe.cpp v0.1.3 loader](https://github.com/handy-computer/transcribe.cpp/blob/v0.1.3/src/transcribe-loader.cpp)
+The next user-value task is the revised TASK-604 provider/configuration slice.
+TASK-1861 managed GGUF acquisition is intentionally last.

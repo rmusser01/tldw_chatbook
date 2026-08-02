@@ -7,9 +7,14 @@
 **Related tasks:** TASK-505, TASK-593 through TASK-605; see the
 [delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
-**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
+**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md), amended by [ADR-040](../../../backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md) for direct-path-first transcribe.cpp delivery
 
 **Primary upstreams reviewed:** `onnx-asr` 0.12.0 and `transcribe.cpp` 0.1.3
+
+> **2026-08-02 delivery amendment:** transcribe.cpp first accepts an explicitly
+> configured, boundedly validated local GGUF path. Managed GGUF catalogs,
+> downloads, copying, and artifact promotion are deferred until that provider
+> works end to end. See ADR-040 and the revised TASK-597 design.
 
 ## Executive decision
 
