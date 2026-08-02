@@ -33,7 +33,11 @@ from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
 
 
 def dictation_export_directory() -> Path:
-    """Return the active user's directory for requested Dictation exports."""
+    """Return the active user's directory for requested Dictation exports.
+
+    Returns:
+        The profile-owned Dictation export directory.
+    """
     return get_user_data_dir() / "exports" / "dictation"
 
 
@@ -348,7 +352,6 @@ class ImprovedDictationWindow(Widget):
                         yield Button("💾 Save as Text", id="save-text-button")
                         yield Button("📝 Save as Markdown", id="save-md-button")
 
-
     def on_mount(self):
         """Initialize on mount."""
         # Textual posts `Changed` when a Switch or Input is created with a
@@ -362,7 +365,6 @@ class ImprovedDictationWindow(Widget):
 
         # Update UI based on settings
         self._update_privacy_ui()
-
 
     def _get_privacy_status_text(self) -> str:
         """Get privacy status description."""
@@ -903,9 +905,6 @@ Performance Tips:
         except Exception as e:
             logger.error(f"Error exporting transcript: {e}")
             self.app.notify("Failed to export transcript", severity="error")
-
-
-
 
     def _show_troubleshooting(self):
         """Show audio troubleshooting dialog."""

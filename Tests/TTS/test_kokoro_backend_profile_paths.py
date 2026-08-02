@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -87,6 +88,50 @@ def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
     backend = KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": explicit})
 
     assert backend.voice_blends_dir == explicit
+
+
+def test_configured_blend_directory_rejects_dangerous_path_syntax(
+    tmp_path: Path,
+) -> None:
+    """Configured blend paths pass through the shared boundary validator."""
+    unsafe = tmp_path / "unsafe|blends"
+
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": unsafe})
+
+    assert not unsafe.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode regression")
+def test_missing_configured_blend_directory_is_private_under_permissive_umask(
+    tmp_path: Path,
+) -> None:
+    """A newly created configured directory remains writable by private JSON."""
+    configured = tmp_path / "outer" / "blends"
+    previous_umask = os.umask(0o002)
+    try:
+        backend = KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": configured})
+    finally:
+        os.umask(previous_umask)
+
+    assert backend.voice_blends_dir == configured
+    assert stat.S_IMODE((tmp_path / "outer").stat().st_mode) == 0o700
+    assert stat.S_IMODE(configured.stat().st_mode) == 0o700
+    assert (configured / "voice_blends.json").is_file()
+    assert backend._save_blends() is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode regression")
+def test_existing_shared_writable_configured_blend_directory_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """An unsafe existing configured directory fails before blend loading."""
+    configured = tmp_path / "shared-blends"
+    configured.mkdir()
+    configured.chmod(0o775)
+
+    with pytest.raises(PrivatePathError, match="shared_writable_parent"):
+        KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": configured})
 
 
 def test_backend_config_blend_directory_overrides_cli_directory(

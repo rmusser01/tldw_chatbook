@@ -1623,7 +1623,7 @@
     },
     {
       "call_count": 68,
-      "diagnostic_digest": "c771e4f1aac7ca7bcba9",
+      "diagnostic_digest": "fd929100a041cb5e4ef4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1868,7 +1868,7 @@
     },
     {
       "call_count": 11,
-      "diagnostic_digest": "182da08e3b4c585a7009",
+      "diagnostic_digest": "dca5b45de6234dfab5ec",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Dictation_Window_Improved.py",
       "reason": "remaining Chatbook production diagnostic owner"

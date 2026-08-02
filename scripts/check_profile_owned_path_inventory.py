@@ -56,7 +56,9 @@ class ExceptionRule:
 
 
 @dataclass(frozen=True)
-class _Problem:
+class InventoryProblem:
+    """One mismatch between the source census and approved inventory."""
+
     relative_path: str
     line: int
     context: str
@@ -65,7 +67,9 @@ class _Problem:
 
 
 @dataclass(frozen=True)
-class _Span:
+class SourceSpan:
+    """One contextual AST source span used to classify occurrences."""
+
     start_line: int
     start_column: int
     end_line: int
@@ -102,9 +106,9 @@ def _literal_expression(value: str, root: str, offset: int) -> str:
     return f"literal:{match.group(0)}"
 
 
-def _node_span(node: ast.AST, context: str) -> _Span:
+def _node_span(node: ast.AST, context: str) -> SourceSpan:
     """Build a source span for an AST node with location information."""
-    return _Span(
+    return SourceSpan(
         node.lineno,
         node.col_offset,
         node.end_lineno,
@@ -135,7 +139,7 @@ def _assignment_target(node: ast.AST) -> str | None:
     return None
 
 
-def _contains_span(outer: _Span, inner: _Span) -> bool:
+def _contains_span(outer: SourceSpan, inner: SourceSpan) -> bool:
     """Return whether ``outer`` wholly contains ``inner``."""
     return (outer.start_line, outer.start_column) <= (
         inner.start_line,
@@ -143,11 +147,13 @@ def _contains_span(outer: _Span, inner: _Span) -> bool:
     ) and (inner.end_line, inner.end_column) <= (outer.end_line, outer.end_column)
 
 
-def _source_contexts(tree: ast.Module) -> tuple[list[_Span], list[_Span], list[_Span]]:
+def _source_contexts(
+    tree: ast.Module,
+) -> tuple[list[SourceSpan], list[SourceSpan], list[SourceSpan]]:
     """Collect docstring, scope, and module-assignment spans from source AST."""
-    docstrings: list[_Span] = []
-    scopes: list[_Span] = []
-    assignments: list[_Span] = []
+    docstrings: list[SourceSpan] = []
+    scopes: list[SourceSpan] = []
+    assignments: list[SourceSpan] = []
 
     for node in ast.walk(tree):
         body = getattr(node, "body", None)
@@ -180,8 +186,8 @@ def _source_contexts(tree: ast.Module) -> tuple[list[_Span], list[_Span], list[_
 def _context_at(
     line: int,
     column: int,
-    scopes: Iterable[_Span],
-    assignments: Iterable[_Span],
+    scopes: Iterable[SourceSpan],
+    assignments: Iterable[SourceSpan],
 ) -> str:
     """Return the smallest owning scope, or its module assignment target."""
     containing_scopes = [span for span in scopes if span.contains(line, column)]
@@ -196,7 +202,7 @@ def _context_at(
     return "module"
 
 
-def _is_docstring(line: int, column: int, docstrings: Iterable[_Span]) -> bool:
+def _is_docstring(line: int, column: int, docstrings: Iterable[SourceSpan]) -> bool:
     """Return whether a string token begins at an actual AST docstring span."""
     return any(span.contains(line, column) for span in docstrings)
 
@@ -251,7 +257,18 @@ def _join_expression(node: ast.AST) -> str | None:
 
 
 def scan_source(source: str, relative_path: str) -> tuple[Occurrence, ...]:
-    """Return all executable historical-root occurrences in Python source text."""
+    """Return executable historical-root occurrences in Python source text.
+
+    Args:
+        source: Python source text to inspect.
+        relative_path: Repository-relative source path used in results.
+
+    Returns:
+        The sorted occurrences found in executable source.
+
+    Raises:
+        SyntaxError: If ``source`` is not valid Python.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
         tree = ast.parse(source, filename=relative_path)
@@ -307,7 +324,14 @@ def scan_source(source: str, relative_path: str) -> tuple[Occurrence, ...]:
 
 
 def scan_tree(root: Path) -> tuple[Occurrence, ...]:
-    """Scan every Python source file under ``root`` in deterministic order."""
+    """Scan every Python source file beneath a source root.
+
+    Args:
+        root: Directory containing the Python source tree.
+
+    Returns:
+        All occurrences in deterministic order.
+    """
     root = root.resolve()
     occurrences: list[Occurrence] = []
     for source_path in sorted(root.rglob("*.py")):
@@ -320,8 +344,16 @@ def scan_tree(root: Path) -> tuple[Occurrence, ...]:
 
 def reconcile_inventory(
     occurrences: Iterable[Occurrence], rules: Iterable[ExceptionRule]
-) -> tuple[_Problem, ...]:
-    """Report new, count-changed, duplicate, invalid, and stale exceptions."""
+) -> tuple[InventoryProblem, ...]:
+    """Compare observed occurrences with the approved exception census.
+
+    Args:
+        occurrences: Occurrences found in executable source.
+        rules: Exact approved inventory rules.
+
+    Returns:
+        New, count-changed, duplicate, invalid, and stale inventory problems.
+    """
     observed: dict[tuple[str, str, str], list[Occurrence]] = defaultdict(list)
     for occurrence in sorted(occurrences):
         observed[
@@ -332,19 +364,19 @@ def reconcile_inventory(
     for rule in rules:
         grouped_rules[(rule.relative_path, rule.context, rule.expression)].append(rule)
 
-    problems: list[_Problem] = []
+    problems: list[InventoryProblem] = []
     for key, matching_rules in sorted(grouped_rules.items()):
         relative_path, context, expression = key
         line = observed[key][0].line if key in observed else 0
         if len(matching_rules) != 1:
             problems.append(
-                _Problem(
+                InventoryProblem(
                     relative_path, line, context, expression, "duplicate exception rule"
                 )
             )
         if any(not rule.reason.strip() for rule in matching_rules):
             problems.append(
-                _Problem(
+                InventoryProblem(
                     relative_path, line, context, expression, "empty exception reason"
                 )
             )
@@ -354,7 +386,7 @@ def reconcile_inventory(
         matching_rules = grouped_rules.get(key, [])
         if not matching_rules:
             problems.extend(
-                _Problem(
+                InventoryProblem(
                     occurrence.relative_path,
                     occurrence.line,
                     occurrence.context,
@@ -369,7 +401,7 @@ def reconcile_inventory(
             and len(matching_occurrences) != matching_rules[0].expected_count
         ):
             problems.append(
-                _Problem(
+                InventoryProblem(
                     relative_path,
                     matching_occurrences[0].line,
                     context,
@@ -383,7 +415,9 @@ def reconcile_inventory(
             continue
         relative_path, context, expression = key
         problems.append(
-            _Problem(relative_path, 0, context, expression, "stale exception rule")
+            InventoryProblem(
+                relative_path, 0, context, expression, "stale exception rule"
+            )
         )
 
     return tuple(
@@ -774,7 +808,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the source census and enforce the approved exception registry."""
+    """Print the source census and enforce the approved exception registry.
+
+    Args:
+        argv: Optional command-line arguments, excluding the program name.
+
+    Returns:
+        Zero when the census matches, otherwise one.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--print-occurrences",

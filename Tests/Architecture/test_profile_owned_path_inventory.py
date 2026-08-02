@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,21 @@ from scripts.check_profile_owned_path_inventory import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_inventory_scanner_class_names_follow_public_style_contract() -> None:
+    """Scanner implementation classes use conventional PascalCase names."""
+    source_path = REPO_ROOT / "scripts" / "check_profile_owned_path_inventory.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), source_path.as_posix())
+
+    invalid_names = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and re.fullmatch(r"[A-Z][A-Za-z0-9]*", node.name) is None
+    ]
+
+    assert invalid_names == []
 
 
 def test_scanner_reports_embedded_and_multiline_physical_lines() -> None:

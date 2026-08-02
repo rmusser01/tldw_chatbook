@@ -16,12 +16,20 @@ from tldw_chatbook.Utils.private_paths import (
 
 
 def kokoro_ui_blend_file() -> Path:
-    """Return the active profile's UI Kokoro blend file."""
+    """Return the active profile's UI Kokoro blend file.
+
+    Returns:
+        The profile-owned UI blend file path.
+    """
     return get_cli_config_path().parent / "kokoro_voice_blends.json"
 
 
 def default_kokoro_backend_blend_directory() -> Path:
-    """Return the active profile's default Kokoro backend blend directory."""
+    """Return the active profile's default Kokoro backend blend directory.
+
+    Returns:
+        The profile-owned backend blend directory path.
+    """
     return get_cli_config_path().parent / "kokoro_voice_blends"
 
 
@@ -31,7 +39,20 @@ def write_private_json(
     *,
     application_owned_directory: Path | None = None,
 ) -> PrivatePathResult:
-    """Serialize and atomically persist a private JSON document."""
+    """Serialize and atomically persist a private JSON document.
+
+    Args:
+        path: Destination JSON file.
+        payload: Mapping to serialize.
+        application_owned_directory: Directory the private writer may create or
+            harden when it is owned by the application.
+
+    Returns:
+        The verified private-path write result.
+
+    Raises:
+        PrivatePathError: If the destination cannot be written safely.
+    """
     serialized = json.dumps(payload, indent=2) + "\n"
     return atomic_private_write_text(
         path,
@@ -41,7 +62,17 @@ def write_private_json(
 
 
 def write_kokoro_ui_blends(payload: Mapping[str, Any]) -> PrivatePathResult:
-    """Atomically persist UI Kokoro blends for the active profile."""
+    """Atomically persist UI Kokoro blends for the active profile.
+
+    Args:
+        payload: Blend definitions to serialize.
+
+    Returns:
+        The verified private-path write result.
+
+    Raises:
+        PrivatePathError: If the destination cannot be written safely.
+    """
     config_path = get_cli_config_path()
     return write_private_json(
         config_path.parent / "kokoro_voice_blends.json",

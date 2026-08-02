@@ -48,7 +48,11 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_private_json,
 )
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.private_paths import secure_private_directory
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.private_paths import (
+    secure_private_directory,
+    verify_trusted_directory,
+)
 
 #######################################################################################################################
 #
@@ -149,8 +153,21 @@ class KokoroTTSBackend(LocalTTSBackend):
                 application_owned=True,
             )
         else:
-            self.voice_blends_dir = Path(configured_blends_dir).expanduser()
-            self.voice_blends_dir.mkdir(parents=True, exist_ok=True)
+            self.voice_blends_dir = validate_path_simple(
+                Path(configured_blends_dir).expanduser(),
+                probe_existing=False,
+            )
+            if self.voice_blends_dir.exists():
+                verify_trusted_directory(
+                    self.voice_blends_dir,
+                    allow_shared_sticky=False,
+                )
+            else:
+                secure_private_directory(
+                    self.voice_blends_dir,
+                    create=True,
+                    application_owned=True,
+                )
         self.saved_blends = self._load_saved_blends()
 
         # Initialize default blends if none exist
