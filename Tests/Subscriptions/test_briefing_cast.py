@@ -35,21 +35,26 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook import config as app_config
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_cast
 from tldw_chatbook.Subscriptions.briefing_cast import (
+    APP_DEFAULT_PRESET_NAME,
     ScriptCastError,
     STATUS_COMPLETE,
     STATUS_FAILED,
     active_cast_claims,
+    active_kept_cast_claims,
     build_cast_prompt,
     dump_roster,
     fail_interrupted_scripts,
     generate_script,
+    generate_script_from_text,
     load_roster,
     parse_script_turns,
     validate_roster,
 )
+from tldw_chatbook.Subscriptions.briefing_keep import keep_briefing
 from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
@@ -113,6 +118,33 @@ def _preset(
         style_notes=style_notes,
         provider=provider,
         model=model,
+    )
+
+
+def _chacha_db(tmp_path: Path) -> CharactersRAGDB:
+    """A real, file-backed `CharactersRAGDB` -- mirrors `test_briefing_keep.py`'s
+    own `_chacha_db` fixture exactly; `generate_script_from_text`'s DB work
+    also runs through `asyncio.to_thread`, so `:memory:` would not do here
+    either."""
+    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="cast-from-kept-test")
+
+
+def _kept_briefing(
+    chacha_db: CharactersRAGDB,
+    *,
+    source_briefing_id: int = 101,
+    body: str = "## Kept body\n\nSomething worth keeping happened.\n",
+    watchlist_name: str = "Security",
+    origin: str = "manual",
+) -> int:
+    """A minimal `kept_briefings` row -- the only state `generate_script_from_text`
+    may start a cast from. `source_briefing_id` is `UNIQUE`, so a test that
+    keeps more than one briefing must pass distinct values explicitly."""
+    return chacha_db.create_kept_briefing(
+        source_briefing_id=source_briefing_id,
+        watchlist_name=watchlist_name,
+        body_markdown=body,
+        origin=origin,
     )
 
 
@@ -820,3 +852,399 @@ async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
     row = await first
     assert row["status"] == STATUS_COMPLETE
     assert briefing_id not in active_cast_claims()
+
+
+# --- generate_script_from_text (task-1780, Task 4) ---------------------------
+#
+# Casts directly from a ChaChaNotes `kept_briefings` row into `kept_scripts`.
+# Two rules shape these tests, both restated in `briefing_cast.py`'s own
+# section comment (above `_APP_DEFAULT_ROSTER`):
+#
+# - **The asymmetry against `generate_script`.** `kept_scripts` has no
+#   `status` column, so a chat or parse failure RAISES instead of becoming
+#   a `failed` row, and nothing is written until a cast fully succeeds.
+# - **The kept briefing is never touched by a cast's outcome**, success or
+#   failure -- pinned by full-dict equality, exactly like `generate_
+#   script`'s own "the briefing is never touched" tests pin `briefings`.
+#
+# Every test here closes its own `CharactersRAGDB` in a `finally`, matching
+# `test_briefing_keep.py`'s own convention for that class.
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp_path):
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, body="## Kept\n\nAcme shipped a thing.")
+        preset_id = _preset(
+            subs_db, roster=TWO_SPEAKER_ROSTER, style_notes="Keep it brisk."
+        )
+
+        chat = _FakeChat()
+        row = await generate_script_from_text(
+            chacha_db, kept_id, preset_id=preset_id, subs_db=subs_db, chat=chat
+        )
+
+        assert row["kept_briefing_id"] == kept_id
+        assert row["source_script_id"] is None
+        assert row["preset_name"] == "Duo"
+        assert json.loads(row["turns_json"]) == CANNED_TURNS
+        assert row["model_used"]
+        snapshot = load_roster(row["roster_snapshot_json"])
+        assert [speaker["name"] for speaker in snapshot] == ["Host", "Analyst"]
+
+        assert len(chat.calls) == 1
+        assert chat.calls[0]["streaming"] is False
+        assert "Keep it brisk." in chat.calls[0]["system_message"]
+        assert (
+            chat.calls[0]["messages_payload"][0]["content"]
+            == "## Kept\n\nAcme shipped a thing."
+        )
+
+        # Findable via the listing interface, newest first.
+        assert chacha_db.list_kept_scripts(kept_id)[0]["id"] == row["id"]
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_app_default_when_preset_id_is_none(
+    tmp_path, monkeypatch
+):
+    """`preset_id=None`: app default provider/model, no style notes,
+    `preset_name` is the literal `APP_DEFAULT_PRESET_NAME`, and the roster
+    is a single unbound "Narrator" speaker (there is no other source for a
+    roster when no preset supplies one)."""
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "local-llama", raising=False
+    )
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+
+        chat = _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        row = await generate_script_from_text(
+            chacha_db, kept_id, preset_id=None, subs_db=subs_db, chat=chat
+        )
+
+        assert row["preset_name"] == APP_DEFAULT_PRESET_NAME
+        assert row["model_used"] == "local-llama"
+        assert chat.calls[0]["api_endpoint"] == "local-llama"
+        assert chat.calls[0].get("model") is None
+        snapshot = load_roster(row["roster_snapshot_json"])
+        assert [speaker["name"] for speaker in snapshot] == ["Narrator"]
+        # No style notes reached the prompt for an app-default cast.
+        assert "Style notes" not in chat.calls[0]["system_message"]
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_refuses_when_kept_briefing_is_missing(
+    tmp_path,
+):
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        preset_id = _preset(subs_db)
+
+        with pytest.raises(ScriptCastError, match="9999"):
+            await generate_script_from_text(
+                chacha_db, 9999, preset_id=preset_id, subs_db=subs_db, chat=_FakeChat()
+            )
+
+        assert chacha_db.list_kept_scripts(9999) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_refuses_when_body_is_empty(tmp_path):
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, body="   ")
+        preset_id = _preset(subs_db)
+
+        with pytest.raises(ScriptCastError, match="empty"):
+            await generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=preset_id,
+                subs_db=subs_db,
+                chat=_FakeChat(),
+            )
+
+        assert chacha_db.list_kept_scripts(kept_id) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_refuses_when_preset_is_missing(tmp_path):
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+
+        with pytest.raises(ScriptCastError, match="9999"):
+            await generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=9999,
+                subs_db=subs_db,
+                chat=_FakeChat(),
+            )
+
+        assert chacha_db.list_kept_scripts(kept_id) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_fails_naming_the_card_when_load_character_is_none(
+    tmp_path,
+):
+    """The roster always comes from the PRESET being cast with, never from
+    the kept briefing's own (roster-less) snapshot -- so a card-bound
+    speaker fails exactly like a live cast's does."""
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+        roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
+        preset_id = _preset(subs_db, roster=roster)
+
+        with pytest.raises(ScriptCastError, match="7"):
+            await generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=preset_id,
+                subs_db=subs_db,
+                chat=_FakeChat(),
+            )
+
+        assert chacha_db.list_kept_scripts(kept_id) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_chat_failure_raises_and_writes_no_row(
+    tmp_path,
+):
+    """The named asymmetry: unlike `generate_script`, a chat failure here
+    RAISES rather than becoming a `failed` row."""
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+        preset_id = _preset(subs_db)
+
+        boom = _FakeChat(error=RuntimeError("provider exploded: 503 upstream"))
+        with pytest.raises(RuntimeError, match="503 upstream"):
+            await generate_script_from_text(
+                chacha_db, kept_id, preset_id=preset_id, subs_db=subs_db, chat=boom
+            )
+
+        assert chacha_db.list_kept_scripts(kept_id) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_parse_failure_raises_and_writes_no_row(
+    tmp_path,
+):
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+        preset_id = _preset(subs_db)
+
+        with pytest.raises(ScriptCastError):
+            await generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=preset_id,
+                subs_db=subs_db,
+                chat=_FakeChat(reply="not a JSON array at all"),
+            )
+
+        assert chacha_db.list_kept_scripts(kept_id) == []
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_generate_script_from_text_never_touches_the_kept_briefing_row(
+    tmp_path,
+):
+    """THE named invariant, both directions: a cast failure AND a cast
+    success leave `kept_briefings` byte-for-byte unchanged."""
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+        preset_id = _preset(subs_db)
+
+        before = chacha_db.get_kept_briefing(kept_id)
+        boom = _FakeChat(error=RuntimeError("provider exploded"))
+        with pytest.raises(RuntimeError):
+            await generate_script_from_text(
+                chacha_db, kept_id, preset_id=preset_id, subs_db=subs_db, chat=boom
+            )
+        after_failure = chacha_db.get_kept_briefing(kept_id)
+        assert before == after_failure
+
+        row = await generate_script_from_text(
+            chacha_db,
+            kept_id,
+            preset_id=preset_id,
+            subs_db=subs_db,
+            chat=_FakeChat(),
+        )
+        after_success = chacha_db.get_kept_briefing(kept_id)
+        assert row["kept_briefing_id"] == kept_id
+        assert before == after_success
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_recast_needs_no_subscriptions_rows(tmp_path):
+    """Named test (AC #4): keep a briefing, delete the watchlist AND the
+    original preset through real paths, then cast with a DIFFERENT
+    currently-existing preset -- succeeds, lands in `kept_scripts` with
+    the new preset's name and `source_script_id=NULL`."""
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = WatchlistBundleService(subs_db).create(name="Security")["id"]
+        briefing_id = _complete_briefing(
+            subs_db, watchlist_id, body="## Body\n\nAcme shipped a thing."
+        )
+        original_preset_id = _preset(
+            subs_db, roster=TWO_SPEAKER_ROSTER, name="Original"
+        )
+
+        kept = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
+        kept_id = kept["kept_id"]
+
+        # Delete the watchlist AND the original preset -- both through
+        # real, app-level paths, never raw SQL.
+        WatchlistBundleService(subs_db).delete(watchlist_id)
+        assert subs_db.delete_briefing_preset(original_preset_id) is True
+        assert subs_db.get_briefing_preset(original_preset_id) is None
+        # Prove the watchlist deletion actually cascaded the briefing away
+        # -- otherwise AC #4 would not be exercising anything real.
+        assert subs_db.get_briefing(briefing_id) is None
+
+        new_preset_id = _preset(subs_db, roster=ONE_SPEAKER_ROSTER, name="Fresh")
+
+        row = await generate_script_from_text(
+            chacha_db,
+            kept_id,
+            preset_id=new_preset_id,
+            subs_db=subs_db,
+            chat=_FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])),
+        )
+
+        assert row["preset_name"] == "Fresh"
+        assert row["source_script_id"] is None
+        assert row["kept_briefing_id"] == kept_id
+        # The kept briefing itself is untouched by the recast.
+        assert chacha_db.get_kept_briefing(kept_id) is not None
+    finally:
+        chacha_db.close_connection()
+
+
+# --- In-process kept-cast claims (task-1780, Task 4) -------------------------
+#
+# Mirrors the live claims section above exactly, scoped to
+# `_ACTIVE_KEPT_CAST_CLAIMS` -- except for the id-space test, whose whole
+# point is proving the two sets do NOT interact.
+
+
+def test_active_kept_cast_claims_is_an_empty_snapshot_by_default():
+    assert active_kept_cast_claims() == frozenset()
+
+
+def test_kept_cast_claim_blocks_a_second_concurrent_claim_of_the_same_kept_briefing():
+    with briefing_cast._claim_kept_cast(42):
+        assert 42 in active_kept_cast_claims()
+        with pytest.raises(GenerationInFlightError, match="42"):
+            with briefing_cast._claim_kept_cast(42):
+                pass
+    assert 42 not in active_kept_cast_claims()
+
+
+def test_kept_and_live_cast_claims_do_not_collide_across_id_spaces():
+    """The id-space guard this task's own mutation targets: a live claim
+    and a kept claim sharing the same integer id must never see each
+    other. Seeds BOTH directions -- a live claim on id 5 must not block a
+    kept cast of kept_briefing_id 5, and vice versa."""
+    with briefing_cast._claim_cast(5):
+        # A live claim on briefing 5 does not block casting kept briefing 5.
+        with briefing_cast._claim_kept_cast(5):
+            assert 5 in active_cast_claims()
+            assert 5 in active_kept_cast_claims()
+    assert 5 not in active_cast_claims()
+    assert 5 not in active_kept_cast_claims()
+
+    with briefing_cast._claim_kept_cast(7):
+        # A kept claim on kept_briefing 7 does not block casting live briefing 7.
+        with briefing_cast._claim_cast(7):
+            assert 7 in active_kept_cast_claims()
+            assert 7 in active_cast_claims()
+    assert 7 not in active_cast_claims()
+    assert 7 not in active_kept_cast_claims()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_path):
+    """Pins that the kept claim is held through the chat call, mirroring
+    `test_a_concurrent_cast_for_the_same_briefing_is_refused` exactly."""
+    subs_db = _db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db)
+        preset_id = _preset(subs_db)
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _slow_chat(**kwargs):
+            entered.set()
+            await release.wait()
+            return json.dumps(CANNED_TURNS)
+
+        first = asyncio.ensure_future(
+            generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=preset_id,
+                subs_db=subs_db,
+                chat=_slow_chat,
+            )
+        )
+        await entered.wait()
+
+        assert kept_id in active_kept_cast_claims()
+        with pytest.raises(GenerationInFlightError, match=str(kept_id)):
+            await generate_script_from_text(
+                chacha_db,
+                kept_id,
+                preset_id=preset_id,
+                subs_db=subs_db,
+                chat=_FakeChat(),
+            )
+
+        release.set()
+        row = await first
+        assert row["kept_briefing_id"] == kept_id
+        assert kept_id not in active_kept_cast_claims()
+    finally:
+        chacha_db.close_connection()
