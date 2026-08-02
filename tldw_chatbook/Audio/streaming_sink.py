@@ -455,8 +455,14 @@ class StreamingPcmSink:
         if self._notify_thread is not None and threading.current_thread() is not self._notify_thread:
             self._notify_q.join()
         _clear_live_sink(self)
-        if self._notify_thread is not None:
-            self._notify_q.put(_NOTIFY_STOP)
+        # Pushed unconditionally -- not gated on self._notify_thread being
+        # published yet (see N1). open() may still be mid-flight, between
+        # its own state flip to "open" and creating/publishing the notify
+        # thread; queuing the sentinel now means that thread, whenever it
+        # does start, finds it waiting and exits immediately instead of
+        # parking on get() forever. Queuing onto a queue nothing will ever
+        # read (open() never reaches "open" at all) is harmless.
+        self._notify_q.put(_NOTIFY_STOP)
         self._emit(SinkStopped())
 
     def _fail(self, reason: str, *, from_callback: bool = False) -> None:
@@ -516,7 +522,7 @@ class StreamingPcmSink:
                     outdata[:] = 0
                     return
                 if not self._audible:
-                    have_any = self._buffered_bytes > 0 or self._leftover
+                    have_any = self._buffered_bytes > 0 or self._leftover_remaining_locked() > 0
                     if self._buffered_bytes >= self._prebuffer_bytes or (self._closed and have_any):
                         self._audible = True
                         # Enqueued while still holding self._lock (rather
@@ -540,6 +546,15 @@ class StreamingPcmSink:
                 chunk = self._take_locked(need)
                 drained = (self._closed and self._buffered_bytes == 0
                            and self._leftover_remaining_locked() == 0)
+                if self._audible and not chunk and not drained:
+                    # Noted (and, if due, enqueued) while still holding
+                    # self._lock -- same reasoning as SinkStarted above: a
+                    # concurrent stop() needs this same lock for its own
+                    # state check, so it cannot complete (and push its
+                    # sentinel) before this enqueue has already happened,
+                    # which is what prevents the job from being orphaned on
+                    # a queue whose notify thread has already exited (N2).
+                    self._note_underrun(frames)
             if chunk:
                 out = memoryview(outdata).cast("B")
                 out[: len(chunk)] = chunk
@@ -547,8 +562,6 @@ class StreamingPcmSink:
                     out[len(chunk):] = b"\x00" * (need - len(chunk))
             else:
                 outdata[:] = 0
-                if self._audible and not drained:
-                    self._note_underrun(frames)
             if drained:
                 with self._lock:
                     if self._state == "draining":
@@ -633,18 +646,24 @@ class StreamingPcmSink:
     def _note_underrun(self, frames: int) -> None:
         """Record an empty callback and, if due, enqueue a throttled `SinkUnderrun`.
 
-        Called on the audio callback thread, with `self._lock` already
-        released (it re-acquires nothing itself; the counters it touches
-        are only ever mutated from that single thread, so no lock is
-        needed for them). Emission is throttled to at most once every
-        `_UNDERRUN_THROTTLE_BLOCKS` blocks so a prolonged underrun does
-        not flood `on_event`; the very first underrun after a quiet period
-        always reports immediately (the throttle only suppresses *repeat*
-        reports of an ongoing underrun). The event itself is handed to the
-        notify queue rather than emitted directly, per the module's thread
-        contract -- this is a plain `"emit"` job (no stream teardown), so
-        it does not need the `_NOTIFY_STOP` sentinel that terminal events
-        push.
+        Called on the audio callback thread, from within `_callback`'s own
+        `self._lock` critical section (it does not acquire the lock itself
+        -- `queue.Queue.put` has its own internal synchronization -- but
+        relies on the *caller* already holding `self._lock` for the same
+        reason `SinkStarted`'s enqueue does: it closes the window where a
+        concurrent `stop()` could complete, push its sentinel, and let the
+        notify thread exit *before* this job is queued, orphaning it on a
+        dead queue -- see N2). The counters it touches are only ever
+        mutated from this single thread regardless, so no additional lock
+        is needed for them specifically. Emission is throttled to at most
+        once every `_UNDERRUN_THROTTLE_BLOCKS` blocks so a prolonged
+        underrun does not flood `on_event`; the very first underrun after
+        a quiet period always reports immediately (the throttle only
+        suppresses *repeat* reports of an ongoing underrun). The event
+        itself is handed to the notify queue rather than emitted directly,
+        per the module's thread contract -- this is a plain `"emit"` job
+        (no stream teardown), so it does not need the `_NOTIFY_STOP`
+        sentinel that terminal events push.
 
         Args:
             frames: Number of audio frames this callback could not fill

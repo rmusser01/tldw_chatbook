@@ -5,6 +5,7 @@ callback exactly as PortAudio would: (outdata, frames, time_info, status).
 No wall-clock sleeps anywhere -- latency contracts are counted in BLOCKS.
 """
 import threading
+import time
 
 import numpy as np
 
@@ -17,6 +18,25 @@ RATE = 24000
 BLOCK_MS = 20
 FRAMES = RATE * BLOCK_MS // 1000          # 480 frames/block
 BLOCK_BYTES = FRAMES * 2                  # int16 mono
+
+
+def _settle_notify_queue(notify_q, timeout: float = 5.0) -> None:
+    """Deadline-bounded wait for `notify_q` to fully drain.
+
+    `queue.Queue.join()` has no timeout, so a job orphaned on a dead notify
+    queue (nothing left to call `task_done()` for it -- see N2) would hang
+    this forever. Polling `unfinished_tasks` with a deadline turns that
+    hang into a fast, loud, informative test failure instead.
+    """
+    deadline = time.monotonic() + timeout
+    while notify_q.unfinished_tasks > 0:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"notify queue did not settle within {timeout}s "
+                f"(unfinished_tasks={notify_q.unfinished_tasks}) -- "
+                "a job was likely orphaned by a race with stop()"
+            )
+        time.sleep(0.001)
 
 
 class FakeStream:
@@ -52,7 +72,7 @@ class FakeStream:
             # stay deterministic without any wall-clock sleep.
             notify_q = getattr(getattr(self.callback, "__self__", None), "_notify_q", None)
             if notify_q is not None:
-                notify_q.join()
+                _settle_notify_queue(notify_q)
 
 
 def _mk(events):
@@ -143,6 +163,58 @@ def test_underrun_after_start_is_counted_and_throttled():
     assert unders[-1].frames == 51 * FRAMES, "must keep counting for the full throttle window"
 
 
+def test_stop_during_underrun_enqueue_does_not_orphan_a_queue_item(monkeypatch):
+    """N2: _note_underrun's enqueue must be as race-safe as SinkStarted's --
+    a stop() completing in the gap around it must not orphan the underrun
+    job on a queue whose notify thread has already exited.
+
+    Forces the exact interleaving deterministically with a real background
+    thread and bounded (not open-ended) event waits: the hook signals that
+    an underrun is about to be reported and gives a concurrent stop() a
+    short, fixed window to land there. Pre-fix, the enqueue happens outside
+    the lock so stop() always wins that window and the job is orphaned.
+    Post-fix, the enqueue happens under the same lock stop() needs for its
+    own state check, so stop() simply cannot complete inside the window --
+    the wait times out (by design) and the job is safely queued first.
+    """
+    import tldw_chatbook.Audio.streaming_sink as mod
+
+    events = []
+    holder = {}
+    underrun_about_to_enqueue = threading.Event()
+    stop_finished = threading.Event()
+
+    class HookedSinkUnderrun(mod.SinkUnderrun):
+        def __init__(self, *a, **kw):
+            underrun_about_to_enqueue.set()
+            stop_finished.wait(timeout=0.3)   # bounded: never hangs the test either way
+            super().__init__(*a, **kw)
+
+    def call_stop_once_ready():
+        if underrun_about_to_enqueue.wait(timeout=2.0):
+            holder["sink"].stop()
+        stop_finished.set()
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+        return holder["s"]
+
+    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    holder["sink"] = sink
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))
+    holder["s"].tick(16)     # drains the buffer fully; open, audible, not closed
+
+    stopper = threading.Thread(target=call_stop_once_ready, daemon=True)
+    stopper.start()
+    monkeypatch.setattr(mod, "SinkUnderrun", HookedSinkUnderrun)
+    holder["s"].tick(1)      # one empty callback -> triggers the hook mid-enqueue-decision
+
+    stopper.join(timeout=2.0)
+    assert not stopper.is_alive(), "stop()-calling thread leaked past the test"
+    _settle_notify_queue(sink._notify_q)   # must not hang / must not orphan (raises loudly if it does)
+
+
 def test_feed_caps_and_reports_once():
     events, = ([],)
     sink, h = _mk(events)
@@ -170,7 +242,7 @@ def test_repeated_callback_failure_reports_once_and_tears_down_stream():
     sink.feed(_pcm(16))
     for _ in range(4):
         sink._callback(None, FRAMES, None, None)   # outdata=None -> every write raises
-    sink._notify_q.join()                    # wait for the async teardown_and_emit job
+    _settle_notify_queue(sink._notify_q)     # wait for the async teardown_and_emit job
     fails = [e for e in events if isinstance(e, SinkFailed)]
     assert len(fails) == 1, "SinkFailed must fire once per lifecycle, not once per callback"
     assert sink.state == "failed"
@@ -273,6 +345,45 @@ def test_buffered_seconds_includes_leftover():
     assert round(sink.buffered_seconds, 4) == 0.32
     h["s"].tick(1)                                # consumes 1 block off the SAME chunk -> _leftover
     assert round(sink.buffered_seconds, 4) == 0.30, "leftover must be visible to buffered_seconds"
+
+
+def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(monkeypatch):
+    """N1: stop() landing between open()'s state="open" and its later,
+    unlocked publish of self._notify_thread must not leave a daemon thread
+    parked on queue.get() forever with no sentinel coming.
+
+    Hooks the *construction* of the threading.Thread object open() builds
+    for its notify thread -- the same "reentrant call from inside a
+    constructor" technique used for the H3 stop()-vs-open() test, aimed at
+    the narrow window between open()'s (already-committed) state flip to
+    "open" and the not-yet-executed `self._notify_thread = ...` assignment.
+    """
+    import tldw_chatbook.Audio.streaming_sink as mod
+
+    events = []
+    holder = {}
+    real_thread_cls = mod.threading.Thread
+
+    class HookedThread(real_thread_cls):
+        def __init__(self, *a, **kw):
+            holder["sink"].stop()   # reentrant, landing exactly in the N1 gap
+            super().__init__(*a, **kw)
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+        return holder["s"]
+
+    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    holder["sink"] = sink
+    monkeypatch.setattr(mod.threading, "Thread", HookedThread)
+    sink.open(sample_rate=RATE)
+
+    assert sink.state == "stopped"
+    assert any(isinstance(e, SinkStopped) for e in events)
+    t = sink._notify_thread
+    if t is not None:
+        t.join(timeout=2.0)
+        assert not t.is_alive(), "notify thread parked forever without a sentinel -- N1 leak"
 
 
 def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
