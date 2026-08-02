@@ -1506,9 +1506,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_no_service(tmp_pa
     controller, _store, _db = _controller(tmp_path, [["ok."]])
     controller.app = _fake_app()  # no unified_mcp_service attribute at all
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1522,9 +1522,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on(tm
     )
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1535,9 +1535,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp
     service = FakeMCPService()  # no catalog records, no builtin inventory
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1555,9 +1555,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_r
     controller.app = _fake_app()
     controller.app.unified_mcp_service = _RaisingService()
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1580,10 +1580,9 @@ async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
     )
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
     assert provider is not None
-    assert callable(hook)
     assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
     assert controller.app.console_mcp_tool_count == 2
     assert (

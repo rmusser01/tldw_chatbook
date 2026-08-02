@@ -1,7 +1,7 @@
 ---
 id: TASK-631
 title: Kill switch label over-claims tool-call coverage
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [ux, security, mcp, tools]
@@ -19,7 +19,19 @@ That claim is broader than reality. `build_tool_review_hook`'s own docstring is 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] Either (a) the kill switch's label/tooltip wording is narrowed to accurately describe what it covers today (MCP tools + built-in agent-runtime tools, not skills/spawn/find/load), or (b) the switch's enforcement is extended so skill tools, `spawn_subagent`, `find_tools`, and `load_tools` all also honor it
-- [ ] Whichever approach is chosen, a test or docstring makes the actual coverage explicit so a future reader cannot reintroduce the same gap silently
-- [ ] If narrowing wording only: the change is confined to the label/tooltip strings, with no behavior change
+- [x] Either (a) the kill switch's label/tooltip wording is narrowed to accurately describe what it covers today (MCP tools + built-in agent-runtime tools, not skills/spawn/find/load), or (b) the switch's enforcement is extended so skill tools, `spawn_subagent`, `find_tools`, and `load_tools` all also honor it
+- [x] Whichever approach is chosen, a test or docstring makes the actual coverage explicit so a future reader cannot reintroduce the same gap silently
+- [x] If narrowing wording only: the change is confined to the label/tooltip strings, with no behavior change
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Option (b): enforcement extended, label untouched -- the label's promise is now TRUE.**
+
+`build_tool_review_hook` takes `kill_switch: Callable[[], bool] | None` and, when it reports on, refuses EVERY call in the batch without prompting -- `KILL_SWITCH_REFUSAL` per call id (name for id-less fence calls, fail-closed per TASK-1861's reasoning). The hook is the one place every parsed call passes, including the four families neither provider claims (skills, `spawn_subagent`, `find_tools`, `load_tools`) that previously ran normally with the switch on; the runtime already converts non-"proceed" verdicts into results without dispatch (pinned by the TASK-1861 tests), so no new plumbing.
+
+A callable, read fresh per turn, so a mid-run flip takes effect on the next batch; an unreadable switch fails CLOSED -- the only safe answer for a security control that cannot be read. Wired via `_console_tool_kill_switch_reader()` (None without a service, matching `_compose_mcp_provider`).
+
+Mutation-verified: deleting the hook's check fails the refusal test. Also corrected the hook docstring's stale "verdict map is purely documentary" claim, false since TASK-1861.
+<!-- SECTION:NOTES:END -->

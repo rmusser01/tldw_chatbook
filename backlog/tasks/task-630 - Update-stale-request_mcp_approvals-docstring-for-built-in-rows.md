@@ -1,7 +1,7 @@
 ---
 id: TASK-630
 title: Update stale request_mcp_approvals docstring for built-in tool rows
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [docs, tools, tech-debt]
@@ -17,7 +17,13 @@ priority: low
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] `request_mcp_approvals`'s docstring no longer claims the batch is exclusively "MCP tool calls" or that the method is bound only as `MCPToolProvider`'s `approval_callback`
-- [ ] The docstring states plainly that the method is owner-agnostic and serves both MCP and built-in (`agent:builtin`) approval rows
-- [ ] No behavior change — this is a documentation-only fix, verified by an unchanged diff outside the docstring/comment
+- [x] `request_mcp_approvals`'s docstring no longer claims the batch is exclusively "MCP tool calls" or that the method is bound only as `MCPToolProvider`'s `approval_callback`
+- [x] The docstring states plainly that the method is owner-agnostic and serves both MCP and built-in (`agent:builtin`) approval rows
+- [x] No behavior change — this is a documentation-only fix, verified by an unchanged diff outside the docstring/comment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Docstring rewritten: the method is owner-agnostic (MCP rows AND `agent:builtin` rows through one card and one Event loop), stated up front with the reason a reader would otherwise go hunting for a second path. The `mcp` name is kept deliberately -- it is the wire between this method, `resolve_pending_approval` and the round-id plumbing, and renaming is churn without a defect. No behavior change.
+<!-- SECTION:NOTES:END -->

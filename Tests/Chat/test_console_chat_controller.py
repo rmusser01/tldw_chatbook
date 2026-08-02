@@ -3881,3 +3881,102 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
     assert gateway.messages_seen is not None
     assert len(gateway.messages_seen) < 13
     assert gateway.messages_seen[-1]["content"] == "current question here"
+
+
+# -- TASK-631: the kill switch must cover EVERY tool call the hook sees ----
+
+
+@pytest.mark.unit
+def test_kill_switch_refuses_unclaimed_tool_calls_at_the_review_hook():
+    """The kill switch's label promises "block tool calls in chat" -- all of
+    them. MCP composition is skipped and `BuiltinToolGate.check` refuses when
+    the switch is on, but a name NEITHER provider claims (a skill,
+    `spawn_subagent`, `find_tools`, `load_tools`) passed through the review
+    hook unreviewed and dispatched normally: flipping the switch to stop all
+    tool calls left four tool families running. A false sense of security in
+    a security-relevant control.
+
+    The hook is the one place every parsed call passes, and the runtime
+    turns any non-"proceed" verdict into the call's result without
+    dispatching it -- so enforcing here covers the unclaimed families with
+    no new plumbing.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        KILL_SWITCH_REFUSAL,
+        build_tool_review_hook,
+    )
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): pass
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return None  # claims nothing
+
+    prompted = []
+
+    def request_approvals(pending):
+        prompted.append(pending)
+        return {}
+
+    hook = build_tool_review_hook(
+        _Gate(), _Provider(), None, request_approvals,
+        workspace_id=None,
+        kill_switch=lambda: True,
+    )
+    verdicts = hook([
+        ToolCall(name="spawn_subagent", args={"task": "x"}, call_id="c1"),
+        ToolCall(name="skill__notes__summarize", args={}, call_id="c2"),
+        ToolCall(name="find_tools", args={"query": "q"}),
+    ])
+
+    assert not prompted, "the kill switch must refuse, not prompt"
+    assert verdicts.get("c1") == KILL_SWITCH_REFUSAL
+    assert verdicts.get("c2") == KILL_SWITCH_REFUSAL
+    assert verdicts.get("find_tools") == KILL_SWITCH_REFUSAL, (
+        "an id-less call must be refused by name, or the fence path "
+        f"escapes the switch: {verdicts}"
+    )
+
+
+@pytest.mark.unit
+def test_kill_switch_off_changes_nothing():
+    """With the switch off (or absent) the hook behaves exactly as before."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _Gate:
+        def begin_turn(self): pass
+        def resolve(self, tool):
+            return SimpleNamespace(state="ask", risk_floored=False)
+        def stamp(self, name, decision): pass
+        def is_session_approved(self, name): return False
+        def options_for(self, tool):
+            return ("approve_once", "approve_session", "deny")
+
+    class _Provider:
+        def tool_for(self, name): return SimpleNamespace(name=name)
+
+    def request_approvals(pending):
+        return {row.call_id: "approve_once" for row in pending}
+
+    for switch in (None, lambda: False):
+        hook = build_tool_review_hook(
+            _Gate(), _Provider(), None, request_approvals,
+            workspace_id=None,
+            kill_switch=switch,
+        )
+        verdicts = hook(
+            [ToolCall(name="read_file", args={"path": "a"}, call_id="c1")]
+        )
+        assert verdicts.get("c1", "proceed") == "proceed", (switch, verdicts)
