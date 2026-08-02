@@ -688,6 +688,55 @@ async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_th
         )
 
 
+@pytest.mark.asyncio
+async def test_generate_in_flight_race_toasts_the_specific_message_not_a_db_error(
+    monkeypatch,
+):
+    """Whole-branch review FIX 2: `_sweep_and_guard` only sees a claim once
+    its row lands in the database. If another in-process caller claims the
+    watchlist AFTER the sweep reads (finding no `generating` row yet, so
+    `blocking` stays empty) but BEFORE it inserts, this attempt proceeds
+    into `generate_briefing`'s own claim check and raises
+    `GenerationInFlightError` -- a specific, contracted, user-safe message
+    (`str(exc)` names the watchlist, per the class's own docstring). The
+    bare `except Exception` used to swallow this as "the watchlist
+    database could not be reached", which is both untrue (nothing is
+    unreachable -- a race was lost) and unhelpful (it tells the user
+    nothing about what to do, whereas the real message says a generation
+    is already running).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    async def _raise_in_flight(db_arg, watchlist_id_arg, **kwargs):
+        raise briefing_service.GenerationInFlightError(
+            f"a briefing is already being generated for watchlist {watchlist_id_arg}"
+        )
+
+    monkeypatch.setattr(screen_module, "generate_briefing", _raise_in_flight)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        rows_before = len(db.list_briefings(watchlist_id))
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert host.is_running, "the lost race must not exit the application"
+        assert app.notify.called, "the race must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False
+        assert "already being generated" in message
+        assert "could not be reached" not in message, (
+            "must not fall through to the generic database-unreachable toast"
+        )
+        assert len(db.list_briefings(watchlist_id)) == rows_before, (
+            "GenerationInFlightError fires before any row insert (the "
+            "phase-1 no-orphan-row contract) -- no failed-row side effect"
+        )
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_the_briefings_list_read_runs_off_the_event_loop_thread():

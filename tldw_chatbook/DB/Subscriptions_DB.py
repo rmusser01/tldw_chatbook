@@ -1843,7 +1843,10 @@ class SubscriptionsDB(BaseDB):
         `('complete','empty')` allowlist for `last_completed_at`, because a
         failed run must never advance the SCHEDULE either -- grep
         "list_briefing_schedules" before changing this set, and change both
-        or neither.
+        or neither. (`list_briefing_schedules` also returns a second,
+        deliberately status-blind `last_attempt_at` column for retry-cadence
+        purposes -- that one is NOT part of this pact; see its own
+        docstring.)
 
         Args:
             watchlist_id: The watchlist to compute the watermark for.
@@ -1882,13 +1885,27 @@ class SubscriptionsDB(BaseDB):
         `status IN ('complete', 'empty')` if you are touching either
         allowlist -- they must move together.
 
+        `last_attempt_at`, in contrast, is deliberately status-blind: MAX
+        `created_at` over that watchlist's briefings of ANY status,
+        `failed`/`generating` included. It is NOT part of the
+        `last_completed_at` pact above and must never gain a status
+        filter -- the whole-branch review that added it found that a
+        projection using `last_completed_at` alone made a FAILED schedule
+        perpetually due (`next_run_at` frozen at the last success, so
+        every ~30-minute queue reload re-emitted it, uncapped). The
+        scheduler projection combines both columns (latest of the two)
+        so a failed attempt defers the next retry by one cadence period
+        instead of leaving it stuck in the past.
+
         Returns:
             A list of dicts, one per watchlist with
             `briefing_cadence_seconds IS NOT NULL`, each with keys
-            `watchlist_id`, `name`, `briefing_cadence_seconds`, and
+            `watchlist_id`, `name`, `briefing_cadence_seconds`,
             `last_completed_at` (the max `created_at` among that
             watchlist's `complete`/`empty` briefings, or `None` if it has
-            never completed one).
+            never completed one), and `last_attempt_at` (the max
+            `created_at` among ALL of that watchlist's briefings
+            regardless of status, or `None` if it has never had one).
         """
         with self.transaction() as conn:
             rows = conn.execute(
@@ -1902,7 +1919,12 @@ class SubscriptionsDB(BaseDB):
                         FROM briefings AS b
                         WHERE b.watchlist_id = w.id
                           AND b.status IN ('complete', 'empty')
-                    ) AS last_completed_at
+                    ) AS last_completed_at,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                    ) AS last_attempt_at
                 FROM watchlists AS w
                 WHERE w.briefing_cadence_seconds IS NOT NULL
                 ORDER BY w.id

@@ -54,6 +54,7 @@ from ...Subscriptions.briefing_export import (
 )
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
+    GenerationInFlightError,
     STATUS_COMPLETE,
     STATUS_GENERATING,
     active_briefing_claims,
@@ -4957,6 +4958,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             try:
                 row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
+            except GenerationInFlightError as exc:
+                # The race `_sweep_and_guard` cannot close: another
+                # in-process caller claimed this watchlist AFTER the sweep
+                # read the database (finding no `generating` row, so
+                # `blocking` stayed empty) but BEFORE its own row landed --
+                # this attempt then reached `generate_briefing`'s own claim
+                # check instead. `str(exc)` already names the watchlist and
+                # is user-safe (the class's own contract, mirroring
+                # `ScriptCastError`'s) -- the bare `except Exception` below
+                # must not swallow it as a generic database failure.
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
             except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
                 logger.warning(
                     f"Briefing generation failed for watchlist {watchlist_id}: "

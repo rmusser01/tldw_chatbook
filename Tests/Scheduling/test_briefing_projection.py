@@ -117,10 +117,16 @@ def test_projection_empty_briefing_counts_as_history_for_next_run_at():
     assert tasks[0].next_run_at == expected
 
 
-def test_projection_ignores_failed_and_generating_rows_for_next_run_at():
-    """A failed or still-`generating` briefing must not advance the schedule
-    -- pinned through the projection the same way task 2 pins it at the DB
-    layer, since this is the value the scheduler actually dispatches on."""
+def test_projection_next_run_at_follows_the_newest_attempt_of_any_status():
+    """Whole-branch review FIX 1: `next_run_at` must follow the NEWEST
+    attempt of ANY status, not stay frozen at the last completion. Before
+    this fix, a failed/generating row newer than the last completion left
+    `next_run_at` in the past forever (every ~30-minute queue reload
+    re-emitted the job, uncapped) -- this is the exact regression this
+    test guards. `last_completed_at` itself still correctly ignores
+    failed/generating rows (pinned at the DB layer in
+    `test_briefing_cadence_db.py`); what changed is that the projection no
+    longer uses `last_completed_at` ALONE for `next_run_at`."""
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db, name="Flaky")
     db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
@@ -135,8 +141,63 @@ def test_projection_ignores_failed_and_generating_rows_for_next_run_at():
     projection = BriefingProjection(db)
     tasks = projection.list_jobs()
 
-    expected = datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=3600)
+    expected = datetime(2099, 6, 1, tzinfo=timezone.utc) + timedelta(seconds=3600)
     assert tasks[0].next_run_at == expected
+    # Must NOT be the old (buggy) completion-only value, which would leave
+    # this schedule perpetually due on every queue reload.
+    stale = datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=3600)
+    assert tasks[0].next_run_at != stale
+
+
+def test_projection_next_run_at_after_a_failure_is_one_cadence_after_the_failure():
+    """The minimal failed-newest case: a failure more recent than the last
+    completed run defers `next_run_at` to one cadence period after the
+    FAILURE -- not `now` (that would be the never-attempted branch leaking
+    in) and not the stale completion (the bug)."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = _make_watchlist(db, name="Flaky Provider")
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=1800)
+
+    complete_id = db.insert_briefing(watchlist_id, status="complete")
+    _force_created_at(db, complete_id, "2026-01-01 00:00:00")
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-01-01 06:00:00")
+
+    now = datetime(2026, 1, 1, 6, 5, 0, tzinfo=timezone.utc)
+    projection = BriefingProjection(db)
+    [task] = projection.list_jobs(now=now)
+
+    expected = datetime(2026, 1, 1, 6, 0, 0, tzinfo=timezone.utc) + timedelta(
+        seconds=1800
+    )
+    assert task.next_run_at == expected
+    assert task.next_run_at != now
+    stale = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc) + timedelta(
+        seconds=1800
+    )
+    assert task.next_run_at != stale
+
+
+def test_projection_next_run_at_completed_newer_than_a_failure_is_unaffected():
+    """The mirror case: a failure OLDER than the latest completed run must
+    not push `next_run_at` backwards -- the newest attempt of either kind
+    wins, and here that is the completion (completed-newest unchanged)."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = _make_watchlist(db, name="Recovered")
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
+
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-02-01 00:00:00")
+    complete_id = db.insert_briefing(watchlist_id, status="complete")
+    _force_created_at(db, complete_id, "2026-02-01 03:00:00")
+
+    projection = BriefingProjection(db)
+    [task] = projection.list_jobs()
+
+    expected = datetime(2026, 2, 1, 3, 0, 0, tzinfo=timezone.utc) + timedelta(
+        seconds=3600
+    )
+    assert task.next_run_at == expected
 
 
 def test_projection_multiple_schedules_each_get_their_own_task():

@@ -74,9 +74,11 @@ A few things worth knowing before turning it on:
 - **It is opt-in, per watchlist, and off by default.** Generating a briefing
   spends the LLM tokens your briefing preset is configured to use, so
   turning scheduling on for one watchlist never turns it on for any other.
-- **A failed run never advances the schedule.** If a scheduled briefing
-  fails, the next tick simply tries again rather than skipping ahead — a
-  bad run costs a retry, never a missed watchlist.
+- **A failed run is retried at the next scheduled time, not immediately.**
+  If a scheduled briefing fails, the schedule doesn't skip ahead to the
+  next period — but it also doesn't retry right away. The next attempt
+  lands one cadence period after the failure, the same timing a normal
+  run would have used.
 
 The Artifacts section's scope line states plainly which of these applies:
 "on request" when scheduling is off, or the actual cadence — "scheduled

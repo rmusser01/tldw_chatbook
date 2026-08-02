@@ -8,7 +8,17 @@ non-NULL `briefing_cadence_seconds` (Locked Decision 4: scheduled briefings
 are opt-in, off by default), each already carrying `last_completed_at`
 computed with the same `status IN ('complete', 'empty')` allowlist as
 `latest_completed_watermark` -- a failed or still-`generating` briefing
-never advances the schedule.
+never advances the schedule (the completion watermark, unchanged).
+
+`next_run_at`, however, is attempt-aware (whole-branch review FIX 1): it
+also reads the row's status-blind `last_attempt_at` and uses whichever of
+`last_completed_at`/`last_attempt_at` is later. A schedule with a
+completion history but a MORE RECENT failure must retry one cadence period
+after that failure, not stay pinned to the stale completion -- the prior
+behavior left `next_run_at` in the past for any watchlist whose most
+recent run failed, so every ~60-tick queue reload (~30 min) re-emitted the
+job, uncapped, forever. Never-attempted (`last_completed_at` and
+`last_attempt_at` both `None`) is still due now.
 """
 
 from __future__ import annotations
@@ -113,19 +123,30 @@ class BriefingProjection:
     ) -> ScheduledTask:
         """Map a single `list_briefing_schedules` row to a `ScheduledTask`.
 
-        `next_run_at` is `last_completed_at + cadence` for a watchlist that
-        has completed at least one briefing (`complete` or `empty`,
-        `list_briefing_schedules`'s own allowlist); a watchlist that has
-        never completed one is due right now, rather than at some
-        indefinitely deferred time -- an opted-in schedule with no history
-        should fire on the next tick, not wait a full cadence period.
+        `next_run_at` is `max(last_completed_at, last_attempt_at) +
+        cadence` -- attempt-aware, not completion-only (whole-branch review
+        FIX 1). `last_attempt_at` is status-blind (failed/generating
+        included), so a failure that is more recent than the last
+        completion pushes the next run one cadence period past the
+        FAILURE, rather than leaving `next_run_at` frozen at the stale
+        completion (which the queue's ~30-minute reload cycle would then
+        re-emit every single time, uncapped). A watchlist that has never
+        had any attempt at all (`None` for both) is due right now, rather
+        than at some indefinitely deferred time -- an opted-in schedule
+        with no history should fire on the next tick, not wait a full
+        cadence period.
         """
         watchlist_id = row["watchlist_id"]
         cadence_seconds = int(row["briefing_cadence_seconds"])
         last_completed = _parse_iso_timestamp(row.get("last_completed_at"))
+        last_attempt = _parse_iso_timestamp(row.get("last_attempt_at"))
+        last_activity = max(
+            (dt for dt in (last_completed, last_attempt) if dt is not None),
+            default=None,
+        )
         next_run_at = (
-            last_completed + timedelta(seconds=cadence_seconds)
-            if last_completed is not None
+            last_activity + timedelta(seconds=cadence_seconds)
+            if last_activity is not None
             else now
         )
         return ScheduledTask(

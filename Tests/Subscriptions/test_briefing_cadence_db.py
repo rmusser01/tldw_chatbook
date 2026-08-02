@@ -213,6 +213,50 @@ def test_list_briefing_schedules_an_empty_briefing_does_advance_last_completed_a
     assert schedules[0]["last_completed_at"] == "2021-06-15 12:00:00"
 
 
+def test_list_briefing_schedules_last_attempt_at_is_null_when_never_attempted():
+    """The counterpart null check to `last_completed_at`'s own: a cadenced
+    watchlist with zero `briefings` rows at all must report `None` for
+    `last_attempt_at` too -- the projection reads this as "due now", not
+    some crash."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = _make_watchlist(db)
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
+
+    schedules = db.list_briefing_schedules()
+
+    assert len(schedules) == 1
+    assert schedules[0]["last_attempt_at"] is None
+
+
+def test_list_briefing_schedules_last_attempt_at_includes_failed_and_generating_rows():
+    """Whole-branch review FIX 1: unlike `last_completed_at`, `last_attempt_at`
+    is deliberately status-blind -- a failed (or still-`generating`) row must
+    win the MAX here, since it is the thing the retry cadence needs to defer
+    from. Seeds a `complete` row first (so `last_completed_at` stays pinned
+    to it, proving the two columns diverge), then a later `failed` row that
+    only `last_attempt_at` picks up."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = _make_watchlist(db)
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=3600)
+
+    complete_id = db.insert_briefing(watchlist_id, status="complete")
+    _force_created_at(db, complete_id, "2026-01-01 00:00:00")
+
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-01-01 06:00:00")
+
+    schedules = db.list_briefing_schedules()
+
+    assert len(schedules) == 1
+    row = schedules[0]
+    # last_completed_at stays at the complete row -- the failed row must
+    # not leak into this allowlisted column (the pre-existing pact,
+    # unchanged by this fix).
+    assert row["last_completed_at"] == "2026-01-01 00:00:00"
+    # last_attempt_at, however, picks up the later failed row.
+    assert row["last_attempt_at"] == "2026-01-01 06:00:00"
+
+
 def test_list_briefing_schedules_reads_inside_a_transaction(monkeypatch):
     """Qodo rule 1011851: reads must go through `self.transaction()`, not a
     bare connection call, so rollback-on-exception is consistently wired
