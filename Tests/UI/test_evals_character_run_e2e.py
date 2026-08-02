@@ -22,8 +22,10 @@ these tests (or in the worker itself) ever ``await``s it directly.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig, Probe, ProbeSet
@@ -272,3 +274,132 @@ async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_sil
         # never even be reached here -- `create_probe_run_group` raises
         # before writing anything for this target.
         assert pilot.app.screen._selection.kind == "character_bench"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (Important findings): the dirty-editor guard and the run
+# status transition, both newly reachable because this task is the first
+# code to ever call select() after a character-bench run completes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
+    evals_app, runnable_character_bench, evals_db
+):
+    """Before ``CharacterBenchEditor.is_dirty()`` existed and
+    ``EvalsScreen._selection_unmoved_since_launch`` learned to consult it,
+    editing this bench's Name field without saving, then pressing Run (a
+    SEPARATE button -- the editor stays mounted the whole time), let the
+    completing worker's own ``select(kind="run_group", ...)`` silently
+    discard the unsaved edit -- exactly the class of bug task-1610's
+    original ``BenchEditor``-only dirty guard was built to prevent for
+    word benches, newly reachable here because this task is the first
+    code to ever call ``select()`` after a character-bench run completes.
+
+    A ``threading.Event``-paused chat callable (not ``asyncio.Event``):
+    ``ChatCallable`` is a plain synchronous ``def`` running inside
+    ``asyncio.to_thread``'s own worker thread, so a blocking
+    ``threading.Event.wait()`` is what actually holds the run open
+    without blocking the event loop -- the pilot stays fully responsive
+    to real clicks/keystrokes while the first provider call is paused.
+    """
+    release = threading.Event()
+
+    def _pausable(*, messages, model, temperature, max_tokens, seed) -> str:
+        release.wait()
+        return "In character, while paused."
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen._character_probe_chat_factory = lambda cfg: _pausable
+        screen.select(kind="character_bench", id=runnable_character_bench)
+        await pilot.pause()
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._character_bench_run_running)
+        await pilot.pause()
+
+        name_input = screen.query_one("#evals-cb-name", Input)
+        name_input.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-cb-name")
+        name_input.value = ""  # setup: clear before typing the real edit
+        await pilot.press(*"typed-while-running")
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._character_bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "character_bench"
+        assert screen._selection.id == runnable_character_bench
+        # The same widget instance, still carrying the typed value -- proof
+        # this is a SKIPPED recompose, not merely a value that happens to
+        # match after a rebuild.
+        assert screen.query_one("#evals-cb-name", Input) is name_input
+        assert screen.query_one("#evals-cb-name", Input).value == "typed-while-running"
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run finished — see the Runs section."
+
+        # The run itself is real -- the DB write is not lost, only the
+        # auto-navigate is skipped.
+        from tldw_chatbook.Evals.character_probe.storage import load_conversations
+
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert len(load_conversations(evals_db, run_groups[0]["id"])) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
+    evals_app, runnable_character_bench
+):
+    """``EvalsViewModel.run_groups()``'s own pivot falls a "pending,
+    nothing running/cancelled/failed" group through to "completed", and
+    nothing in ``character_probe/storage.py``/``runner.py`` (Task 1's
+    phase-1 engine) ever transitions ``eval_runs.status`` itself, unlike
+    ``WordBenchRunner``. Before this fix, a HARD cancellation (Textual's
+    own ``exclusive=True`` worker mechanism -- the same mechanism a
+    second, superseding Run press already uses in production) left every
+    run row this worker created stuck at its 'pending' DB default, which
+    the rail's own pivot then read as "completed": indistinguishable from
+    a genuinely finished run with real results.
+
+    Cancels the worker's own Task directly via ``pilot.app.workers.
+    cancel_group`` -- the sharpest available reproduction of "cancelled
+    after work started" without a Cancel button to press yet.
+    """
+    release = threading.Event()
+
+    def _pausable(*, messages, model, temperature, max_tokens, seed) -> str:
+        release.wait()
+        return "never returns during this test"
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen._character_probe_chat_factory = lambda cfg: _pausable
+        screen.select(kind="character_bench", id=runnable_character_bench)
+        await pilot.pause()
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._character_bench_run_running)
+        await pilot.pause()
+
+        cancelled = pilot.app.workers.cancel_group(
+            screen, "evals-run-character-bench"
+        )
+        assert cancelled, "expected an in-flight character-bench run worker to cancel"
+
+        await _wait_until(pilot, lambda: not screen._character_bench_run_running)
+        await pilot.pause()
+
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert run_groups[0]["status"] == "cancelled"
+
+        # Unblock the still-paused provider thread -- it survives Task
+        # cancellation per `to_thread`'s own contract (see the module
+        # docstring), so it must be released rather than left to leak
+        # past this test.
+        release.set()

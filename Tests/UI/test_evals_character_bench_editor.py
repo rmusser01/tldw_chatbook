@@ -633,3 +633,153 @@ async def test_a_card_past_the_row_cap_is_reachable_inside_the_editors_own_scrol
             f"card 59 not hit-testable inside the bench editor's own scroll "
             f"at {size} -- landed on {hit!r} instead"
         )
+
+
+# ---------------------------------------------------------------------------
+# is_dirty() -- task-1691 phase 2 Task 6 review round 1 (Important finding):
+# EvalsScreen._selection_unmoved_since_launch queried ONLY BenchEditor's own
+# is_dirty(), leaving a completing character-bench run free to silently
+# discard an unsaved edit in THIS editor. Mirrors BenchEditor.is_dirty()'s
+# own contract/tests, per the reviewer's explicit instruction not to invent
+# a second one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_independently_for_each_scalar_field(
+    character_app, saved_bench_id
+):
+    """Name/Description/Samples/Seed/Temperature/Max-tokens each flip
+    ``is_dirty()`` to True on their own -- exercised one field at a time
+    against a freshly re-selected (clean) editor, so an earlier field's
+    edit can never mask a later one's assertion. Real typing throughout
+    (this module's own "Real widgets, not `.value=` assignment" rule);
+    ``.value = ""`` appears only as the established setup-clear."""
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-name")
+        pilot.app.screen.query_one("#evals-cb-name", Input).value = ""
+        await pilot.press(*"renamed")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-description")
+        await pilot.press(*"new description")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-samples")
+        pilot.app.screen.query_one("#evals-cb-samples", Input).value = ""
+        await pilot.press("3")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-seed")
+        await pilot.press("-", "1")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-temperature")
+        pilot.app.screen.query_one("#evals-cb-temperature", Input).value = ""
+        await pilot.press("1", ".", "2")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-max-tokens")
+        pilot.app.screen.query_one("#evals-cb-max-tokens", Input).value = ""
+        await pilot.press("6", "4")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        # An unparseable numeric value counts as dirty too -- matches
+        # Save's own treatment of that value as a real, if invalid, edit.
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-samples")
+        pilot.app.screen.query_one("#evals-cb-samples", Input).value = ""
+        await pilot.press(*"nan")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_when_a_card_selection_changes(
+    character_app, saved_bench_id
+):
+    """``saved_bench_id`` starts with only Vex (id 3, row 0) selected --
+    clicking Marlow's row (id 7, row 1) is a real character-selection edit,
+    not just a form-field edit, and ``is_dirty()`` must catch it too."""
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is False
+
+        await _click_after_scroll(pilot, "#evals-card-row-1")
+        await pilot.pause()
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_treats_a_reordered_but_unchanged_character_selection_as_clean(
+    character_app, evals_db
+):
+    """``CardPicker.selected_ids()`` returns ids in CARD-LIST order (``
+    CARDS``' own order here), not the order they happen to be stored in
+    ``config.character_ids`` -- a bench saved with ``character_ids=(9, 3)``
+    (id 9, "vexing puzzle", stored BEFORE id 3, "Vex") reads back through
+    the picker as ``(3, 9)`` (``CARDS``' own order: Vex is index 0, "vexing
+    puzzle" is index 2) even though nothing was ever edited. ``is_dirty()``
+    must not manufacture a false positive out of this reordering -- see its
+    own docstring for why the comparison is a SET, not a tuple, unlike
+    ``BenchEditor.is_dirty()``'s order-sensitive staged-target comparison.
+    A naive tuple comparison here would report a freshly-selected, never-
+    touched bench as dirty forever, permanently blocking auto-navigate for
+    every run of it."""
+    probe_set_id = _make_probe_set(evals_db, name="reorder probe set")
+    target_id = evals_db.create_model(name="t", provider="llama_cpp", model_id="m")
+    config = CharacterProbeConfig(
+        name="reorder-check bench",
+        probe_set_id=probe_set_id,
+        character_ids=(9, 3),
+        target_ids=(target_id,),
+    )
+    bench_id = save_character_bench(evals_db, config)
+
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, bench_id)
+        await pilot.pause()
+        editor = pilot.app.screen.query_one(CharacterBenchEditor)
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_again_after_save(character_app, saved_bench_id):
+    """Save -> ``Saved`` -> the screen's own re-selection (via ``select_
+    bench``, which mounts a brand-new editor instance from what was
+    actually persisted) reads clean again -- the round-trip this whole
+    feature exists to protect: an in-flight worker completing AFTER a Save
+    must still be free to auto-navigate."""
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        await _click_after_scroll(pilot, "#evals-cb-name")
+        pilot.app.screen.query_one("#evals-cb-name", Input).value = ""
+        await pilot.press(*"renamed-and-saved")
+        assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
+
+        await _click_after_scroll(pilot, "#evals-cb-save")
+        await pilot.pause()
+
+        # `select_bench` bypasses `EvalsScreen.select()`'s own recompose
+        # (see its own docstring), so re-select explicitly to rebuild the
+        # editor from the freshly persisted row, mirroring what a real
+        # `CharacterBenchEditor.Saved` -> `EvalsScreen.select()` round trip
+        # produces.
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        editor = pilot.app.screen.query_one(CharacterBenchEditor)
+        assert editor.is_dirty() is False

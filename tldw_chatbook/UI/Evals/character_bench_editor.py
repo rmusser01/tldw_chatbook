@@ -242,6 +242,124 @@ class CharacterBenchEditor(Vertical):
                 tooltip="Discard unsaved changes and reload this bench.",
             )
 
+    def is_dirty(self) -> bool:
+        """True when the mounted form differs from ``self._loaded_config``
+        -- i.e. there is unsaved state a recompose would destroy.
+
+        Same contract as ``BenchEditor.is_dirty()`` (task-1610), which
+        this method mirrors rather than reinventing: ``EvalsScreen.
+        _selection_unmoved_since_launch`` queries it defensively before
+        letting a just-finished background worker call ``select()``, so a
+        completing character-bench run must not silently discard an
+        unsaved edit made in this editor while the run was in flight
+        (task-1691 phase 2 Task 6 review round 1 -- before this method
+        existed, ``_selection_unmoved_since_launch`` only ever queried
+        ``#evals-bench-editor``/``BenchEditor``, so this editor's own
+        dirty state was invisible to it).
+
+        Computed on demand by re-reading the same widgets ``_on_save_
+        pressed`` reads and comparing each to what ``compose()`` loaded --
+        no field here posts a live ``Changed`` message (see the module
+        docstring's "display-only until Save" paragraph), so there is no
+        watcher to drive this reactively instead. The four sampler fields
+        go through the exact same ``int``/``float``/blank-means-``None``
+        parsing ``_on_save_pressed`` itself uses, so the two can never
+        disagree about what counts as an edit; an unparseable value counts
+        as dirty (the user typed SOMETHING different from the loaded
+        value), matching Save's own treatment of that value as a real, if
+        invalid, edit.
+
+        Character selection is compared as a SET, not a tuple, unlike
+        ``BenchEditor.is_dirty()``'s order-sensitive ``_staged_target_ids``
+        comparison -- deliberately, not an oversight: ``CardPicker.
+        selected_ids()`` returns ids in CARD-LIST order (the order
+        ``EvalsViewModel.character_cards()`` supplied them in), not the
+        order they happen to be stored in ``config.character_ids``, so an
+        untouched, pristine picker can legitimately return a different
+        ORDER than ``loaded.character_ids`` while selecting the exact same
+        cards -- ``_on_save_pressed`` already accepts this (it saves
+        whatever order ``selected_ids()`` returns), so this method must
+        not manufacture a false "dirty" out of a reordering Save itself
+        does not consider a change.
+
+        ``False`` when this widget never composed a form at all --
+        ``self._loaded_config`` stays ``None`` in every one of
+        ``compose()``'s early-return branches (no db, or an unreadable
+        bench row) -- there is no form to have edited.
+
+        Returns:
+            bool: True when any field or the character selection differs
+            from the loaded bench state; False for a pristine form or when
+            no form composed at all.
+        """
+        loaded = self._loaded_config
+        if loaded is None:
+            return False
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            name = self.query_one("#evals-cb-name", Input).value
+            description = self.query_one("#evals-cb-description", Input).value
+            samples_raw = self.query_one("#evals-cb-samples", Input).value
+            seed_raw = self.query_one("#evals-cb-seed", Input).value
+            temperature_raw = self.query_one("#evals-cb-temperature", Input).value
+            max_tokens_raw = self.query_one("#evals-cb-max-tokens", Input).value
+        except QueryError:
+            # Defensive only: this widget always composes all six fields
+            # together with `_loaded_config` (see compose()'s own early
+            # returns above) -- treating an unreadable form as dirty is the
+            # conservative direction if that invariant is ever broken (a
+            # false positive here degrades a completing worker to a toast;
+            # a false negative would let it destroy real unsaved state).
+            return True
+
+        if name != loaded.name:
+            return True
+        if description != loaded.description:
+            return True
+
+        try:
+            samples_per_cell = int(samples_raw.strip())
+        except ValueError:
+            return True
+        if samples_per_cell != loaded.samples_per_cell:
+            return True
+
+        seed_text = seed_raw.strip()
+        seed: Optional[int]
+        if seed_text == "":
+            seed = None
+        else:
+            try:
+                seed = int(seed_text)
+            except ValueError:
+                return True
+        if seed != loaded.seed:
+            return True
+
+        try:
+            temperature = float(temperature_raw.strip())
+        except ValueError:
+            return True
+        if temperature != loaded.temperature:
+            return True
+
+        try:
+            max_tokens = int(max_tokens_raw.strip())
+        except ValueError:
+            return True
+        if max_tokens != loaded.max_tokens:
+            return True
+
+        try:
+            character_ids = self.query_one(CardPicker).selected_ids()
+        except QueryError:
+            return True
+        if set(character_ids) != set(loaded.character_ids):
+            return True
+
+        return False
+
     def _build_probe_set_section(
         self, db: EvalsDB, config: CharacterProbeConfig
     ) -> list[Any]:

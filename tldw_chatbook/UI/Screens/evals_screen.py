@@ -435,25 +435,45 @@ class EvalsScreen(LabScreen):
         ``select()`` (task-1482 Task 2).
 
         A THIRD, independent check overrides both branches above (task-1610):
-        if the currently mounted detail pane holds a ``BenchEditor`` whose
-        ``is_dirty()`` is ``True``, this returns ``False`` regardless of
-        selection identity -- a recompose would destroy that unsaved state
-        even when the selection itself never moved. This is deliberately
-        NOT limited to ``bench_task_id``'s own editor: the sample-bench
-        worker's sharpest case is a user parked on some OTHER bench's
-        editor (unrelated to the sample bench just created elsewhere) with
-        unsaved edits -- ``self._selection`` reads "unmoved" there (it never
-        pointed at the sample bench to begin with), but the mounted editor
-        is still real, unsaved, user state a recompose must not touch.
-        Queried defensively (``QueryError`` -> not dirty, nothing to
-        protect): most selections never mount a ``BenchEditor`` at all.
+        if the currently mounted detail pane holds a ``BenchEditor`` OR a
+        ``CharacterBenchEditor`` whose ``is_dirty()`` is ``True``, this
+        returns ``False`` regardless of selection identity -- a recompose
+        would destroy that unsaved state even when the selection itself
+        never moved. This is deliberately NOT limited to ``bench_task_id``'s
+        own editor: the sample-bench worker's sharpest case is a user
+        parked on some OTHER bench's editor (unrelated to the sample bench
+        just created elsewhere) with unsaved edits -- ``self._selection``
+        reads "unmoved" there (it never pointed at the sample bench to
+        begin with), but the mounted editor is still real, unsaved, user
+        state a recompose must not touch. Queried defensively (``QueryError``
+        -> not dirty, nothing to protect): most selections never mount
+        either editor at all, and the two are never BOTH mounted at once
+        (mutually exclusive selection kinds), so checking both costs at
+        most one real query.
+
+        task-1691 phase 2 Task 6 review round 1 (Important finding): before
+        this check covered ``CharacterBenchEditor`` too, editing a
+        character bench's field without saving, then pressing Run (a
+        SEPARATE button -- the editor stays mounted), let the completing
+        worker's own ``select(kind="run_group", ...)`` silently discard
+        the unsaved edit -- this is exactly the class of bug task-1610's
+        original ``BenchEditor``-only check was built to prevent, just
+        newly reachable because Task 6 is the first code to ever call
+        ``select()`` after a character-bench run completes.
         """
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
-            editor = self.query_one("#evals-bench-editor", BenchEditor)
+            editor: Any = self.query_one("#evals-bench-editor", BenchEditor)
         except QueryError:
             editor = None
+        if editor is None:
+            try:
+                editor = self.query_one(
+                    "#evals-character-bench-editor", CharacterBenchEditor
+                )
+            except QueryError:
+                editor = None
         if editor is not None and editor.is_dirty():
             return False
 
@@ -1181,6 +1201,51 @@ class EvalsScreen(LabScreen):
             )
         return model
 
+    @staticmethod
+    def _mark_character_run_ids(
+        db: Optional[EvalsDB], run_ids: Mapping[str, str], status: str
+    ) -> None:
+        """Best-effort terminal-status stamp for every run
+        ``_run_character_bench_worker`` created, mirroring ``sample_bench.
+        _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
+        call and its "log and continue, never let a bookkeeping failure
+        mask the real outcome" contract -- called from both the success
+        path (``status="completed"``) and the ``CancelledError`` path
+        (``status="cancelled"``) of that worker.
+
+        Necessary because ``character_probe.storage``/``runner`` (Task 1's
+        phase-1 engine) never call ``EvalsDB.update_run_status``
+        themselves -- unlike ``WordBenchRunner.run``, which moves each run
+        pending -> running -> completed/cancelled on its own. Left
+        unstamped, ``EvalsViewModel.run_groups()``'s own pivot falls a
+        "pending, nothing running/cancelled/failed" group through to
+        "completed" (see that method's own docstring) -- true by
+        coincidence for a genuinely successful run, but also true, and
+        misleading, for one that was hard-cancelled with zero results
+        (task-1691 phase 2 Task 6 review round 1 finding).
+
+        Args:
+            db: The evals database handle, or ``None`` -- nothing to
+                stamp when this worker failed before ever resolving one
+                (the earliest possible failure, before any run existed to
+                mark).
+            run_ids: ``target_id -> eval_runs id``, as returned by
+                ``create_probe_run_group`` -- empty (``{}``) when this
+                worker failed or was cancelled before that call ever ran,
+                in which case there is nothing to stamp either.
+            status: ``"completed"`` or ``"cancelled"``.
+        """
+        if db is None or not run_ids:
+            return
+        for run_id in set(run_ids.values()):
+            try:
+                db.update_run_status(run_id, status)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not mark character bench run {run_id!r} "
+                    f"{status!r}."
+                )
+
     async def _run_character_bench_worker(self) -> None:
         """Runs ``self._character_bench_run_task_id`` -- the character-probe
         sibling of ``_run_bench_worker`` just above (see that method's own
@@ -1219,15 +1284,23 @@ class EvalsScreen(LabScreen):
         ``exclusive=True`` superseding it) can still land before
         ``save_conversations`` ever runs, in which case the run group's
         ``eval_runs`` rows (already written by ``create_probe_run_group``,
-        before the runner starts) persist with no results attached --
-        this mirrors a known, pre-existing gap in the phase-1 engine
-        itself (unlike ``WordBenchRunner``, nothing in
-        ``character_probe.runner``/``storage`` ever transitions
-        ``eval_runs.status`` past its ``'pending'`` default, in EITHER the
-        success or the cancelled case), so no NEW orphan-cleanup behavior
-        is invented here for one path only -- see this task's own report
-        for why fixing that status gap is out of scope for this task's
-        file list.
+        before the runner starts) persist with no results attached.
+        Nothing in ``character_probe.storage``/``runner`` (Task 1's
+        phase-1 engine) ever transitions ``eval_runs.status`` past its
+        ``'pending'`` DB default itself -- unlike ``WordBenchRunner``,
+        which moves each run pending -> running -> completed/cancelled on
+        its own -- so this method stamps the terminal status directly
+        (review round 1 fix): ``"completed"`` after ``save_conversations``
+        succeeds, ``"cancelled"`` in the ``except CancelledError`` branch
+        below, via ``_mark_character_run_ids`` (mirrors ``sample_bench.
+        _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
+        call and its "log and continue, never let a bookkeeping failure
+        mask the real outcome" contract). Left unstamped,
+        ``EvalsViewModel.run_groups()``'s own pivot falls a "pending,
+        nothing running/cancelled/failed" group through to "completed"
+        (see that method's own docstring) -- true by coincidence for a
+        genuinely finished run, but also true, and actively misleading,
+        for one that was hard-cancelled with zero results.
 
         Every error ``cards.snapshot_cards``/``targets.resolve_targets``
         (via ``create_probe_run_group``/``CharacterProbeRunner.run``) can
@@ -1244,6 +1317,8 @@ class EvalsScreen(LabScreen):
         self._character_bench_run_cancel_token = cancel_token
         self._set_bench_run_running_ui()
         group_id: Optional[str] = None
+        db: Optional[EvalsDB] = None
+        run_ids: dict[str, str] = {}
         try:
             db = self._view_model.db
             if db is None:
@@ -1272,12 +1347,18 @@ class EvalsScreen(LabScreen):
                 progress=self._on_bench_run_progress,
             )
             save_conversations(db, new_group_id, run_ids, conversations)
+            self._mark_character_run_ids(db, run_ids, "completed")
             group_id = new_group_id
         except asyncio.CancelledError:
             # A hard cancellation (Textual's `exclusive=True` superseding
             # this worker) is re-raised, never swallowed -- Textual's
             # worker bookkeeping needs to observe the real cancellation,
             # the same rule `_run_bench_worker`'s identical clause states.
+            # `run_ids` is `{}` (its `__init__`-time default, never
+            # reassigned) if cancellation landed before `create_probe_run_
+            # group` ever ran -- `_mark_character_run_ids` no-ops on an
+            # empty mapping, so this is safe to call unconditionally.
+            self._mark_character_run_ids(db, run_ids, "cancelled")
             logger.info("Character bench run worker was cancelled.")
             raise
         except Exception as exc:
