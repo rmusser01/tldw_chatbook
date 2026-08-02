@@ -810,6 +810,93 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
 
 
 @pytest.mark.asyncio
+async def test_commit_persists_the_live_pressed_default_selection(
+    tmp_path, monkeypatch
+):
+    """PR #1184 review (finding 2), widget-level proof: commit() must read
+    the SELECTED language/precision from the mounted step, not a hardcoded
+    constant -- ``test_commit_persists_the_recommended_selection_once_verified_active``
+    above uses an UNMOUNTED step, so it only ever exercises
+    resolve_speech_selection's "" fallback branch. This test mounts the
+    real step (real curated_registry, nothing monkeypatched about
+    selectability) so English/INT8 is genuinely the only pre-pressed radio,
+    and proves the live-radio path is byte-identical to the old constant."""
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    active_dir = tmp_path / "installed"
+    monkeypatch.setattr(
+        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+    )
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._acted_this_run = True
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # commit() must run while the step is still mounted -- it reads the
+        # live RadioSet's pressed_button, which is gone once the App tears
+        # its widget tree down on exit (proven by _effective_language()
+        # falling back to "" post-exit; see the unmounted-fallback tests).
+        ok, error = await step.commit()
+
+    assert ok, error
+    committed = wizard.commit_config.call_args.args[0]
+    assert committed == {
+        "transcription": {
+            "default_provider": "parakeet-onnx",
+            "default_model": "nemo-parakeet-tdt-0.6b-v2",
+            "default_language": "en",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_commit_follows_a_hypothetical_second_selectable_language(
+    tmp_path, monkeypatch
+):
+    """Divergence-proofing (finding 2): make a v3 language selectable (as a
+    future curated descriptor would), press it, and prove commit() persists
+    THAT selection instead of silently keeping the English/v2 default --
+    the exact scenario the review flagged as "will silently diverge the
+    moment a second combination becomes selectable"."""
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    v3_language = sorted(policy.validated_v3_languages)[0]
+
+    active_dir = tmp_path / "installed"
+    monkeypatch.setattr(
+        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+    )
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._curated_model_ids = lambda: frozenset(
+        {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+    )
+    step._curated_precisions = lambda: frozenset({"int8"})
+    step._acted_this_run = True
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#setup-speech-language-{v3_language}")
+        await pilot.pause()
+        # commit() must run before the App tears its widget tree down (see
+        # the sibling byte-identical test's comment for why).
+        ok, error = await step.commit()
+
+    assert ok, error
+    committed = wizard.commit_config.call_args.args[0]
+    assert committed == {
+        "transcription": {
+            "default_provider": "parakeet-onnx",
+            "default_model": policy.parakeet_v3_model_id,
+            "default_language": v3_language,
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_commit_reports_failure_when_persistence_write_fails(monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 

@@ -171,6 +171,70 @@ def recommended_speech_selection() -> tuple[str, str, str]:
     return policy.parakeet_provider_id, policy.parakeet_v2_model_id, "en"
 
 
+def resolve_speech_selection(
+    *,
+    selected_language: str,
+    selected_precision: str,
+    curated_model_ids: frozenset[str],
+    curated_precisions: frozenset[str],
+) -> tuple[str, str, str]:
+    """Resolve the step's PRESSED language/precision radios into a commit tuple.
+
+    PR #1184 review (finding 2): ``commit()`` used to persist
+    ``recommended_speech_selection()`` unconditionally, even though the step
+    renders selectable language/precision ``RadioSet``s. Only one
+    combination (English, INT8) is selectable today, so no user choice
+    could actually be lost yet -- but the moment a second curated
+    descriptor lands, an unconditional constant would silently diverge from
+    the pressed radio. This is the one place that maps a live selection to
+    what gets persisted, via the same pure catalog helpers
+    (``speech_language_options``, ``speech_precision_options``) the step
+    already renders from.
+
+    Args:
+        selected_language: The code of the pressed language radio (``""``
+            when nothing is pressed -- e.g. the step never mounted, or
+            ``commit()`` runs before ``on_show()``).
+        selected_precision: The value of the pressed precision radio (same
+            "empty means nothing pressed" contract).
+        curated_model_ids: Model ids with a registered curated descriptor --
+            see ``speech_language_options``.
+        curated_precisions: Precisions with a registered curated Parakeet v2
+            descriptor -- see ``speech_precision_options``.
+
+    Returns:
+        ``(provider_id, model_id, language)`` for the pressed selection when
+        BOTH the language and precision radios resolve to a currently
+        selectable option. Otherwise ``recommended_speech_selection()`` --
+        the only selection available today, and the safe fallback for an
+        unmounted step, a stale id, or a selection that is no longer (or
+        not yet) selectable.
+    """
+    language_option = next(
+        (
+            option
+            for option in speech_language_options(curated_model_ids=curated_model_ids)
+            if option.code == selected_language and option.selectable
+        ),
+        None,
+    )
+    precision_option = next(
+        (
+            option
+            for option in speech_precision_options(curated_precisions=curated_precisions)
+            if option.value == selected_precision and option.selectable
+        ),
+        None,
+    )
+    if language_option is None or precision_option is None:
+        return recommended_speech_selection()
+    return (
+        _ROUTING_POLICY.parakeet_provider_id,
+        language_option.model_id,
+        language_option.code,
+    )
+
+
 def build_speech_transcription_commit(
     *, provider_id: str, model_id: str, language: str
 ) -> dict[str, dict[str, Any]]:
@@ -340,6 +404,7 @@ __all__ = [
     "should_persist_speech_config",
     "speech_prefill_status",
     "recommended_speech_selection",
+    "resolve_speech_selection",
     "routing_policy",
     "speech_language_options",
     "speech_precision_options",

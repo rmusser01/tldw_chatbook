@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
     build_speech_transcription_commit,
     read_speech_prefill,
     recommended_speech_selection,
+    resolve_speech_selection,
     routing_policy,
     should_persist_speech_config,
     speech_language_options,
@@ -113,6 +114,103 @@ class TestBuildSpeechTranscriptionCommit:
                 "default_language": "en",
             }
         }
+
+
+class TestResolveSpeechSelection:
+    """PR #1184 review (finding 2): commit() must persist what the user
+    actually PRESSED, not a hardcoded constant. Today only English/INT8 is
+    selectable, so this always equals recommended_speech_selection() -- but
+    the moment a second curated descriptor makes another combination
+    selectable, resolve_speech_selection() is the one place that has to
+    notice and follow the pressed radios instead."""
+
+    def test_nothing_selected_falls_back_to_recommended(self):
+        """No live radio pressed yet (e.g. the step never mounted, or
+        commit() runs before on_show()) -- skip-safe fallback."""
+        assert (
+            resolve_speech_selection(
+                selected_language="",
+                selected_precision="",
+                curated_model_ids=frozenset(),
+                curated_precisions=frozenset(),
+            )
+            == recommended_speech_selection()
+        )
+
+    def test_todays_only_selectable_combo_is_byte_identical_to_recommended(self):
+        """The BYTE-IDENTICAL pin: pressing the one combination that is
+        selectable today must resolve to exactly what commit() persists
+        today -- no behavior change yet, divergence-proofing for later."""
+        policy = routing_policy()
+        result = resolve_speech_selection(
+            selected_language="en",
+            selected_precision="int8",
+            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
+            curated_precisions=frozenset({"int8"}),
+        )
+        assert result == recommended_speech_selection()
+        assert result == (policy.parakeet_provider_id, policy.parakeet_v2_model_id, "en")
+
+    def test_hypothetical_second_selectable_language_is_honored(self):
+        """Divergence-proofing: once a second curated descriptor makes a v3
+        language selectable, the commit payload must follow the PRESSED
+        radio, not silently keep persisting the v2/English default.
+
+        Mutation check: an implementation that hardcodes
+        ``return recommended_speech_selection()`` regardless of the
+        selection makes this assertion fail (it would still return the
+        English/v2 tuple)."""
+        policy = routing_policy()
+        v3_language = sorted(policy.validated_v3_languages)[0]
+        result = resolve_speech_selection(
+            selected_language=v3_language,
+            selected_precision="int8",
+            curated_model_ids=frozenset(
+                {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+            ),
+            curated_precisions=frozenset({"int8"}),
+        )
+        assert result == (policy.parakeet_provider_id, policy.parakeet_v3_model_id, v3_language)
+        assert result != recommended_speech_selection()
+
+    def test_unselectable_language_falls_back_even_when_curated_elsewhere(self):
+        """A pressed language whose model is not (yet) curated must never be
+        persisted, even if some other model id happens to be curated."""
+        policy = routing_policy()
+        v3_language = sorted(policy.validated_v3_languages)[0]
+        result = resolve_speech_selection(
+            selected_language=v3_language,
+            selected_precision="int8",
+            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),  # no v3
+            curated_precisions=frozenset({"int8"}),
+        )
+        assert result == recommended_speech_selection()
+
+    def test_unselectable_precision_falls_back_even_when_language_is_selectable(self):
+        """Both radios must resolve to a currently-selectable option --
+        precision alone can veto a selectable language too (defensive: the
+        UI never lets a disabled radio get pressed, but the pure resolver
+        does not trust that)."""
+        policy = routing_policy()
+        result = resolve_speech_selection(
+            selected_language="en",
+            selected_precision="f32",
+            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
+            curated_precisions=frozenset({"int8"}),  # f32 not curated
+        )
+        assert result == recommended_speech_selection()
+
+    def test_unknown_language_code_falls_back(self):
+        """A stale/garbage id (should never happen via the real RadioSet)
+        must not raise -- fall back to the recommended selection."""
+        policy = routing_policy()
+        result = resolve_speech_selection(
+            selected_language="zz",
+            selected_precision="int8",
+            curated_model_ids=frozenset({policy.parakeet_v2_model_id}),
+            curated_precisions=frozenset({"int8"}),
+        )
+        assert result == recommended_speech_selection()
 
 
 class TestReadSpeechPrefill:

@@ -1269,6 +1269,44 @@ class SpeechSetupStep(SetupStep):
             if descriptor.model_id == policy.parakeet_v2_model_id
         )
 
+    # -- review finding 2: read the PRESSED radio, never a hardcoded default --
+    _LANGUAGE_RADIO_ID_PREFIX = "setup-speech-language-"
+    _PRECISION_RADIO_ID_PREFIX = "setup-speech-precision-"
+
+    def _effective_language(self) -> str:
+        """The code of the currently pressed language radio, or "" for none.
+
+        Mirrors ``ModelSetupStep._live_pressed_radio``'s guard: reading
+        ``RadioSet.pressed_button`` unguarded can resurrect a stale press
+        left over from before a ``recompose``, so membership in the set's
+        CURRENT children is required too. "" (never pressed / step
+        unmounted, e.g. ``commit()`` called before ``on_show()``) is a
+        valid, skip-safe result -- ``resolve_speech_selection`` falls back
+        to the recommended default for it.
+        """
+        return self._pressed_radio_code(
+            "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
+        )
+
+    def _effective_precision(self) -> str:
+        """The value of the currently pressed precision radio, or "" for none."""
+        return self._pressed_radio_code(
+            "#setup-speech-precision-choice", self._PRECISION_RADIO_ID_PREFIX
+        )
+
+    def _pressed_radio_code(self, selector: str, id_prefix: str) -> str:
+        try:
+            radio_set = self.query_one(selector, RadioSet)
+        except Exception:
+            return ""
+        pressed = radio_set.pressed_button
+        if pressed is None or pressed not in radio_set.query(RadioButton):
+            return ""
+        button_id = pressed.id or ""
+        if not button_id.startswith(id_prefix):
+            return ""
+        return button_id[len(id_prefix):]
+
     def _prefill(self) -> Any:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         return speech_state.read_speech_prefill(app_config)
@@ -1655,7 +1693,14 @@ class SpeechSetupStep(SetupStep):
             # this step this run -- either way, leave [transcription] byte-
             # identical to whatever is already persisted (review Important 3).
             return True, ""
-        provider_id, model_id, language = speech_state.recommended_speech_selection()
+        # Review finding 2: persist what the user actually pressed, not a
+        # hardcoded constant -- see resolve_speech_selection's docstring.
+        provider_id, model_id, language = speech_state.resolve_speech_selection(
+            selected_language=self._effective_language(),
+            selected_precision=self._effective_precision(),
+            curated_model_ids=self._curated_model_ids(),
+            curated_precisions=self._curated_precisions(),
+        )
         ok = await self.wizard.commit_config(
             speech_state.build_speech_transcription_commit(
                 provider_id=provider_id, model_id=model_id, language=language,
