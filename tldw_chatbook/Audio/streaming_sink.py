@@ -173,9 +173,13 @@ class StreamingPcmSink:
     `close()`/`stop()`/a failure, a new `StreamingPcmSink` must be created
     for further playback.
 
-    All public methods are safe to call from any thread; the audio device
-    callback runs on a backend-owned thread and communicates with the rest
-    of the instance only through a single lock.
+    All public methods are safe to call from any thread. The audio device
+    callback runs on a backend-owned realtime thread; it communicates
+    buffer/state changes with the rest of the instance through a single
+    lock, and hands off event delivery and stream teardown to a dedicated
+    notify thread via a queue (see the module docstring's "Thread
+    contract") rather than ever calling back into `on_event` or the
+    stream itself directly.
     """
 
     def __init__(
