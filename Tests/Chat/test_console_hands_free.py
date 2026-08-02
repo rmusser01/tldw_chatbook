@@ -19,6 +19,7 @@ written one statement per line.
 """
 
 from tldw_chatbook.Chat.console_hands_free import (
+    AWAITING_REPLY_DEADLINE_SECONDS,
     CloseCapture,
     CountdownTick,
     ExitLoop,
@@ -82,6 +83,11 @@ def test_keypress_in_awaiting_suppresses_speech():
     c.on_composer_key()
     assert any(isinstance(e, SuppressReplySpeech) for e in ev)
     assert c.state == "listening"
+    # F4 (review): this reopen was unpinned -- deleting it passed 29/29.
+    # The mic was closed on send; a keypress-suppressed reply must reopen
+    # it or the loop lands in `listening` with a permanently closed mic.
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert c.capture_open is True
 
 
 def test_limit_hit_with_segments_sends_without_segments_reopens_once_then_exits():
@@ -401,20 +407,148 @@ def test_enter_from_live_capture_does_not_reopen_it():
     assert c.state == "listening"
 
 
-def test_expiry_closes_capture_unless_acoustic_opt_in():
+def test_expiry_always_closes_capture_regardless_of_acoustic_mode():
+    """F1 (review): the send stops the capture in BOTH modes -- V2's
+    stop-and-send flow only ever runs from the recorder's own stop
+    success tail, so `_capture_open` must go False on every send. Acoustic
+    mode's difference is WHEN the mic reopens (`on_reply_started`, not
+    "never closed in the first place")."""
     c, ev = mk()
     c.enter(capture_live=True)
     c.on_voice_final()
     c.tick(now=0.0)
     c.tick(now=1.6)
     assert any(isinstance(e, CloseCapture) for e in ev)
+    assert c.capture_open is False
 
     c2, ev2 = mk(acoustic_barge_in=True)
     c2.enter(capture_live=True)
     c2.on_voice_final()
     c2.tick(now=0.0)
     c2.tick(now=1.6)
-    assert not any(isinstance(e, CloseCapture) for e in ev2)
+    assert any(isinstance(e, CloseCapture) for e in ev2)
+    assert c2.capture_open is False
+
+
+def test_acoustic_mode_reopens_at_reply_started_not_at_drained():
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.capture_open is False  # closed by the send, like non-acoustic
+    ev.clear()
+    c.on_reply_started()
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert c.capture_open is True
+
+
+def test_non_acoustic_mode_does_not_reopen_at_reply_started():
+    c, ev = mk()  # acoustic_barge_in defaults False
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.capture_open is False
+    ev.clear()
+    c.on_reply_started()
+    assert not any(isinstance(e, OpenCapture) for e in ev)
+    assert c.capture_open is False
+
+
+def test_acoustic_mode_resume_in_speaking_works_across_multiple_turns():
+    """F1 (review, HIGH): reproduces the reviewer's turn-2 sequence, and
+    checks the model's OWN consistency at each step, not just that
+    `on_speech_resumed` happens to still emit `SilenceSpeech` (nothing
+    gates that emission on `capture_open`, so a stale model wouldn't
+    change it -- the actual defect is the model believing the mic stayed
+    open across a send that, in reality, always stops it). Mutation
+    evidence: reverting `_begin_awaiting_reply` to skip `CloseCapture` in
+    acoustic mode (the pre-fix, sticky-`_capture_open` model) makes the
+    per-turn `CloseCapture` assertion fail from turn 1 onward."""
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    for turn in range(3):
+        base = float(turn * 10)
+        c.on_voice_final()
+        ev.clear()
+        c.tick(now=base)
+        c.tick(now=base + 1.6)
+        assert c.state == "awaiting_reply", f"turn {turn}"
+        assert any(isinstance(e, CloseCapture) for e in ev), \
+            f"turn {turn}: send did not close the mic in the model"
+        assert c.capture_open is False, f"turn {turn}: model out of sync with reality"
+        ev.clear()
+        c.on_reply_started()
+        assert any(isinstance(e, OpenCapture) for e in ev), \
+            f"turn {turn}: mic did not reopen for the reply"
+        assert c.capture_open is True, f"turn {turn}: mic did not reopen for the reply"
+        c.on_first_utterance()
+        assert c.state == "speaking", f"turn {turn}"
+        ev.clear()
+        c.on_speech_resumed()
+        assert any(isinstance(e, SilenceSpeech) for e in ev), \
+            f"turn {turn}: acoustic resume did not silence -- loop went deaf"
+        assert c.state == "listening", f"turn {turn}"
+
+
+def test_capture_ended_in_awaiting_reply_corrects_model_issues_no_send():
+    """F2 (review): a capture-ended report while a reply is outstanding
+    must correct the mic model but must NOT issue a send mid-reply (that
+    would interleave two turns)."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.state == "awaiting_reply"
+    ev.clear()
+    c.on_capture_ended(had_segments=True, limit_hit=True)
+    assert c.state == "awaiting_reply"
+    assert not any(isinstance(e, RequestStopAndSend) for e in ev)
+
+
+def test_capture_ended_in_speaking_acoustic_reopens_the_mic():
+    """F2 (review): the acoustic-mode mic can end (service-side limit)
+    while the reply is still speaking -- must correct the model AND
+    reopen (per F1's on_reply_started rule), not drop the user's speech
+    silently with no intent at all."""
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"
+    assert c.capture_open is True
+    ev.clear()
+    c.on_capture_ended(had_segments=True, limit_hit=True)
+    # Corrects the model (closed by the service-side limit) and reopens it
+    # (acoustic mode) within this one call -- the intermediate "closed"
+    # instant is not separately observable, only the net effect is.
+    assert c.state == "speaking"
+    assert not any(isinstance(e, RequestStopAndSend) for e in ev)
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert not any(isinstance(e, CloseCapture) for e in ev)  # a fact, not a command
+    assert c.capture_open is True
+
+
+def test_capture_ended_in_speaking_non_acoustic_only_corrects_the_model():
+    c, ev = mk()  # acoustic_barge_in defaults False
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"
+    assert c.capture_open is False  # never reopened outside acoustic mode
+    ev.clear()
+    c.on_capture_ended(had_segments=False, limit_hit=True)
+    assert c.capture_open is False
+    assert not any(isinstance(e, OpenCapture) for e in ev)
+    assert c.state == "speaking"
 
 
 def test_zero_sentence_reply_short_circuits_to_listening():
@@ -438,3 +572,185 @@ def test_mode_changed_emitted_on_every_transition():
     c.on_voice_final()
     modes = [e.state for e in ev if isinstance(e, ModeChanged)]
     assert modes == ["listening", "countdown"]
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave (task-3-review.md): F1 High, F2-F6 Medium, F7-F10 Low
+# ---------------------------------------------------------------------------
+
+
+def test_resume_latch_does_not_survive_a_turn_boundary():
+    """F3 (review): reproduces the reviewer's cross-turn swallow (P2). A
+    resume latched in `listening` before ANY final is pending must not
+    outlive the turn boundary a send creates -- otherwise it swallows the
+    NEXT turn's genuine `on_voice_final`."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_speech_resumed()  # latches with nothing pending to cancel
+    assert c.state == "listening"
+    c.on_capture_ended(had_segments=True, limit_hit=True)  # turn boundary: a send
+    assert c.state == "awaiting_reply"
+    c.on_reply_started()
+    c.on_first_utterance()
+    c.on_reply_finished()
+    c.on_sequencer_drained()
+    assert c.state == "listening"
+
+    ev.clear()
+    c.on_voice_final()  # next turn's genuine final must NOT be swallowed
+    assert c.state == "countdown"
+
+
+def test_resume_latch_cleared_on_countdown_expiry_turn_boundary():
+    """F3 (continued): the same swallow via the countdown-expiry send
+    path (not just `on_capture_ended`)."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_speech_resumed()  # latches
+    c.on_voice_final()  # consumes it (carried finding #1), stays listening
+    assert c.state == "listening"
+    c.on_speech_resumed()  # latches again, nothing pending
+    # A full turn happens without ever consuming this second latch via
+    # on_voice_final -- it must not leak into the NEXT turn either.
+    c.on_capture_ended(had_segments=True, limit_hit=True)
+    c.on_reply_started()
+    c.on_first_utterance()
+    c.on_reply_finished()
+    c.on_sequencer_drained()
+    assert c.state == "listening"
+
+    ev.clear()
+    c.on_voice_final()
+    assert c.state == "countdown"
+
+
+def test_awaiting_reply_deadline_not_yet_expired_stays_awaiting():
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.state == "awaiting_reply"
+    c.tick(now=1.6)  # anchors _awaiting_armed_at = 1.6
+    assert c.state == "awaiting_reply"
+    c.tick(now=1.6 + AWAITING_REPLY_DEADLINE_SECONDS - 1.0)  # still inside the window
+    assert c.state == "awaiting_reply"
+
+
+def test_awaiting_reply_deadline_expiry_reopens_and_returns_to_listening():
+    """F5 (review): a silently-refused send must not hang the loop in
+    `awaiting_reply` forever. Mutation evidence: removing the deadline
+    watchdog makes this fail (state stays `awaiting_reply` under an
+    arbitrarily large `now`)."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.state == "awaiting_reply"
+    ev.clear()
+    c.tick(now=1.6)  # first awaiting_reply tick: anchors, does not expire yet
+    assert c.state == "awaiting_reply"
+    c.tick(now=1.6 + AWAITING_REPLY_DEADLINE_SECONDS + 0.1)  # past the deadline
+    assert c.state == "listening"
+    assert any(isinstance(e, OpenCapture) for e in ev)
+    assert any(isinstance(e, ModeChanged) and e.state == "listening" for e in ev)
+
+
+def test_countdown_tick_clamped_and_nonincreasing_under_backwards_jitter():
+    """F6 (review): reproduces the reviewer's backwards-jitter probe
+    (100.0 / 100.5 / 99.0 / 100.2). Mutation evidence: removing the clamp
+    lets `remaining` exceed `send_delay_seconds` and go non-monotonic."""
+    c, ev = mk()  # send_delay_seconds=1.5
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    for now in (100.0, 100.5, 99.0, 100.2):
+        c.tick(now=now)
+    ticks = [e.remaining for e in ev if isinstance(e, CountdownTick)]
+    assert len(ticks) == 4
+    assert all(0.0 <= r <= 1.5 for r in ticks)
+    assert all(ticks[i] >= ticks[i + 1] for i in range(len(ticks) - 1))
+
+
+def test_enter_from_speaking_silences_before_resetting():
+    """F7 (review): re-entering (or the wiring re-confirming) the loop
+    while a reply is actively speaking must silence it first -- there is
+    no AEC, so an unsilenced reply would otherwise transcribe itself once
+    `listening` believes the mic is live again."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"
+    ev.clear()
+    c.enter(capture_live=True)
+    assert any(isinstance(e, SilenceSpeech) for e in ev)
+    assert c.state == "listening"
+
+
+def test_enter_never_double_opens_an_already_open_capture():
+    """F7 (continued): re-entering while already `listening` with
+    `capture_live=False` must not blindly trust that stale claim over the
+    controller's own bookkeeping and double-open the mic."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    assert c.capture_open is True
+    ev.clear()
+    c.enter(capture_live=False)
+    assert not any(isinstance(e, OpenCapture) for e in ev)
+    assert c.capture_open is True
+    assert c.state == "listening"
+
+
+def test_mode_changed_full_cycle_all_five_payloads():
+    """F8 (review): only `listening`/`countdown` were previously pinned;
+    walk the whole cycle so `speaking`/`awaiting_reply`/`idle` payloads
+    are pinned too (they drive the wiring task's chip states)."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    c.on_reply_started()
+    c.on_first_utterance()
+    c.on_reply_finished()
+    c.on_sequencer_drained()
+    c.on_exit_request()
+    modes = [e.state for e in ev if isinstance(e, ModeChanged)]
+    assert modes == [
+        "listening", "countdown", "awaiting_reply", "speaking", "listening", "idle",
+    ]
+
+
+def test_reopen_never_double_opens_an_already_open_capture():
+    """F9 (review): the "never double-opens" claim in the docstrings had
+    no pin. Acoustic mode reopens once at `on_reply_started`; drained
+    completion must see the mic already open and emit nothing further."""
+    c, ev = mk(acoustic_barge_in=True)
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    ev.clear()
+    c.on_reply_started()
+    assert len([e for e in ev if isinstance(e, OpenCapture)]) == 1
+    c.on_first_utterance()
+    c.on_reply_finished()
+    c.on_sequencer_drained()
+    assert c.state == "listening"
+    assert len([e for e in ev if isinstance(e, OpenCapture)]) == 1
+
+
+def test_transition_rejects_an_invalid_state():
+    """F10 (review): `_VALID_STATES` was dead. Use it as a real invariant
+    on the sole state-mutation chokepoint."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    try:
+        c._transition("bogus")
+    except AssertionError:
+        return
+    raise AssertionError("expected _transition to reject an invalid state")

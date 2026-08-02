@@ -25,34 +25,89 @@ time -- it takes no `now` argument. Instead it leaves `_armed_at` as
 call adopts that `now` as the anchor. Every following `tick(now)` compares
 `now - _armed_at` against `send_delay_seconds`: while positive remaining
 time is left, it emits `CountdownTick(remaining)` (monotonically
-decreasing as `now` advances); once remaining time reaches zero or below,
-the countdown expires into the existing V2 stop-and-send flow via
-`RequestStopAndSend` -- there is no second send path.
+non-increasing as `now` advances, and always clamped to
+`[0, send_delay_seconds]`); once remaining time reaches zero or below, the
+countdown expires into the existing V2 stop-and-send flow via
+`RequestStopAndSend` -- there is no second send path. **The injected clock
+is expected to be monotonic**; a backwards step is defensively handled by
+re-anchoring to the earliest `now` seen so far (so elapsed time can never
+go negative) and by clamping every emitted value to the last one emitted,
+but this is a safety net, not a feature to rely on -- see task-3-review.md
+F6.
+
+## `awaiting_reply` watchdog (`tick`, again)
+
+`awaiting_reply` is also `tick()`-driven: `_awaiting_armed_at` anchors the
+same way `_armed_at` does (first `tick()` call after
+`_begin_awaiting_reply()` adopts `now`). If `AWAITING_REPLY_DEADLINE_SECONDS`
+elapses with no reply-lifecycle input at all, the send is presumed to have
+silently refused (V2's send path has refusal branches -- an unmounted
+send button, a session that changed mid-flight -- that emit no reply
+signal whatsoever back to this controller). The honest recovery is to stop
+waiting for a reply that may never come and let the user speak again:
+`OpenCapture` (if needed) and `_transition("listening")`. This is a
+last-resort backstop, not the primary error path -- `on_reply_failed()`,
+driven by the wiring layer's own error handling, is expected to fire long
+before this in the vast majority of failures.
 
 ## Capture open/close bookkeeping
 
-`_capture_open` tracks whether the mic is presently live. `enter()` sets it
-from `capture_live` (opening the mic itself, via `OpenCapture`, only if the
-loop is entered from idle). The mic stays open through `listening` and
-`countdown` (a countdown must remain cancellable by resumed speech). It
-closes on a successful send (`CloseCapture`) *unless* `acoustic_barge_in`
-is enabled, in which case it deliberately stays open through
-`awaiting_reply`/`speaking` so an acoustic interruption needs no reopen.
-Every path back to `listening` reopens the mic (`OpenCapture`) only if it
-is not already open, so acoustic-mode barge-in never double-opens a mic
-that was never closed.
+`_capture_open` tracks whether the mic is presently live (exposed
+read-only as `capture_open` for callers/tests). `enter()` sets it from
+`capture_live` when entering fresh from `idle` (opening the mic itself,
+via `OpenCapture`, only if not already live); re-entering while already
+running trusts this controller's own bookkeeping over a possibly-stale
+`capture_live` argument instead (see "Re-entry" below). The mic stays open
+through `listening` and `countdown` (a countdown must remain cancellable
+by resumed speech).
+
+**The send always stops the capture, in BOTH capture modes** -- V2's
+stop-and-send flow only ever runs from the recorder's own stop-success
+tail, so there is no way for a capture to survive a send regardless of
+`acoustic_barge_in`. `_begin_awaiting_reply()` therefore closes the mic
+unconditionally. Acoustic mode's actual difference is *when* the mic
+reopens: `on_reply_started()` reopens it immediately (mid-reply is
+precisely the acoustic mode's point -- the user may interrupt by
+speaking), whereas default mode leaves it closed until the reply fully
+drains (`_maybe_complete_reply`, the V2 mic/speaker exclusion rule). Every
+reopen goes through `_reopen_capture_if_closed()`, which only opens if not
+already open, so acoustic-mode's early reopen never double-opens when
+drained-completion runs its own reopen check afterward.
 
 ## Reopen-once-then-exit (service-side capture limits)
 
 `on_capture_ended(had_segments, limit_hit)` covers the recorder's own
 60s wall-clock cutoff / buffer cap ending a capture out from under the
-loop. With finalized segments pending, this is treated exactly like
-countdown expiry (`RequestStopAndSend`). With nothing captured, the loop
-reopens for one more turn (`OpenCapture`) rather than exiting outright --
-but only once in a row: a *second* consecutive empty-limit ending exits
-the loop (`ExitLoop`) rather than looping forever in a silent room. A
-successful send in between resets the reopen-once flag, so it is
-consecutive empty endings specifically that exit, not a lifetime cap.
+loop. It always corrects `_capture_open = False` first (the capture
+genuinely ended, regardless of FSM state) -- see task-3-review.md F2. In
+`listening`/`countdown`: with finalized segments pending, this is treated
+exactly like countdown expiry (`RequestStopAndSend`); with nothing
+captured, the loop reopens for one more turn (`OpenCapture`) rather than
+exiting outright, but only once in a row -- a *second* consecutive
+empty-limit ending exits the loop (`ExitLoop`) rather than looping forever
+in a silent room. A successful send in between resets the reopen-once
+flag, so it is consecutive empty endings specifically that exit, not a
+lifetime cap. In `awaiting_reply`/`speaking` (a reply is outstanding, most
+often the acoustic-mode mic hitting its own limit mid-reply): no send is
+issued regardless of `had_segments` -- a send mid-reply would interleave
+two turns, which this FSM's single-outstanding-reply model cannot
+represent -- but in acoustic mode the mic is still reopened (per the same
+`on_reply_started` rule above) so the user is not left deaf mid-turn; in
+default mode there is nothing further to do (the mic was already meant to
+be closed there).
+
+## Re-entry (`enter()` called while not `idle`)
+
+Calling `enter()` again while the loop is already running (state !=
+`idle`) re-confirms `listening`: it resets the same per-loop bookkeeping
+as a fresh entry, but does NOT trust the `capture_live` argument for the
+open/close decision (a stale caller-supplied snapshot could otherwise
+double-open an already-open mic -- task-3-review.md F7/P4b) -- it defers
+to `_capture_open` via `_reopen_capture_if_closed()` instead. If reply
+audio was in flight (`state == "speaking"`), it is silenced first
+(`SilenceSpeech`) -- there is no AEC, so leaving it audible while
+`listening` believes the mic is live would have the recognizer transcribe
+the assistant's own voice.
 
 ## Degraded (no-webrtcvad) mode
 
@@ -82,6 +137,13 @@ HandsFreeState = Literal["idle", "listening", "countdown", "awaiting_reply", "sp
 _VALID_STATES: tuple[HandsFreeState, ...] = (
     "idle", "listening", "countdown", "awaiting_reply", "speaking",
 )
+
+#: How long `awaiting_reply` may wait, via `tick()`, before presuming the
+#: send silently refused and recovering to `listening` on its own (see the
+#: module docstring's "`awaiting_reply` watchdog" section). A last-resort
+#: backstop, not the primary error path -- `on_reply_failed()` is expected
+#: to fire long before this in the vast majority of failures.
+AWAITING_REPLY_DEADLINE_SECONDS: float = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +188,12 @@ class CloseCapture:
 @dataclass(frozen=True)
 class CountdownTick:
     """A countdown heartbeat while `countdown`; `remaining` (seconds) is
-    monotonically decreasing across consecutive `tick()` calls until either
-    cancellation or expiry."""
+    always clamped to `[0, send_delay_seconds]` and monotonically
+    non-increasing across consecutive `tick()` calls until either
+    cancellation or expiry -- strictly decreasing under a monotonic clock,
+    never larger than the previous value even under a backwards clock
+    step (see `HandsFreeController`'s "Countdown timing" docstring
+    section)."""
 
     remaining: float
 
@@ -182,8 +248,9 @@ class HandsFreeController:
             segment to an automatic send.
         acoustic_barge_in: When True, `on_speech_resumed()` also barges in
             during `speaking` (not just a composer keypress), and the mic
-            is kept open through `awaiting_reply`/`speaking` instead of
-            being closed on send.
+            is reopened as soon as reply generation starts
+            (`on_reply_started()`) rather than only once the reply fully
+            drains -- the send still closes the mic in both modes.
     """
 
     def __init__(
@@ -198,6 +265,8 @@ class HandsFreeController:
 
         self._state: HandsFreeState = "idle"
         self._armed_at: Optional[float] = None
+        self._last_countdown_remaining: Optional[float] = None
+        self._awaiting_armed_at: Optional[float] = None
         self._resume_latched: bool = False
         self._capture_open: bool = False
         self._capture_limit_reopened: bool = False
@@ -210,6 +279,14 @@ class HandsFreeController:
     def state(self) -> HandsFreeState:
         return self._state
 
+    @property
+    def capture_open(self) -> bool:
+        """This controller's own belief about whether the mic is
+        presently live. Read-only; useful for tests and diagnostics --
+        the emitted `OpenCapture`/`CloseCapture` intents are what the
+        wiring layer should actually act on."""
+        return self._capture_open
+
     # -- transition chokepoint -------------------------------------------
 
     def _transition(self, new_state: HandsFreeState) -> None:
@@ -217,7 +294,14 @@ class HandsFreeController:
         Always emits `ModeChanged`, even for a nominal self-transition --
         callers that do not conceptually "enter" a new state (e.g. the
         resume-latch consuming an already-cancelled `on_voice_final` while
-        staying `listening`) simply do not call this."""
+        staying `listening`) simply do not call this. Rejects any target
+        outside `_VALID_STATES` (a programming error, not a runtime
+        condition -- see task-3-review.md F10). Also the one place that
+        clears the resume latch on leaving `listening` (see
+        `_clear_resume_latch`'s docstring for the other clear sites)."""
+        assert new_state in _VALID_STATES, f"invalid HandsFreeState: {new_state!r}"
+        if self._state == "listening" and new_state != "listening":
+            self._resume_latched = False
         self._state = new_state
         self._emit(ModeChanged(new_state))
 
@@ -230,11 +314,29 @@ class HandsFreeController:
             self._emit(OpenCapture())
             self._capture_open = True
 
+    def _cancel_countdown(self) -> None:
+        """Reset countdown-arming state (both the anchor and the
+        monotonicity tracker) without necessarily transitioning -- shared
+        by every place a countdown is cancelled or newly armed."""
+        self._armed_at = None
+        self._last_countdown_remaining = None
+
+    def _clear_resume_latch(self) -> None:
+        """Bound the resume latch's lifetime (task-3-review.md F3): besides
+        one-shot consumption in `on_voice_final` and `_transition`'s clear
+        on leaving `listening`, a turn boundary (`on_capture_ended`) also
+        clears it explicitly -- a latch may only cancel a final within the
+        SAME capture, never across turns."""
+        self._resume_latched = False
+
     def _begin_awaiting_reply(self) -> None:
         """Shared by countdown expiry and `on_capture_ended`'s
-        with-segments path -- both are "a send is happening now"."""
+        with-segments path -- both are "a send is happening now". The send
+        stops the capture in BOTH capture modes (task-3-review.md F1): V2's
+        stop-and-send flow only ever runs from the recorder's own stop
+        success tail, so there is no way for a capture to survive it."""
         self._emit(RequestStopAndSend())
-        if self._capture_open and not self._acoustic_barge_in:
+        if self._capture_open:
             self._emit(CloseCapture())
             self._capture_open = False
         # A successful send resets the reopen-once flag: only *consecutive*
@@ -242,7 +344,9 @@ class HandsFreeController:
         self._capture_limit_reopened = False
         self._reply_finished = False
         self._sequencer_drained = False
-        self._armed_at = None
+        self._cancel_countdown()
+        self._awaiting_armed_at = None
+        self._clear_resume_latch()
         self._transition("awaiting_reply")
 
     def _maybe_complete_reply(self) -> None:
@@ -265,33 +369,79 @@ class HandsFreeController:
     # -- public inputs ----------------------------------------------------
 
     def enter(self, capture_live: bool) -> None:
-        """Enter the hands-free loop. `capture_live=True` keeps an
-        already-open capture as the first turn; `capture_live=False` opens
-        one (emits `OpenCapture`)."""
-        self._armed_at = None
-        self._resume_latched = False
+        """Enter the hands-free loop. On a genuine entry from `idle`,
+        `capture_live=True` keeps an already-open capture as the first
+        turn and `capture_live=False` opens one (`OpenCapture`). Calling
+        `enter()` again while already running (state != `idle`) instead
+        re-confirms `listening` from this controller's own `capture_open`
+        bookkeeping (never trusting a possibly-stale `capture_live`
+        argument -- see the module docstring's "Re-entry" section and
+        task-3-review.md F7), and silences any reply audio still in
+        flight first."""
+        was_speaking = self._state == "speaking"
+        from_idle = self._state == "idle"
+        self._cancel_countdown()
+        self._awaiting_armed_at = None
+        self._clear_resume_latch()
         self._capture_limit_reopened = False
         self._reply_finished = False
         self._sequencer_drained = False
-        self._capture_open = capture_live
-        if not capture_live:
-            self._emit(OpenCapture())
-            self._capture_open = True
+        if was_speaking:
+            self._emit(SilenceSpeech())
+        if from_idle:
+            self._capture_open = capture_live
+            if not capture_live:
+                self._emit(OpenCapture())
+                self._capture_open = True
+        else:
+            self._reopen_capture_if_closed()
         self._transition("listening")
 
     def tick(self, now: float) -> None:
-        """Injected-clock heartbeat. A no-op outside `countdown`. The
-        first call after arming adopts `now` as the anchor (`on_voice_final`
-        cannot record one itself -- it has no `now` parameter)."""
-        if self._state != "countdown":
+        """Injected-clock heartbeat. A no-op outside `countdown` and
+        `awaiting_reply`. See the module docstring's "Countdown timing" and
+        "`awaiting_reply` watchdog" sections for what each does."""
+        if self._state == "countdown":
+            self._tick_countdown(now)
             return
+        if self._state == "awaiting_reply":
+            self._tick_awaiting_reply(now)
+            return
+
+    def _tick_countdown(self, now: float) -> None:
+        """The first call after arming adopts `now` as the anchor
+        (`on_voice_final` cannot record one itself -- it has no `now`
+        parameter). A backwards clock step re-anchors to the earliest
+        `now` seen so far, and every emitted value is additionally clamped
+        to `[0, send_delay_seconds]` and to be no larger than the last
+        value emitted -- see task-3-review.md F6."""
         if self._armed_at is None:
             self._armed_at = now
+        else:
+            self._armed_at = min(self._armed_at, now)
         remaining = self._send_delay_seconds - (now - self._armed_at)
+        remaining = max(0.0, min(remaining, self._send_delay_seconds))
+        if self._last_countdown_remaining is not None:
+            remaining = min(remaining, self._last_countdown_remaining)
         if remaining <= 0:
             self._begin_awaiting_reply()
             return
+        self._last_countdown_remaining = remaining
         self._emit(CountdownTick(remaining))
+
+    def _tick_awaiting_reply(self, now: float) -> None:
+        """See the module docstring's "`awaiting_reply` watchdog" section:
+        a send that silently refuses (no reply-lifecycle input arrives at
+        all) would otherwise hang this state forever. Mirrors
+        `_tick_countdown`'s anchoring: the first call after entering
+        `awaiting_reply` adopts `now` as the anchor (elapsed is always 0
+        relative to a same-call anchor, so this never expires on its own
+        first call, exactly like the countdown's arming tick)."""
+        if self._awaiting_armed_at is None:
+            self._awaiting_armed_at = now
+        if now - self._awaiting_armed_at >= AWAITING_REPLY_DEADLINE_SECONDS:
+            self._reopen_capture_if_closed()
+            self._transition("listening")
 
     def on_voice_final(self) -> None:
         """A segment was finalized. Only meaningful while `listening`."""
@@ -305,7 +455,7 @@ class HandsFreeController:
             # do not arm a countdown, consume the latch (one-shot).
             self._resume_latched = False
             return
-        self._armed_at = None
+        self._cancel_countdown()
         self._transition("countdown")
 
     def on_speech_resumed(self) -> None:
@@ -321,7 +471,7 @@ class HandsFreeController:
             self._resume_latched = True
             return
         if self._state == "countdown":
-            self._armed_at = None
+            self._cancel_countdown()
             self._transition("listening")
             return
         if self._state == "speaking" and self._acoustic_barge_in:
@@ -341,15 +491,32 @@ class HandsFreeController:
     def on_capture_ended(self, had_segments: bool, limit_hit: bool) -> None:
         """The recorder's own service-side limit (60s wall-clock cutoff or
         buffer cap) ended the capture out from under the loop. Meaningful
-        only when `limit_hit` is True and the loop is `listening` or
-        `countdown` -- a non-limit ending is out of this method's contract
-        (normal endings arrive via `on_voice_final`/countdown expiry
-        instead) and is silently ignored."""
+        only when `limit_hit` is True; a non-limit ending is out of this
+        method's contract (normal endings arrive via `on_voice_final`/
+        countdown expiry instead) and is silently ignored.
+
+        Always corrects `_capture_open = False` first, in EVERY state --
+        the capture genuinely ended regardless of what the FSM was doing
+        (task-3-review.md F2). In `listening`/`countdown` this is a turn
+        boundary: with segments pending, treated exactly like countdown
+        expiry; with nothing captured, reopen once rather than exit
+        outright (see the module docstring's reopen-once section). In
+        `awaiting_reply`/`speaking` (a reply is outstanding -- typically
+        the acoustic-mode mic hitting its own limit mid-reply) no send is
+        issued regardless of `had_segments`, since a send mid-reply would
+        interleave two turns; acoustic mode still reopens the mic (per
+        `on_reply_started`'s rule) so the user is not left deaf mid-turn,
+        default mode has nothing further to do."""
         if not limit_hit:
             return
-        if self._state not in ("listening", "countdown"):
+        self._capture_open = False  # the capture already ended, any state
+        if self._state in ("awaiting_reply", "speaking"):
+            if self._acoustic_barge_in:
+                self._reopen_capture_if_closed()
             return
-        self._capture_open = False  # the capture already ended
+        if self._state not in ("listening", "countdown"):
+            return  # idle: nothing further to do
+        self._clear_resume_latch()  # turn boundary either way below
         if had_segments:
             self._begin_awaiting_reply()
             return
@@ -368,7 +535,7 @@ class HandsFreeController:
         while `listening`/`idle` (ordinary typing -- the controller never
         swallows keys outside the states that need them)."""
         if self._state == "countdown":
-            self._armed_at = None
+            self._cancel_countdown()
             self._transition("listening")
             return
         if self._state == "awaiting_reply":
@@ -387,13 +554,19 @@ class HandsFreeController:
         self._exit()
 
     def on_reply_started(self) -> None:
-        """Reply generation has begun streaming. Currently a bookkeeping
-        hook with no FSM effect of its own -- the state-changing signal is
-        `on_first_utterance()`, once the sequencer actually queues
-        speakable text. Kept as a distinct input for reply-lifecycle
-        symmetry (`started` / `first_utterance` / `finished` / `failed`)
-        and potential future instrumentation."""
-        return
+        """Reply generation has begun streaming. Never itself changes
+        `state` -- that is `on_first_utterance()`'s job, once the
+        sequencer actually queues speakable text -- but in acoustic-mode
+        this is exactly when the mic reopens (`_begin_awaiting_reply()`
+        just closed it, unconditionally, for the send): mid-reply is the
+        acoustic mode's whole point, since the user may interrupt by
+        speaking (task-3-review.md F1). A no-op in default mode (the mic
+        stays closed until the reply drains) and in any state other than
+        `awaiting_reply`."""
+        if self._state != "awaiting_reply":
+            return
+        if self._acoustic_barge_in:
+            self._reopen_capture_if_closed()
 
     def on_first_utterance(self) -> None:
         """The sequencer queued its first speakable sentence."""
