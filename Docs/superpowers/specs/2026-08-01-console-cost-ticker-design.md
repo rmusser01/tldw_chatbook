@@ -22,9 +22,13 @@ Today the app has **none** of the required substrate:
   table has no usage column.
 - There is no real pricing table (only a stale, blended $/1K list used by
   Evals).
-- No request ever sets `cache_control` — for Anthropic there is currently no
-  cache to break. OpenAI-style providers cache automatically but the app
-  never accounts for it.
+- Anthropic caching is PARTIAL (amended 2026-08-02: task-323 landed system-block
+  + last-tool `cache_control` for all callers after this spec's exploration
+  snapshot): conversation HISTORY is never cached — no per-turn message
+  breakpoint exists, so every send re-pays the full message history. There is
+  no config kill-switch and no degrade path if an endpoint rejects
+  `cache_control`. OpenAI-style providers cache automatically; PR1's adapters
+  already account for it.
 
 ## Decisions (user-approved during brainstorming)
 
@@ -156,6 +160,16 @@ round-trip on real in-memory SQLite.
 
 ## PR2 — Prompt-caching enablement
 
+> **Amended 2026-08-02 (PR2 planning):** task-323 shipped the system-block and
+> last-tool breakpoints for ALL `chat_with_anthropic` callers (not console-only)
+> before PR2 started, and PR1 shipped the OpenAI implicit-cache accounting.
+> PR2's remaining scope: the per-turn message breakpoint, the
+> `[caching] anthropic_enabled` toggle (provider-level, gating all three
+> breakpoints, default on — matching shipped reality; the original
+> "injected by the console gateway only" note described a world that no longer
+> exists), the 4xx degrade, and prefix-stability tests. The
+> "system string → block array" implementation note is already implemented.
+
 Only the **native Anthropic console path** changes requests; every other
 provider's requests are untouched. `cache_control` is injected by the
 console gateway — non-console callers of `chat_with_anthropic` are
@@ -178,11 +192,11 @@ unaffected (pass-through test asserts legacy paths emit no
   breakpoints and log a diagnostic. Caching must never break sends.
 - Sub-minimum prefixes silently don't cache (no error) — PR3 shows this
   honestly as "no cache" from usage ground truth.
-- Implementation note: the gateway extracts leading system rows into the
+- ~~Implementation note: the gateway extracts leading system rows into the
   provider call's `system_message` string parameter, so
   `chat_with_anthropic` must convert that string into a system **block
   array** to carry `cache_control` — the byte-stability test covers the
-  conversion.
+  conversion.~~ (amended: already shipped via task-323/PR1)
 
 ### Prefix-stability audit (part of PR2)
 
@@ -207,8 +221,8 @@ unaffected (pass-through test asserts legacy paths emit no
 
 ### OpenAI implicit caching
 
-Zero request changes. Start reading `prompt_tokens_details.cached_tokens`
-into the PR1 `cache_read` bucket.
+~~Zero request changes. Start reading `prompt_tokens_details.cached_tokens`
+into the PR1 `cache_read` bucket.~~ (amended: already shipped via task-323/PR1)
 
 ### PR2 testing
 
