@@ -1,6 +1,6 @@
 ---
 id: TASK-1978
-title: 'Change review: 'changed outside direct file tools' badge'
+title: 'Change review: ''changed outside direct file tools'' badge'
 status: To Do
 assignee: []
 created_date: '2026-08-02 21:00'
