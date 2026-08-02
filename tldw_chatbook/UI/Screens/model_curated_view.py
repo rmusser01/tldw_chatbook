@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.dom import NoScreen
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -26,20 +24,10 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
-from tldw_chatbook.UI.Screens.model_browser_state import (
-    install_failure_message,
-    provenance_label,
-)
-from tldw_chatbook.Widgets.ModelArtifacts import (
-    InstallProgressed,
-    InstallStatusChanged,
-    ModelInstallModal,
-    ModelInstallProgress,
-)
+from tldw_chatbook.UI.Screens.model_browser_state import provenance_label
+from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
-    from textual.screen import Screen
-
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
 
 
@@ -52,7 +40,70 @@ class CuratedRow:
 
 
 class CuratedView(Widget):
-    """Browse and explicitly install models curated by the application."""
+    """Browse curated models and request their installation.
+
+    Rendering only, past the catalog load: an Install click posts
+    :class:`InstallRequested` and waits to be told what happened via
+    :meth:`apply_progress`, :meth:`cancel_pending_install`, or
+    :meth:`finish_install`. ``LLMScreen`` owns the actual preflight/
+    provision workers (mirroring ``LibraryScreen``'s Parakeet v2 flow,
+    ``library_screen.py``'s ``_run_parakeet_v2_preflight``/
+    ``_run_parakeet_v2_install``) precisely so a several-hundred-megabyte
+    download survives both the consent modal being dismissed and a
+    screen-level recompose that tears down and rebuilds this exact view
+    mid-install (TASK-1803).
+
+    Before this change, this view owned that worker directly, and a
+    screen-level recompose mid-install orphaned it: the torn-down
+    instance's own ``post_message`` became a silent no-op, so progress
+    stopped reaching the UI unless compensating durable-delivery logic
+    (a fallback chain trying this instance, then the live ``CuratedView``,
+    then ``LLMManagementWindow``, then the ``Screen``) papered over it.
+    Moving the worker to ``LLMScreen`` -- which already survives that same
+    recompose to hydrate this view's progress display, see
+    ``LLMScreen._hydrate_curated_progress`` -- removes the need for any of
+    that: ``LLMScreen`` is never the thing being torn down, so there is no
+    orphaned poster left to compensate for.
+
+    This module deliberately never imports ``ArtifactAcquisitionService``
+    nor calls ``preflight()``/``provision()`` itself; ``Model_Artifacts.
+    acquisition``/``fetch`` are only ever imported inside ``LLMScreen``'s
+    own worker methods.
+    """
+
+    class InstallRequested(Message):
+        """Posted when Install is pressed for a not-yet-installed model."""
+
+        def __init__(
+            self,
+            reference: ArtifactRef,
+            *,
+            service: ModelArtifactService,
+            registry: CuratedRegistry,
+            sources: dict[ArtifactRef, dict[str, str]],
+        ) -> None:
+            """Carry everything the host screen needs to preflight/provision.
+
+            Args:
+                reference: The exact curated model reference to install.
+                service: The managed-store service resolved by this view's
+                    own (possibly test-injected) ``service_factory`` --
+                    captured here so ``LLMScreen``'s worker uses the exact
+                    same instance a test constructed this view with,
+                    without ``LLMScreen`` needing its own factory-override
+                    constructor knobs.
+                registry: The curated registry resolved the same way, via
+                    ``registry_factory``.
+                sources: The file source map for every currently
+                    registered curated descriptor (this view's own
+                    ``_source_map()``); re-walked by ``preflight()``/
+                    ``provision()`` themselves.
+            """
+            super().__init__()
+            self.reference = reference
+            self.service = service
+            self.registry = registry
+            self.sources = sources
 
     DEFAULT_CSS = """
     CuratedView {
@@ -110,21 +161,7 @@ class CuratedView(Widget):
         self._loading = False
         self._load_error: str | None = None
         self._operation_reference: ArtifactRef | None = None
-        self._pending_report = None
-        self._progress = None
-        #: The screen this view was mounted under when its current install
-        #: started, captured by ``_confirm_install`` on the main thread
-        #: before the worker starts. Unlike this exact ``CuratedView``
-        #: instance, the screen survives a screen-level
-        #: ``LabScreen.recompose()`` that tears down and rebuilds the whole
-        #: ``LLMManagementWindow`` (this view included) mid-download, so
-        #: ``_deliver`` falls back to posting there -- once this instance
-        #: can no longer receive its own messages -- letting the host
-        #: screen re-apply live progress to whichever ``CuratedView``
-        #: instance is mounted next (see
-        #: ``LLMScreen._hydrate_curated_progress``) instead of the
-        #: download going silently unrendered for the rest of its run.
-        self._progress_screen: "Screen | None" = None
+        self._progress: "AcquisitionProgress | None" = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -247,13 +284,21 @@ class CuratedView(Widget):
 
     @on(Button.Pressed, ".curated-install")
     def _install_pressed(self, event: Button.Pressed) -> None:
+        """Post an install intent; never call preflight/provision here."""
         event.stop()
         reference = getattr(event.button, "reference", None)
         if not isinstance(reference, ArtifactRef) or self._operation_reference is not None:
             return
         self._operation_reference = reference
         self.refresh(recompose=True)
-        self._preflight_model(reference)
+        self.post_message(
+            self.InstallRequested(
+                reference,
+                service=self._service_for_worker(),
+                registry=self._registry_for_worker(),
+                sources=self._source_map(),
+            )
+        )
 
     def _source_map(self) -> dict[ArtifactRef, dict[str, str]]:
         """Return sources for every descriptor in the curated registry."""
@@ -263,218 +308,27 @@ class CuratedView(Widget):
             for descriptor in registry.list()
         }
 
-    async def _preflight(self, reference: ArtifactRef):
-        """Resolve a curated acquisition plan on the worker's event loop."""
-        from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
-
-        acquisition = ArtifactAcquisitionService(self._service_for_worker())
-        return await acquisition.preflight(
-            reference,
-            self._registry_for_worker(),
-            sources=self._source_map(),
-        )
-
-    @work(thread=True, group="curated_model_install", exclusive=True, exit_on_error=False)
-    def _preflight_model(self, reference: ArtifactRef) -> None:
-        """Resolve the plan off the Textual event loop."""
-        try:
-            report = asyncio.run(self._preflight(reference))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Curated model preflight failed for {}@{}/{}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
-            )
-            self.app.call_from_thread(
-                self._apply_preflight_result,
-                None,
-                install_failure_message(exc, model_label=reference.artifact_id),
-            )
-            return
-        self.app.call_from_thread(self._apply_preflight_result, report, None)
-
-    def _apply_preflight_result(self, report, error: str | None) -> None:
-        """Show the shared plan modal or a sanitized failure."""
-        if error is not None or report is None:
-            self._operation_reference = None
-            self.notify(error or "Model preflight failed.", severity="error")
-            self.refresh(recompose=True)
-            return
-        self._pending_report = report
-        descriptor = self._registry_for_worker().descriptor(report.root)
-        self.app.push_screen(
-            ModelInstallModal(report, model_label=descriptor.model_id),
-            self._confirm_install,
-        )
-
-    def _confirm_install(self, confirmed: bool) -> None:
-        """Start provisioning only after explicit consent."""
-        if not confirmed:
-            self._pending_report = None
-            self._operation_reference = None
-            self.refresh(recompose=True)
-            return
-        # See _progress_screen's own docstring: captured here, on the main
-        # thread, before the worker starts -- not inside _provision, which
-        # runs on the worker thread -- and before the InstallStatusChanged
-        # post below, so _deliver's fallback is available from the very
-        # first message this install produces.
-        try:
-            self._progress_screen = self.screen
-        except NoScreen:
-            self._progress_screen = None
-        if self._operation_reference is not None:
-            self._deliver(
-                InstallStatusChanged(self._operation_reference, active=True)
-            )
-        self._provision_model()
-
-    def _deliver(self, message: InstallProgressed | InstallStatusChanged) -> None:
-        """Post one message to whichever target can still receive it.
-
-        Tries this instance first -- ``self.post_message`` -- which
-        preserves today's exact bubble path (``CuratedView`` ->
-        ``LLMManagementWindow``, which mirrors progress into
-        ``InstalledView`` -- unrelated to this task -- -> ``LLMScreen``)
-        for the common, no-recompose case: exactly the same single message
-        this code posted before ``_progress_screen`` existed.
-        ``post_message`` returns ``False`` without raising once this
-        instance is closed (torn down by a screen-level recompose, see
-        ``_progress_screen``'s docstring) -- only THEN does this fall back.
-
-        Review Important #1 (this delta port's first round): posting to
-        both targets unconditionally, every tick, meant ``LLMScreen``'s own
-        forwarding (``_model_install_progressed``/``_hydrate_curated_
-        progress``) re-applied the SAME event to the SAME still-mounted
-        ``CuratedView`` a second (and, with ``InstallProgressed`` also
-        bubbling through this instance's own now-removed self-listening
-        handler, third) time -- confirmed live via a Pilot probe showing
-        three ``apply_progress`` calls for one tick. Exactly one message
-        is posted per tick now, so ``LLMScreen`` renders exactly once.
-
-        Review Important #2 (PR #1185 automated review, fix round 2): the
-        fallback used to post directly at the captured Screen. Textual
-        only bubbles a message UP from wherever it is posted -- never back
-        down -- and ``LLMManagementWindow`` (which owns the
-        ``InstallProgressed``/``InstallStatusChanged`` handlers that mirror
-        progress and lifecycle into ``InstalledView``) sits BELOW the
-        Screen in the tree. Posting at the Screen therefore entered the
-        tree above that mirroring node, so it silently never ran after a
-        recompose: Curated kept updating via ``LLMScreen``, but Installed
-        stopped receiving ticks/completion until some later, unrelated
-        refresh. The fallback now re-enters the tree below that node
-        instead -- at the live ``CuratedView`` if one is mounted (the
-        normal case, restoring the FULL path: mirror at
-        ``LLMManagementWindow``, then render at ``LLMScreen``, in one
-        message), or at the live ``LLMManagementWindow`` if a fresh
-        ``CuratedView`` has not finished (re)mounting yet (the same
-        nested-mount window ``apply_progress`` itself tolerates), and only
-        as a last resort -- neither found -- at the Screen itself, exactly
-        as the reviewer specified.
-
-        Args:
-            message: The event to deliver; a fresh instance per call (never
-                reused across two different posts, so no Message ever
-                needs its ``_prevent`` set merged from two different
-                targets).
-        """
-        if self.post_message(message):
-            return
-        screen = self._progress_screen
-        if screen is None:
-            return
-        # Local import: avoids a module-scope cycle with
-        # LLM_Management_Window, which itself only imports this module
-        # locally (inside its own compose()), for the same reason.
-        from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
-
-        try:
-            target: Widget = screen.query_one(CuratedView)
-        except NoMatches:
-            try:
-                target = screen.query_one(LLMManagementWindow)
-            except NoMatches:
-                target = screen
-        target.post_message(message)
-
-    async def _provision(self, report):
-        """Provision the consented report on the worker's event loop."""
-        from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
-
-        acquisition = ArtifactAcquisitionService(self._service_for_worker())
-
-        def deliver(progress: "AcquisitionProgress") -> None:
-            self._deliver(InstallProgressed(progress))
-
-        return await acquisition.provision(
-            report.root,
-            report.grant(),
-            self._registry_for_worker(),
-            sources=self._source_map(),
-            progress=deliver,
-        )
-
-    @work(thread=True, group="curated_model_install", exclusive=True, exit_on_error=False)
-    def _provision_model(self) -> None:
-        """Provision the consented plan off the Textual event loop."""
-        report = self._pending_report
-        if report is None:
-            self.app.call_from_thread(
-                self._apply_provision_result,
-                "No install plan is available; review the model again.",
-            )
-            return
-        try:
-            asyncio.run(self._provision(report))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Curated model installation failed for {}@{}/{}",
-                report.root.artifact_id,
-                report.root.revision,
-                report.root.variant,
-            )
-            self.app.call_from_thread(
-                self._apply_provision_result,
-                install_failure_message(
-                    exc,
-                    model_label=report.root.artifact_id,
-                ),
-            )
-            return
-        self.app.call_from_thread(self._apply_provision_result, None)
-
     def apply_progress(self, progress: "AcquisitionProgress") -> None:
         """Render one acquisition progress event, retaining it for later.
 
         Called ONLY by the host screen (``LLMScreen``) -- via its own
         ``InstallProgressed`` handler for a live tick, and via
         ``_hydrate_curated_progress`` to re-apply the last known progress
-        to a freshly (re)mounted instance after a screen-level recompose
-        (see ``_progress_screen``'s docstring). This view deliberately has
-        no ``@on(InstallProgressed)`` handler of its own: it used to
-        (re-rendering itself on receipt of the very message it had just
-        posted to itself), which meant one tick rendered TWICE on the same
-        still-mounted widget once ``LLMScreen`` started forwarding too --
-        confirmed live via a Pilot probe showing three ``apply_progress``
-        calls for one tick (Review Important #1). ``LLMScreen`` is now the
-        sole caller, giving exactly one render per tick regardless of
-        which delivery path (self or the durable screen fallback,
-        see ``_deliver``) carried it.
+        to a freshly (re)mounted instance after a screen-level recompose.
+        This view has no ``@on(InstallProgressed)`` handler of its own and
+        never posts that message itself (TASK-1803 moved the worker that
+        used to post it to ``LLMScreen``); ``LLMScreen`` is the sole
+        caller, giving exactly one render per tick.
 
         ``self._progress`` is retained before either branch below runs, so
         a fallback ``refresh(recompose=True)`` still picks up the correct
-        value on CuratedView's next (complete) compose pass: this method
-        can run (via ``_hydrate_curated_progress``, scheduled by
-        ``call_after_refresh``) at a point where CuratedView itself has
+        value on this view's next (complete) compose pass: this method can
+        run (via ``_hydrate_curated_progress``, scheduled by
+        ``call_after_refresh``) at a point where this view itself has
         (re)mounted but its own ``ModelInstallProgress`` child has not yet
         finished composing ITS OWN children -- a widget that ``query_one``
         finds but whose own ``update_progress`` call then raises
-        ``NoMatches`` reaching into it. Unrelated to the double-render
-        issue above (that was about how many times a fully-mounted widget
-        got re-rendered; this is about a widget still mid-mount) -- kept
-        even now that delivery is single-path, tolerating the outer
-        widget lookup being temporarily absent one level deeper.
+        ``NoMatches`` reaching into it.
 
         Args:
             progress: The acquisition progress event to render.
@@ -490,16 +344,29 @@ class CuratedView(Widget):
         except NoMatches:
             self.refresh(recompose=True)
 
-    def _apply_provision_result(self, error: str | None) -> None:
-        """Finish an installation and refresh curated installed-state."""
-        reference = self._operation_reference
-        self._pending_report = None
+    def cancel_pending_install(self) -> None:
+        """Clear the in-flight indicator without reloading the catalog.
+
+        Called by the host screen (``LLMScreen``) when a request this view
+        posted did not lead to an install actually starting: a preflight
+        failure, an explicit decline at the consent modal, or a request
+        refused outright because a different install is already running
+        (in which case this is the freshly (re)mounted view that just
+        clicked Install, not the instance whose install is still in
+        flight -- see ``LLMScreen._curated_install_requested``).
+        """
+        self._operation_reference = None
+        self.refresh(recompose=True)
+
+    def finish_install(self) -> None:
+        """Clear the in-flight indicator and reload after a completed install.
+
+        Called by the host screen (``LLMScreen``) once provisioning
+        finishes, successfully or not -- reloading refreshes which rows
+        show "Installed" and re-enables Install everywhere else.
+        """
         self._operation_reference = None
         self._progress = None
-        # _progress_screen itself is cleared only after _deliver (below)
-        # has had a chance to use it as its fallback target for this
-        # exact completion message -- clearing it first would silently
-        # disable the durable path for the one message that most needs it.
         try:
             progress = self.query_one(
                 "#curated-model-install-progress",
@@ -509,21 +376,4 @@ class CuratedView(Widget):
             progress = None
         if progress is not None:
             progress.display = False
-        if error is not None:
-            self.notify(error, severity="error")
-        else:
-            self.notify("Model installed and activated.", severity="information")
-        if reference is not None:
-            # _deliver (see its own docstring): tries this instance first,
-            # falls back to the captured screen only if a screen-level
-            # recompose already orphaned it -- otherwise this completion
-            # message would never bubble anywhere (a closed widget's
-            # post_message() is a silent no-op), and the host screen would
-            # never learn the install finished, re-hydrating a stale
-            # "still active" progress display on every future recompose
-            # (see LLMScreen._hydrate_curated_progress).
-            self._deliver(
-                InstallStatusChanged(reference, active=False, succeeded=error is None)
-            )
-        self._progress_screen = None
         self.ensure_loaded(force=True)

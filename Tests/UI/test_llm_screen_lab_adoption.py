@@ -151,12 +151,18 @@ async def test_the_status_row_reports_running_servers():
 
 @pytest.mark.asyncio
 async def test_model_install_progress_survives_switch_to_installed():
-    """Curated progress remains visible in Installed and in the Lab status row."""
+    """Curated progress remains visible in Installed and in the Lab status row.
+
+    Delivers through ``LLMScreen._deliver_curated`` -- the screen's own
+    entry point for a curated-install tick (TASK-1803: the screen owns the
+    worker that would call this in production; ``CuratedView`` no longer
+    posts ``InstallProgressed``/``InstallStatusChanged`` itself) -- rather
+    than posting directly on ``CuratedView``, which nothing does any more.
+    """
     from unittest.mock import MagicMock
 
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
-    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
     from tldw_chatbook.Widgets.ModelArtifacts import (
         InstallProgressed,
@@ -169,7 +175,6 @@ async def test_model_install_progress_survives_switch_to_installed():
         await pilot.pause()
         await pilot.pause()
         window = screen.query_one(LLMManagementWindow)
-        curated = window.query_one(CuratedView)
         installed = window.query_one(InstalledView)
         installed.ensure_loaded = MagicMock()
         reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
@@ -181,8 +186,8 @@ async def test_model_install_progress_survives_switch_to_installed():
             1024,
         )
 
-        curated.post_message(InstallStatusChanged(reference, active=True))
-        curated.post_message(InstallProgressed(progress))
+        screen._deliver_curated(InstallStatusChanged(reference, active=True))
+        screen._deliver_curated(InstallProgressed(progress))
         await pilot.pause()
 
         installed_row = next(
@@ -197,7 +202,7 @@ async def test_model_install_progress_survives_switch_to_installed():
         assert "Model install: downloading" in str(chip.renderable)
 
         installed.ensure_loaded.reset_mock()
-        curated.post_message(
+        screen._deliver_curated(
             InstallStatusChanged(reference, active=False, succeeded=True)
         )
         await pilot.pause()
@@ -208,25 +213,29 @@ async def test_model_install_progress_survives_switch_to_installed():
 
 @pytest.mark.asyncio
 async def test_curated_install_progress_survives_a_screen_level_recompose(monkeypatch):
-    """TASK-596 delta port: a curated install must not go blank/stale.
+    """TASK-596 delta port / TASK-1803: a curated install must not go blank/stale.
 
     ``LabScreen.recompose()`` tears down and rebuilds the whole
     ``LLMManagementWindow`` -- ``CuratedView`` included -- which used to
     mean a curated install in progress lost its progress display for the
     rest of the run: the fresh ``CuratedView`` instance starts with no
-    memory of the install, and (since ``CuratedView`` owns its own
+    memory of the install, and (back when ``CuratedView`` owned its own
     preflight/provision worker) further progress ticks from the ORIGINAL
     instance's worker thread were posted to that now-closed instance and
     silently dropped, never reaching the fresh one either.
 
-    Exercises the real ``CuratedView._provision`` code path (not a
-    simulation of it) against a stubbed ``ArtifactAcquisitionService`` so
-    this test controls exactly when a second progress tick fires relative
-    to the recompose, then asserts both halves of the fix: the freshly
-    (re)mounted view is hydrated with the last known progress (not blank),
-    and a progress tick emitted AFTER the recompose -- delivered through
-    the pre-recompose instance's own worker, exactly as the real download
-    would -- still reaches and updates the fresh view (not stale).
+    TASK-1803 moved that worker to ``LLMScreen`` -- this screen owns the
+    ``WorkerManager`` the download actually runs under, and a screen-level
+    recompose never tears the *screen* down, only its body -- so there is
+    no orphaned poster left to compensate for. This test exercises the
+    real ``LLMScreen._provision_curated`` code path (not a simulation of
+    it) against a stubbed ``ArtifactAcquisitionService`` so it controls
+    exactly when a second progress tick fires relative to the recompose,
+    then asserts both halves of the fix: the freshly (re)mounted view is
+    hydrated with the last known progress (not blank), and a progress tick
+    emitted AFTER the recompose -- delivered through this screen's own
+    still-running worker, exactly as the real download would -- still
+    reaches and updates the fresh view (not stale).
 
     Content-only, like this test: it cannot tell one render from three.
     See test_curated_install_progress_renders_exactly_once_per_tick below
@@ -264,8 +273,8 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         Only ``.provision`` is exercised; it delivers one progress tick,
         waits for the test to force a screen-level recompose, then
         delivers a second tick -- all through the real ``progress``
-        callback ``CuratedView._provision`` built, so ``_deliver``'s fix
-        under test runs unmodified.
+        callback ``LLMScreen._provision_curated`` built, so
+        ``_deliver_curated`` under test runs unmodified.
         """
 
         def __init__(self, _service) -> None:
@@ -285,10 +294,10 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
                 consent: The granted consent object (unused).
                 registry: The curated registry (unused).
                 sources: File source map (unused).
-                progress: The real ``deliver`` callback ``CuratedView.
-                    _provision`` built; called synchronously, twice, exactly
-                    as the real acquisition service would call it from its
-                    own await points.
+                progress: The real ``deliver`` callback ``LLMScreen.
+                    _provision_curated`` built; called synchronously,
+                    twice, exactly as the real acquisition service would
+                    call it from its own await points.
 
             Returns:
                 A sentinel standing in for the real installed-path result;
@@ -311,19 +320,20 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         window = screen.query_one(LLMManagementWindow)
         curated = window.query_one(CuratedView)
 
-        # Mimics _confirm_install's own setup (captures the screen before
-        # the worker starts, bypasses real preflight/registry I/O) --
-        # exercising _provision itself directly, on this test's own event
-        # loop rather than a real background thread, so `resume` can pause
-        # it deterministically at an exact point.
-        curated._operation_reference = reference
-        curated._progress_screen = curated.screen
-        curated._service_for_worker = MagicMock()
-        curated._registry_for_worker = MagicMock()
-        curated._source_map = MagicMock(return_value={})
+        # Mimics _confirm_curated_install's own setup (bypasses real
+        # preflight/registry I/O) -- exercising _provision_curated itself
+        # directly, on this test's own event loop rather than a real
+        # background thread, so `resume` can pause it deterministically at
+        # an exact point. State lives on the SCREEN now (TASK-1803), not
+        # on the CuratedView instance -- it must survive the instance
+        # being torn down below.
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = MagicMock()
+        screen._model_install_sources = {}
         fake_report = MagicMock(root=reference)
 
-        provision_task = asyncio.create_task(curated._provision(fake_report))
+        provision_task = asyncio.create_task(screen._provision_curated(fake_report))
         await pilot.pause()
         await pilot.pause()
 
@@ -359,14 +369,13 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         # known progress to it via _hydrate_curated_progress.
         assert "encoder.onnx" in _progress_text(fresh_curated)
 
-        # Half 2 of the fix: still updating. This tick is delivered by the
-        # ORIGINAL (now unmounted, orphaned) curated instance's own
-        # worker -- exactly what the real download does after a
-        # mid-install recompose. self.post_message on that orphaned
-        # instance now returns False (a closed widget's post_message() is
-        # a no-op), so _deliver falls back to the captured screen; without
-        # that fallback this would be silently dropped and the fresh view
-        # would stay on "encoder.onnx".
+        # Half 2 of the fix: still updating. This tick is delivered by
+        # THIS SCREEN's own still-running worker -- exactly what the real
+        # download does after a mid-install recompose, since the worker
+        # was never owned by the CuratedView instance the recompose tore
+        # down in the first place. _deliver_curated posts at
+        # self.llm_window, read fresh -- already the NEW window by this
+        # point -- so this reaches fresh_curated with no fallback required.
         resume.set()
         await provision_task
         await pilot.pause()
@@ -379,20 +388,28 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
 async def test_curated_install_progress_after_recompose_still_mirrors_into_installed_view(
     monkeypatch,
 ):
-    """PR #1185 automated review, Important #1 (fix round 2).
+    """PR #1185 automated review, Important #1 (fix round 2); TASK-1803.
 
-    ``CuratedView._deliver``'s durable fallback used to post straight at
-    the captured Screen. Textual only ever bubbles a message UP from
-    wherever it is posted, never back down, and ``LLMManagementWindow``
-    (which owns the ``InstallProgressed``/``InstallStatusChanged``
-    handlers that mirror progress and lifecycle into ``InstalledView``,
-    see ``LLM_Management_Window.py``) sits BELOW the Screen. Posting at
-    the Screen therefore entered the tree above that mirroring node, so
-    it silently never ran after a recompose: Curated kept updating (the
-    two tests above only ever checked Curated), while Installed silently
-    stopped receiving ticks/completion. This test is the one the review
-    asked for: it checks the MIRRORING handler's own effect on
-    ``InstalledView``, not the curated side, after a real recompose.
+    ``LLMManagementWindow`` (which owns the ``InstallProgressed``/
+    ``InstallStatusChanged`` handlers that mirror progress and lifecycle
+    into ``InstalledView``, see ``LLM_Management_Window.py``) sits BELOW
+    the Screen. Before TASK-1803, ``CuratedView`` posted these messages
+    itself and needed a durable fallback for when a screen-level recompose
+    orphaned it; an earlier version of that fallback posted straight at
+    the Screen, which -- since Textual only ever bubbles a message UP from
+    wherever it is posted, never back down -- entered the tree above that
+    mirroring node and silently never ran: Curated kept updating (the
+    tests above only ever checked Curated), while Installed silently
+    stopped receiving ticks/completion.
+
+    TASK-1803 moved the worker to ``LLMScreen`` and made it always post at
+    ``self.llm_window`` (``_deliver_curated``), read fresh so it already
+    points at whichever ``LLMManagementWindow`` is currently mounted --
+    which sits BELOW this screen by construction, so this can no longer
+    regress the way the original fallback did. This test is the one the
+    original review asked for: it checks the MIRRORING handler's own
+    effect on ``InstalledView``, not the curated side, after a real
+    recompose.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture, used to stub the
@@ -405,7 +422,6 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
     import tldw_chatbook.Model_Artifacts.acquisition as acquisition_module
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
-    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
@@ -436,8 +452,8 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
                 consent: The granted consent object (unused).
                 registry: The curated registry (unused).
                 sources: File source map (unused).
-                progress: The real ``deliver`` callback ``CuratedView.
-                    _provision`` built.
+                progress: The real ``deliver`` callback ``LLMScreen.
+                    _provision_curated`` built.
 
             Returns:
                 A sentinel standing in for the real installed-path result;
@@ -458,24 +474,22 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
         for _ in range(5):
             await pilot.pause()
         window = screen.query_one(LLMManagementWindow)
-        curated = window.query_one(CuratedView)
         installed = window.query_one(InstalledView)
 
-        curated._operation_reference = reference
-        curated._progress_screen = curated.screen
-        curated._service_for_worker = MagicMock()
-        curated._registry_for_worker = MagicMock()
-        curated._source_map = MagicMock(return_value={})
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = MagicMock()
+        screen._model_install_sources = {}
         fake_report = MagicMock(root=reference)
 
-        provision_task = asyncio.create_task(curated._provision(fake_report))
+        provision_task = asyncio.create_task(screen._provision_curated(fake_report))
         await pilot.pause()
         await pilot.pause()
 
         # Sanity check on the normal (no-recompose) path: the FIRST tick
         # already reaches InstalledView's own mirroring, via the exact
-        # bubble chain _deliver's docstring describes (CuratedView ->
-        # LLMManagementWindow -> LLMScreen).
+        # bubble chain _deliver_curated's docstring describes
+        # (LLMManagementWindow -> LLMScreen, posted at llm_window).
         assert installed._install_progress == first_progress
         assert installed._install_active is True
 
@@ -489,13 +503,13 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
             "test setup bug: recompose did not actually replace InstalledView"
         )
 
-        # The tick under test: delivered by the ORIGINAL (now unmounted,
-        # orphaned) CuratedView instance's own worker, through _deliver's
-        # fallback -- exactly what the real download does after a
-        # mid-install recompose. Before this fix, _deliver posted straight
-        # at the Screen, which never reaches LLMManagementWindow's
-        # mirroring handler; fresh_installed would still show the FIRST
-        # tick's byte counts (or nothing), never the second's.
+        # The tick under test: delivered by THIS SCREEN's own
+        # still-running worker (never torn down by the recompose) --
+        # exactly what the real download does after a mid-install
+        # recompose. _deliver_curated posts at self.llm_window, read
+        # fresh -- already the NEW window by this point -- so it reaches
+        # LLMManagementWindow's mirroring handler with no fallback
+        # required.
         resume.set()
         await provision_task
         for _ in range(3):
@@ -503,30 +517,200 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
 
         assert fresh_installed._install_progress == second_progress, (
             "InstalledView's mirroring handler never observed the "
-            "post-recompose tick -- _deliver's fallback bypassed "
-            "LLMManagementWindow"
+            "post-recompose tick"
         )
         assert fresh_installed._install_active is True
 
 
 @pytest.mark.asyncio
+async def test_deliver_curated_falls_back_to_the_screen_when_llm_window_is_stale_and_closed():
+    """TASK-1803 review round 1 (Critical): ``self.llm_window`` is a plain
+    attribute, not a live query. ``LabScreen.recompose()`` (``lab_frame.
+    py``'s ``recompose()``, which calls the base ``Widget.recompose()``)
+    tears down and closes the old ``LLMManagementWindow`` SYNCHRONOUSLY,
+    but only the deferred ``_mount_lab_body`` (scheduled via
+    ``call_after_refresh``) reassigns ``self.llm_window`` to the fresh
+    instance. Between those two points, ``self.llm_window`` still refers
+    to the closed widget -- ``post_message`` on a closed target returns
+    ``False`` without raising, and the original ``_deliver_curated``
+    ignored that return value, silently dropping the message: this
+    screen's OWN ``@on(InstallProgressed)``/``@on(InstallStatusChanged)``
+    handlers never fired either, so even the Lab status chip and
+    ``_model_install_active`` got stuck -- a regression against the
+    deleted ``CuratedView._deliver``, which used a live ``try``/``except
+    NoMatches`` query specifically so a stale reference could never
+    swallow a tick this way.
+
+    Reproduces the exact gap without waiting for a real recompose to race
+    it: removes the window exactly as ``recompose()``'s teardown does,
+    confirms ``self.llm_window`` is still that same, now-closed instance
+    (pinning the reproduction itself, not just the fix), then delivers a
+    tick and asserts this screen's own state still updated -- proving the
+    fallback-on-``False`` in ``_deliver_curated`` (not a query, and not
+    the four-level chain the deleted code used) closes the gap.
+    """
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.ModelArtifacts import InstallStatusChanged
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        for _ in range(5):
+            await pilot.pause()
+
+        old_window = screen.llm_window
+        assert old_window is not None
+
+        # The synchronous half of a screen-level recompose: the old body
+        # is removed/closed immediately. Deliberately NOT followed by
+        # anything that would reassign screen.llm_window (the deferred
+        # _mount_lab_body/build_lab_body pair a real recompose schedules
+        # via call_after_refresh) -- that is exactly the gap under test.
+        await old_window.remove()
+        await pilot.pause()
+
+        assert screen.llm_window is old_window, (
+            "test setup bug: something already reassigned llm_window -- "
+            "this must still be the stale, closed reference"
+        )
+        assert old_window._closed is True
+        assert old_window.post_message(InstallStatusChanged(reference, active=True)) is False, (
+            "test setup bug: the removed window must already be closed, "
+            "i.e. post_message on it must return False, for this to be "
+            "the gap _deliver_curated needs to survive"
+        )
+
+        screen._deliver_curated(InstallStatusChanged(reference, active=True))
+        await pilot.pause()
+
+        assert screen._model_install_active is True, (
+            "_deliver_curated silently dropped the message when "
+            "self.llm_window was stale and closed -- this screen's own "
+            "state never updated"
+        )
+
+
+@pytest.mark.asyncio
+async def test_hydration_mirrors_a_tick_delivered_during_the_recompose_gap_into_installed_view():
+    """TASK-1803 review round 2 (Important): the fallback in
+    ``_deliver_curated`` keeps THIS screen's own state current when a
+    tick lands in the teardown -> remount gap (see the test above), but
+    posting on ``self`` never reaches ``LLMManagementWindow``'s mirroring
+    handlers (``_managed_install_progressed``/``_managed_install_status_
+    changed``) -- Textual only ever bubbles a message UP, never back down
+    into a sibling/descendant, and the Screen is already above that node.
+    Before this fix, ``InstalledView`` would show a stale "not
+    installing" state for however long it took the next tick to arrive
+    naturally -- this is the same mirroring gap PR #1185 fixed for
+    ``CuratedView``, recurring one level deeper.
+
+    This is the distinction the review asked to be pinned: not merely
+    that the SCREEN's own state updated (the test above), but that
+    ``InstalledView`` itself is brought up to date once the fresh window
+    actually mounts.
+
+    Reproduces the exact gap deterministically (removes the window
+    exactly as recompose's teardown does -- see the test above --
+    delivers a tick while it is closed, and confirms the OLD
+    ``InstalledView`` never saw it, proving this is a real reproduction
+    and not a no-op), then completes the deferred remount directly
+    (``_mount_lab_body``, exactly what ``call_after_refresh`` would
+    eventually call for a real recompose) and asserts the FRESH
+    ``InstalledView`` reflects the delivered tick once hydration runs.
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.ModelArtifacts import InstallProgressed
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    progress = AcquisitionProgress("fetch", reference, "encoder.onnx", 512, 1024)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        for _ in range(5):
+            await pilot.pause()
+
+        old_window = screen.llm_window
+        assert old_window is not None
+        old_installed = old_window.query_one(InstalledView)
+
+        # The synchronous half of a screen-level recompose (see
+        # test_deliver_curated_falls_back_to_the_screen_when_llm_window_
+        # is_stale_and_closed above for why this deterministically
+        # reproduces the gap without racing a real recompose).
+        await old_window.remove()
+        await pilot.pause()
+        assert screen.llm_window is old_window, (
+            "test setup bug: something already reassigned llm_window"
+        )
+
+        # The tick under test: delivered while the window is stale and
+        # closed. Falls back to posting on self (TASK-1803 review round
+        # 1), so this screen's own state updates -- but the OLD (about to
+        # be discarded) InstalledView must NOT have received it, which is
+        # exactly what makes this a genuine reproduction of the gap the
+        # mirror needs to survive, not a no-op.
+        screen._deliver_curated(InstallProgressed(progress))
+        await pilot.pause()
+
+        assert screen._model_install_active is True
+        assert screen._model_install_last_progress == progress
+        assert old_installed._install_progress is None, (
+            "test setup bug: the OLD InstalledView must not have seen "
+            "the tick, or this isn't reproducing the gap"
+        )
+
+        # Complete the deferred remount directly -- exactly what
+        # call_after_refresh(self._mount_lab_body) would eventually call
+        # for a real recompose.
+        screen._mount_lab_body()
+        for _ in range(5):
+            await pilot.pause()
+
+        fresh_window = screen.llm_window
+        assert fresh_window is not old_window, (
+            "test setup bug: _mount_lab_body did not actually replace "
+            "the window"
+        )
+        fresh_installed = fresh_window.query_one(InstalledView)
+        assert fresh_installed is not old_installed
+
+        assert fresh_installed._install_active is True, (
+            "InstalledView was not brought up to date by hydration after "
+            "the remount -- it still shows the tick dropped in the "
+            "teardown/remount gap as though the install were not active"
+        )
+        assert fresh_installed._install_progress == progress, (
+            "InstalledView's progress was not hydrated from the tick "
+            "delivered during the recompose gap"
+        )
+
+
+@pytest.mark.asyncio
 async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatch):
-    """TASK-596 delta port, fix round 1 (Review Important #1).
+    """TASK-596 delta port, fix round 1 (Review Important #1); TASK-1803.
 
     ``InstallProgressed`` bubbles by default -- nothing in this codebase
-    ever called ``event.stop()`` on it. Posting one tick to ``CuratedView``
-    used to be handled by ``CuratedView``'s own ``_install_progressed``
-    (rendering the widget), then bubble on, unstopped, through
-    ``LLMManagementWindow`` (unrelated to this bug -- it mirrors into
-    ``InstalledView``, a different widget) up to ``LLMScreen``, whose
-    forwarding (added for the recompose fix above) rendered the SAME,
-    still-mounted ``CuratedView`` a second time via ``apply_progress``.
-    With the since-removed dual delivery (a second, independent
-    ``screen.post_message`` for the very same tick) that was three
-    renders total for one event -- confirmed live via a Pilot probe
-    before this fix. The recompose test above only ever asserted eventual
-    CONTENT, which cannot distinguish one render from three; this counts
-    the actual number of ``apply_progress`` calls instead.
+    ever calls ``event.stop()`` on it. Before TASK-1803, ``CuratedView``
+    posted this message itself, which used to be handled by its own
+    ``_install_progressed`` (rendering the widget), then bubble on,
+    unstopped, through ``LLMManagementWindow`` (unrelated to this bug --
+    it mirrors into ``InstalledView``, a different widget) up to
+    ``LLMScreen``, whose own forwarding rendered the SAME, still-mounted
+    ``CuratedView`` a second time via ``apply_progress`` -- three renders
+    total for one event with an earlier, since-removed dual-delivery
+    fallback added on top. TASK-1803 removed ``CuratedView``'s own
+    posting and self-listening entirely: ``LLMScreen`` (via
+    ``_deliver_curated``, posting at ``self.llm_window``) is now the ONLY
+    originator of this message for a curated install, and
+    ``_model_install_progressed`` is the only place that calls
+    ``apply_progress``. This counts the actual number of calls, which
+    content-only assertions (like the recompose tests above) cannot
+    distinguish from two or three.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture, used to wrap
@@ -552,20 +736,16 @@ async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatc
         screen = await _models_screen(app)
         for _ in range(5):
             await pilot.pause()
-        window = screen.query_one(LLMManagementWindow)
-        curated = window.query_one(CuratedView)
 
         reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
         progress = AcquisitionProgress("fetch", reference, "encoder.onnx", 1, 2)
 
-        # Posted to the still-live, currently-mounted CuratedView -- the
-        # steady-state, no-recompose case _deliver's own docstring calls
-        # "the common case": exactly what self.post_message(message) does
-        # inside _deliver when it succeeds. Bubbles through
+        # The production entry point for a live tick (TASK-1803):
+        # LLMScreen's own worker calls exactly this. Bubbles through
         # LLMManagementWindow (mirrors into InstalledView, untouched by
-        # this fix) up to LLMScreen, whose forwarding is now the ONLY
-        # place that calls apply_progress.
-        curated.post_message(InstallProgressed(progress))
+        # this fix) up to LLMScreen, whose forwarding is the ONLY place
+        # that calls apply_progress.
+        screen._deliver_curated(InstallProgressed(progress))
         await pilot.pause()
         await pilot.pause()
         await pilot.pause()
@@ -575,6 +755,610 @@ async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatc
         f"expected exactly one apply_progress call for one progress tick, "
         f"got {len(calls)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_curated_install_click_reaches_the_shared_consent_modal(monkeypatch):
+    """A real Install click -- not a direct call to an internal method --
+    posts ``CuratedView.InstallRequested``, which ``LLMScreen`` resolves
+    (through a stubbed acquisition service, so this stays network-free)
+    into the exact shared ``ModelInstallModal``.
+
+    TASK-1803: this replaces ``test_model_curated_view.py``'s
+    ``test_install_click_reaches_the_shared_consent_modal``, which used to
+    assert this against ``CuratedView`` directly (it owned the worker that
+    resolved the plan and pushed the modal itself). Now that ``LLMScreen``
+    owns that worker, the equivalent end-to-end coverage belongs here,
+    against a real, running ``LLMScreen``.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; stubs
+            ``ArtifactAcquisitionService`` so preflight resolves without
+            real network I/O, and stubs ``push_screen`` to capture its
+            arguments without pushing a real screen.
+    """
+    from unittest.mock import MagicMock
+
+    import tldw_chatbook.Model_Artifacts.acquisition as acquisition_module
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    class _FakeAcquisitionService:
+        """Stands in for the real, network-capable acquisition service."""
+
+        def __init__(self, _service) -> None:
+            """Accept and discard the managed-store service the real
+            constructor takes.
+
+            Args:
+                _service: The managed-store service (unused by the fake).
+            """
+
+        async def preflight(self, ref, _registry, *, sources):
+            """Resolve a fake plan rooted at whatever reference was clicked.
+
+            Args:
+                ref: The reference LLMScreen asked to preflight.
+                _registry: The curated registry (unused).
+                sources: File source map (unused).
+
+            Returns:
+                A stand-in report whose ``.root`` is ``ref``, so
+                ``LLMScreen``'s registry lookup for the modal's label
+                resolves against the real curated registry.
+            """
+            report = MagicMock()
+            report.root = ref
+            return report
+
+    monkeypatch.setattr(
+        acquisition_module, "ArtifactAcquisitionService", _FakeAcquisitionService
+    )
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        monkeypatch.setattr(app, "push_screen", MagicMock())
+        for _ in range(5):
+            await pilot.pause()
+
+        curated_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "curated"
+        )
+        curated_row.press()
+        await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one(CuratedView)
+
+        async def _loaded() -> bool:
+            return curated._loaded
+
+        for _ in range(50):
+            if await _loaded():
+                break
+            await pilot.pause()
+        assert curated._loaded, "Curated never finished its catalog load"
+
+        button = next(iter(curated.query(".curated-install").results(Button)))
+        await pilot.click(button)
+        await pilot.pause()
+        await pilot.pause()
+
+        for _ in range(20):
+            if app.push_screen.called:
+                break
+            await pilot.pause()
+        assert app.push_screen.called, "clicking Install never reached push_screen"
+
+        modal, callback = app.push_screen.call_args[0]
+        assert isinstance(modal, ModelInstallModal)
+        assert modal.report.root == button.reference
+        assert callback == screen._confirm_curated_install
+        assert screen._model_install_pending_report is modal.report
+
+
+@pytest.mark.parametrize("operation", ("preflight", "installation"))
+def test_curated_install_failures_log_exact_artifact_context(operation, monkeypatch):
+    """Worker diagnostics identify the safe immutable artifact reference.
+
+    TASK-1803: this used to run directly against ``CuratedView``'s own
+    ``_preflight_model``/``_provision_model`` (formerly in
+    ``test_model_installed_view.py``); the equivalent worker methods now
+    live on ``LLMScreen``.
+
+    Built via ``__new__`` (skipping ``__init__``) with ``app`` patched to
+    a ``MagicMock`` at the class level, exactly like the pre-existing
+    ``InstalledView``/``CuratedView`` versions of this test -- ``LLMScreen.
+    __init__`` reads the real Lab rail-collapse config through
+    ``load_rail_layout()``/``get_cli_setting()``, which this test must not
+    touch, and a mocked ``app`` lets ``call_from_thread`` be inspected
+    directly instead of raising (Textual refuses to run it from the app's
+    own thread, which this synchronous test is).
+
+    Args:
+        operation: Which worker to exercise -- ``"preflight"`` drives
+            ``_run_curated_preflight``, ``"installation"`` drives
+            ``_run_curated_provision``.
+        monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
+            app`` and this module's ``logger``, both reverted afterward.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    fake_app = MagicMock()
+    fake_logger = MagicMock()
+    fake_logger.opt.return_value = fake_logger
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(module, "logger", fake_logger)
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = None
+
+    if operation == "preflight":
+
+        async def fail_preflight(_reference):
+            raise RuntimeError("PRIVATE-WORKER-DETAIL")
+
+        screen._preflight_curated = fail_preflight
+        module.LLMScreen._run_curated_preflight.__wrapped__(screen)
+    else:
+        report = MagicMock()
+        report.root = reference
+        screen._model_install_pending_report = report
+
+        async def fail_provision(_report):
+            raise RuntimeError("PRIVATE-WORKER-DETAIL")
+
+        screen._provision_curated = fail_provision
+        module.LLMScreen._run_curated_provision.__wrapped__(screen)
+
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
+    assert reference.artifact_id in logged
+    assert reference.revision in logged
+    assert reference.variant in logged
+
+
+def test_curated_preflight_failure_notifies_and_does_not_push_a_modal(monkeypatch):
+    """The sibling success path is
+    ``test_curated_install_click_reaches_the_shared_consent_modal`` above;
+    this is its failure branch, adapted from ``test_model_curated_view.
+    py``'s former ``test_preflight_failure_notifies_and_does_not_push_a_
+    modal`` now that ``LLMScreen`` -- not ``CuratedView`` -- resolves the
+    plan (TASK-1803). Built via ``__new__``, same rationale as the test
+    above.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
+            app`` (a read-only property with no setter, hence the
+            class-level patch rather than plain instance assignment).
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_worker = MagicMock()
+    screen._model_install_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = None
+
+    module.LLMScreen._apply_curated_preflight_result(screen, None, "boom")
+
+    screen.notify.assert_called_once_with("boom", severity="error")
+    fake_app.push_screen.assert_not_called()
+    assert screen._model_install_worker is None
+    assert screen._model_install_reference is None
+    assert screen._model_install_service is None
+    assert screen._model_install_registry is None
+    assert screen._model_install_sources is None
+    view.cancel_pending_install.assert_called_once_with()
+
+
+def test_declining_the_consent_modal_does_not_start_the_install_worker():
+    """Adapted from ``test_model_curated_view.py``'s former test of the
+    same name -- ``LLMScreen`` now owns the decline path (TASK-1803).
+    Built via ``__new__``, same rationale as the tests above.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._run_curated_provision = MagicMock()
+    screen._model_install_worker = None
+    screen._model_install_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = object()
+
+    module.LLMScreen._confirm_curated_install(screen, False)
+
+    screen._run_curated_provision.assert_not_called()
+    assert screen._model_install_reference is None
+    assert screen._model_install_pending_report is None
+    view.cancel_pending_install.assert_called_once_with()
+
+
+def test_curated_install_requested_refuses_a_second_concurrent_install():
+    """TASK-1803 review round 1 (Important, gap #2): untested until now.
+
+    ``_curated_install_requested``'s worker-in-flight guard (mirroring
+    ``LibraryScreen.handle_parakeet_v2_install_requested``'s own) must
+    refuse a second request while one install is still running -- not
+    start a competing preflight worker, not touch the running install's
+    own retained reference/service/registry/sources, and not touch its
+    worker handle -- and must release only the freshly clicking
+    ``CuratedView``'s own in-flight indicator (see the method's own
+    docstring for why that view, specifically, is the one instance a
+    screen-level recompose can hand a second chance to click Install
+    while the original install is still in flight elsewhere).
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    running_worker = MagicMock()
+    running_worker.is_finished = False
+    running_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    running_service = MagicMock()
+    running_registry = MagicMock()
+    running_sources = {}
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._run_curated_preflight = MagicMock()
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_worker = running_worker
+    screen._model_install_reference = running_reference
+    screen._model_install_service = running_service
+    screen._model_install_registry = running_registry
+    screen._model_install_sources = running_sources
+
+    event = CuratedView.InstallRequested(
+        ArtifactRef("model-b", "b" * 40, "int8"),
+        service=MagicMock(),
+        registry=MagicMock(),
+        sources={},
+    )
+    event.stop = MagicMock()
+
+    module.LLMScreen._curated_install_requested(screen, event)
+
+    event.stop.assert_called_once_with()
+    screen.notify.assert_called_once_with(
+        "A curated model install is already running.",
+        severity="information",
+    )
+    view.cancel_pending_install.assert_called_once_with()
+    screen._run_curated_preflight.assert_not_called()
+    # The running install's own retained state must survive untouched.
+    assert screen._model_install_reference is running_reference
+    assert screen._model_install_service is running_service
+    assert screen._model_install_registry is running_registry
+    assert screen._model_install_sources is running_sources
+    assert screen._model_install_worker is running_worker
+
+
+@pytest.mark.parametrize(
+    ("reference", "service", "registry", "sources"),
+    (
+        (None, "service", "registry", {}),
+        ("not-a-ref", "service", "registry", {}),
+        (object(), "service", "registry", {}),
+    ),
+)
+def test_curated_install_requested_refuses_an_invalid_payload_without_starting_a_worker(
+    reference, service, registry, sources
+):
+    """TASK-1803 review round 2 (Critical, Finding 1): an invalid request
+    must never be stored or acted on.
+
+    ``_run_curated_preflight`` used to assume ``self._model_install_
+    reference`` was always a valid ``ArtifactRef``: a missing or malformed
+    reference reached ``reference.artifact_id`` inside that worker's own
+    exception handler, raising a SECOND, unhandled exception that
+    pre-empted ``_apply_curated_preflight_result`` entirely and stranded
+    the retained install state with no path back to idle. The primary
+    defense is here, before anything is ever stored: an invalid
+    ``reference`` (parametrized: ``None``, a plain string, and an
+    arbitrary object -- none are ``ArtifactRef``) notifies, releases the
+    clicking view's own indicator via ``cancel_pending_install()``, clears
+    every retained field via ``_clear_curated_install_state()``, and never
+    starts a preflight worker.
+
+    Args:
+        reference: The (invalid) reference value under test.
+        service: A stand-in for ``event.service`` (a valid, non-``None``
+            placeholder here; only ``reference`` is exercised as invalid
+            in this parametrization).
+        registry: A stand-in for ``event.registry``, same rationale.
+        sources: A stand-in for ``event.sources``, same rationale.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._run_curated_preflight = MagicMock()
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_worker = None
+    screen._model_install_reference = None
+    screen._model_install_service = None
+    screen._model_install_registry = None
+    screen._model_install_sources = None
+    screen._model_install_pending_report = None
+
+    event = CuratedView.InstallRequested(
+        reference,
+        service=service,
+        registry=registry,
+        sources=sources,
+    )
+    event.stop = MagicMock()
+
+    module.LLMScreen._curated_install_requested(screen, event)
+
+    event.stop.assert_called_once_with()
+    screen._run_curated_preflight.assert_not_called()
+    screen.notify.assert_called_once_with(
+        "Could not start the model install: invalid request.",
+        severity="error",
+    )
+    view.cancel_pending_install.assert_called_once_with()
+    assert screen._model_install_worker is None
+    assert screen._model_install_reference is None
+    assert screen._model_install_service is None
+    assert screen._model_install_registry is None
+    assert screen._model_install_sources is None
+    assert screen._model_install_pending_report is None
+
+
+@pytest.mark.parametrize(
+    ("missing_field",),
+    (("service",), ("registry",), ("sources",)),
+)
+def test_curated_install_requested_refuses_when_service_registry_or_sources_is_none(
+    missing_field,
+):
+    """TASK-1803 review round 2 (Critical, Finding 1): the same validation
+    covers ``event.service``/``event.registry``/``event.sources`` being
+    ``None``, not only a malformed ``reference``.
+
+    Args:
+        missing_field: Which of the three payload fields to set to
+            ``None`` for this parametrization; the other two stay valid.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    fields = {"service": "service", "registry": "registry", "sources": {}}
+    fields[missing_field] = None
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._run_curated_preflight = MagicMock()
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_worker = None
+    screen._model_install_reference = None
+    screen._model_install_service = None
+    screen._model_install_registry = None
+    screen._model_install_sources = None
+
+    event = CuratedView.InstallRequested(
+        ArtifactRef("model-a", "a" * 40, "int8"),
+        **fields,
+    )
+    event.stop = MagicMock()
+
+    module.LLMScreen._curated_install_requested(screen, event)
+
+    screen._run_curated_preflight.assert_not_called()
+    screen.notify.assert_called_once_with(
+        "Could not start the model install: invalid request.",
+        severity="error",
+    )
+    assert screen._model_install_reference is None
+
+
+def test_run_curated_preflight_schedules_apply_result_when_reference_is_none(
+    monkeypatch,
+):
+    """TASK-1803 review round 2 (Critical, Finding 1): defense-in-depth.
+
+    ``_curated_install_requested`` already refuses to store an invalid
+    reference, so this should be unreachable in practice -- but
+    ``_run_curated_preflight`` must never trust that assumption blindly.
+    If ``self._model_install_reference`` is somehow ``None`` when this
+    worker runs, it must still schedule
+    ``_apply_curated_preflight_result(None, <message>)`` directly rather
+    than reaching the ``try`` block and risking an ``AttributeError`` on
+    ``None.artifact_id`` that would pre-empt that call entirely.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
+            app`` (a read-only property with no setter, hence the
+            class-level patch rather than plain instance assignment).
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._model_install_reference = None
+
+    module.LLMScreen._run_curated_preflight.__wrapped__(screen)
+
+    fake_app.call_from_thread.assert_called_once()
+    args = fake_app.call_from_thread.call_args[0]
+    assert args[0] == screen._apply_curated_preflight_result
+    assert args[1] is None
+    assert isinstance(args[2], str) and args[2]
+
+
+def test_run_curated_preflight_except_clause_survives_a_malformed_reference(
+    monkeypatch,
+):
+    """TASK-1803 review round 2 (Critical, Finding 1): the except clause
+    itself must never raise a second exception.
+
+    Forces ``_preflight_curated`` to fail with a malformed (non-
+    ``ArtifactRef``) ``self._model_install_reference`` already in place --
+    exactly the state a bug elsewhere could otherwise leave behind -- and
+    asserts the exception handler still schedules
+    ``_apply_curated_preflight_result(None, ...)`` exactly once, using
+    ``getattr(..., "unknown")`` formatting instead of raising its own
+    ``AttributeError`` reaching for ``.artifact_id``/``.revision``/
+    ``.variant`` on an object that has none of them.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
+            app`` (a read-only property with no setter) and this module's
+            ``logger``.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    fake_logger = MagicMock()
+    fake_logger.opt.return_value = fake_logger
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(module, "logger", fake_logger)
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._model_install_reference = object()  # malformed: not an ArtifactRef
+
+    async def fail_preflight(_reference):
+        raise RuntimeError("PRIVATE-WORKER-DETAIL")
+
+    screen._preflight_curated = fail_preflight
+
+    # Must not itself raise (that is exactly the regression under test).
+    module.LLMScreen._run_curated_preflight.__wrapped__(screen)
+
+    fake_logger.error.assert_called_once()
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
+    assert "unknown" in logged
+    assert "PRIVATE-WORKER-DETAIL" not in logged
+
+    fake_app.call_from_thread.assert_called_once_with(
+        screen._apply_curated_preflight_result,
+        None,
+        fake_app.call_from_thread.call_args[0][2],
+    )
+    assert fake_app.call_from_thread.call_args[0][1] is None
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_severity", "expected_message"),
+    (
+        (None, "information", "Model installed and activated."),
+        ("boom", "error", "boom"),
+    ),
+)
+def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
+    error, expected_severity, expected_message, monkeypatch
+):
+    """TASK-1803 review round 1 (Important, gap #1): untested until now.
+
+    ``_apply_curated_provision_result`` is the sole path that ends a
+    curated install, success or failure: it must notify the exact
+    outcome, deliver the terminal ``InstallStatusChanged(active=False,
+    ...)`` (so the Lab chip and ``InstalledView``'s mirror both learn the
+    install finished -- losing this message is what leaves the chip stuck
+    on "downloading" forever), reset every bit of retained install state
+    so a later install starts clean, and tell the visible ``CuratedView``
+    (if any) to reload. The deleted ``CuratedView._apply_provision_result``
+    had a direct test (``test_curated_provision_completion_tolerates_
+    recompose_gap``); its stated replacement
+    (``test_finish_install_clears_the_indicator_and_reloads_despite_a_
+    missing_progress_widget`` in ``test_model_curated_view.py``) only
+    covers ``CuratedView.finish_install()``'s render half, not this
+    method's notify/deliver/reset half.
+
+    Args:
+        error: The error string ``_run_curated_provision`` would pass on
+            failure, or ``None`` on success.
+        expected_severity: The ``notify()`` severity this error value
+            maps to.
+        expected_message: The ``notify()`` message this error value maps
+            to.
+        monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
+            app`` (a read-only property with no setter).
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+
+    reference = ArtifactRef("model-a", "a" * 40, "int8")
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_worker = MagicMock()
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = object()
+
+    module.LLMScreen._apply_curated_provision_result(screen, error)
+
+    screen.notify.assert_called_once_with(expected_message, severity=expected_severity)
+    assert screen._model_install_worker is None
+    assert screen._model_install_pending_report is None
+    assert screen._model_install_reference is None
+    assert screen._model_install_service is None
+    assert screen._model_install_registry is None
+    assert screen._model_install_sources is None
+
+    screen._deliver_curated.assert_called_once()
+    delivered = screen._deliver_curated.call_args[0][0]
+    assert isinstance(delivered, module.InstallStatusChanged)
+    assert delivered.reference == reference
+    assert delivered.active is False
+    assert delivered.succeeded == (error is None)
+
+    view.finish_install.assert_called_once_with()
 
 
 @pytest.mark.asyncio
