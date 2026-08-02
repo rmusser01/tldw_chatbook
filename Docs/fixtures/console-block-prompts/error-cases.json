@@ -1,0 +1,40 @@
+{
+  "structured": [
+    {
+      "name": "missing_lanes",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt"}},
+      "state": "malformed"
+    },
+    {
+      "name": "duplicate_block_id",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": [{"id": "same", "title": "One", "syntax": "freeform", "content": "a"}]}, {"id": "user", "blocks": [{"id": "same", "title": "Two", "syntax": "freeform", "content": "b"}]}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "duplicate_lane_id",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "system", "blocks": []}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "non_mapping_lane",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": ["not-a-lane", {"id": "user", "blocks": []}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "kind_artifact_mismatch",
+      "record": {"artifact_type": "recipe", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    },
+    {
+      "name": "column_definition_version_mismatch",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 3, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    }
+  ],
+  "xml": [
+    {"xml_tag": "", "content": "body", "input": ""},
+    {"xml_tag": "1bad", "content": "body", "input": "1bad"},
+    {"xml_tag": "context", "content": "<context>body</context>", "input": "<context>body</context>"},
+    {"xml_tag": "context", "content": "<context />", "input": "<context />"}
+  ]
+}

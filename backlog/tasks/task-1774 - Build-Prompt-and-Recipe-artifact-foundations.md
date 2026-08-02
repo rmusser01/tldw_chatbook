@@ -1,9 +1,10 @@
 ---
 id: TASK-1774
 title: Build Prompt and Recipe artifact foundations
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 23:27'
+updated_date: '2026-08-02 00:53'
 labels: []
 dependencies:
   - TASK-1773
@@ -27,3 +28,15 @@ Create the durable Prompt/Recipe artifact contract that lets Console and server-
 - [ ] #2 Console block schema v2 and server structured kinds are explicitly dispatched, validated, and compiled without ambiguity; malformed, mismatched, and foreign records remain safely distinguishable.
 - [ ] #3 Library source capabilities expose supported artifact kinds, limits, conditional-update availability, and honest backend search behavior, with focused local/server compatibility tests passing.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Implement the Console block-v2 immutable artifact models, strict decode states, deterministic compilation, conservative legacy decomposition, and focused fixtures/tests (plan Task 1).
+2. Add local Prompt persistence migration, typed storage/service handling, and transactional expected-version updates (plan Task 2).
+3. Extend server adapter/service compatibility and add server-side parity contract coverage without changing legacy or schema-v1 behavior (plan Task 3).
+4. Add source capability descriptors, honest search routing, and capability-aware validation for prompt artifacts (plan Task 4).
+5. Extend prompt import/export and unified scope behavior for first-class Prompt/Recipe artifacts, then verify the Stage 1 acceptance criteria (plan Task 5).
+
+ADR required: yes; ADR path: backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md; Reason: the stage implements the adopted cross-module versioning/storage/runtime contract.
+<!-- SECTION:PLAN:END -->
