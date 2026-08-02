@@ -22,15 +22,27 @@ anywhere else.**
   `bind` (e.g. to `0.0.0.0`) in `[briefings_feed_server]`. Widening it
   exposes the served directory to the whole LAN (or further, behind a
   router configured for it) with no authentication at all -- see the next
-  point.
+  point. A blank, whitespace-only, or non-string `bind` value can never
+  silently cause this widening: `_normalize_bind` falls back to the safe
+  loopback default instead (task-1760 review, M3), and whenever the
+  address actually bound is not loopback -- whether from a deliberate
+  widening or a config mistake that still resolved to a real address --
+  `start()` logs a warning once, so exposure is never purely implicit.
 - **No authentication, by design, stated plainly rather than implied.**
   There is no login, token, or IP allow-list. Anyone who can open a TCP
   connection to the bound address and port can read every file under the
-  served directory for as long as it is running. This is acceptable for
-  its one intended use (pointing a podcast client at a feed you exported
-  yourself, on a loopback address only you can reach) and unacceptable for
-  anything wider -- the UI's own toast states this every time serving
-  starts, not just this docstring.
+  served directory **and every subdirectory beneath it** (recursively --
+  the handler is a plain `SimpleHTTPRequestHandler`, not scoped to one
+  level) for as long as it is running. This is acceptable for its one
+  intended use (pointing a podcast client at a feed you exported yourself,
+  on a loopback address only you can reach) and unacceptable for anything
+  wider -- the UI's own toast states this every time serving starts, not
+  just this docstring. Directory listings are refused (404, task-1760
+  review M4: `_ContainedRequestHandler.list_directory`) -- nothing is
+  *browsable* -- but every file whose name a client already knows (from
+  `feed.xml`, or guessed) is still fetchable anywhere in the tree. Point
+  this at a dedicated export folder, never a general-purpose directory
+  like your home folder, for exactly that reason.
 - **Path containment.** `_ContainedRequestHandler` resolves every request
   path (following symlinks) and refuses (404) anything that resolves
   outside the served directory. `SimpleHTTPRequestHandler.translate_path`
@@ -62,6 +74,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import ipaddress
 import threading
 from pathlib import Path
 
@@ -75,6 +88,55 @@ from ..Utils.path_validation import validate_path_simple
 #: read by `configured_bind_and_port()`, which supplies *defaults* for the
 #: UI's Serve action; nothing here auto-starts from it.
 _CONFIG_SECTION = "briefings_feed_server"
+
+#: The safe fallback bind address -- loopback-only (module docstring).
+#: `_normalize_bind` returns exactly this for anything that is not itself
+#: a non-blank string, so a blank/typo'd config value can never silently
+#: resolve to "every interface" (task-1760 review, M3).
+_SAFE_DEFAULT_BIND = "127.0.0.1"
+
+
+def _normalize_bind(raw_bind: object) -> str:
+    """Coerce a config-supplied `bind` value to a safe, non-empty string.
+
+    Fix wave (task-1760 review, M3): `bind` used to be passed through
+    `str(...)` with no further check, so a blank config value (`bind =
+    ""`, read back as `""`) or a numeric typo (`bind = 0`, meant for
+    `port`) reached `socket.bind` unchanged -- and both of those name
+    "every interface" to the stdlib (`socket.bind(("", 0))` and
+    `socket.bind(("0", 0))` both resolve to `0.0.0.0`), silently turning a
+    loopback-only default into a LAN-wide one. Anything that is not
+    itself a non-blank string -- `None`, an int, a float, an empty or
+    whitespace-only string -- falls back to the safe loopback default
+    instead; a *non-empty* string (including `"0.0.0.0"`) is trusted as a
+    deliberate choice and passed through unchanged (widening is not
+    forbidden -- module docstring -- only an accidental blank/typo'd value
+    silently causing it is).
+    """
+    if isinstance(raw_bind, str) and raw_bind.strip():
+        return raw_bind.strip()
+    return _SAFE_DEFAULT_BIND
+
+
+def is_loopback_bind(bind: str) -> bool:
+    """True if `bind` names a loopback-only address.
+
+    Covers the hostname `localhost` and any address `ipaddress` reports as
+    loopback (`127.0.0.0/8`, `::1`). Anything else -- a real interface
+    address, `0.0.0.0`, `::`, a LAN hostname, an unparsable string -- is
+    treated as reachable from somewhere other than this machine. Exposed
+    (not `_`-prefixed) so the UI layer can word its own toast/warning
+    around the same test `FeedDirectoryServer.start` uses (task-1760
+    review, M3) rather than re-implementing it.
+    """
+    normalized = bind.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
 
 #: What `_ContainedRequestHandler.translate_path` hands back for a request
 #: that resolves outside the served directory -- an ordinary, vanishingly
@@ -108,12 +170,15 @@ def configured_bind_and_port() -> tuple[str, int]:
 
     Returns:
         `(bind, port)`. `bind` defaults to `"127.0.0.1"` (loopback-only --
-        module docstring). `port` defaults to `0` (ephemeral: the OS picks
-        any free port, reported back by `FeedDirectoryServer.start`'s
-        return value) and falls back to `0` if the configured value is not
-        a valid integer, rather than raising on a hand-edited config.
+        module docstring) and falls back to that same safe default (never
+        an empty string) for a blank, whitespace-only, or non-string
+        configured value -- see `_normalize_bind` (task-1760 review, M3).
+        `port` defaults to `0` (ephemeral: the OS picks any free port,
+        reported back by `FeedDirectoryServer.start`'s return value) and
+        falls back to `0` if the configured value is not a valid integer,
+        rather than raising on a hand-edited config.
     """
-    bind = str(get_cli_setting(_CONFIG_SECTION, "bind", "127.0.0.1"))
+    bind = _normalize_bind(get_cli_setting(_CONFIG_SECTION, "bind", _SAFE_DEFAULT_BIND))
     raw_port = get_cli_setting(_CONFIG_SECTION, "port", 0)
     try:
         port = int(raw_port)
@@ -187,6 +252,24 @@ class _ContainedRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_PATCH(self) -> None:  # noqa: N802 - stdlib naming convention
         self._method_not_allowed()
 
+    def list_directory(self, path: str):  # noqa: D102 - stdlib override
+        """Refuse to render a directory listing; 404 instead.
+
+        Fix wave (task-1760 review, M4): a podcast feed is fetched by URLs
+        named in the served `feed.xml` -- nothing ever needs to browse the
+        served directory itself, and an auto-generated index is pure
+        exposure surface on top of that (every filename in the directory,
+        and every subdirectory beneath it, becomes visible to anyone who
+        can reach the bound address). Recursive *file* serving stays
+        intact -- an episode named in `feed.xml` from a subfolder must
+        still resolve -- only the browsable-index behaviour is removed.
+        `SimpleHTTPRequestHandler.send_head` treats a `None` return from
+        this method as "already handled, nothing further to do" (its own
+        docstring), so a plain `send_error` here is the complete override.
+        """
+        self.send_error(404, "File not found")
+        return None
+
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
         """Route request logging to loguru debug instead of stderr.
 
@@ -196,11 +279,24 @@ class _ContainedRequestHandler(http.server.SimpleHTTPRequestHandler):
         default per-request access log and `log_error` (which
         `BaseHTTPRequestHandler.log_error` implements by calling this same
         method), so a malformed request never reaches stderr either.
+
+        Fix wave (task-1760 review, M1): `BaseHTTPRequestHandler.parse_
+        request` sets `self.command = None` *before* `self.path` exists,
+        and calls `send_error` -> `log_error` -> this method on every
+        malformed-request-line path (an empty line, a bad HTTP version, an
+        over-long request line) that runs before `self.command, self.path
+        = words[:2]` ever executes. Reading `self.path` there raised
+        `AttributeError`, which killed the response (the client got zero
+        bytes instead of the intended 400/414) and the handler thread with
+        it -- and produced no log line at all, the opposite of this
+        method's own purpose. `getattr(..., "-")` never touches a missing
+        attribute, so logging itself can never be the reason a malformed
+        request goes unanswered.
         """
         logger.debug(
             "Feed server request: {} {} ({})",
-            self.command,
-            self.path,
+            getattr(self, "command", "-"),
+            getattr(self, "path", "-"),
             (format % args) if args else format,
         )
 
@@ -222,6 +318,8 @@ class FeedDirectoryServer:
         self._httpd: http.server.ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._url: str | None = None
+        self._bind: str | None = None
+        self._directory: Path | None = None
 
     @property
     def is_running(self) -> bool:
@@ -232,6 +330,27 @@ class FeedDirectoryServer:
         """The bound URL from the most recent successful `start()`, or
         `None` before the first `start()` or after `stop()`."""
         return self._url
+
+    @property
+    def bind(self) -> str | None:
+        """The normalized bind address actually used by the most recent
+        successful `start()` (never the raw, possibly-blank value a caller
+        passed in -- see `_normalize_bind`), or `None` before the first
+        `start()` or after `stop()`. Exposed so a caller (the UI's Serve
+        handler) can word its own exposure warning with `is_loopback_bind`
+        without re-deriving the address from `url` (task-1760 review, M3).
+        """
+        return self._bind
+
+    @property
+    def directory(self) -> Path | None:
+        """The resolved directory the most recent successful `start()` is
+        serving, or `None` before the first `start()` or after `stop()`.
+        Lets a caller (the export toast, task-1760 review, L1) tell
+        whether a fresh export landed in the directory actually being
+        served, without keeping its own duplicate bookkeeping.
+        """
+        return self._directory
 
     def start(self, directory: Path, *, bind: str = "127.0.0.1", port: int = 0) -> str:
         """Serve `directory` over HTTP, GET/HEAD only, until `stop()`.
@@ -257,6 +376,11 @@ class FeedDirectoryServer:
             bind: The address to bind. Defaults to loopback-only (module
                 docstring's Security posture) -- pass a wider address only
                 when the caller has deliberately chosen to widen exposure.
+                A blank/whitespace-only string (or any non-string value)
+                is normalized to the safe loopback default instead of
+                being passed through -- see `_normalize_bind` (task-1760
+                review, M3): a caller does not have to pre-validate this
+                itself, and cannot silently widen exposure by accident.
             port: The port to bind, or `0` for an ephemeral port (the OS
                 picks any free one). The actual bound port is always
                 reported back in the returned URL, regardless of which was
@@ -285,6 +409,12 @@ class FeedDirectoryServer:
         if not resolved_directory.is_dir():
             raise FeedServerError(f"{resolved_directory} is not a directory.")
 
+        # task-1760 review, M3: normalize here too, not only in
+        # `configured_bind_and_port` -- this method is the actual socket
+        # boundary, and a future direct caller (a test, a script) must get
+        # the same safe-by-default behaviour as the UI's Serve action.
+        bind = _normalize_bind(bind)
+
         handler_cls = functools.partial(
             _ContainedRequestHandler, directory=str(resolved_directory)
         )
@@ -296,8 +426,25 @@ class FeedDirectoryServer:
         httpd.daemon_threads = True
         actual_port = httpd.server_address[1]
 
+        if not is_loopback_bind(bind):
+            # task-1760 review, M3: nothing else here would ever tell an
+            # operator that a blank/typo'd or deliberately widened `bind`
+            # just made this directory reachable beyond this machine --
+            # the module docstring's whole posture rests on that
+            # distinction being visible, not merely documented. The bind
+            # address itself is safe to log in full (an IP/hostname this
+            # process itself resolved from config, never user or model
+            # content), unlike the `type(exc).__name__`-only rule this
+            # module follows for caught exceptions elsewhere.
+            logger.warning(
+                "Feed directory server binding to {} (not loopback-only) -- "
+                "the served directory is reachable from beyond this "
+                "machine while it is running.",
+                bind,
+            )
+
         thread = threading.Thread(
-            target=httpd.serve_forever,
+            target=lambda: httpd.serve_forever(poll_interval=0.05),
             name="briefings-feed-server",
             daemon=True,
         )
@@ -306,6 +453,8 @@ class FeedDirectoryServer:
         self._httpd = httpd
         self._thread = thread
         self._url = f"http://{bind}:{actual_port}/"
+        self._bind = bind
+        self._directory = resolved_directory
         logger.debug(
             "Feed directory server started on {}:{}", bind, actual_port
         )
@@ -319,6 +468,18 @@ class FeedDirectoryServer:
         `join()` afterward waits for that thread to actually exit before
         returning, so a caller that immediately calls `start()` again (or
         checks `is_running`) never races the old thread's teardown.
+
+        Fix wave (task-1760 review, M2): `shutdown()` blocks until the
+        `serve_forever()` loop's *next* `selector.select(poll_interval)`
+        call returns -- at the stdlib's own 0.5s default `poll_interval`
+        (unset before this fix wave), that measured ~501ms synchronous on
+        the Textual event loop, since both callers of this method
+        (`WatchlistsCollectionsScreen.handle_stop_feed_server_requested`
+        and its `on_unmount`) call it directly rather than via a worker.
+        `start()` now runs the loop at `poll_interval=0.05`, bounding this
+        call to roughly a tenth of that -- no change needed here, since
+        the bound comes entirely from how the loop it is joining was
+        started.
         """
         if self._httpd is None:
             return
@@ -329,4 +490,6 @@ class FeedDirectoryServer:
         self._httpd = None
         self._thread = None
         self._url = None
+        self._bind = None
+        self._directory = None
         logger.debug("Feed directory server stopped.")

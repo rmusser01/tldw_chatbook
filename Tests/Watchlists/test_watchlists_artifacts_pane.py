@@ -5361,8 +5361,12 @@ async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
         assert url in args[0]
         assert (
             "No authentication — anyone who can reach this address can "
-            "read the feed while it is serving." in args[0]
+            "read every file in this folder and its subfolders while it "
+            "is serving." in args[0]
         )
+        # Loopback default -> no additional exposure sentence (task-1760
+        # review, M3: that sentence is reserved for a non-loopback bind).
+        assert "reachable from beyond this machine" not in args[0]
         assert kwargs.get("severity") == "warning"
         assert kwargs.get("markup") is False
 

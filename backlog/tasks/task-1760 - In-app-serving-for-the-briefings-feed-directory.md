@@ -156,4 +156,57 @@ Watchlists_Modules/artifacts_pane.py` (Serve/Stop buttons, reactives, messages),
 watchlists_collections_screen.py` (server ownership, handlers, `on_unmount`), `Tests/Watchlists/
 test_watchlists_artifacts_pane.py` (new UI tests), `Docs/User_Guide/watchlists.md` (Serve Feed usage + Security
 posture section).
+
+**Fix wave (whole-branch security review, `task-1760-verdict.md`).** Four Medium + one Low finding remediated,
+no blockers found. **M1**: `log_message` read `self.command`/`self.path` directly; `BaseHTTPRequestHandler.
+parse_request` sets `self.command = None` before `self.path` exists and calls `send_error` -> `log_error` ->
+`log_message` on every malformed-request-line path (bare `GET`, a >64KiB request line, a 4-word line with a
+parseable version) that runs before `self.path` is ever assigned -- raising `AttributeError`, which killed the
+intended 400/414 response (client got zero bytes) and the handler thread, with no log line at all. Fixed with
+`getattr(self, "command", "-")` / `getattr(self, "path", "-")`. **M2**: `stop()` measured ~501ms blocking the
+Textual event loop (both callers -- the Stop handler and `on_unmount` -- call it synchronously), because
+`serve_forever()` was started with no `poll_interval` (stdlib default 0.5s) and `shutdown()` blocks until the
+loop's next poll returns. Fixed by starting the loop at `poll_interval=0.05`; measured `stop()` afterward at
+well under 150ms in the new regression test (no change to `stop()` itself needed -- the bound comes entirely
+from how the loop was started). The "fast, non-blocking stdlib calls" comment that justified skipping
+`run_worker` is corrected to state the real, now-bounded cost instead of claims that measured false. **M3**:
+`bind` was `str(...)`'d with no further validation -- a blank config value or a numeric typo (`bind = 0`, meant
+for `port`) both resolve to `0.0.0.0` (every interface) at the socket layer, silently turning the loopback
+default into a LAN-wide one with no signal anywhere. Added `_normalize_bind` (blank/whitespace/non-string ->
+`"127.0.0.1"`) applied at both `configured_bind_and_port` (config-read layer) and `start()` itself (the actual
+socket boundary, so a direct caller gets the same guarantee); `start()` now also logs a warning and the Serve
+toast appends an explicit exposure sentence whenever the resolved bind is not loopback (new `is_loopback_bind`
+helper, covering `127.0.0.0/8`, `::1`, and `localhost`). **M4**: the handler served the chosen directory
+recursively with browsable directory listings enabled (`GET /` returned a full index) -- undersold in the
+original posture text. Fixed in code, not just docs: `_ContainedRequestHandler.list_directory` now 404s
+instead of rendering a listing (recursive FILE serving is unchanged -- an episode in a subfolder still
+resolves). Module docstring, `config.py`'s template comment, and `Docs/User_Guide/watchlists.md` all now state
+plainly that the server serves every file in the chosen directory **and every subdirectory**, and steer users
+toward a dedicated export folder rather than a general-purpose one like `$HOME`. **L1**: re-exporting a feed
+while a server is running on a *different*, older directory previously gave no signal beyond the Serve
+button's own disabled state. `FeedDirectoryServer` now exposes `.directory` (the resolved directory the running
+server actually serves); the export success/partial-export toasts append "Still serving the previously-exported
+folder -- Stop Serving and Serve again to publish this export." when the server is running and pointed
+elsewhere (silent when re-exporting into the *same* directory, since the server reads from disk per-request and
+already reflects it). **Test-quality note**: `test_dotdot_traversal_does_not_escape_the_served_directory` was
+confirmed near-vacuous (httpx normalizes a literal `../` client-side before it reaches the wire) -- kept, and
+augmented with a new raw-socket parametrized test (`test_raw_socket_dotdot_forms_httpx_would_never_put_on_the_
+wire`, 6 wire forms including literal `..`, doubled `../../`, `..%2f`, `..%5c`, leading `//`, and `./../`) that
+puts each form directly on the wire, bypassing any client normalization. L2 (no HTTP Range/206 support) is a
+deliberately out-of-scope non-goal, per the review.
+
+Three mutations verified by hand with the Edit tool (git-status-clean between each): reverting `log_message`'s
+`getattr` fallbacks reproduced the exact `AttributeError` from the review against all three M1 tests; reverting
+`_normalize_bind`'s fallback to a bare `str(raw_bind)` REDed all three blank/numeric-bind tests; reverting
+`list_directory` to `super().list_directory(path)` REDed both no-listing tests (200 with a real HTML index
+instead of 404). All three restored byte-exact and reconfirmed green.
+
+**Verification.** `Tests/Subscriptions/test_feed_server.py`: 41 passed (23 original + 18 new: 2 malformed-
+request, 1 stop-latency, 5 bind-validation, 3 no-listing, 6 raw-socket traversal, 1 malformed-line-survives).
+`Tests/Watchlists/test_watchlists_artifacts_pane.py`: 124 passed on a clean run; three earlier full-suite runs
+each surfaced exactly one different, unrelated test failing (`test_export_feed_press_survives_an_os_error_from_
+the_service`, then `test_citations_do_not_shrink_the_briefings_table_below_its_pinned_minimum`, then three more
+at once) -- every one of them passed standalone and touches no code this fix wave changed, consistent with this
+suite's known pre-existing full-run flakiness rather than a regression. Targeted `test_config_*` sweep (71
+tests, covering the new config-template comment) also green.
 <!-- SECTION:NOTES:END -->

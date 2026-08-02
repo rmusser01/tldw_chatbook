@@ -71,6 +71,7 @@ from ...Subscriptions.feed_server import (
     FeedDirectoryServer,
     FeedServerError,
     configured_bind_and_port,
+    is_loopback_bind,
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
@@ -4720,6 +4721,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # arrive while Artifacts is already on screen.
             self._last_feed_export_directory = result.directory
             self._sync_feed_server_pane_state()
+            # task-1760 review, L1: a running server keeps serving whatever
+            # directory it was STARTED with -- `FeedDirectoryServer` never
+            # picks up a later export on its own (refuses a second `start()`
+            # instead, `start`'s own docstring). If this export landed
+            # somewhere other than that directory, the running server is
+            # now silently stale: the only prior explanation was the Serve
+            # button's own disabled state, easy to miss. Said only when it
+            # actually differs -- a re-export into the SAME directory is
+            # already reflected live, since the server reads from disk on
+            # every request rather than caching anything.
+            still_serving_stale_export = (
+                self._feed_server.is_running
+                and self._feed_server.directory != result.directory
+            )
+            stale_export_note = (
+                " Still serving the previously-exported folder — Stop "
+                "Serving and Serve again to publish this export."
+                if still_serving_stale_export
+                else ""
+            )
             total = result.episode_count + len(result.skipped)
             if result.skipped:
                 # Honest, not a success toast: this is Task 4's own named
@@ -4746,7 +4767,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 reasons = self._user_facing_skip_reasons(result.skipped)
                 self._notify_watchlists(
                     f"Exported {result.episode_count} of {total} episodes "
-                    f"to {result.directory.name} ({reasons}).",
+                    f"to {result.directory.name} ({reasons})."
+                    f"{stale_export_note}",
                     severity="warning",
                     markup=False,
                 )
@@ -4754,8 +4776,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 plural = "" if result.episode_count == 1 else "s"
                 self._notify_watchlists(
                     f"Exported {result.episode_count} episode{plural} to "
-                    f"{result.directory.name}.",
-                    severity="information",
+                    f"{result.directory.name}.{stale_export_note}",
+                    severity="information" if not stale_export_note else "warning",
                     markup=False,
                 )
         finally:
@@ -4767,12 +4789,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # (a `ThreadingHTTPServer` on a daemon thread); this screen only owns
     # ONE instance of it (`self._feed_server`, constructed in `__init__`)
     # and decides when to start/stop it. No `run_worker` here, unlike every
-    # other action on this screen: `start()`/`stop()` bind/release a socket
-    # and spawn/join a thread, which are fast, synchronous stdlib calls --
-    # there is no `await` boundary that would make dispatching a worker
-    # meaningful, and no filesystem/database I/O of the kind the OTHER
-    # handlers move off the UI thread with `asyncio.to_thread`. Both
-    # handlers re-check state before acting, the same "the button's
+    # other action on this screen: `start()` binds a socket and spawns a
+    # thread with no `await` boundary, and `stop()` -- after the task-1760
+    # review's M2 fix, which starts `serve_forever` at a 50ms poll interval
+    # instead of the stdlib's 0.5s default -- now blocks the UI thread for
+    # roughly a tenth of what it used to (measured ~50ms here vs. a
+    # measured ~501ms before the fix), a bound this screen accepts as
+    # "fast enough not to need a worker" rather than eliminating entirely;
+    # see `FeedDirectoryServer.stop`'s own docstring for the mechanics.
+    # Both handlers re-check state before acting, the same "the button's
     # disabled state and the message it posts are two different frames"
     # reasoning `handle_export_feed_requested` already states for its own
     # re-check.
@@ -4847,17 +4872,34 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._sync_feed_server_pane_state()
         # AC #4's posture, restated at the moment it matters most: every
         # time serving actually starts, not merely in a docstring or the
-        # user guide. `markup=False` -- this interpolates a URL this
-        # process itself built (bind/port), never model or remote content,
-        # but every toast on this screen that is not a hand-written
-        # literal already takes this same posture.
-        self._notify_watchlists(
+        # user guide. `markup=False` -- this interpolates a URL and (in
+        # the widened-bind branch) a bind address this process itself
+        # built/resolved (never model or remote content), but every toast
+        # on this screen that is not a hand-written literal already takes
+        # this same posture.
+        #
+        # task-1760 review, M4: says "this folder AND its subfolders" --
+        # not just "the feed" -- since serving is recursive and the export
+        # picker can point at any folder the user chooses, up to and
+        # including their home directory.
+        message = (
             f"Serving the exported feed at {url}. No authentication — "
-            "anyone who can reach this address can read the feed while "
-            "it is serving.",
-            severity="warning",
-            markup=False,
+            "anyone who can reach this address can read every file in "
+            "this folder and its subfolders while it is serving."
         )
+        # task-1760 review, M3: the posture above assumes loopback-only.
+        # When the actually-bound address is NOT loopback (a deliberate
+        # widening, or a config value that survived `_normalize_bind`
+        # because it was a real address rather than blank/typo'd), say so
+        # here too -- not just in the one-time `logger.warning` `start()`
+        # already emits -- since this toast is what a user actually sees.
+        served_bind = self._feed_server.bind
+        if served_bind is not None and not is_loopback_bind(served_bind):
+            message += (
+                f" This is bound to {served_bind}, which is reachable "
+                "from beyond this machine, not just localhost."
+            )
+        self._notify_watchlists(message, severity="warning", markup=False)
 
     @on(StopFeedServerRequested)
     def handle_stop_feed_server_requested(

@@ -73,15 +73,28 @@ served until you press **Serve Feed**, and it stops the moment you press
 starts on its own, and no setting can make it start on its own.
 
 - **No authentication.** Anyone who can reach the served address can read
-  every file in the exported directory for as long as it is running. The
-  toast that appears when you press Serve Feed states this every time, not
-  just here.
+  every file in the exported directory **and every subdirectory beneath
+  it** — serving is recursive, not limited to `feed.xml` and the episodes
+  next to it — for as long as it is running. The toast that appears when
+  you press Serve Feed states this every time, not just here. Point Serve
+  Feed at a dedicated export folder, not a general-purpose directory like
+  your home folder, for exactly this reason: everything under whatever
+  folder you export into becomes reachable while serving is on.
+- **No directory browsing.** The server refuses to render a listing of the
+  served folder (or any subfolder) — only a file whose exact name a client
+  already knows (from `feed.xml`, or a URL you typed yourself) is
+  fetchable. This narrows the exposure above; it does not remove it, since
+  every filename in the tree is still fetchable if it is known.
 - **Loopback by default.** The server binds `127.0.0.1` (this machine
   only) unless you change `bind` under `[briefings_feed_server]` in
   `config.toml` to something wider (e.g. `0.0.0.0`, to reach it from
-  another device on your network). Only widen this if you understand that
-  doing so removes the one thing standing between "only this machine" and
-  "anyone who can reach it" — there is still no authentication either way.
+  another device on your network). A blank or otherwise invalid `bind`
+  value can never silently widen this — it falls back to `127.0.0.1`
+  instead — and whenever the server does end up bound to a non-loopback
+  address, a warning is logged and the Serve Feed toast says so plainly.
+  Only widen this if you understand that doing so removes the one thing
+  standing between "only this machine" and "anyone who can reach it" —
+  there is still no authentication either way.
 - **Confined to the exported directory.** The server refuses (with a plain
   404) any request that would read a file outside the directory you
   exported to, including through a symlink planted inside it that points

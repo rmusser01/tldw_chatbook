@@ -24,19 +24,51 @@ task's Implementation Notes) and are not re-run automatically here.
 from __future__ import annotations
 
 import socket
+import time
 from pathlib import Path
 
 import httpx
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Subscriptions import feed_server as feed_server_module
 from tldw_chatbook.Subscriptions.feed_server import (
     FeedDirectoryServer,
     FeedServerError,
     configured_bind_and_port,
+    is_loopback_bind,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _raw_http_request(port: int, request_bytes: bytes, timeout: float = 5.0) -> bytes:
+    """Send raw bytes straight to the server's port and return whatever
+    comes back over the wire, unmodified.
+
+    Fix wave (task-1760 review, M1/L1 test-quality note): `httpx`
+    normalizes URLs client-side before a request is ever sent -- a literal
+    `..`, a bare `GET\\r\\n\\r\\n`, or an over-long request line can never
+    reach the server through it. A raw socket is the only way to prove
+    what the server itself does with bytes an `httpx`-based test can never
+    put on the wire.
+    """
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.sendall(request_bytes)
+        chunks: list[bytes] = []
+        try:
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError:
+            pass
+    return b"".join(chunks)
+
+
+def _url_port(url: str) -> int:
+    return int(url.rsplit(":", 1)[1].rstrip("/"))
 
 
 @pytest.fixture
@@ -192,6 +224,244 @@ def test_write_methods_are_rejected_with_405(
     assert response.status_code == 405
 
 
+# --- malformed requests get a real error response (task-1760 review, M1) -----
+#
+# `log_message` used to read `self.path`, which `BaseHTTPRequestHandler.
+# parse_request` does not set until AFTER the point where it calls
+# `send_error` -> `log_error` -> `log_message` on these exact failure
+# paths. Reading it raised `AttributeError`, which killed the intended
+# 400/414 response (the client got zero bytes instead) and the per-
+# connection handler thread with it. Both cases below are driven with a
+# raw socket -- `httpx` builds well-formed requests and can never put a
+# bare `GET\r\n\r\n` or a >64KiB request line on the wire.
+
+
+def test_a_malformed_request_line_gets_a_400_not_a_dropped_connection(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """`GET / a HTTP/1.0` -- 4 words, not the 2-3 `parse_request` accepts
+    -- is one of the reviewer's own confirmed repro lines. It is used
+    (rather than a bare `GET\\r\\n\\r\\n`) specifically because its word
+    count still lets `parse_request` validate and set `self.request_
+    version` to a real `HTTP/1.0` *before* the word-count check fails --
+    unlike a 1-word requestline, which leaves `request_version` at the
+    stdlib's own `HTTP/0.9` default and (correctly, independent of this
+    bug) sends a bare body with no status line at all, per that protocol.
+    Both shapes exercise the same `self.path`-before-it-exists bug in
+    `log_message`; this one just lets the assertion check a real status
+    line too.
+    """
+    url = server.start(served_dir)
+    port = _url_port(url)
+
+    response = _raw_http_request(port, b"GET / a HTTP/1.0\r\n\r\n")
+    assert response, "the client must receive a real response, not zero bytes"
+    status_line = response.split(b"\r\n", 1)[0]
+    assert status_line.startswith(b"HTTP/")
+    assert b" 400 " in status_line
+
+    # The bug killed one connection's handler thread, not the whole
+    # server -- but a real regression here would show up as this
+    # follow-up request failing too.
+    follow_up = httpx.get(url + "feed.xml", timeout=5.0)
+    assert follow_up.status_code == 200
+
+
+def test_a_bare_malformed_request_line_does_not_crash_the_handler_thread(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """The reviewer's other confirmed repro: a 1-word requestline (`GET`
+    alone). The stdlib itself, independent of this bug, answers a
+    request it never upgraded past its own `HTTP/0.9` default with a bare
+    body and no status line -- so this test's own bar is simply "the
+    connection gets SOME response and the server survives", not a status
+    line (covered by the sibling test above and the over-long-line test
+    below instead).
+    """
+    url = server.start(served_dir)
+    port = _url_port(url)
+
+    response = _raw_http_request(port, b"GET\r\n\r\n")
+    assert response, "the client must receive a real response, not zero bytes"
+
+    follow_up = httpx.get(url + "feed.xml", timeout=5.0)
+    assert follow_up.status_code == 200
+
+
+def test_an_over_long_request_line_gets_a_414_not_a_dropped_connection(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """`handle_one_request`'s own >64KiB guard sets `self.command = ''`
+    but never sets `self.path` at all before calling `send_error` -- the
+    same missing-attribute trap as the malformed-request-line case above,
+    on a different code path (`command` exists here; `path` still does
+    not)."""
+    url = server.start(served_dir)
+    port = _url_port(url)
+
+    oversized_target = b"A" * 70_000
+    request = b"GET /" + oversized_target + b" HTTP/1.1\r\n\r\n"
+    response = _raw_http_request(port, request)
+    assert response, "the client must receive a real response, not zero bytes"
+    status_line = response.split(b"\r\n", 1)[0]
+    assert status_line.startswith(b"HTTP/")
+    assert b" 414 " in status_line
+
+    follow_up = httpx.get(url + "feed.xml", timeout=5.0)
+    assert follow_up.status_code == 200
+
+
+# --- stop() latency (task-1760 review, M2) -----------------------------------
+
+
+def test_stop_returns_well_under_the_old_half_second_stall(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """`stop()` used to block for the stdlib's default 0.5s `serve_forever`
+    poll interval (measured ~501ms) on the SAME thread the Stop button
+    handler and `on_unmount` call it from -- a real, measured UI freeze.
+    `start()` now runs the loop at a 50ms poll interval instead, bounding
+    this to roughly a tenth of that. 150ms is a generous ceiling: well
+    above the ~50ms this should take, comfortably below the ~500ms this
+    reproduced before the fix, so this is not a flaky assertion on a
+    loaded CI box.
+    """
+    server.start(served_dir)
+
+    started_at = time.monotonic()
+    server.stop()
+    elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds < 0.15, (
+        f"stop() took {elapsed_seconds * 1000:.1f}ms, expected well under 150ms"
+    )
+
+
+# --- bind validation (task-1760 review, M3) -----------------------------------
+
+
+def test_start_normalizes_a_blank_bind_to_the_safe_loopback_default(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """A blank `bind` (an operator's attempt to "unset" it, or a hand-
+    edited config gone wrong) must resolve to loopback, never to an empty
+    string -- `socket.bind(("", 0))` binds EVERY interface, silently
+    turning the loopback-only default into a LAN-wide one."""
+    url = server.start(served_dir, bind="")
+    assert server.bind == "127.0.0.1"
+    assert url.startswith("http://127.0.0.1:")
+    assert is_loopback_bind(server.bind) is True
+
+
+def test_start_normalizes_a_numeric_bind_to_the_safe_loopback_default(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """A `bind = 0` typo (meant for `port`) is a non-string, not merely a
+    blank string -- `_normalize_bind` must catch that shape too, since
+    `socket.bind(("0", 0))` and `socket.bind(("", 0))` both resolve to
+    `0.0.0.0` just as readily."""
+    url = server.start(served_dir, bind=0)  # type: ignore[arg-type]
+    assert server.bind == "127.0.0.1"
+    assert url.startswith("http://127.0.0.1:")
+
+
+def test_configured_bind_and_port_falls_back_to_loopback_on_a_blank_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "briefings_feed_server" and key == "bind":
+            return ""
+        return default
+
+    monkeypatch.setattr(feed_server_module, "get_cli_setting", _fake_get_cli_setting)
+    bind, _port = configured_bind_and_port()
+    assert bind == "127.0.0.1"
+
+
+def test_a_non_loopback_bind_warns_once_and_is_loopback_bind_says_so(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """A deliberately widened bind (or a config mistake that still
+    resolves to a real address, unlike a blank/typo'd one) must not be
+    silently invisible -- `start()` logs a warning, and the same
+    `is_loopback_bind` check lets the UI layer word its own toast around
+    the identical fact rather than re-deriving it.
+
+    `caplog` does not intercept loguru (this project's logger, per this
+    repo's own established idiom -- see e.g. `Tests/Chat/
+    test_attachment_policy.py`'s `TestSvgCapability`); a temporary loguru
+    sink is used instead.
+    """
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        server.start(served_dir, bind="0.0.0.0", port=0)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("not loopback-only" in message for message in messages), messages
+    assert server.bind == "0.0.0.0"
+    assert is_loopback_bind(server.bind) is False
+
+
+def test_a_loopback_bind_never_warns(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        server.start(served_dir)  # default bind -- loopback
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert messages == []
+    assert is_loopback_bind(server.bind) is True
+
+
+# --- directory listings disabled, recursive FILE serving intact (M4) ---------
+
+
+def test_root_index_is_refused_with_404_not_a_directory_listing(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """A podcast feed is fetched by URLs named in `feed.xml` -- nothing
+    ever needs to browse the served directory, and an auto-generated
+    index is pure exposure surface on top of the files a client already
+    knows about."""
+    url = server.start(served_dir)
+    response = httpx.get(url, timeout=5.0)
+    assert response.status_code == 404
+    assert "<li>" not in response.text, "no directory listing HTML"
+
+
+def test_a_subdirectory_index_is_also_refused_with_404(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    subdir = served_dir / "episodes"
+    subdir.mkdir()
+    (subdir / "bonus.wav").write_bytes(b"RIFF....WAVEfmt ")
+
+    url = server.start(served_dir)
+    response = httpx.get(url + "episodes/", timeout=5.0)
+    assert response.status_code == 404
+    assert "<li>" not in response.text
+
+
+def test_a_known_file_inside_a_subdirectory_still_serves_200(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """M4's fix disables browsing, not recursive FILE serving -- an
+    episode `feed.xml` names inside a subfolder must still resolve."""
+    subdir = served_dir / "episodes"
+    subdir.mkdir()
+    (subdir / "bonus.wav").write_bytes(b"RIFF....WAVEfmt ")
+
+    url = server.start(served_dir)
+    response = httpx.get(url + "episodes/bonus.wav", timeout=5.0)
+    assert response.status_code == 200
+    assert response.content == b"RIFF....WAVEfmt "
+
+
 # --- traversal matrix (AC #3) ------------------------------------------------
 
 
@@ -199,7 +469,17 @@ def test_dotdot_traversal_does_not_escape_the_served_directory(
     server: FeedDirectoryServer, served_dir: Path, tmp_path: Path
 ) -> None:
     """A sibling directory holds a 'secret' the served directory has no
-    business exposing; `../`-shaped requests must never return it."""
+    business exposing; `../`-shaped requests must never return it.
+
+    Test-quality note (task-1760 review): this test alone is near-vacuous
+    for its stated purpose -- `httpx` normalizes a literal `../` client-
+    side before the request is ever sent (`httpx.URL("http://h/../x").
+    raw_path == b"/x"`), so the literal `..` never reaches the wire here
+    and the server only ever sees an ordinary missing-file request. Kept
+    (it is still a real, if weaker, 404 assertion) alongside
+    `test_raw_socket_dotdot_forms_httpx_would_never_put_on_the_wire`
+    below, which puts each form directly on a raw socket instead.
+    """
     secret_dir = tmp_path / "secret"
     secret_dir.mkdir()
     (secret_dir / "passwd").write_text("root:x:0:0", encoding="utf-8")
@@ -210,6 +490,47 @@ def test_dotdot_traversal_does_not_escape_the_served_directory(
     )
     assert response.status_code in (404, 400)
     assert "root:x:0:0" not in response.text
+
+
+@pytest.mark.parametrize(
+    "wire_target",
+    [
+        b"/../secret/passwd",
+        b"/../../secret/passwd",
+        b"/..%2fsecret%2fpasswd",
+        b"/..%5csecret%5cpasswd",
+        b"//secret/passwd",
+        b"/./../secret/passwd",
+    ],
+)
+def test_raw_socket_dotdot_forms_httpx_would_never_put_on_the_wire(
+    server: FeedDirectoryServer,
+    served_dir: Path,
+    tmp_path: Path,
+    wire_target: bytes,
+) -> None:
+    """The real fix for the sibling test's near-vacuous coverage: each
+    traversal form goes directly onto a raw socket, bypassing any client-
+    side normalization, so the 404 this asserts is the SERVER's own
+    answer -- not an artifact of a well-behaved HTTP client never sending
+    the bad bytes in the first place.
+    """
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    (secret_dir / "passwd").write_text("root:x:0:0", encoding="utf-8")
+
+    url = server.start(served_dir)
+    port = _url_port(url)
+
+    request = (
+        b"GET " + wire_target + b" HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    response = _raw_http_request(port, request)
+
+    status_line = response.split(b"\r\n", 1)[0]
+    assert b" 404 " in status_line or b" 400 " in status_line, response[:200]
+    assert b"root:x:0:0" not in response
 
 
 def test_percent_encoded_dotdot_traversal_does_not_escape(

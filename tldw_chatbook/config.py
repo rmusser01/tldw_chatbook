@@ -3692,7 +3692,11 @@ profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store sele
 # Artifacts pane's Serve action uses when you press it; serving always
 # requires that explicit action. See Docs/User_Guide/watchlists.md's
 # "Serving an exported feed" section for the full security posture
-# (no authentication, localhost-only unless you widen bind).
+# (no authentication, localhost-only unless you widen bind, recursive
+# file serving with directory listings disabled, so point this at a
+# dedicated export folder rather than a general-purpose one like $HOME).
+# A blank/invalid bind value here falls back to loopback rather than
+# silently widening exposure.
 bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -- there is no authentication.
 port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
 
