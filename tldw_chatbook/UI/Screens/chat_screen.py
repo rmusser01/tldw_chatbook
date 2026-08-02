@@ -7126,18 +7126,16 @@ class ChatScreen(BaseAppScreen):
             callback=self._apply_console_rag_settings_choice,
         )
 
-    def _apply_console_rag_settings_choice(
-        self, result: ConsoleRagSettingsResult | None
-    ) -> None:
-        """Store the modal's query and optionally run retrieval now.
+    def _set_console_library_rag_query(self, query: str) -> None:
+        """Store the Library RAG query and mirror it into mounted surfaces.
 
-        Mirrors the query into the Inspector's readiness-card input when it
-        is mounted, so the two surfaces cannot disagree about what will be
-        retrieved.
+        Every query write goes through here so the Inspector's
+        readiness-card input, its Run button gating, and the RAG settings
+        modal's next prefill cannot disagree about what will be retrieved.
+
+        Args:
+            query: Already-sanitized retrieval query ("" clears it).
         """
-        if result is None:
-            return
-        query = _sanitize_console_library_rag_query(result.query)
         self._console_library_rag_query = query
         try:
             rail_input = self.query_one("#console-library-rag-query-input", Input)
@@ -7151,6 +7149,16 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             run_button.disabled = not query
+
+    def _apply_console_rag_settings_choice(
+        self, result: ConsoleRagSettingsResult | None
+    ) -> None:
+        """Store the modal's query and optionally run retrieval now."""
+        if result is None:
+            return
+        self._set_console_library_rag_query(
+            _sanitize_console_library_rag_query(result.query)
+        )
         if result.run:
             self._run_console_library_rag_from_visible_action()
 
@@ -12251,8 +12259,27 @@ class ChatScreen(BaseAppScreen):
         self._run_console_library_rag_from_visible_action()
 
     def _run_console_library_rag_from_visible_action(self) -> None:
-        """Request Library retrieval from the visible Console action surface."""
+        """Request Library retrieval from the visible Console action surface.
+
+        With no dedicated query set, falls back to the composer draft (user
+        decision 2026-08-02): the text about to be sent is what retrieval
+        should look for, and the dedicated query input may not even be on
+        screen while this always-visible action is. The fallback is STORED
+        through ``_set_console_library_rag_query`` so the rail input and
+        the RAG settings modal agree with what actually ran. An explicit
+        query always wins; the empty-everything warning survives.
+        """
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
+        if not query:
+            composer = self._console_composer_or_none()
+            draft_query = (
+                _sanitize_console_library_rag_query(composer.draft_text())
+                if composer is not None
+                else ""
+            )
+            if draft_query:
+                self._set_console_library_rag_query(draft_query)
+                query = draft_query
         if not query:
             self.app_instance.notify(
                 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,

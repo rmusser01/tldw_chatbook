@@ -139,21 +139,88 @@ def test_screen_callback_stores_sanitized_query_and_delegates_run():
     screen._console_library_rag_query = ""
     screen.query_one = Mock(side_effect=QueryError("not mounted"))
 
-    # Textual QueryError paths are exercised in the mounted tests; here the
-    # bare state contract: sanitize, store, delegate when run=True.
+    # The bare state contract: sanitize, store through the one query
+    # writer (`_set_console_library_rag_query`), delegate when run=True.
     ChatScreen._apply_console_rag_settings_choice(
         screen, ConsoleRagSettingsResult(query="  spaced   query  ", run=True)
     )
-    assert screen._console_library_rag_query == "spaced query"
+    screen._set_console_library_rag_query.assert_called_once_with("spaced query")
     screen._run_console_library_rag_from_visible_action.assert_called_once()
 
+    screen._set_console_library_rag_query.reset_mock()
     screen._run_console_library_rag_from_visible_action.reset_mock()
     ChatScreen._apply_console_rag_settings_choice(
         screen, ConsoleRagSettingsResult(query="no run", run=False)
     )
-    assert screen._console_library_rag_query == "no run"
+    screen._set_console_library_rag_query.assert_called_once_with("no run")
     screen._run_console_library_rag_from_visible_action.assert_not_called()
 
-    screen._console_library_rag_query = "unchanged"
+    screen._set_console_library_rag_query.reset_mock()
     ChatScreen._apply_console_rag_settings_choice(screen, None)
-    assert screen._console_library_rag_query == "unchanged"
+    screen._set_console_library_rag_query.assert_not_called()
+
+
+@pytest.mark.unit
+def test_visible_run_action_falls_back_to_the_composer_draft():
+    """User decision (2026-08-02): with no dedicated query set, the visible
+    Run Library RAG action retrieves with the composer draft instead of
+    demanding a query the collapsed rail gives no place to type. The
+    fallback is STORED so the rail input and this modal agree with what
+    actually ran; with no query anywhere, the warning toast survives."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,
+        ChatScreen,
+    )
+
+    screen = Mock()
+    screen._console_library_rag_query = ""
+    composer = Mock()
+    composer.draft_text.return_value = "  what   changed in auth  "
+    screen._console_composer_or_none.return_value = composer
+
+    ChatScreen._run_console_library_rag_from_visible_action(screen)
+
+    screen._set_console_library_rag_query.assert_called_once_with(
+        "what changed in auth"
+    )
+    screen.app_instance.notify.assert_not_called()
+    screen._stage_console_library_rag_launch.assert_called_once()
+    launch = screen._stage_console_library_rag_launch.call_args.args[0]
+    assert launch.payload["query"] == "what changed in auth"
+    request = screen._execute_console_library_rag_search.call_args.args[0]
+    assert request.query == "what changed in auth"
+
+    # No dedicated query AND an empty composer: the toast survives.
+    empty = Mock()
+    empty._console_library_rag_query = ""
+    empty_composer = Mock()
+    empty_composer.draft_text.return_value = "   "
+    empty._console_composer_or_none.return_value = empty_composer
+
+    ChatScreen._run_console_library_rag_from_visible_action(empty)
+
+    empty.app_instance.notify.assert_called_once()
+    assert (
+        CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE
+        in empty.app_instance.notify.call_args.args
+    )
+    empty._stage_console_library_rag_launch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_dedicated_query_still_wins_over_the_composer_draft():
+    """A query set through the rail or the modal is what runs; the draft
+    fallback only fills a VACANT query, never overrides an explicit one."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    screen._console_library_rag_query = "explicit query"
+    composer = Mock()
+    composer.draft_text.return_value = "draft text"
+    screen._console_composer_or_none.return_value = composer
+
+    ChatScreen._run_console_library_rag_from_visible_action(screen)
+
+    screen._set_console_library_rag_query.assert_not_called()
+    request = screen._execute_console_library_rag_search.call_args.args[0]
+    assert request.query == "explicit query"
