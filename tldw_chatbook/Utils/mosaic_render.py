@@ -34,6 +34,54 @@ QUADRANT_GLYPHS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
 # speckled glyphs.
 _FLAT_CELL_SPREAD = 8.0
 
+# Shade ramp for the monochrome path, darkest to lightest. The colour mosaic
+# puts 100% of its information in BACKGROUND colour -- a flat cell is a space
+# glyph with `on rgb(...)` -- so when colour is unavailable every cell becomes
+# an ordinary space and the image does not degrade, it disappears entirely.
+# Textual converts the whole app to monochrome when NO_COLOR is set
+# (`textual/app.py` -> `filter.py`), which is one confirmed way a user sees no
+# portrait at all. In that mode the GLYPH has to carry the luminance instead.
+#
+# Block Elements only (U+2591-2588), the same universal range the quadrant
+# glyphs come from, so this adds no new font risk.
+#
+# No blank bucket, deliberately (Qodo review, PR #1183). An earlier ramp led
+# with a space, so a sufficiently dark portrait mapped every cell to the
+# darkest bucket and rendered as an all-space box -- invisible, reproducing
+# the exact bug this path exists to fix. Character-card art on a dark theme
+# is that case, so it was the common path rather than an edge one. The
+# darkest ink still has to be ink.
+_SHADE_RAMP = "░▒▓█"
+
+
+def _shade_glyph(lum: float, lo: float = 0.0, hi: float = 255.0) -> str:
+    """Return the shade glyph for a luminance, normalised to ``lo``..``hi``.
+
+    The range is normalised PER IMAGE rather than mapped from absolute
+    0-255. A character-card portrait on a dark theme can occupy a narrow
+    dark band -- every cell then lands in one ramp bucket and renders as a
+    uniform block: visible, but shapeless, which is not a portrait. Stretching
+    the image's own range across the ramp keeps the subject distinguishable
+    from its background.
+
+    Args:
+        lum: Mean luminance of the cell.
+        lo: Darkest cell luminance in this image.
+        hi: Brightest cell luminance in this image.
+
+    Returns:
+        One character from ``_SHADE_RAMP``; darker maps to a sparser glyph so
+        the result reads like the image rather than its negative.
+    """
+    span = hi - lo
+    # A genuinely flat image has nothing to stretch; render it mid-ramp
+    # rather than dividing by ~0 and slamming everything to one end.
+    if span < 1e-6:
+        return _SHADE_RAMP[len(_SHADE_RAMP) // 2]
+    scaled = (lum - lo) / span
+    index = int(scaled * len(_SHADE_RAMP))
+    return _SHADE_RAMP[min(max(index, 0), len(_SHADE_RAMP) - 1)]
+
 
 def _luminance(rgb: tuple[int, int, int]) -> float:
     return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
@@ -54,6 +102,7 @@ def mosaic_from_image(
     box_lines: int,
     *,
     fit: str = "contain",
+    monochrome: bool = False,
 ) -> Text:
     """Render ``image`` into a quadrant-glyph mosaic fitting a cell box.
 
@@ -73,6 +122,12 @@ def mosaic_from_image(
         fit: "contain" (default) letterboxes the whole image inside the
             box; "cover" scales to FILL the box and center-crops the
             overflow (object-fit: cover) -- aspect is preserved either way.
+        monochrome: Render luminance as SHADE GLYPHS instead of colour. The
+            colour path stores the whole image in background colour, so a
+            terminal without colour shows a box of blank spaces rather than
+            a portrait; set this when colour is unavailable (Textual sets
+            ``App.no_color`` from ``NO_COLOR``) so the glyph carries the
+            image instead.
 
     Returns:
         A non-wrapping Rich ``Text`` renderable, one line per cell row.
@@ -108,6 +163,21 @@ def mosaic_from_image(
         # reading out of bounds.
         return pixels[min(x, width - 1), min(y, height - 1)]
 
+    mono_lo, mono_hi = 0.0, 255.0
+    if monochrome:
+        # One pass over the cell means to learn this image's actual range.
+        cell_means = [
+            sum(
+                _luminance(sample(c * 2 + dx, r * 2 + dy))
+                for dx in (0, 1)
+                for dy in (0, 1)
+            )
+            / 4
+            for r in range(cell_rows)
+            for c in range(cell_cols)
+        ]
+        mono_lo, mono_hi = min(cell_means), max(cell_means)
+
     text = Text(no_wrap=True, end="")
     for row in range(cell_rows):
         if row:
@@ -121,6 +191,14 @@ def mosaic_from_image(
             ]
             lums = [_luminance(c) for c in cell]
             spread = max(lums) - min(lums)
+            if monochrome:
+                # One glyph per cell from the mean luminance: no colour is
+                # consulted at all, so the result survives a monochrome
+                # filter that would blank the coloured path entirely.
+                # Normalised to this image's own range (see `_shade_glyph`)
+                # so a dark portrait keeps its shape instead of flattening.
+                text.append(_shade_glyph(sum(lums) / len(lums), mono_lo, mono_hi))
+                continue
             if spread < _FLAT_CELL_SPREAD:
                 r, g, b = _mean(cell)
                 text.append(" ", style=f"on rgb({r},{g},{b})")

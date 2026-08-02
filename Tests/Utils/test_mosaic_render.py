@@ -113,3 +113,105 @@ def test_contain_stays_default():
 
     lines = text.plain.split("\n")
     assert len(lines) < 5
+
+
+@pytest.mark.unit
+def test_monochrome_mosaic_stays_visible_without_colour():
+    """A colourless terminal must still show the portrait, not a blank box.
+
+    The colour mosaic encodes 100% of its information in BACKGROUND colour:
+    a flat cell is a space glyph with `on rgb(...)`. Strip colour -- Textual
+    does exactly that when NO_COLOR is set (`app.py` -> monochrome filter) --
+    and every cell becomes an ordinary space, so the avatar does not degrade,
+    it vanishes. A Windows user reported precisely that: no character image
+    at all in the Console rail.
+
+    In monochrome mode the glyph itself must carry the luminance, so the
+    portrait survives with no colour at all.
+    """
+    import io
+    import re
+
+    from rich.console import Console
+
+    # Left half dark, right half light -- a shape that must remain readable.
+    img = PILImage.new("RGB", (32, 32), (10, 10, 10))
+    for y in range(32):
+        for x in range(16, 32):
+            img.putpixel((x, y), (245, 245, 245))
+
+    def emitted(renderable, **console_kw):
+        buf = io.StringIO()
+        Console(file=buf, width=20, force_terminal=True, **console_kw).print(renderable)
+        return buf.getvalue()
+
+    # Colour path is unchanged: still carries the image, however it is drawn.
+    colour = emitted(mosaic_from_image(img, 16, 8, fit="contain"),
+                     color_system="truecolor")
+    assert re.findall(r"\x1b\[[0-9;]*m", colour), "colour mosaic lost its colour"
+
+    # Monochrome path: no colour escapes available, so the GLYPHS must carry it.
+    mono = mosaic_from_image(img, 16, 8, fit="contain", monochrome=True)
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", emitted(mono, color_system=None))
+    glyphs = set(plain.replace("\n", "")) - {" "}
+    assert glyphs, (
+        "monochrome mosaic rendered nothing but spaces -- invisible, which is "
+        "the reported bug"
+    )
+    # And it must be a real image, not a solid block: the dark half and the
+    # light half have to use different glyphs.
+    rows = [r for r in plain.splitlines() if r.strip()]
+    assert rows, "no rows rendered"
+    widest = max(rows, key=len)
+    left, right = widest[: len(widest) // 2], widest[len(widest) // 2 :]
+    assert set(left) != set(right), (
+        f"monochrome mosaic is uniform -- shape lost: {widest!r}"
+    )
+
+
+@pytest.mark.unit
+def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
+    """A dark image must still render glyphs, not an all-space box.
+
+    Qodo review on PR #1183: the first monochrome ramp began with a literal
+    space, so every cell of a sufficiently dark portrait mapped to the
+    darkest bucket and the mosaic came out invisible -- reproducing the very
+    bug the monochrome path exists to fix. Character-card art on a dark
+    theme is precisely that case, so this was the common path, not an edge.
+
+    The ramp must have no blank bucket: the darkest ink still has to be ink.
+    """
+    import re
+
+    # Charcoal subject on near-black -- a dark character card.
+    img = PILImage.new("RGB", (48, 48), (12, 12, 14))
+    for y in range(14, 34):
+        for x in range(14, 34):
+            img.putpixel((x, y), (40, 38, 44))
+
+    mono = mosaic_from_image(img, 16, 8, fit="contain", monochrome=True)
+    glyphs = set(mono.plain.replace("\n", ""))
+    assert glyphs != {" "}, (
+        "dark portrait rendered as all spaces -- invisible, which is the bug "
+        "the monochrome path exists to prevent"
+    )
+    assert " " not in glyphs, (
+        f"monochrome ramp still has a blank bucket: {sorted(glyphs)}"
+    )
+
+    # Visible is not enough: the SHAPE has to survive. A dark portrait's
+    # whole luminance range can sit inside one ramp bucket, which renders a
+    # uniform block -- technically visible, useless as a portrait. The
+    # subject must be distinguishable from its background.
+    assert len(glyphs) > 1, (
+        f"dark portrait flattened to a single glyph {sorted(glyphs)} -- "
+        "visible but shapeless"
+    )
+
+    # Control: a light image must still differ from a dark one, or a ramp
+    # that mapped everything to one glyph would pass the assertions above.
+    light = PILImage.new("RGB", (48, 48), (230, 230, 230))
+    light_mono = mosaic_from_image(light, 16, 8, fit="contain", monochrome=True)
+    assert set(light_mono.plain.replace("\n", "")) != glyphs, (
+        "light and dark render identically -- the ramp has collapsed"
+    )

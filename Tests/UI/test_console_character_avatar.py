@@ -687,3 +687,46 @@ async def test_available_cols_measures_the_section_not_the_holder(
     )
     assert measured != holder.content_size.width
 
+
+
+@pytest.mark.unit
+def test_expanding_the_character_section_reallows_a_rail_width_avatar():
+    """Re-opening the collapsed Character section must re-render the avatar.
+
+    A user reported "no character image in the Console" and turned out to
+    have the Character rail section COLLAPSED. Clicking it open is the fix
+    -- but two mechanisms interact badly on that path:
+
+    * a collapsed body has ``display: none``, so
+      ``_character_avatar_available_cols()`` measures 0 and
+      ``character_avatar_box(0)`` clamps to the 16-column MINIMUM;
+    * ``_refresh_active_character_avatar_if_scope_changed`` early-returns
+      while ``(character_id, state)`` is unchanged.
+
+    So an avatar first rendered while collapsed stays pinned at 16 columns
+    forever -- exactly the "~50-column rail showing a 16-column portrait"
+    defect task-1661 fixed for a different trigger. Toggling the section
+    open must invalidate the scope guard so the next sync re-measures.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen, character_avatar_box
+
+    # The sizing half of the trap, in isolation: a hidden body measures 0.
+    assert character_avatar_box(0) == (16, 8), "collapsed body clamps to minimum"
+    assert character_avatar_box(48)[0] > 16, "an open rail should size larger"
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._last_console_avatar_scope = (7, "idle")
+    applied: list[tuple[str, bool]] = []
+    screen._set_console_rail_preference = lambda **kw: applied.append(("pref", True))
+    screen._apply_console_rail_section_open = lambda sid, o: applied.append((sid, o))
+    screen._current_console_rail_state = lambda: type(
+        "S", (), {"character_open": False}
+    )()
+
+    screen._toggle_console_rail_section("character")
+
+    assert ("character", True) in applied, "section did not open"
+    assert screen._last_console_avatar_scope is None, (
+        "opening the Character section must clear the avatar scope guard, or "
+        "the portrait stays at the collapsed 16-column size forever"
+    )
