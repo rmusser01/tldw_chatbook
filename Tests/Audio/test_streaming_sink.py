@@ -4,6 +4,8 @@ The fake exposes `tick(n_blocks)` which invokes the sink's registered
 callback exactly as PortAudio would: (outdata, frames, time_info, status).
 No wall-clock sleeps anywhere -- latency contracts are counted in BLOCKS.
 """
+import threading
+
 import numpy as np
 
 from tldw_chatbook.Audio.streaming_sink import (
@@ -23,13 +25,17 @@ class FakeStream:
         self.blocksize = blocksize
         self.started = False
         self.aborted = False
+        self.abort_thread = None           # which thread called abort(), for H4
         self.stopped_via_drain = False
         self.out = []                      # bytes actually "played"
 
     def start(self):  self.started = True
-    def abort(self):  self.aborted = True
     def stop(self):   self.stopped_via_drain = True   # the WRONG stop; must stay unused
     def close(self):  pass
+
+    def abort(self):
+        self.abort_thread = threading.current_thread()
+        self.aborted = True
 
     def tick(self, n=1):
         for _ in range(n):
@@ -38,6 +44,15 @@ class FakeStream:
             out = np.zeros((self.blocksize, 1), dtype=np.int16)
             self.callback(out, self.blocksize, None, None)
             self.out.append(out.tobytes())
+            # The sink may deliver events for this block asynchronously off
+            # the calling ("callback") thread (see StreamingPcmSink's notify
+            # thread). Wait for that hand-off to fully settle -- including
+            # any reentrant call a listener makes back into the sink, e.g.
+            # stop() -- before returning, so assertions right after tick()
+            # stay deterministic without any wall-clock sleep.
+            notify_q = getattr(getattr(self.callback, "__self__", None), "_notify_q", None)
+            if notify_q is not None:
+                notify_q.join()
 
 
 def _mk(events):
@@ -146,6 +161,87 @@ def test_callback_never_raises_even_when_emit_explodes():
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     sink._stream.tick(20)                    # would raise through callback if unguarded
+
+
+def test_repeated_callback_failure_reports_once_and_tears_down_stream():
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))
+    for _ in range(4):
+        sink._callback(None, FRAMES, None, None)   # outdata=None -> every write raises
+    sink._notify_q.join()                    # wait for the async teardown_and_emit job
+    fails = [e for e in events if isinstance(e, SinkFailed)]
+    assert len(fails) == 1, "SinkFailed must fire once per lifecycle, not once per callback"
+    assert sink.state == "failed"
+    assert h["s"].aborted is True, "the stream must be torn down on failure"
+
+
+def test_listener_stop_from_sink_started_does_not_abort_on_the_callback_thread():
+    events = []
+    holder = {}
+
+    def on_event(e):
+        events.append(e)
+        if isinstance(e, SinkStarted):
+            holder["sink"].stop()          # reentrant, as a real barge-in listener would do
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
+        return holder["s"]
+
+    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    holder["sink"] = sink
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))                    # crosses the prebuffer threshold immediately
+    calling_thread = threading.current_thread()
+    holder["s"].tick(1)                    # drives SinkStarted -> listener's reentrant stop()
+
+    assert holder["s"].aborted is True
+    assert holder["s"].abort_thread is not None
+    assert holder["s"].abort_thread is not calling_thread, \
+        "stream.abort() must never run on the PortAudio callback thread"
+    kinds = [type(e).__name__ for e in events]
+    assert kinds.index("SinkStarted") < kinds.index("SinkStopped"), \
+        "SinkStopped must never be observed before the SinkStarted that caused it"
+
+
+def test_drain_tears_down_the_stream_and_stop_afterward_is_clean():
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))
+    sink.close()
+    h["s"].tick(20)                          # drains fully
+    assert h["s"].aborted is True, "a completed utterance must not leak the stream"
+    assert sink._stream is None
+    before = len(events)
+    sink.stop()                              # calling stop() after a natural drain...
+    assert not any(isinstance(e, SinkStopped) for e in events[before:]), \
+        "stop() after a natural drain must be a clean no-op, not a second terminal event"
+
+
+def test_stop_racing_open_wins_and_stream_is_never_left_running():
+    events, = ([],)
+    holder = {}
+
+    def factory(*, samplerate, channels, blocksize, callback):
+        stream = FakeStream(callback, samplerate, channels, blocksize)
+        holder["s"] = stream
+        # Simulate a stop() landing while open() is still mid-flight, i.e.
+        # after the stream object exists (and could be playing) but before
+        # open()'s trailing state="open" assignment has run.
+        holder["sink"].stop()
+        return stream
+
+    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    holder["sink"] = sink
+    sink.open(sample_rate=RATE)
+
+    assert sink.state == "stopped", "a stop() that lands mid-open() must not be overwritten"
+    assert any(isinstance(e, SinkStopped) for e in events)
+    assert holder["s"].aborted is True, "the stream open() just built must not be left running"
+    assert sink._stream is None
 
 
 def test_zero_audio_open_close_never_starts():

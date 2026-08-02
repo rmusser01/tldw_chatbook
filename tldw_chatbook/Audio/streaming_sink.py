@@ -31,15 +31,38 @@ Design constraints (see the streaming-pcm-sink plan for the full spec):
   an exception escaping that callback would kill the backend's audio
   thread.
 
+Thread contract: `open()`, `feed()`, `close()`, and `stop()` may be called
+from any thread. The audio backend invokes the device callback
+(`_callback`) on its own realtime thread; PortAudio forbids calling
+`Pa_AbortStream`/`Pa_StopStream`/`Pa_CloseStream` (i.e. `stream.abort()`/
+`.stop()`/`.close()`) from within that callback, and a listener reacting
+to an event by calling `stop()` synchronously is the expected, common
+case (e.g. barge-in). Events that originate on the callback thread
+(`SinkStarted`, `SinkUnderrun`, and the stream-teardown that accompanies
+a natural drain or a callback failure) are therefore handed off to a
+dedicated per-sink daemon notify thread and delivered to `on_event` from
+there, never from the callback itself. Events that originate from a
+caller thread (`SinkBufferFull` from `feed()`, `SinkStopped` from
+`stop()`, `SinkFailed` from `open()`'s own failure paths) are delivered
+directly, synchronously, on whichever thread called the method -- there
+is no PortAudio-callback-reentrancy risk there.
+
 The `stream_factory` constructor argument is the testability seam: in
 production it is left `None` and `open()` lazily builds a real
 `sounddevice.OutputStream`; tests inject a fake stream whose callback can
 be driven synchronously and deterministically (no wall-clock sleeps, no
 real audio hardware).
+
+Note: `sounddevice` is not imported at module scope by *this* file, but
+`tldw_chatbook.Audio.__init__` currently imports `recording_service` eagerly,
+which does import `sounddevice` (and pyaudio, webrtcvad) at module scope --
+so in practice, importing anything from the `Audio` package already pulls
+in the audio backend regardless of what this module does on its own.
 """
 
 from __future__ import annotations
 
+import queue
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -47,6 +70,10 @@ from importlib.util import find_spec
 from typing import Any, Callable, Optional
 
 from loguru import logger
+
+#: Sentinel pushed onto a sink's notify queue to tell its notify thread to
+#: exit its drain loop once every already-queued job has been processed.
+_NOTIFY_STOP = object()
 
 #: Minimum amount of buffered audio, in milliseconds, before the sink
 #: starts emitting audible samples (rather than silence) from the device
@@ -194,6 +221,12 @@ class StreamingPcmSink:
         self._underrun_last_emit_block = -10**9
         self._block_index = 0
         self._stream: Any = None
+        # Hand-off from the audio callback thread to a dedicated notify
+        # thread; see the module docstring's "Thread contract". The queue
+        # is always created (even if the sink never successfully opens) so
+        # tests can uniformly probe it.
+        self._notify_q: "queue.Queue[Any]" = queue.Queue()
+        self._notify_thread: Optional[threading.Thread] = None
 
     def _emit(self, event: object) -> None:
         """Fire-and-forget event dispatch that never raises.
@@ -207,6 +240,49 @@ class StreamingPcmSink:
         except Exception:
             logger.opt(exception=True).debug("sink event emit failed")
 
+    def _teardown_stream(self) -> None:
+        """Abort and close `self._stream`, if any, and clear the reference.
+
+        Safe to call from any thread and safe to call more than once (a
+        second call finds `self._stream` already `None` and does nothing).
+        Never calls `stream.stop()` -- only `abort()` -- for the same
+        latency reason as `stop()` itself: PortAudio drains its buffer on
+        a graceful stop, which would blow the two-block silence budget.
+        """
+        with self._lock:
+            stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        try:
+            stream.abort()
+            stream.close()
+        except Exception:
+            logger.opt(exception=True).debug("sink stream teardown raised")
+
+    def _notify_loop(self) -> None:
+        """Drain `self._notify_q`, delivering callback-thread-originated work.
+
+        Runs on a dedicated per-sink daemon thread started by `open()`.
+        Each queued job is either the `_NOTIFY_STOP` sentinel (exit the
+        loop) or a `(kind, event)` pair: `"emit"` just delivers `event`;
+        `"teardown_and_emit"` additionally tears down the stream and
+        clears the live-sink registry first, for the drain and
+        callback-failure paths (see `_callback` and `_fail`) -- neither of
+        which may touch the stream directly from the callback thread.
+        """
+        while True:
+            job = self._notify_q.get()
+            try:
+                if job is _NOTIFY_STOP:
+                    return
+                kind, event = job
+                if kind == "teardown_and_emit":
+                    self._teardown_stream()
+                    _clear_live_sink(self)
+                self._emit(event)
+            finally:
+                self._notify_q.task_done()
+
     def open(self, sample_rate: int, channels: int = 1) -> None:
         """Open the output stream and start the device callback.
 
@@ -216,6 +292,13 @@ class StreamingPcmSink:
         `stream_factory` and `sounddevice` unavailable, or the factory /
         `stream.start()` raising -- transitions to `"failed"` and emits
         `SinkFailed` instead of raising.
+
+        If a concurrent `stop()` (or failure) claims the sink while this
+        call is still building/starting the stream -- so the state is no
+        longer `"idle"` by the time this method would otherwise transition
+        to `"open"` -- the just-built stream is torn down immediately
+        instead of being left running, and the `"stopped"`/`"failed"`
+        state that call already set is left in place.
 
         Args:
             sample_rate: Output sample rate in Hz. Used to size the
@@ -253,7 +336,22 @@ class StreamingPcmSink:
             self._fail(f"audio device open failed: {exc}")
             return
         with self._lock:
-            self._state = "open"
+            if self._state != "idle":
+                became_open = False
+            else:
+                self._state = "open"
+                became_open = True
+        if not became_open:
+            # A concurrent stop()/_fail() already claimed this sink -- e.g.
+            # a stop() landing while this open() call was still mid-flight
+            # (the classic Task-3 barge-in-during-open race). The stream we
+            # just built and started must not be left running.
+            self._teardown_stream()
+            return
+        self._notify_thread = threading.Thread(
+            target=self._notify_loop, name="StreamingPcmSinkNotify", daemon=True,
+        )
+        self._notify_thread.start()
 
     def feed(self, pcm: bytes) -> bool:
         """Append a chunk of PCM16 audio to the playback buffer.
@@ -319,39 +417,77 @@ class StreamingPcmSink:
         Reaches audible silence within two audio blocks by calling
         `stream.abort()` (never `stream.stop()`, which drains PortAudio's
         internal buffer first and would violate the latency contract).
-        Safe to call multiple times or on a sink that never successfully
-        opened; emits `SinkStopped` exactly once.
+        Safe to call multiple times, reentrantly from a listener reacting
+        to an event, or on a sink that never successfully opened (even
+        mid-`open()`, before a stream exists yet -- see `open()`); emits
+        `SinkStopped` exactly once.
+
+        The stream teardown itself is unconditional on `self._stream`
+        being set, independent of the state guard below: even if this
+        call finds the sink already terminal (a natural drain already
+        finished it, say), it still tears down `self._stream` if one is
+        somehow still present, defensively. Only the *event* emission is
+        gated to "first call to reach a terminal state wins".
         """
         with self._lock:
-            if self._state in ("stopped", "failed", "idle"):
-                self._state = "stopped" if self._state == "idle" else self._state
-                return
-            self._state = "stopped"
+            already_terminal = self._state in ("stopped", "failed")
+            if not already_terminal:
+                self._state = "stopped"
             self._buf.clear()
             self._buffered_bytes = 0
             self._leftover = b""
             self._leftover_off = 0
-        stream, self._stream = self._stream, None
-        if stream is not None:
-            try:
-                stream.abort()                 # NEVER stream.stop(): that drains
-                stream.close()
-            except Exception:
-                logger.opt(exception=True).debug("sink abort raised")
+        self._teardown_stream()
+        if already_terminal:
+            return
+        # If this call is not itself running on the notify thread (the
+        # common case -- a real stop() arrives from the UI/worker thread),
+        # let any work already queued from the callback thread (e.g. an
+        # in-flight SinkStarted) finish delivering first, so listeners
+        # never observe SinkStopped before an event that logically
+        # preceded it. Skipping this when we ARE the notify thread avoids
+        # a self-deadlock: a listener calling stop() synchronously from
+        # within its own event handling cannot wait on itself.
+        if self._notify_thread is not None and threading.current_thread() is not self._notify_thread:
+            self._notify_q.join()
         _clear_live_sink(self)
+        if self._notify_thread is not None:
+            self._notify_q.put(_NOTIFY_STOP)
         self._emit(SinkStopped())
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, *, from_callback: bool = False) -> None:
         """Transition the sink to `"failed"` and emit `SinkFailed`.
+
+        Idempotent: only the call that actually wins the transition out of
+        a non-terminal state tears down the stream and emits; a sink that
+        is already `"stopped"`/`"failed"` (e.g. a repeating callback error
+        calling this on every block) is a no-op, so `SinkFailed` fires at
+        most once per sink lifecycle and the stream is never left running.
 
         Args:
             reason: Human-readable description of the failure, passed
                 through to the `SinkFailed` event.
+            from_callback: `True` when called from `_callback` (the audio
+                thread) -- in which case the stream teardown, registry
+                clear, and emit are handed off to the notify thread rather
+                than done here, per the module's thread contract. `False`
+                (the default) is for caller-thread call sites (`open()`'s
+                own failure paths), which run before any notify thread
+                exists and may act directly.
         """
         with self._lock:
+            if self._state in ("stopped", "failed"):
+                return
             self._state = "failed"
             self._buf.clear()
             self._buffered_bytes = 0
+            self._leftover = b""
+            self._leftover_off = 0
+        if from_callback:
+            self._notify_q.put(("teardown_and_emit", SinkFailed(reason=reason)))
+            self._notify_q.put(_NOTIFY_STOP)
+            return
+        self._teardown_stream()
         _clear_live_sink(self)
         self._emit(SinkFailed(reason=reason))
 
@@ -379,7 +515,13 @@ class StreamingPcmSink:
                     have_any = self._buffered_bytes > 0 or self._leftover
                     if self._buffered_bytes >= self._prebuffer_bytes or (self._closed and have_any):
                         self._audible = True
-                        started = True
+                        # Enqueued while still holding self._lock (rather
+                        # than after release) so a concurrent stop() -- which
+                        # needs this same lock for its own state check --
+                        # can never observe/act on "started" before this
+                        # event has already been handed to the notify queue.
+                        # That closes the ordering gap findings F8/L8 found.
+                        self._notify_q.put(("emit", SinkStarted()))
                     elif self._closed:
                         # Closed with nothing ever fed: nothing will ever
                         # play, so skip the SinkStarted transition -- but
@@ -387,17 +529,13 @@ class StreamingPcmSink:
                         # logic below so the sink still reaches "stopped"
                         # and emits SinkDrained instead of stalling in
                         # "draining" forever.
-                        started = False
+                        pass
                     else:
                         outdata[:] = 0
                         return
-                else:
-                    started = False
                 chunk = self._take_locked(need)
                 drained = (self._closed and self._buffered_bytes == 0
                            and self._leftover_remaining_locked() == 0)
-            if started:
-                self._emit(SinkStarted())
             if chunk:
                 out = memoryview(outdata).cast("B")
                 out[: len(chunk)] = chunk
@@ -415,8 +553,13 @@ class StreamingPcmSink:
                     else:
                         emit_drain = False
                 if emit_drain:
-                    _clear_live_sink(self)
-                    self._emit(SinkDrained())
+                    # Stream teardown and the live-sink registry clear must
+                    # not happen on this (the audio callback) thread -- see
+                    # the module's thread contract -- so hand both off to
+                    # the notify thread along with the event itself, then
+                    # tell it to exit once it's done (this sink is terminal).
+                    self._notify_q.put(("teardown_and_emit", SinkDrained()))
+                    self._notify_q.put(_NOTIFY_STOP)
             self._block_index += 1
         except Exception:
             # Swallow EVERYTHING: a raise here kills the PortAudio thread.
@@ -424,7 +567,7 @@ class StreamingPcmSink:
                 outdata[:] = 0
             except Exception:
                 pass
-            self._fail("audio callback error")
+            self._fail("audio callback error", from_callback=True)
 
     def _leftover_remaining_locked(self) -> int:
         """Return how many unconsumed bytes remain in `self._leftover`.
@@ -484,15 +627,20 @@ class StreamingPcmSink:
         return blob
 
     def _note_underrun(self, frames: int) -> None:
-        """Record an empty callback and, if due, emit a throttled `SinkUnderrun`.
+        """Record an empty callback and, if due, enqueue a throttled `SinkUnderrun`.
 
-        Called with `self._lock` already released (it re-acquires nothing
-        itself; the counters it touches are only ever mutated from the
-        single audio callback thread). Emission is throttled to at most
-        once every `_UNDERRUN_THROTTLE_BLOCKS` blocks so a prolonged
-        underrun does not flood `on_event`; the very first underrun after
-        a quiet period always reports immediately (the throttle only
-        suppresses *repeat* reports of an ongoing underrun).
+        Called on the audio callback thread, with `self._lock` already
+        released (it re-acquires nothing itself; the counters it touches
+        are only ever mutated from that single thread, so no lock is
+        needed for them). Emission is throttled to at most once every
+        `_UNDERRUN_THROTTLE_BLOCKS` blocks so a prolonged underrun does
+        not flood `on_event`; the very first underrun after a quiet period
+        always reports immediately (the throttle only suppresses *repeat*
+        reports of an ongoing underrun). The event itself is handed to the
+        notify queue rather than emitted directly, per the module's thread
+        contract -- this is a plain `"emit"` job (no stream teardown), so
+        it does not need the `_NOTIFY_STOP` sentinel that terminal events
+        push.
 
         Args:
             frames: Number of audio frames this callback could not fill
@@ -502,7 +650,7 @@ class StreamingPcmSink:
         self._underruns += frames
         if self._block_index - self._underrun_last_emit_block >= _UNDERRUN_THROTTLE_BLOCKS:
             self._underrun_last_emit_block = self._block_index
-            self._emit(SinkUnderrun(frames=self._underruns))
+            self._notify_q.put(("emit", SinkUnderrun(frames=self._underruns)))
 
     @property
     def state(self) -> str:
