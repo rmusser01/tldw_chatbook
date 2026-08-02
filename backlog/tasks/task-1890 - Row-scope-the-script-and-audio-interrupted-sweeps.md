@@ -1,7 +1,7 @@
 ---
 id: TASK-1890
 title: Row-scope the script and audio interrupted sweeps
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02'
 updated_date: '2026-08-02 12:10'
