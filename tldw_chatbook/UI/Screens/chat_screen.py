@@ -1204,8 +1204,7 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
         "Built-in tools ask before running; a background session that "
         "needs approval parks with a ◆ badge and a toast.",
         CONSOLE_FLEET_MARKER_LEGEND,
-        "Leaving Console cancels any runs still in progress -- you'll be "
-        "asked first.",
+        "Leaving Console cancels any runs still in progress -- you'll be asked first.",
     )
 
 
@@ -1217,9 +1216,7 @@ def _is_empty_select_value(value: Any) -> bool:
 _MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
 _MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
 _CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
-_SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(
-    r"server-user-v1:[0-9a-f]{64}"
-)
+_SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(r"server-user-v1:[0-9a-f]{64}")
 
 
 def _canonical_character_id_text(value: Any) -> str | None:
@@ -1277,9 +1274,7 @@ def _character_session_identity_from_handoff(
     ):
         return None
 
-    character_id_text = _canonical_character_id_text(
-        metadata.get("selected_record_id")
-    )
+    character_id_text = _canonical_character_id_text(metadata.get("selected_record_id"))
     if character_id_text is None:
         return None
     if (
@@ -1344,16 +1339,12 @@ def _character_session_prompt_seed(
             description=str(card.get("description") or ""),
             scenario=str(card.get("scenario") or ""),
             message_example=str(card.get("message_example") or ""),
-            post_history_instructions=str(
-                card.get("post_history_instructions") or ""
-            ),
+            post_history_instructions=str(card.get("post_history_instructions") or ""),
             user_name="User",
         )
         or "Stay in character."
     )
-    greeting = replace_placeholders(
-        str(card.get("first_message") or ""), name, "User"
-    )
+    greeting = replace_placeholders(str(card.get("first_message") or ""), name, "User")
     return name, system_prompt, greeting
 
 
@@ -4266,9 +4257,7 @@ class ChatScreen(BaseAppScreen):
             fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
-            full_log_button = self.query_one(
-                "#console-agent-view-full-log", Button
-            )
+            full_log_button = self.query_one("#console-agent-view-full-log", Button)
             full_log_button.styles.display = "block" if full_log_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
@@ -4739,7 +4728,9 @@ class ChatScreen(BaseAppScreen):
                 timeout=20,
                 max_bytes=REMOTE_IMAGE_MAX_BYTES,
             )
-            if content_type and not str(content_type).split(";")[0].strip().lower().startswith("image/"):
+            if content_type and not str(content_type).split(";")[
+                0
+            ].strip().lower().startswith("image/"):
                 return
             _state, cache = self._ensure_console_image_view()
             prepared = await asyncio.to_thread(cache.prepare, cache_key, data)
@@ -5614,7 +5605,9 @@ class ChatScreen(BaseAppScreen):
             if self._console_dictation_session is session:
                 self._notify_console_dictation_error(exc)
             else:
-                logger.debug("Console dictation start skipped; the attempt was cancelled")
+                logger.debug(
+                    "Console dictation start skipped; the attempt was cancelled"
+                )
             return
         if not self.is_mounted or self._console_dictation_session is not session:
             # Cancelled, failed or unmounted while the model was loading: the
@@ -5701,9 +5694,7 @@ class ChatScreen(BaseAppScreen):
             self._save_console_chatbook_from_visible_action()
             return
         if action_id == ACTION_GENERATE_IMAGE:
-            self.run_worker(
-                self._open_console_generate_image_modal(), exclusive=False
-            )
+            self.run_worker(self._open_console_generate_image_modal(), exclusive=False)
         elif action_id == ACTION_GENERATE_CAPTION:
             self._insert_console_caption_prompt()
         elif action_id == ACTION_NARRATE_CONVERSATION:
@@ -5827,9 +5818,7 @@ class ChatScreen(BaseAppScreen):
             # temporary and nothing happened) -- these read very
             # differently to the user, so distinguish them rather than
             # picking one generic sentence.
-            session = next(
-                (s for s in store.sessions() if s.id == session_id), None
-            )
+            session = next((s for s in store.sessions() if s.id == session_id), None)
             if session is not None and not session.ephemeral:
                 # A cancelled-then-retried promote worker lands here: the
                 # first (cancelled) run's `asyncio.to_thread` DB write still
@@ -6247,9 +6236,7 @@ class ChatScreen(BaseAppScreen):
                 # unconditionally: this is a refusal the user did not ask for
                 # and cannot otherwise see, and the dictated text is sitting
                 # safely in the origin session's draft either way.
-                self.app_instance.notify(
-                    _VOICE_ACK_SESSION_CHANGED, severity="warning"
-                )
+                self.app_instance.notify(_VOICE_ACK_SESSION_CHANGED, severity="warning")
                 self._speak_status(_VOICE_ACK_SESSION_CHANGED)
                 return
             try:
@@ -7377,9 +7364,7 @@ class ChatScreen(BaseAppScreen):
         session_id = getattr(store, "active_session_id", None)
         session = None
         if session_id:
-            session = next(
-                (s for s in store.sessions() if s.id == session_id), None
-            )
+            session = next((s for s in store.sessions() if s.id == session_id), None)
         if session is None:
             return False
         for field, value in (
@@ -8221,9 +8206,7 @@ class ChatScreen(BaseAppScreen):
         else:
             runtime_backend = ""
         raw_assistant_kind = conversation.get("assistant_kind")
-        assistant_kind = (
-            raw_assistant_kind if type(raw_assistant_kind) is str else None
-        )
+        assistant_kind = raw_assistant_kind if type(raw_assistant_kind) is str else None
         raw_assistant_id = conversation.get("assistant_id")
         assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
         raw_assistant_authority_id = conversation.get("assistant_authority_id")
@@ -10116,9 +10099,7 @@ class ChatScreen(BaseAppScreen):
                     if isinstance(onboarding, dict)
                     else None
                 )
-            self._console_fleet_coachmark_seen_cached = coerce_bool_setting(
-                raw, False
-            )
+            self._console_fleet_coachmark_seen_cached = coerce_bool_setting(raw, False)
         return self._console_fleet_coachmark_seen_cached
 
     def _maybe_show_fleet_coachmark(
@@ -10198,9 +10179,7 @@ class ChatScreen(BaseAppScreen):
                 True,
             )
         except Exception as exc:
-            logger.warning(
-                "Failed to persist Console fleet coach-mark flag: {}", exc
-            )
+            logger.warning("Failed to persist Console fleet coach-mark flag: {}", exc)
 
     def _migrate_console_rail_fallback_preferences(
         self,
@@ -12809,9 +12788,7 @@ class ChatScreen(BaseAppScreen):
                         markup=False,
                     )
                     fleet_summary.styles.height = "auto"
-                    fleet_summary.styles.display = (
-                        "block" if fleet_line else "none"
-                    )
+                    fleet_summary.styles.display = "block" if fleet_line else "none"
                     yield fleet_summary
 
                     with VerticalScroll(
@@ -13775,8 +13752,7 @@ class ChatScreen(BaseAppScreen):
             "active_session_id": store.active_session_id,
             "task_resume_state": self._task_resume_state.to_dict(),
             "sessions": [
-                self._console_session_to_state(session)
-                for session in store.sessions()
+                self._console_session_to_state(session) for session in store.sessions()
             ],
             "messages_by_session": {
                 session.id: [
@@ -13836,15 +13812,11 @@ class ChatScreen(BaseAppScreen):
             "assistant_id",
             "assistant_authority_id",
         )
-        has_source_aware_identity = any(
-            key in raw_session for key in identity_keys
-        )
+        has_source_aware_identity = any(key in raw_session for key in identity_keys)
         if has_source_aware_identity:
             raw_runtime_backend = raw_session.get("runtime_backend")
             session_kwargs["runtime_backend"] = (
-                raw_runtime_backend
-                if type(raw_runtime_backend) is str
-                else ""
+                raw_runtime_backend if type(raw_runtime_backend) is str else ""
             )
             for key in (
                 "assistant_kind",
@@ -14158,10 +14130,7 @@ class ChatScreen(BaseAppScreen):
         server_context_is_current: Callable[[object], bool] | None = None
 
         def exact_server_context_is_current() -> bool:
-            if (
-                server_context_capture is None
-                or server_context_is_current is None
-            ):
+            if server_context_capture is None or server_context_is_current is None:
                 return False
             try:
                 return server_context_is_current(server_context_capture) is True
@@ -14195,7 +14164,10 @@ class ChatScreen(BaseAppScreen):
                 or expected_server_id != expected_server_id.strip()
             ):
                 return False
-            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+            if (
+                getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
                 return False
 
             assistant_authority_id = None
@@ -14211,9 +14183,7 @@ class ChatScreen(BaseAppScreen):
                 None,
             )
             resolver = getattr(provider, "resolve_character_authority_id", None)
-            if not callable(capture_context) or not callable(
-                server_context_is_current
-            ):
+            if not callable(capture_context) or not callable(server_context_is_current):
                 return False
             try:
                 server_context_capture = capture_context(
@@ -15450,7 +15420,10 @@ class ChatScreen(BaseAppScreen):
         # from before the send), and the composer's own live stacks too
         # when it still shows this exact session.
         self._console_undo_histories.pop(session_id, None)
-        if composer is not None and self._console_visible_draft_session_id == session_id:
+        if (
+            composer is not None
+            and self._console_visible_draft_session_id == session_id
+        ):
             composer.clear_history()
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
@@ -15809,6 +15782,15 @@ class ChatScreen(BaseAppScreen):
     _CONSOLE_PROMPT_SEARCH_LIMIT = 25
 
     _LIBRARY_PROMPT_INSERT_BLOCKED_COPY = "Finish provider setup to insert prompts."
+    _RECIPE_EXECUTION_BLOCKED_COPY = (
+        "Recipes cannot be applied directly. Open Prompts and edit the Recipe "
+        "as an unsaved Prompt copy first."
+    )
+
+    @staticmethod
+    def _is_recipe_prompt_record(record: Mapping[str, Any]) -> bool:
+        """Return whether a normalized or raw record is a non-executable Recipe."""
+        return str(record.get("artifact_type") or "prompt").casefold() == "recipe"
 
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
         """Resolve and insert a saved prompt's ``user_prompt`` for `/prompt`.
@@ -15825,6 +15807,11 @@ class ChatScreen(BaseAppScreen):
         query = parse.args.strip()
         resolved = await self._resolve_console_prompt_by_name(query) if query else None
         if resolved is not None:
+            if self._is_recipe_prompt_record(resolved):
+                await self._append_native_console_system_message(
+                    self._RECIPE_EXECUTION_BLOCKED_COPY
+                )
+                return
             self._insert_prompt_text_into_composer(
                 str(resolved.get("user_prompt") or ""), replace=True
             )
@@ -15867,12 +15854,18 @@ class ChatScreen(BaseAppScreen):
             else {}
         )
         try:
-            return await search_prompts(
+            records = await search_prompts(
                 mode="local",
                 query=query,
                 limit=self._CONSOLE_PROMPT_SEARCH_LIMIT,
                 **fts_kwargs,
             )
+            return [
+                record
+                for record in records
+                if isinstance(record, Mapping)
+                and not self._is_recipe_prompt_record(record)
+            ]
         except Exception:
             logger.opt(exception=True).warning(
                 f"Console prompt search failed for query {query!r}."
@@ -15888,7 +15881,11 @@ class ChatScreen(BaseAppScreen):
         candidates, an ambiguous (2+) exact case-insensitive name match, or
         no/ambiguous unique prefix match either.
         """
-        candidates = await self._console_prompt_search(query)
+        candidates = [
+            record
+            for record in await self._console_prompt_search(query)
+            if isinstance(record, Mapping) and not self._is_recipe_prompt_record(record)
+        ]
         normalized_query = query.strip().casefold()
         exact_matches = [
             record
@@ -15917,6 +15914,12 @@ class ChatScreen(BaseAppScreen):
         def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
             self._focus_console_composer_if_needed(force=True)
             if record is None:
+                return
+            if self._is_recipe_prompt_record(record):
+                self.app_instance.notify(
+                    self._RECIPE_EXECUTION_BLOCKED_COPY,
+                    severity="warning",
+                )
                 return
             self._insert_prompt_text_into_composer(
                 str(record.get("user_prompt") or ""), replace=True
@@ -16129,6 +16132,11 @@ class ChatScreen(BaseAppScreen):
             return
         resolved = await self._resolve_console_prompt_by_name(args)
         if resolved is not None:
+            if self._is_recipe_prompt_record(resolved):
+                await self._append_native_console_system_message(
+                    self._RECIPE_EXECUTION_BLOCKED_COPY
+                )
+                return
             # Blank check only via strip(); the applied value below is the
             # raw prompt text so leading/trailing whitespace and internal
             # formatting survive verbatim.
@@ -16792,6 +16800,12 @@ class ChatScreen(BaseAppScreen):
         def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
             self._focus_console_composer_if_needed(force=True)
             if record is None:
+                return
+            if self._is_recipe_prompt_record(record):
+                self.app_instance.notify(
+                    self._RECIPE_EXECUTION_BLOCKED_COPY,
+                    severity="warning",
+                )
                 return
             # Blank check only via strip(); the applied value is the raw
             # prompt text so formatting survives verbatim.
@@ -19715,7 +19729,10 @@ class ChatScreen(BaseAppScreen):
             # usage this method's own docstring describes), so it falls
             # through and toasts, preserving that pre-TASK-1141 behavior.
             last_round_ids = self._console_last_parked_round_ids.get(session_id)
-            if last_round_ids and last_round_ids <= self._console_toasted_park_round_ids:
+            if (
+                last_round_ids
+                and last_round_ids <= self._console_toasted_park_round_ids
+            ):
                 return
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id

@@ -627,6 +627,24 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
 
 
 @pytest.mark.asyncio
+async def test_prompt_scope_refuses_to_record_recipe_usage_after_authoritative_read():
+    server = FakeServerPromptService()
+    server.prompt = server.prompt.model_copy(update={"artifact_type": "recipe"})
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Recipes cannot be used directly"):
+        await service.record_prompt_usage(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == [("get_prompt", "server-uuid-9", False)]
+
+
+@pytest.mark.asyncio
 async def test_prompt_scope_rejects_local_version_history_until_supported():
     service = PromptScopeService(
         local_service=FakeLocalPromptService(),
@@ -877,9 +895,7 @@ async def test_modern_server_capabilities_preserve_exact_kinds_and_smaller_limit
         {
             "status": "healthy",
             "capabilities": {
-                "structured_kinds": [
-                    {"schema_version": 2, "kind": "block_prompt"}
-                ],
+                "structured_kinds": [{"schema_version": 2, "kind": "block_prompt"}],
                 "artifact_types": [{}],
             },
         },
@@ -909,9 +925,7 @@ async def test_legacy_or_malformed_server_health_fails_closed_but_remains_browsa
 async def test_single_text_only_server_is_not_inferred_to_support_console_block_v2():
     server = FakeServerPromptService(
         health=modern_prompt_health(
-            structured_kinds=[
-                {"schema_version": 2, "kind": "single_text_recipe"}
-            ]
+            structured_kinds=[{"schema_version": 2, "kind": "single_text_recipe"}]
         )
     )
     service = PromptScopeService(FakeLocalPromptService(), server)
@@ -1013,9 +1027,7 @@ async def test_empty_server_query_uses_paginated_list_not_search():
     )
 
     assert items[0]["name"] == "Server Prompt"
-    assert server.calls == [
-        ("list_prompts", 1, 25, True, "last_modified", "desc")
-    ]
+    assert server.calls == [("list_prompts", 1, 25, True, "last_modified", "desc")]
 
 
 @pytest.mark.asyncio

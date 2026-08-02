@@ -4,7 +4,7 @@ title: 'Deliver unified Prompt, Recipe, and Library user interfaces'
 status: In Progress
 assignee: []
 created_date: '2026-08-01 23:29'
-updated_date: '2026-08-02 06:15'
+updated_date: '2026-08-02 08:20'
 labels: []
 dependencies:
   - TASK-1774
@@ -46,4 +46,6 @@ Reason: this stage implements the adopted long-lived unified Console/Library edi
 
 <!-- SECTION:NOTES:BEGIN -->
 Task 7: Added the stable Prompts entry to the existing Console composer hamburger menu, preserving temporary Save-this-chat precedence and all prior rows/reasons. Added one responsive ConsolePromptsModal Browse/Edit shell with pure source/navigation state, backend list/search/detail/save injection, 200 ms token-gated search, pagination, retry/unavailable/deleted-detail copy, Prompt/Recipe labels, conservative legacy editing, guarded foreign/malformed compatibility views, Recipe-to-unsaved-Prompt copies, capability-gated saves, focus restoration, and dirty-work protection. Reused the Task 6 incremental PromptBlockEditor without composer apply/model side effects. Verification: exact four-file UI suite 235 passed; focused Ruff and format clean; CSS regenerated; diff check clean. Impeccable detector reported one advisory for pre-existing #6f7782 at _agentic_terminal.tcss:3488, outside this task diff. TASK-1775 remains In Progress with ACs unchecked until Task 8 completes Library integration and legacy Recipe guards.
+
+Task 8: Made Prompt and Recipe rows first-class in Library > Prompts with distinct type/source/lane summaries, shared incremental System/User block editing, read-only compiled previews, guarded compatibility conversion, capability/version-aware update, and conflict recovery through Reload or Save as new. Added immutable Outcome-first and Blank Recipe factories plus exact structured save sizing/limit gates. Recipe saves preserve block order, syntax, XML tags, mapping hints, and opt-in starter content without retargeting the active Prompt. Library use opens Recipes as unsaved Prompt copies, while picker, `/prompt`, `/system`, and usage-recording seams reject direct Recipe execution. Markdown export/import now preserves structured Recipe identity and definition; invalid structured exports stop instead of downgrading. Library System Apply is explicitly unavailable until Task 9, with a durable recovery reason, while User Apply remains available. Verification: required Task 8 five-file suite 165 passed; shared editor and PromptScope suites 77 passed; Task 7 modal/menu regression 70 passed; Ruff check/format and diff check clean; one-time Impeccable detector returned no findings; independent review approved with no remaining findings. ADR-040 remains governing. TASK-1775 intentionally remains In Progress with all ACs unchecked pending stage closeout authorization.
 <!-- SECTION:NOTES:END -->

@@ -456,7 +456,9 @@ class LocalPromptService:
         if hasattr(self.prompt_db, "update_prompt_by_id"):
             expected_version = payload.get("expected_version")
             update_payload = {
-                key: value for key, value in payload.items() if key != "expected_version"
+                key: value
+                for key, value in payload.items()
+                if key != "expected_version"
             }
             prompt_uuid, _message = self.prompt_db.update_prompt_by_id(
                 existing["id"], update_payload, expected_version=expected_version
@@ -658,9 +660,7 @@ class PromptScopeService:
             return self._server_capabilities_cache
 
         try:
-            health = await self._maybe_await(
-                self.server_service.get_prompts_health()
-            )
+            health = await self._maybe_await(self.server_service.get_prompts_health())
         except Exception:
             # A transient health failure must not invent capabilities or poison retries.
             return normalize_server_prompt_capabilities(None)
@@ -708,8 +708,7 @@ class PromptScopeService:
         else:
             source_items = cls._source_record(response).get("items", [])
         normalized["items"] = [
-            cls._normalize_prompt_record(item, backend=backend)
-            for item in source_items
+            cls._normalize_prompt_record(item, backend=backend) for item in source_items
         ]
         return normalized
 
@@ -817,9 +816,7 @@ class PromptScopeService:
                 )
             except (PermissionError, PolicyDeniedError) as exc:
                 raise PromptCapabilityError(normalized_mode.value, "search") from exc
-            return normalize_prompt_search(
-                response, backend=normalized_mode.value
-            )
+            return normalize_prompt_search(response, backend=normalized_mode.value)
 
         local_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
@@ -890,20 +887,21 @@ class PromptScopeService:
             raw_definition.get("kind") if raw_definition is not None else None
         )
         definition_version = (
-            raw_definition.get("schema_version")
-            if raw_definition is not None
-            else None
+            raw_definition.get("schema_version") if raw_definition is not None else None
         )
         is_console_v2_candidate = (
-            type(payload.get("prompt_schema_version")) is int
-            and payload.get("prompt_schema_version") == 2
-        ) or (
-            type(definition_version) is int and definition_version == 2
-        ) or definition_kind in {
-            "block_prompt",
-            "block_recipe",
-            "single_text_recipe",
-        }
+            (
+                type(payload.get("prompt_schema_version")) is int
+                and payload.get("prompt_schema_version") == 2
+            )
+            or (type(definition_version) is int and definition_version == 2)
+            or definition_kind
+            in {
+                "block_prompt",
+                "block_recipe",
+                "single_text_recipe",
+            }
+        )
         capabilities = None
         if is_console_v2_candidate:
             capabilities = await self.get_capabilities(mode=normalized_mode)
@@ -951,6 +949,16 @@ class PromptScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id(normalized_mode, "use"))
         service = self._service_for_mode(normalized_mode)
+        current = await self._maybe_await(
+            service.get_prompt(prompt_identifier, include_deleted=False)
+        )
+        normalized_current = self._normalize_prompt_record(
+            current, backend=normalized_mode.value
+        )
+        if normalized_current.get("artifact_type") == "recipe":
+            raise ValueError(
+                "Recipes cannot be used directly. Save a Prompt copy before use."
+            )
         response = await self._maybe_await(
             service.record_prompt_usage(prompt_identifier)
         )

@@ -22,6 +22,7 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     MODE_INSERT,
     NO_SYSTEM_PART_SUFFIX,
     REASON_STATIC_ID,
+    ROW_CLASS,
     ROW_ID_PREFIX,
     SEARCH_DEBOUNCE_SECONDS,
     ConsolePromptPickerModal,
@@ -50,6 +51,7 @@ def _record(
     system_prompt: str | None = "You are helpful.",
     user_prompt: str = "Do the thing.",
     keywords: tuple[str, ...] = (),
+    artifact_type: str = "prompt",
 ) -> dict[str, Any]:
     return {
         "id": f"local:prompt:{local_id}",
@@ -58,6 +60,7 @@ def _record(
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
         "keywords": list(keywords),
+        "artifact_type": artifact_type,
     }
 
 
@@ -149,6 +152,60 @@ async def test_enter_on_highlighted_row_dismisses_with_that_record() -> None:
         await pilot.press("enter")
 
     assert app.dismissed_with == record
+
+
+@pytest.mark.asyncio
+async def test_recipe_never_enters_legacy_prompt_picker_rows_or_selection() -> None:
+    app = ModalHarness()
+    recipe = _record(
+        local_id=12,
+        name="Outcome first",
+        artifact_type="recipe",
+    )
+    fake_search = FakePromptSearch([recipe])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(
+            ConsolePromptPickerModal(
+                mode=MODE_INSERT,
+                initial_query="",
+                prompt_search=fake_search,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        await _wait_for_search(pilot)
+
+        assert len(app.screen.query(f".{ROW_CLASS}")) == 0
+        assert app.dismissed_with == "not-called"
+
+
+@pytest.mark.asyncio
+async def test_recipe_detail_slipping_past_search_is_rejected_before_dismiss() -> None:
+    app = ModalHarness()
+    recipe = _record(
+        local_id=12,
+        name="Outcome first",
+        artifact_type="recipe",
+    )
+    fake_search = FakePromptSearch([])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        picker = ConsolePromptPickerModal(
+            mode=MODE_INSERT,
+            initial_query="",
+            prompt_search=fake_search,
+        )
+        await app.push_screen(picker, callback=app.capture)
+        await pilot.pause()
+
+        picker._select_record(recipe)
+        await pilot.pause()
+
+        assert app.dismissed_with == "not-called"
+        reason = app.screen.query_one(f"#{REASON_STATIC_ID}", Static)
+        assert reason.display is True
+        assert "recipe" in str(reason.renderable).lower()
 
 
 @pytest.mark.asyncio

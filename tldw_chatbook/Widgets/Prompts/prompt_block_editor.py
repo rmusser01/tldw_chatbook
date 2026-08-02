@@ -415,11 +415,15 @@ class PromptBlockEditor(Vertical):
         state: PromptBlockEditorState,
         *,
         can_update_original: bool = False,
+        allow_apply_system: bool = True,
+        apply_system_unavailable_reason: str = "",
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self._state = state
         self._can_update_original = can_update_original
+        self._allow_apply_system = bool(allow_apply_system)
+        self._apply_system_unavailable_reason = apply_system_unavailable_reason.strip()
         self._block_widgets: dict[str, PromptBlockCard] = {}
 
     @property
@@ -492,7 +496,10 @@ class PromptBlockEditor(Vertical):
                     "Apply system prompt to this session",
                     value=False,
                     id="prompt-editor-apply-system",
+                    disabled=not self._allow_apply_system,
                 )
+                if not self._allow_apply_system:
+                    system.tooltip = self._apply_system_unavailable_reason
                 system.display = bool(self._state.compiled_system)
                 yield system
                 yield Checkbox(
@@ -698,7 +705,9 @@ class PromptBlockEditor(Vertical):
 
         system = self.query_one("#prompt-editor-apply-system", Checkbox)
         user = self.query_one("#prompt-editor-apply-user", Checkbox)
-        selected_system = bool(system.value and self._state.compiled_system)
+        selected_system = bool(
+            self._allow_apply_system and system.value and self._state.compiled_system
+        )
         selected_user = bool(user.value and self._state.compiled_user)
         no_selected_content = not (selected_system or selected_user)
 
@@ -708,9 +717,22 @@ class PromptBlockEditor(Vertical):
         elif not self._state.compiled_system and not self._state.compiled_user:
             reason = "Apply unavailable — add content to a System or User block."
         elif no_selected_content:
-            reason = "Apply unavailable — select a non-empty lane."
+            reason = (
+                self._apply_system_unavailable_reason
+                if not self._allow_apply_system
+                and self._state.compiled_system
+                and not self._state.compiled_user
+                else "Apply unavailable — select a non-empty lane."
+            )
         else:
-            reason = "Ready — Apply changes only the selected non-empty lanes."
+            reason = (
+                f"{self._apply_system_unavailable_reason} "
+                "Ready — Apply inserts the selected User lane."
+                if not self._allow_apply_system
+                and self._state.compiled_system
+                and self._apply_system_unavailable_reason
+                else "Ready — Apply changes only the selected non-empty lanes."
+            )
         apply_reason.update(reason)
         apply_reason.set_class(issue_count > 0 or no_selected_content, "blocked")
 
@@ -912,7 +934,9 @@ class PromptBlockEditor(Vertical):
             return
         system = self.query_one("#prompt-editor-apply-system", Checkbox)
         user = self.query_one("#prompt-editor-apply-user", Checkbox)
-        apply_system = bool(system.value and self._state.compiled_system)
+        apply_system = bool(
+            self._allow_apply_system and system.value and self._state.compiled_system
+        )
         apply_user = bool(user.value and self._state.compiled_user)
         if not (apply_system or apply_user):
             self._sync_footer()

@@ -114,3 +114,83 @@ class DecodedPromptArtifact:
     compiled_system: str
     compiled_user: str
     compatibility_stale: bool
+
+
+def outcome_first_recipe() -> BlockArtifactDefinition:
+    """Return a fresh built-in outcome-first Recipe definition.
+
+    The factory supplies structure and concise mapping help only. User facts,
+    constraints, evidence, and desired outputs intentionally remain blank.
+    """
+    system_specs = (
+        ("role", "Role", "Define the model's function and job."),
+        ("personality", "Personality", "Describe the desired tone and demeanor."),
+        (
+            "collaboration-style",
+            "Collaboration style",
+            "Describe how the model should work with the user.",
+        ),
+    )
+    user_specs = (
+        ("goal", "Goal", "State the user-visible outcome."),
+        (
+            "success-criteria",
+            "Success criteria",
+            "List what must be true before the answer is complete.",
+        ),
+        (
+            "context-evidence",
+            "Context and evidence",
+            "Add available facts, sources, examples, or inputs.",
+        ),
+        (
+            "constraints",
+            "Constraints",
+            "Name policy, safety, business, evidence, or side-effect limits.",
+        ),
+        (
+            "output",
+            "Output",
+            "Describe the required answer shape, length, and tone.",
+        ),
+        (
+            "stop-rules",
+            "Stop rules",
+            "Define when to retry, ask, fall back, abstain, or stop.",
+        ),
+    )
+
+    def blocks(
+        specs: tuple[tuple[str, str, str], ...],
+    ) -> tuple[PromptBlock, ...]:
+        return tuple(
+            PromptBlock(
+                id=block_id,
+                title=title,
+                syntax="markdown",
+                content="",
+                mapping_hint=mapping_hint,
+            )
+            for block_id, title, mapping_hint in specs
+        )
+
+    return BlockArtifactDefinition(
+        kind="block_recipe",
+        schema_version=2,
+        lanes=(
+            PromptLane(id="system", blocks=blocks(system_specs)),
+            PromptLane(id="user", blocks=blocks(user_specs)),
+        ),
+    )
+
+
+def blank_recipe() -> BlockArtifactDefinition:
+    """Return a fresh empty two-lane Recipe working definition."""
+    return BlockArtifactDefinition(
+        kind="block_recipe",
+        schema_version=2,
+        lanes=(
+            PromptLane(id="system", blocks=()),
+            PromptLane(id="user", blocks=()),
+        ),
+    )
