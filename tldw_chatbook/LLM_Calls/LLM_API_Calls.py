@@ -44,7 +44,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
 #
@@ -961,6 +961,23 @@ def _anthropic_supports_caching(model: str) -> bool:
     )
 
 
+def _anthropic_caching_enabled() -> bool:
+    """[caching].anthropic_enabled kill-switch for ALL Anthropic cache_control.
+
+    Defaults to True when the section or key is absent (prompt caching is the
+    shipped task-323 behavior; this gate only adds an opt-out). Any config
+    read failure also defaults to True so a broken config file cannot
+    silently change request shapes.
+
+    Returns:
+        True when cache_control breakpoints should be emitted.
+    """
+    try:
+        return bool(get_cli_setting("caching", "anthropic_enabled", True))
+    except Exception:
+        return True
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -1204,6 +1221,7 @@ def chat_with_anthropic(
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
+    caching_active = _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
     data = {
         "model": current_model,
         "max_tokens": current_max_tokens,  # Changed from max_tokens_to_sample to the parameter
@@ -1211,7 +1229,7 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None:
-        if _anthropic_supports_caching(current_model) and system_prompt:
+        if caching_active and system_prompt:
             # cache_control on the system prompt (the largest stable prefix)
             # activates Anthropic prompt caching; per the tools->system->messages
             # hierarchy this caches tools+system. Applied for both streaming and
@@ -1252,7 +1270,7 @@ def chat_with_anthropic(
         data["stop_sequences"] = stop_sequences
     if tools is not None:
         tools_payload = _anthropic_tools_payload(tools)
-        if _anthropic_supports_caching(current_model) and tools_payload:
+        if caching_active and tools_payload:
             # Optional second breakpoint on the last converted tool. A fresh dict
             # so the caller's input `tools` are never mutated.
             tools_payload[-1] = {

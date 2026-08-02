@@ -2261,6 +2261,13 @@ ingest_directory_scan_limit = 1000
 # Per-type ingestion options are persisted here by the Library ingest canvas.
 [library.ingest_options]
 
+[caching]
+# Anthropic prompt caching (cache_control breakpoints on system prompt, tool
+# list, and the latest message). Cache writes bill at 1.25x input and reads at
+# ~0.1x, so multi-turn chat wins after two sends inside the 5-minute TTL.
+# Set false to disable all Anthropic cache_control emission.
+anthropic_enabled = true
+
 [splash_screen]
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens

@@ -867,3 +867,28 @@ def test_caching_model_no_tools_system_only(mock_post):
     sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", system_message="Hi.")
     assert isinstance(sent["system"], list)
     assert "tools" not in sent  # no tools passed -> no tools key
+
+
+@patch("requests.Session.post")
+def test_caching_disabled_via_config_strips_all_breakpoints(mock_post):
+    """[caching] anthropic_enabled = false removes system AND tool AND
+    message breakpoints; payload shape otherwise unchanged."""
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+        side_effect=lambda section, key=None, default=None: (
+            False if (section, key) == ("caching", "anthropic_enabled") else default
+        ),
+    ):
+        sent = _sent_anthropic(
+            mock_post, "claude-sonnet-4-6", system_message="be terse", tools=OPENAI_TOOLS
+        )
+    assert isinstance(sent["system"], str)  # string form, no block array
+    assert "cache_control" not in json.dumps(sent)
+
+
+@patch("requests.Session.post")
+def test_caching_default_on_when_section_absent(mock_post):
+    """No [caching] section -> enabled (the existing task-323 behavior)."""
+    sent = _sent_anthropic(mock_post, "claude-sonnet-4-6", system_message="be terse")
+    assert isinstance(sent["system"], list)
+    assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
