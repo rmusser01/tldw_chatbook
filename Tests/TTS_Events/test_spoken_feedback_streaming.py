@@ -17,12 +17,29 @@ harness pre-existing to build on (this is the first file in the directory).
 `StreamingPcmSink` itself is monkeypatched, in the `tts_events` module's own
 namespace, with `_RecordingSink` -- a minimal fake implementing just enough
 of the real class's interface (`open`/`feed`/`close`/`stop`/`state`/
-`terminal_reason`/`bytes_per_second`/`buffered_seconds`) for the REAL
-`pump()` (`Audio/streaming_sink.py`, untouched here) to drive it
+`terminal_reason`/`fail_reason`/`bytes_per_second`/`buffered_seconds`) for
+the REAL `pump()` (`Audio/streaming_sink.py`, untouched here) to drive it
 synchronously, with no real audio device or background thread. Patching
 `streaming_sink._import_sounddevice` would not be enough on its own --
 `open()` still needs a `stream_factory`-shaped success/failure outcome to
 react to, which is exactly what patching the class provides.
+
+pcm and wav responses take deliberately different branches in `_generate_tts`
+and are tested accordingly. pcm decides sink eligibility BEFORE any file
+write (needs only `response.sample_rate`, no bytes read) and, when eligible,
+never touches disk. wav can only be validated against its COMPLETE body
+(`pcm_stream.sink_plan`'s own docstring), so it decides AFTER the legacy
+write loop has already run unmodified -- an earlier version that drained wav
+responses up front, to decide before writing, reproduced four real
+regressions in `test_console_audio_cpp_native.py`'s cancellation/partial-
+artifact/write-batching pins (eager draining changes observable timing for
+every wav response whenever a sink is merely available, independent of the
+eventual eligibility verdict). An eligible wav response is played from the
+bytes the write loop already collected, then the now-redundant artifact is
+deleted; an ineligible one, or one where the sink itself fails afterward,
+is reported via the file the write loop already produced -- see
+`test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_end`
+and `test_wav_sink_failure_falls_back_to_the_already_written_file_silently`.
 """
 from __future__ import annotations
 
