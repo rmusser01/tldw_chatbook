@@ -5,20 +5,291 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
+from rich.cells import get_character_cell_size
+
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
 
 NOTES_SORT_MODES = ("newest", "oldest", "title")
 _UPDATED_KEYS = ("last_modified", "updated_at", "created_at")
-_EMPTY_NOTES_COPY = "No notes yet. Create one to see it here."
+_EMPTY_NOTES_COPY = "No notes yet. Create your first note."
+
+DATABASE_NOTE_TITLE_MAX_CHARS = 300
+DATABASE_NOTE_BODY_MAX_CHARS = 2_000_000
+DATABASE_NOTE_KEYWORD_MAX_CHARS = 100
 
 # The "blank" template duplicates the dedicated Blank note action (with a
 # confusingly different default title), so the create view's template list
 # excludes it -- the button is the one canonical empty path.
 _BLANK_TEMPLATE_KEY = "blank"
+
+
+@dataclass(frozen=True)
+class NormalizedDatabaseNote:
+    """One coherent persisted Database Note detail returned by a session port.
+
+    Attributes:
+        note_id: Stable Database Note identity.
+        title: Exact persisted title.
+        body: Exact persisted body.
+        keywords: Semantic keyword tokens in persisted order.
+        version: Current optimistic-lock version.
+        created_at: Persisted creation timestamp text.
+        modified_at: Persisted modification timestamp text.
+    """
+
+    note_id: str
+    title: str
+    body: str
+    keywords: tuple[str, ...]
+    version: int
+    created_at: str
+    modified_at: str
+
+
+@dataclass(frozen=True)
+class DatabaseNoteDraft:
+    """Canonical raw in-memory Database Note draft.
+
+    Attributes:
+        note_id: Stable Database Note identity.
+        title: Raw, untransformed title text.
+        body: Raw, untransformed body text.
+        keywords_text: Raw comma-delimited keyword input.
+        revision: Monotonic draft revision.
+    """
+
+    note_id: str
+    title: str
+    body: str
+    keywords_text: str
+    revision: int
+
+
+@dataclass(frozen=True)
+class DatabaseNoteSavePayload:
+    """Losslessly validated values for one versioned save attempt."""
+
+    title: str
+    body: str
+    keywords: tuple[str, ...]
+    revision: int
+
+
+@dataclass(frozen=True)
+class NoteValidationVeto:
+    """Typed actionable reason that the current raw draft cannot be saved."""
+
+    field: Literal["title", "body", "keywords"]
+    message: str
+    revision: int
+
+
+@dataclass(frozen=True)
+class LibraryNoteSessionSnapshot:
+    """Portable immutable view of one active Database Note session."""
+
+    baseline: NormalizedDatabaseNote
+    draft: DatabaseNoteDraft
+    session_generation: int
+    saved_revision: int
+    dirty: bool
+    saving: bool
+    in_conflict: bool
+    conflict_generation: int
+    status_message: str
+
+    @property
+    def note_id(self) -> str:
+        """Return the active note identity."""
+        return self.draft.note_id
+
+    @property
+    def title(self) -> str:
+        """Return the canonical raw draft title."""
+        return self.draft.title
+
+    @property
+    def body(self) -> str:
+        """Return the canonical raw draft body."""
+        return self.draft.body
+
+    @property
+    def keywords_text(self) -> str:
+        """Return the canonical raw keyword input."""
+        return self.draft.keywords_text
+
+    @property
+    def draft_revision(self) -> int:
+        """Return the current canonical draft revision."""
+        return self.draft.revision
+
+    @property
+    def version(self) -> int:
+        """Return the last confirmed optimistic-lock version."""
+        return self.baseline.version
+
+
+@dataclass(frozen=True)
+class LibraryNotesFocusIdentity:
+    """Textual-free semantic focus, selection, and scroll restoration tuple."""
+
+    stage: str
+    region: str
+    note_id: str | None
+    semantic_role: str
+    body_selection_start: tuple[int, int] | None = None
+    body_selection_end: tuple[int, int] | None = None
+    scroll_offset: tuple[int, int] | None = None
+
+
+def _validation_veto(
+    draft: DatabaseNoteDraft,
+    field: Literal["title", "body", "keywords"],
+    message: str,
+) -> NoteValidationVeto:
+    return NoteValidationVeto(field=field, message=message, revision=draft.revision)
+
+
+def validate_database_note_draft(
+    draft: DatabaseNoteDraft,
+) -> DatabaseNoteSavePayload | NoteValidationVeto:
+    """Build an exact save payload or veto any transforming persistence path.
+
+    Delimiter-adjacent keyword whitespace and empty comma segments are syntax;
+    every remaining token preserves its spelling and order. Title, body, and
+    keyword content are never truncated, sanitized into replacement text, or
+    silently deduplicated.
+
+    Args:
+        draft: Canonical raw Database Note draft.
+
+    Returns:
+        An exact persistence payload, or a typed actionable validation veto.
+    """
+    title = draft.title
+    if len(title) > DATABASE_NOTE_TITLE_MAX_CHARS:
+        return _validation_veto(
+            draft,
+            "title",
+            f"Title is {len(title)}/{DATABASE_NOTE_TITLE_MAX_CHARS} characters — shorten it to save.",
+        )
+    if title != title.strip():
+        return _validation_veto(
+            draft,
+            "title",
+            "Title begins or ends with whitespace — remove it to save.",
+        )
+    if sanitize_string(title, max_length=DATABASE_NOTE_TITLE_MAX_CHARS) != title:
+        return _validation_veto(
+            draft,
+            "title",
+            "Title contains unsupported control characters — remove them to save.",
+        )
+    if not validate_text_input(
+        title, max_length=DATABASE_NOTE_TITLE_MAX_CHARS, allow_html=False
+    ):
+        return _validation_veto(
+            draft,
+            "title",
+            "Title contains unsafe markup — revise it to save.",
+        )
+
+    body = draft.body
+    if len(body) > DATABASE_NOTE_BODY_MAX_CHARS:
+        return _validation_veto(
+            draft,
+            "body",
+            f"Body is {len(body)}/{DATABASE_NOTE_BODY_MAX_CHARS} characters — shorten it to save.",
+        )
+    if sanitize_string(body, max_length=DATABASE_NOTE_BODY_MAX_CHARS) != body:
+        return _validation_veto(
+            draft,
+            "body",
+            "Body contains unsupported control characters — remove them to save.",
+        )
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for raw_token in draft.keywords_text.split(","):
+        token = raw_token.strip()
+        if not token:
+            continue
+        if len(token) > DATABASE_NOTE_KEYWORD_MAX_CHARS:
+            return _validation_veto(
+                draft,
+                "keywords",
+                f"A keyword is {len(token)}/{DATABASE_NOTE_KEYWORD_MAX_CHARS} characters — shorten it to save.",
+            )
+        if sanitize_string(token, max_length=DATABASE_NOTE_KEYWORD_MAX_CHARS) != token:
+            return _validation_veto(
+                draft,
+                "keywords",
+                "A keyword contains unsupported control characters — revise it to save.",
+            )
+        if not validate_text_input(
+            token, max_length=DATABASE_NOTE_KEYWORD_MAX_CHARS, allow_html=False
+        ):
+            return _validation_veto(
+                draft,
+                "keywords",
+                "A keyword contains unsafe markup — revise it to save.",
+            )
+        identity = token.casefold()
+        if identity in seen:
+            return _validation_veto(
+                draft,
+                "keywords",
+                "Keywords contain a case-insensitive duplicate — remove one to save.",
+            )
+        seen.add(identity)
+        keywords.append(token)
+
+    return DatabaseNoteSavePayload(
+        title=title,
+        body=body,
+        keywords=tuple(keywords),
+        revision=draft.revision,
+    )
+
+
+def ellipsize_note_title_cells(title: str, max_cells: int) -> str:
+    """Return a plain one-row title no wider than ``max_cells`` terminal cells.
+
+    Args:
+        title: Raw title to format for display only.
+        max_cells: Maximum terminal-cell width, including an ellipsis.
+
+    Returns:
+        The original title when it fits, otherwise a cell-safe ellipsized copy.
+        The raw input is never modified.
+    """
+    if max_cells <= 0:
+        return ""
+
+    one_row_title = re.sub(r"[\r\n\t\x85\u2028\u2029]", " ", title)
+    width = sum(get_character_cell_size(character) for character in one_row_title)
+    if width <= max_cells:
+        return one_row_title
+
+    ellipsis = "…"
+    remaining = max_cells - get_character_cell_size(ellipsis)
+    if remaining <= 0:
+        return ellipsis if max_cells >= 1 else ""
+
+    visible: list[str] = []
+    used = 0
+    for character in one_row_title:
+        character_width = get_character_cell_size(character)
+        if used + character_width > remaining:
+            break
+        visible.append(character)
+        used += character_width
+    return "".join(visible) + ellipsis
 
 
 @dataclass(frozen=True)
@@ -119,6 +390,7 @@ def build_library_notes_list_state(
     records: Sequence[Mapping[str, Any]] | None,
     *,
     filter_note: str = "",
+    total_count: int | None = None,
     now: datetime | None = None,
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
@@ -134,6 +406,8 @@ def build_library_notes_list_state(
             caller), or ``None``.
         filter_note: The active filter text, used only to render the
             result-count status copy; ``""`` when no filter is active.
+        total_count: Total notes in the source before filtering. Defaults to
+            the rendered row count when the caller has no separate total.
         now: Reference time for relative-age labels; defaults to the
             current UTC time.
         select_mode: Whether multi-select mode is active.
@@ -153,11 +427,18 @@ def build_library_notes_list_state(
         noun = "result" if len(rows) == 1 else "results"
         status_copy = f"filter: {filter_note} · {len(rows)} {noun}"
     selected_count = sum(1 for r in rows if r.checked)
+    source_total = len(rows) if total_count is None else max(total_count, 0)
+    empty_copy = ""
+    if not rows:
+        if source_total == 0:
+            empty_copy = _EMPTY_NOTES_COPY
+        elif filter_note:
+            empty_copy = f"No notes match “{filter_note}”. Clear the filter."
     return LibraryNotesListState(
         rows=rows,
-        header_copy=f"Notes ({len(rows)})",
+        header_copy=f"Notes ({source_total})",
         status_copy=status_copy,
-        empty_copy="" if rows else _EMPTY_NOTES_COPY,
+        empty_copy=empty_copy,
         select_mode=select_mode,
         selected_count=selected_count,
     )
