@@ -306,6 +306,23 @@ async def test_update_original_source_unavailable_reason_is_preserved() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_original_source_unavailable_reason_precedes_validation() -> None:
+    invalid = update_block(_state(), "goal", syntax="xml", xml_tag="bad tag")
+    app = BlockEditorHarness(invalid, can_update_original=False)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        reason = str(
+            app.query_one("#prompt-editor-update-reason", Static).renderable
+        ).lower()
+        assert "no guarded version update" in reason
+        assert "save as new" in reason
+        assert "resolve the block errors" not in reason
+
+
+@pytest.mark.asyncio
 async def test_apply_defaults_and_all_empty_disabled_reason_are_explicit() -> None:
     app = BlockEditorHarness(_state())
     async with app.run_test(size=(120, 40)) as pilot:

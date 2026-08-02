@@ -713,15 +713,15 @@ class PromptBlockEditor(Vertical):
             issue_count or no_selected_content
         )
         update_reason = self.query_one("#prompt-editor-update-reason", Static)
-        if issue_count:
-            update_copy = "Update unavailable — resolve the block errors above."
-        elif self._can_update_original:
-            update_copy = ""
-        else:
+        if not self._can_update_original:
             update_copy = (
                 "Update unavailable — this source has no guarded version update; "
                 "save as new."
             )
+        elif issue_count:
+            update_copy = "Update unavailable — resolve the block errors above."
+        else:
+            update_copy = ""
         update_reason.update(update_copy)
 
     def _issues_for(self, block_id: str) -> tuple[PromptBlockValidationIssue, ...]:
