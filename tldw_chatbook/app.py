@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 import traceback
+from copy import deepcopy
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
 from textual.widget import Widget
 
@@ -1979,7 +1980,12 @@ class LibraryIngestQueueMixin:
         self._top_up_ingest_parse_pool()
         return job
 
-    def retry_library_ingest_job(self, job_id: str) -> Optional[LibraryIngestJob]:
+    def retry_library_ingest_job(
+        self,
+        job_id: str,
+        *,
+        transcription_provider: str | None = None,
+    ) -> Optional[LibraryIngestJob]:
         """Requeue a previously failed job and top up the parse pool.
 
         UI-thread only. A thin wrapper over
@@ -1994,7 +2000,21 @@ class LibraryIngestQueueMixin:
             when ``media_db`` is unavailable), or ``None`` when nothing was
             requeued.
         """
-        requeued = self.library_ingest_jobs.requeue(job_id)
+        replacement_options = None
+        if transcription_provider not in {None, "faster-whisper"}:
+            return None
+        if transcription_provider is not None:
+            source = self.library_ingest_jobs.get_job(job_id)
+            if source is None:
+                return None
+            replacement_options = deepcopy(source.ingest_options)
+            replacement_options.setdefault("audio_video", {})[
+                "transcription_provider"
+            ] = transcription_provider
+        requeued = self.library_ingest_jobs.requeue(
+            job_id,
+            ingest_options=replacement_options,
+        )
         if requeued is None:
             return None
         if self.media_db is None:
@@ -2004,6 +2024,20 @@ class LibraryIngestQueueMixin:
             return failed if failed is not None else requeued
         self._top_up_ingest_parse_pool()
         return requeued
+
+    def retry_library_ingest_job_with_provider(
+        self,
+        job_id: str,
+        provider: str,
+    ) -> Optional[LibraryIngestJob]:
+        """Run the one supported explicit cross-provider recovery action."""
+
+        if provider != "faster-whisper":
+            return None
+        return self.retry_library_ingest_job(
+            job_id,
+            transcription_provider=provider,
+        )
 
     # -- Parse-pool sizing + lifecycle (coordinator) -----------------------
 
@@ -2233,7 +2267,10 @@ class LibraryIngestQueueMixin:
             )
             options["transcription_model_dir"] = selected_model_dir or None
             selected_model = route.model
-            if selected_model is None and route.requested_provider != "default":
+            if (
+                selected_model is None
+                and route.requested_provider not in {"default", "transcribe-cpp"}
+            ):
                 selected_model = flat_opts.get("model") or flat_opts.get(
                     "transcription_model"
                 )
@@ -2247,6 +2284,26 @@ class LibraryIngestQueueMixin:
             options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
+            failed_attempt = job.retry_source_failure_provenance
+            if route.provider == "transcribe-cpp":
+                configured_path = get_cli_setting(
+                    "transcription.transcribe_cpp.model_path"
+                )
+                options["transcription_context"] = {
+                    "model_path": configured_path
+                    if isinstance(configured_path, str) and configured_path
+                    else None,
+                    "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+                    "batch_id": failed_attempt.get("batch_id")
+                    if failed_attempt
+                    else None,
+                    "job_id": job.job_id,
+                    "retry_of_attempt_id": failed_attempt.get("attempt_id")
+                    if failed_attempt
+                    else None,
+                    "retry_of_job_id": job.retry_of_job_id,
+                    "retry_source_failure_provenance": failed_attempt,
+                }
         elif group == "ebook":
             options["extraction_method"] = (
                 flat_opts.get("extraction_method")
