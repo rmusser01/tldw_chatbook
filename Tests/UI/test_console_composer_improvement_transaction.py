@@ -4,6 +4,8 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ComposerDraftSegmentSnapshot,
     ComposerTransactionValidationError,
@@ -202,6 +204,59 @@ def test_projection_rejects_nonce_collision_with_improvable_source():
         )
 
 
+@pytest.mark.parametrize(
+    "reserved_text",
+    [
+        "[[TLDW_PROTECTED:user-authored]]",
+        "[[TLDW_PROTECTED:not-closed",
+    ],
+)
+def test_projection_rejects_reserved_placeholder_syntax_in_literal_text(
+    reserved_text,
+):
+    composer = ConsoleComposerBar()
+    composer.insert_text(f"before {reserved_text} after")
+    before = composer.capture_draft_snapshot()
+
+    with pytest.raises(ComposerTransactionValidationError, match="reserved"):
+        composer.project_snapshot_for_model(before, request_nonce="reserved-literal-1")
+
+    assert composer.capture_draft_snapshot() == before
+    assert composer.improvement_undo_available is False
+
+
+def test_projection_rejects_reserved_placeholder_candidate_in_paste_with_inline_file():
+    composer = ConsoleComposerBar()
+    composer.insert_text("before ")
+    composer.insert_pasted_text("pasted [[TLDW_PROTECTED:user-candidate]] bytes")
+    composer.insert_file_segment(INLINE_BODY, INLINE_LABEL)
+    composer.insert_text(" after")
+    before = composer.capture_draft_snapshot()
+
+    with pytest.raises(ComposerTransactionValidationError, match="reserved"):
+        composer.project_snapshot_for_model(before, request_nonce="reserved-paste-1")
+
+    assert composer.capture_draft_snapshot() == before
+    assert composer.improvement_undo_available is False
+
+
+def test_safe_unicode_near_placeholder_spelling_round_trips_without_mutation():
+    safe_text = "雪 [[TLDW_PROTECTED：user-authored]] Ω"
+    composer = ConsoleComposerBar()
+    composer.insert_text(safe_text)
+    before = composer.capture_draft_snapshot()
+
+    projection = composer.project_snapshot_for_model(
+        before, request_nonce="safe-unicode-1"
+    )
+    result = composer.apply_improvement(before, projection.text)
+
+    assert projection.text == safe_text
+    assert result is None
+    assert composer.capture_draft_snapshot() == before
+    assert composer.improvement_undo_available is False
+
+
 def test_apply_rewrites_only_improvable_spans_and_rehydrates_files_exactly():
     composer = _mixed_composer(second_file=True)
     before = composer.capture_draft_snapshot()
@@ -374,6 +429,50 @@ def test_improvement_undo_expires_on_documented_draft_scope_events(event):
 
     assert composer.improvement_undo_available is False
     assert composer.undo_improvement() is False
+
+
+def test_empty_stash_after_improvement_to_empty_expires_undo():
+    composer = ConsoleComposerBar()
+    composer.insert_text("remove this")
+    snapshot = composer.capture_draft_snapshot()
+
+    assert composer.apply_improvement(snapshot, "") == snapshot
+    assert composer.draft_text() == ""
+    assert composer.improvement_undo_available is True
+
+    assert composer.stash_draft_for_send() is None
+    assert composer.improvement_undo_available is False
+    assert composer.undo_improvement() is False
+
+
+def test_attachment_only_empty_stash_expires_undo_without_mutating_attachment():
+    composer = ConsoleComposerBar()
+    composer.insert_text("remove this before image-only send")
+    snapshot = composer.capture_draft_snapshot()
+    assert composer.apply_improvement(snapshot, "") == snapshot
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    attachment = PendingAttachment(
+        file_path="/tmp/photo.png",
+        display_name="photo.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"\x89PNG-bytes",
+        mime_type="image/png",
+        original_size=11,
+        processed_size=11,
+    )
+    attachment_state = vars(attachment).copy()
+    store.set_pending_attachment(session.id, attachment)
+    composer.set_pending_attachment_label(attachment.label)
+
+    assert composer.stash_draft_for_send() is None
+
+    assert composer.improvement_undo_available is False
+    assert store.pending_attachment(session.id) is attachment
+    assert vars(attachment) == attachment_state
+    assert composer._pending_attachment_label == attachment.label
 
 
 def test_later_improvement_replaces_prior_undo_and_undoes_only_latest_apply():

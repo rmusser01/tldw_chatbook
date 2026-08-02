@@ -732,6 +732,10 @@ class ConsoleComposerBar(Horizontal):
             for segment in snapshot.segments
             if segment.origin != "inline_file"
         )
+        if _PLACEHOLDER_PREFIX in improvable_text:
+            raise ComposerTransactionValidationError(
+                "Improvable composer text contains reserved placeholder syntax."
+            )
         if request_nonce in improvable_text:
             raise ComposerTransactionValidationError(
                 "Projection request nonce collision with user-authored text."
@@ -2250,6 +2254,9 @@ class ConsoleComposerBar(Horizontal):
             The captured stash, or ``None`` when the draft is empty (an
             image-only send has nothing to capture or restore).
         """
+        # A send keypress is a draft-scope barrier even when there is no text
+        # to stash (for example, an attachment-only send).
+        self.invalidate_improvement_undo()
         text = self.draft_text()
         if not text:
             return None

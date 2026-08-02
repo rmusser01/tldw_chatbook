@@ -4,7 +4,7 @@ title: Add exact Console composer improvement transactions
 status: In Progress
 assignee: []
 created_date: '2026-08-01 23:30'
-updated_date: '2026-08-02 09:05'
+updated_date: '2026-08-02 10:16'
 labels: []
 dependencies:
   - TASK-1775
@@ -42,3 +42,9 @@ ADR required: yes
 ADR path: backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md
 Reason: ADR-040 already governs immutable snapshots, protected opaque projection, atomic Apply, and exact Undo; no new ADR is needed.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Post-commit review status: CHANGES_REQUIRED. The first review found two Task 9 boundary defects: user-authored reserved placeholder syntax could project successfully and then be rejected on unchanged Apply, and attachment/image-only empty send-stash invocations did not expire improvement Undo. The correction rejects the complete reserved placeholder namespace in literal/paste model-facing source before token generation, preserves safe Unicode near-spellings byte-for-byte, and invalidates improvement Undo at every stash/send invocation before the empty-text return without mutating pending attachment identity or state. TDD correction evidence: 5 expected RED failures plus 1 safe-near-spelling pass; corrected slice 6 passed; full transaction suite 45 passed; broad composer suite 226 passed; full internals suite 127 passed. Existing ADR-040 still governs the boundary. TASK-1776 remains In Progress with all acceptance criteria unchecked pending independent re-review.
+<!-- SECTION:NOTES:END -->
