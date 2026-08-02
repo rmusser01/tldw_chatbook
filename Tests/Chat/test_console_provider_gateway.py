@@ -3321,6 +3321,18 @@ def test_auxiliary_request_rejects_invalid_contract(overrides) -> None:
         AuxiliaryCompletionRequest(**values)
 
 
+def test_auxiliary_output_cap_matches_prompt_improvement_application_limit() -> None:
+    assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
+
+
+def test_auxiliary_output_cap_accepts_boundary_and_rejects_one_over() -> None:
+    request = _auxiliary_request(max_output_tokens=16_384)
+
+    assert request.max_output_tokens == 16_384
+    with pytest.raises(ValueError, match="between 1 and 16384"):
+        _auxiliary_request(max_output_tokens=16_385)
+
+
 @pytest.mark.asyncio
 async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> None:
     calls: list[dict[str, object]] = []

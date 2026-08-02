@@ -65,8 +65,8 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
-MAX_AUXILIARY_OUTPUT_TOKENS = 131_072
-"""Hard ceiling for one auxiliary completion's requested output allowance."""
+MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
+"""Application hard ceiling for one auxiliary completion's output allowance."""
 
 
 @dataclass(slots=True)
