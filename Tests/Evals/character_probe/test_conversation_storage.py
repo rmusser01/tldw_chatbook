@@ -13,14 +13,17 @@ from tldw_chatbook.Evals.character_probe.storage import (
     annotate_turn,
     conversation_sample_id,
     create_probe_run_group,
+    load_character_bench,
     load_conversations,
     load_probe_run_snapshot,
     load_review_state,
     load_turn_annotations,
     mark_conversation_reviewed,
+    run_group_vocabulary,
     save_character_bench,
     save_conversations,
 )
+from tldw_chatbook.Evals.character_probe.tags import BUILTIN_TAGS, Tag
 
 
 @pytest.fixture
@@ -181,6 +184,46 @@ def _target_row(db, name="steered", config=None):
         name=name, provider="llama_cpp", model_id="m", config=config or {}
     )
     return db.get_model(row_id)
+
+
+@pytest.fixture
+def probe_run_group(db, bench):
+    """A run group opened under a bench with no extra tags."""
+    config, task_id = bench
+    group_id, _ = create_probe_run_group(
+        db,
+        task_id,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db)],
+    )
+    return group_id
+
+
+@pytest.fixture
+def bench_id_of_that_run(db):
+    """A bench carrying an extra tag, saved before any run group opens."""
+    config = _bench_config(
+        name="villain probes with extras",
+        extra_tags=(Tag("meta-commentary", "Meta commentary", "failure"),),
+    )
+    return save_character_bench(db, config)
+
+
+@pytest.fixture
+def probe_run_group_with_extra_tags(db, bench_id_of_that_run):
+    """A run group opened under a bench that carries an extra tag."""
+    config = load_character_bench(db, bench_id_of_that_run)
+    group_id, _ = create_probe_run_group(
+        db,
+        bench_id_of_that_run,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db)],
+    )
+    return group_id
 
 
 def test_create_probe_run_group_returns_a_run_per_target(db, bench):
@@ -451,3 +494,43 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
         source = module.read_text()
         for token in forbidden_tokens:
             assert token not in source, f"{module.name} mentions {token}"
+
+
+# --- run_group_vocabulary (whole-branch review I4, task-4) ---------------
+
+
+def test_a_run_with_no_extra_tags_has_exactly_the_builtins(db, probe_run_group):
+    assert run_group_vocabulary(db, probe_run_group) == BUILTIN_TAGS
+
+
+def test_a_runs_vocabulary_includes_the_benchs_extras_as_of_the_run(
+    db, probe_run_group_with_extra_tags
+):
+    vocab = run_group_vocabulary(db, probe_run_group_with_extra_tags)
+    assert Tag("meta-commentary", "Meta commentary", "failure") in vocab
+
+
+def test_editing_the_bench_after_the_run_does_not_change_the_runs_vocabulary(
+    db, probe_run_group_with_extra_tags, bench_id_of_that_run
+):
+    """Snapshot provenance: the run is annotated with what it captured."""
+    config = load_character_bench(db, bench_id_of_that_run)
+    save_character_bench(
+        db,
+        type(config)(
+            name=config.name,
+            probe_set_id=config.probe_set_id,
+            character_ids=config.character_ids,
+            target_ids=config.target_ids,
+            extra_tags=(),
+        ),
+        bench_id_of_that_run,
+    )
+    vocab = run_group_vocabulary(db, probe_run_group_with_extra_tags)
+    assert any(t.slug == "meta-commentary" for t in vocab)
+
+
+def test_an_unknown_run_group_raises_naming_it(db):
+    with pytest.raises(Exception) as exc:
+        run_group_vocabulary(db, "no-such-group")
+    assert "no-such-group" in str(exc.value)

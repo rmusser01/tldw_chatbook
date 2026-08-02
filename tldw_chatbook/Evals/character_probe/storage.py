@@ -26,7 +26,7 @@ from .models import (
     ProbeSet,
 )
 from .prompt import compose_system_prompt
-from .tags import Tag, coerce_tag
+from .tags import Tag, coerce_tag, resolve_vocabulary
 from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
@@ -707,6 +707,39 @@ def load_probe_run_snapshot(db: EvalsDB, run_group_id: str) -> dict[str, Any]:
     overrides = runs[0].get("config_overrides") or {}
     snapshot = overrides.get("snapshot")
     return snapshot if isinstance(snapshot, Mapping) else {}
+
+
+def run_group_vocabulary(db: EvalsDB, run_group_id: str) -> tuple[Tag, ...]:
+    """The tag vocabulary one run group was created under.
+
+    A reviewer annotates a run's answers, so the vocabulary that applies is
+    the one the run captured -- not the bench's current one. This is the same
+    provenance rule the card snapshot follows (see ``_probe_run_snapshot``):
+    editing the bench afterwards must not change what the run shows, and must
+    not orphan an annotation already recorded against a tag the bench has
+    since dropped. The read comes from ``load_probe_run_snapshot``, never
+    from the live ``eval_tasks`` row, for exactly that reason.
+
+    Args:
+        db: The evals database handle.
+        run_group_id: The run group to read.
+
+    Returns:
+        tuple[Tag, ...]: Built-in tags plus whatever extras the snapshot
+        recorded, resolved through ``resolve_vocabulary``. A snapshot with no
+        stored ``extra_tags`` (or no snapshot at all) yields exactly
+        ``BUILTIN_TAGS``.
+
+    Raises:
+        ValueError: Propagated from ``load_probe_run_snapshot`` if no runs
+            share this ``run_group_id`` -- naming the group. Also propagated
+            from ``_tags_from_json`` if the snapshot's stored tags are
+            corrupt -- naming the run group as the owner.
+    """
+    snapshot = load_probe_run_snapshot(db, run_group_id)
+    return resolve_vocabulary(
+        _tags_from_json(snapshot.get("extra_tags"), run_group_id)
+    )
 
 
 def save_conversations(
