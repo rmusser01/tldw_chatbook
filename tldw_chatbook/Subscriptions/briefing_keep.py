@@ -39,7 +39,14 @@ callers keeping the same briefing safe: the loser's
 ``source_briefing_id UNIQUE`` constraint (the table's only unique
 constraint, so the exception is unambiguous), which is caught and turned
 into the identical re-keep path a sequential re-keep already takes --
-never a raw exception surfacing to the caller.
+never a raw exception surfacing to the caller. The same holds one level
+down, per script: two concurrent callers can both copy the same
+``source_script_id`` under the same kept briefing (e.g. the scheduled
+auto-keep and a manual Keep press both surviving the briefing-row race
+fold above), and the loser's ``create_kept_script`` call raises
+``ConflictError`` against ``kept_scripts``' own ``source_script_id``
+UNIQUE constraint -- caught in :func:`_copy_missing_scripts` and folded
+into "already kept" rather than failing that caller's entire keep.
 
 Cross-DB datetime boundary (load-bearing, see Task 1's report): every
 ``CharactersRAGDB`` connection opens with ``sqlite3.PARSE_DECLTYPES`` plus
@@ -205,6 +212,16 @@ def _copy_missing_scripts(
     reached `complete` yet is left for a future keep to pick up once it
     has.
 
+    Also safe against a genuine race between two concurrent callers
+    copying the same script: the `kept_script_source_ids` snapshot above
+    is taken once, so two callers can both pass the "not yet kept" check
+    for the same `source_script_id` before either has inserted. The
+    loser's `create_kept_script` call then raises `ConflictError` against
+    that column's UNIQUE constraint, which is caught and treated as
+    "already kept" -- not counted in the returned total, and not raised
+    to the caller -- so one script losing this race never fails the rest
+    of the copy.
+
     Args:
         subs_db: An open `SubscriptionsDB`.
         chacha_db: An open `CharactersRAGDB`.
@@ -223,15 +240,35 @@ def _copy_missing_scripts(
             continue
         if script["id"] in already_kept:
             continue
-        chacha_db.create_kept_script(
-            kept_briefing_id,
-            source_script_id=script["id"],
-            preset_name=script["preset_name"],
-            roster_snapshot_json=script["roster_snapshot_json"],
-            turns_json=script["turns_json"],
-            model_used=script.get("model_used"),
-            original_created_at=_to_chacha_datetime(script.get("created_at")),
-        )
+        try:
+            chacha_db.create_kept_script(
+                kept_briefing_id,
+                source_script_id=script["id"],
+                preset_name=script["preset_name"],
+                roster_snapshot_json=script["roster_snapshot_json"],
+                turns_json=script["turns_json"],
+                model_used=script.get("model_used"),
+                original_created_at=_to_chacha_datetime(script.get("created_at")),
+            )
+        except ConflictError as exc:
+            # Lost a race: another caller (Task 3's auto-keep and a manual
+            # Keep press can plausibly land at nearly the same moment, same
+            # as the briefing-row race above) already copied this exact
+            # script -- by `source_script_id` -- between our
+            # `kept_script_source_ids` snapshot above and this insert.
+            # `create_kept_script`'s only non-NULL UNIQUE constraint is
+            # `source_script_id`, so the conflict unambiguously means
+            # "already kept": treat it as such (do not count it as newly
+            # added) and move on to the remaining scripts, rather than
+            # letting the raw exception fail this caller's *entire* keep
+            # even though every script ended up kept.
+            logger.debug(
+                f"kept_briefing_id={kept_briefing_id} source_script_id="
+                f"{script['id']}: create_kept_script raised "
+                f"{type(exc).__name__} (already kept by a concurrent "
+                "caller); skipping"
+            )
+            continue
         added += 1
     return added
 
@@ -260,7 +297,13 @@ def keep_briefing(
     briefing: the loser's insert raises `ConflictError` against the
     `source_briefing_id UNIQUE` constraint, which is caught here and
     turned into the identical re-keep path -- the caller sees a normal
-    `created=False` result, never the raw `ConflictError`.
+    `created=False` result, never the raw `ConflictError`. The same
+    protection applies per script: two concurrent callers racing to copy
+    the same `source_script_id` under the same kept briefing hit
+    `kept_scripts`' own UNIQUE constraint, caught in
+    `_copy_missing_scripts` and folded into "already kept" -- one script
+    losing that race never fails the rest of this call's copy, let alone
+    the whole keep.
 
     Args:
         subs_db: An open `SubscriptionsDB` -- the source of the briefing

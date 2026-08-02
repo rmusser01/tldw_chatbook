@@ -312,6 +312,70 @@ def test_keep_survives_a_racing_create_kept_briefing_conflict(
         chacha_db.close_connection()
 
 
+def test_copy_missing_scripts_survives_a_racing_create_kept_script_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo (PR #1197): `_copy_missing_scripts` snapshots
+    `kept_script_source_ids` ONCE, then inserts every script missing from
+    that snapshot. Two concurrent `keep_briefing` calls -- the scheduled
+    auto-keep and a manual Keep press landing together, say, both
+    surviving the briefing-row race fold above -- can both pass that
+    snapshot for the same `source_script_id` before either has inserted.
+    The loser's `create_kept_script` call then hits the real
+    `source_script_id UNIQUE` constraint for real and must be folded into
+    "already kept" rather than failing this caller's *entire* keep even
+    though every script ended up copied.
+
+    Forced deterministically rather than with real threads: one script
+    (`raced_script_id`) is pre-copied directly via
+    `chacha_db.create_kept_script` (exactly what "another caller already
+    kept this one" would have done), then `kept_script_source_ids` is
+    monkeypatched to still report the STALE (pre-race) empty set --
+    reproducing the exact TOCTOU window a real race would hit -- so the
+    real `create_kept_script` call underneath collides with the
+    pre-created row for real.
+    """
+    subs_db = _subs_db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        watchlist_id = _watchlist(subs_db, name="Tech Watch")
+        briefing_id = _complete_briefing(subs_db, watchlist_id)
+        raced_script_id = _script(subs_db, briefing_id, preset_name="Duo")
+        other_script_id = _script(subs_db, briefing_id, preset_name="Solo")
+
+        kept_id = chacha_db.create_kept_briefing(
+            source_briefing_id=briefing_id,
+            watchlist_name="Tech Watch",
+            body_markdown="# Digest\n\nSomething happened this week.\n",
+            origin="manual",
+        )
+        # "Another caller" already copied `raced_script_id` first.
+        chacha_db.create_kept_script(
+            kept_id,
+            source_script_id=raced_script_id,
+            preset_name="Duo",
+            roster_snapshot_json='[{"name": "Host"}]',
+            turns_json='[{"speaker": "Host", "text": "Welcome back."}]',
+            model_used="gpt-test",
+        )
+
+        monkeypatch.setattr(
+            chacha_db, "kept_script_source_ids", lambda kept_briefing_id: set()
+        )
+
+        result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
+
+        assert result["created"] is False
+        assert result["kept_id"] == kept_id
+        assert result["scripts_added"] == 1  # only `other_script_id` counted
+        kept_scripts = chacha_db.list_kept_scripts(kept_id)
+        assert len(kept_scripts) == 2  # no duplicate row for raced_script_id
+        kept_source_ids = {row["source_script_id"] for row in kept_scripts}
+        assert kept_source_ids == {raced_script_id, other_script_id}
+    finally:
+        chacha_db.close_connection()
+
+
 # --- Scripts: complete-only, additive-idempotent -----------------------------
 
 
