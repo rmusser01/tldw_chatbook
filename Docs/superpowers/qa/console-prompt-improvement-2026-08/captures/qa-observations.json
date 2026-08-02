@@ -1,0 +1,93 @@
+{
+  "canary_audit": {
+    "counts": {
+      "block": 0,
+      "inline_body": 0,
+      "inline_label": 0,
+      "placeholder_1": 0,
+      "response": 0,
+      "system": 0,
+      "user": 0
+    },
+    "permitted_metadata": [
+      "provider",
+      "model",
+      "mode",
+      "duration",
+      "input/output sizes",
+      "typed outcome"
+    ],
+    "provider_calls": 1
+  },
+  "chatbook_head": "12acb277751ebd3985b768ff8a66605da3ae3818",
+  "guards_library": {
+    "foreign_v1_guard": true,
+    "library_save_conflict": true,
+    "library_type_labels": true
+  },
+  "improvement": {
+    "auto_success_undo": true,
+    "cancel_late_discard": true,
+    "no_change": true,
+    "preservation_veto_review": true
+  },
+  "profile_shape": "<temporary-root>/console-prompt-improvement-qa-*/",
+  "seeded_rows": 12,
+  "sizes": [
+    {
+      "browse_page": "Page 1 of 2",
+      "filled_prompt_review": true,
+      "mapped_context_duplicate_disabled": true,
+      "mapped_context_recipe_save_disabled": true,
+      "menu_order": [
+        "prompts",
+        "attach-context",
+        "save-chatbook",
+        "generate-image",
+        "generate-caption",
+        "narrate-conversation",
+        "impersonate"
+      ],
+      "recipe_blocks": 10,
+      "recipe_save_recovered_after_mapped_context_delete": true,
+      "server_retry": true,
+      "size": "140x40"
+    },
+    {
+      "browse_page": "Page 1 of 2",
+      "filled_prompt_review": true,
+      "mapped_context_duplicate_disabled": true,
+      "mapped_context_recipe_save_disabled": true,
+      "menu_order": [
+        "prompts",
+        "attach-context",
+        "save-chatbook",
+        "generate-image",
+        "generate-caption",
+        "narrate-conversation",
+        "impersonate"
+      ],
+      "recipe_blocks": 10,
+      "recipe_save_recovered_after_mapped_context_delete": true,
+      "size": "100x30"
+    },
+    {
+      "browse_page": "Page 1 of 2",
+      "filled_prompt_review": true,
+      "mapped_context_duplicate_disabled": true,
+      "mapped_context_recipe_save_disabled": true,
+      "menu_order": [
+        "prompts",
+        "attach-context",
+        "save-chatbook",
+        "generate-image",
+        "generate-caption",
+        "narrate-conversation",
+        "impersonate"
+      ],
+      "recipe_blocks": 10,
+      "recipe_save_recovered_after_mapped_context_delete": true,
+      "size": "80x24"
+    }
+  ]
+}
