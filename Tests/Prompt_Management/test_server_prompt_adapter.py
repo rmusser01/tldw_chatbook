@@ -225,3 +225,103 @@ def test_markdown_import_persists_future_structure_as_new_legacy_prompt(tmp_path
     assert prompt["prompt_definition"] is None
     assert prompt["system_prompt"] == "compiled system"
     assert prompt["user_prompt"] == "compiled user"
+
+
+@pytest.mark.parametrize(
+    ("existing_artifact_type", "structure"),
+    [
+        ("prompt", '{"kind":'),
+        ("recipe", '{"schema_version":1,"messages":[]}'),
+        ("prompt", '{"kind":"future_prompt","schema_version":3}'),
+    ],
+    ids=["malformed", "foreign-v1", "future-version"],
+)
+def test_markdown_fallback_collision_creates_new_legacy_prompt_without_mutation(
+    tmp_path, existing_artifact_type, structure
+):
+    """Fallback imports never overwrite a same-named structured artifact."""
+    existing_definition = {
+        "kind": "block_prompt"
+        if existing_artifact_type == "prompt"
+        else "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {"id": "user", "blocks": []},
+        ],
+    }
+    _, existing_uuid, _ = add_prompt(
+        name="Collision Prompt",
+        author="Original author",
+        details="Original details",
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=existing_definition,
+        artifact_type=existing_artifact_type,
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "collision.md"
+    import_path.write_text(
+        "### TITLE ###\nCollision Prompt\n### AUTHOR ###\nImporter\n"
+        "### SYSTEM ###\ncompiled system\n### USER ###\ncompiled user\n"
+        "### ARTIFACT_TYPE ###\nrecipe\n### STRUCTURE ###\n```json\n"
+        f"{structure}\n```\n",
+        encoding="utf-8",
+    )
+
+    [result] = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    imported = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
+
+    assert result["status"] == "success"
+    assert result["prompt_uuid"] != existing_uuid
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    assert imported["name"] == "Collision Prompt (2)"
+    assert imported["artifact_type"] == "prompt"
+    assert imported["prompt_format"] == "legacy"
+    assert imported["prompt_schema_version"] is None
+    assert imported["prompt_definition"] is None
+    assert imported["system_prompt"] == "compiled system"
+    assert imported["user_prompt"] == "compiled user"
+
+
+def test_repeated_markdown_fallback_collisions_allocate_distinct_legacy_names(tmp_path):
+    """Each fallback import retries a fresh deterministic name after a collision."""
+    _, existing_uuid, _ = add_prompt(
+        name="Repeated Collision",
+        author=None,
+        details=None,
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {"id": "user", "blocks": []},
+            ],
+        },
+        artifact_type="prompt",
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "repeated-collision.md"
+    import_path.write_text(
+        "### TITLE ###\nRepeated Collision\n### SYSTEM ###\ncompiled system\n"
+        "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
+        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        encoding="utf-8",
+    )
+
+    first = import_prompts_from_files(import_path, base_directory=str(tmp_path))[0]
+    second = import_prompts_from_files(import_path, base_directory=str(tmp_path))[0]
+
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    assert fetch_prompt_details(first["prompt_uuid"], include_deleted=True)["name"] == (
+        "Repeated Collision (2)"
+    )
+    assert fetch_prompt_details(second["prompt_uuid"], include_deleted=True)["name"] == (
+        "Repeated Collision (3)"
+    )
