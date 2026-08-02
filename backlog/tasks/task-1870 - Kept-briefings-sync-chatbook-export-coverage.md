@@ -4,6 +4,7 @@ title: 'Kept briefings: sync/chatbook-export coverage'
 status: In Progress
 assignee: []
 created_date: '2026-08-02 00:16'
+updated_date: '2026-08-02 13:34'
 labels:
   - watchlists
   - briefings
@@ -43,7 +44,6 @@ somewhere a future reader will find it before assuming coverage that doesn't exi
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [x] #1 A user's kept briefings and their kept scripts are included when the user exports a chatbook, OR a recorded decision explains why they are deliberately excluded — **arm taken: included.** New `ContentType.KEPT_BRIEFING`; `ChatbookCreator._collect_kept_briefings` walks selected kept briefings, nests each briefing's kept scripts inside its own JSON payload (scripts are not independently selectable), and also writes a companion human-readable Markdown file per briefing.
 - [x] #2 A user's kept briefings and their kept scripts participate in ChaChaNotes sync between devices, OR a recorded decision explains why they are deliberately excluded — **arm taken: excluded, deliberately.** Extends task-1780's original "no sync columns" v1 ruling; recorded in the follow-up decision block appended to the design spec (see AC #3).
@@ -61,6 +61,7 @@ somewhere a future reader will find it before assuming coverage that doesn't exi
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Export (AC #1, included).** `tldw_chatbook/Chatbooks/chatbook_models.py`: new
 `ContentType.KEPT_BRIEFING`, `ChatbookContent.kept_briefings`, and
 `ChatbookManifest.total_kept_briefings` (defaults to 0 in `from_dict` for bundles that predate
@@ -137,3 +138,20 @@ touched by this task).
 `Docs/superpowers/specs/2026-08-01-kept-briefings-design.md`. **Files added:**
 `Tests/Chatbooks/test_chatbook_kept_briefings_round_trip.py`. **Tests modified:**
 `Tests/DB/test_chachanotes_kept_briefings.py`, `Tests/Chatbooks/test_chatbook_models.py`.
+
+**Fix wave (2026-08-02, whole-branch review).** A whole-branch review (`.superpowers/sdd/briefings-residuals/task-1870-verdict.md`) found one high-severity defect plus four low/medium findings against the implementation above; all five fixed here.
+
+F1 (HIGH, proven empirically): on a genuine cross-device conflict, `_import_kept_briefings` still called `_import_kept_scripts` unconditionally against `target_kept_id` -- the *unrelated local* briefing sharing the same `source_briefing_id` -- grafting the incoming bundle's scripts onto it while the warning claimed nothing was modified. Fixed: the conflict branch now skips `_import_kept_scripts` entirely (refuses the whole incoming item as a unit, parent AND children) and the warning names both; the byte-identical (non-conflict) branch is unchanged -- scripts still import additively there. Regression test extended with a local script under the conflicting briefing, asserted byte-unchanged; mutation-verified (removing the guard reproduces the reviewer's exact probe: 2 foreign scripts land on the local row).
+
+F2: `ChatbookImportWizard._run_validation`'s statistics-mismatch check summed per-type manifest totals but omitted `total_kept_briefings` (this task's own type) and `total_prompts` (pre-existing) -- a kept-only chatbook always showed a false "Statistics mismatch" warning. Fixed by extracting the sum into `PreviewValidationStep._expected_content_total` (now including both terms), testable without mounting the widget; new `Tests/Chatbooks/test_chatbook_import_wizard_validation.py`, mutation-verified.
+
+F3: `ChatbookCreationWizard`/`ChatbookCreationWindow` computed each kept briefing's script-count subtitle via `len(list_kept_scripts(kept_id, limit=1000))` per row on the UI thread -- up to 200 extra queries materializing full `turns_json`/`roster_snapshot_json` transcripts just to discard them. Added `CharactersRAGDB.kept_script_counts(ids) -> dict[int,int]`, one grouped `COUNT(*)` query, and switched both call sites to it. New CRUD tests in `Tests/DB/test_chachanotes_kept_briefings.py`.
+
+F4: `kept_at` was exported but silently re-stamped with `CURRENT_TIMESTAMP` on import (no param existed to carry it), while the spec/guide/test docstring implied a full provenance round trip; the original round-trip test's `kept_at` assertion could false-pass because both writes landed in the same second. Fixed faithfully rather than just documenting the gap: `create_kept_briefing`/`create_kept_script` both gained an optional `kept_at` param (explicit column added to the INSERT only when provided; no schema change, the column already has `DEFAULT CURRENT_TIMESTAMP`), and the importer now passes the bundle's value through for both the briefing and every script. New test seeds `kept_at` years in the past on both rows so second-resolution coincidence cannot false-pass; mutation-verified.
+
+F5: the briefing success/skip counters incremented only after `_import_kept_scripts` returned, so a script-level exception (e.g. a malformed non-list `scripts` payload) was caught by the outer per-item handler and counted the whole item -- including the already-durably-inserted briefing row -- as failed. Fixed by counting the briefing's outcome before touching its scripts and wrapping `_import_kept_scripts` in its own try/except that adds a warning naming the script failure instead of falsifying the briefing's own outcome. New test reproduces the reviewer's exact scenario (`scripts: "not-a-list"`) and asserts `successful_items == 1`, `failed_items == 0`, and the warning text; mutation-verified.
+
+Verification: full `Tests/Chatbooks/` + `Tests/DB/test_chachanotes_kept_briefings.py` + `Tests/Watchlists/test_kept_briefings_modal.py` + the two other kept-briefings call sites (`Tests/Subscriptions/test_briefing_keep.py`, `test_briefing_cast.py`) -- 239 passed + 85 passed, 1 pre-existing `--run-slow` skip, 0 failed. All five fixes mutation-tested by reverting each guard/param in turn (Edit, confirm RED, Edit-revert, confirm `md5` byte-identical to the pre-mutation file).
+
+**Files modified (fix wave):** `tldw_chatbook/Chatbooks/chatbook_importer.py`, `tldw_chatbook/DB/ChaChaNotes_DB.py`, `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py`, `tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py`, `tldw_chatbook/UI/ChatbookCreationWindow.py`. **Tests modified:** `Tests/Chatbooks/test_chatbook_kept_briefings_round_trip.py`, `Tests/DB/test_chachanotes_kept_briefings.py`. **Tests added:** `Tests/Chatbooks/test_chatbook_import_wizard_validation.py`.
+<!-- SECTION:NOTES:END -->

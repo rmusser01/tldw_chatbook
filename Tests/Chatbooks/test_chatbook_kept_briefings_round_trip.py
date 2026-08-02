@@ -108,6 +108,28 @@ def _dest_db(dest_paths) -> CharactersRAGDB:
     return CharactersRAGDB(dest_paths["ChaChaNotes"], "test-dest")
 
 
+def _replace_kept_json_scripts(
+    source_zip: Path, kept_id, scripts_value, dest_zip: Path
+) -> Path:
+    """Copy `source_zip` to `dest_zip`, replacing the kept briefing's
+    `scripts` field with `scripts_value`.
+
+    Used to simulate a malformed payload (e.g. the importer never validates
+    this field's *type*, mirroring every other chatbook content type's
+    trust model for chatbook payloads -- see the whole-branch review's
+    "Malformed-section containment" notes)."""
+    json_name = f"content/kept_briefings/kept_briefing_{kept_id}.json"
+    with zipfile.ZipFile(source_zip) as src:
+        payload = json.loads(src.read(json_name))
+        payload["scripts"] = scripts_value
+        entries = {name: src.read(name) for name in src.namelist()}
+    entries[json_name] = json.dumps(payload).encode("utf-8")
+    with zipfile.ZipFile(dest_zip, "w") as dst:
+        for name, data in entries.items():
+            dst.writestr(name, data)
+    return dest_zip
+
+
 # --- Export -----------------------------------------------------------
 
 
@@ -237,6 +259,64 @@ def test_import_restores_kept_briefing_and_scripts_byte_faithful(source_env, tmp
     assert by_source[None]["roster_snapshot_json"] == '{"roster": ["Narrator"]}'
 
 
+def test_import_restores_kept_at_faithfully_not_re_stamped(
+    tmp_path, chachanotes_template_db
+):
+    """`kept_at` is exported alongside every other provenance column
+    (`chatbook_creator.py`) and must round-trip just as faithfully --
+    import must not silently re-stamp it with the local import moment
+    (task-1870 fix-wave F4).
+
+    Seeded more than a second in the past on both the briefing and its
+    script: `CURRENT_TIMESTAMP` has second-level resolution, so seeding
+    "now" (as the other round-trip test does, incidentally) cannot tell a
+    faithful restore apart from a re-stamp that happens to land in the same
+    second -- exactly the false pass the whole-branch review's own probe
+    hit. A multi-year gap makes that impossible."""
+    import shutil
+
+    db_paths = _db_paths(tmp_path / "source")
+    shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
+    db = CharactersRAGDB(db_paths["ChaChaNotes"], "test-source")
+    kept_id = db.create_kept_briefing(
+        source_briefing_id=102,
+        watchlist_name="Old Watch",
+        body_markdown="Old content",
+        origin="manual",
+        kept_at="2020-01-01T00:00:00+00:00",
+    )
+    db.create_kept_script(
+        kept_id,
+        source_script_id=None,
+        preset_name="old-preset",
+        roster_snapshot_json="{}",
+        turns_json="[]",
+        kept_at="2020-01-02T00:00:00+00:00",
+    )
+    db.close_connection()
+
+    output = _create_chatbook(
+        db_paths, kept_id, tmp_path, name="kept-at-round-trip.zip"
+    )
+
+    dest_paths = _db_paths(tmp_path / "dest")
+    importer = ChatbookImporter(dest_paths)
+    ok, message = importer.import_chatbook(
+        output,
+        content_selections={ContentType.KEPT_BRIEFING: [str(kept_id)]},
+    )
+    assert ok, message
+
+    dest_db = _dest_db(dest_paths)
+    restored = dest_db.get_kept_briefing_by_source(102)
+    assert restored is not None
+    assert restored["kept_at"] == datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    scripts = dest_db.list_kept_scripts(restored["id"])
+    assert len(scripts) == 1
+    assert scripts[0]["kept_at"] == datetime(2020, 1, 2, 0, 0, tzinfo=timezone.utc)
+
+
 def test_reimport_is_idempotent_no_duplicates(source_env, tmp_path):
     """Importing the same chatbook twice into the same destination must add
     nothing on the second pass -- neither the briefing nor either script
@@ -271,7 +351,14 @@ def test_import_reports_conflict_and_never_overwrites_differing_local_row(
     """A local kept briefing already exists for the same (device-local)
     `source_briefing_id` but with genuinely different content -- the
     existing row must survive unmodified and the conflict must be named in
-    the import summary, never silently absorbed as an ordinary skip."""
+    the import summary, never silently absorbed as an ordinary skip.
+
+    The local briefing also carries its own kept script here (task-1870
+    fix-wave F1 regression coverage): the incoming bundle's two scripts
+    (one `source_script_id=555`, one NULL-source) must never be grafted
+    onto this unrelated local row just because it shares the same
+    `source_briefing_id` -- the whole incoming item, parent AND children,
+    is refused as a unit on a genuine conflict."""
     db_paths, kept_id = source_env
     output = _create_chatbook(db_paths, kept_id, tmp_path)
 
@@ -282,6 +369,13 @@ def test_import_reports_conflict_and_never_overwrites_differing_local_row(
         watchlist_name="Totally Different Local Watchlist",
         body_markdown="Local content that does not match the import at all.",
         origin="scheduled",
+    )
+    dest_db.create_kept_script(
+        local_kept_id,
+        source_script_id=None,
+        preset_name="local-only-preset",
+        roster_snapshot_json='{"roster": ["Local"]}',
+        turns_json='[{"speaker": "Local", "text": "Mine"}]',
     )
     dest_db.close_connection()
 
@@ -303,6 +397,15 @@ def test_import_reports_conflict_and_never_overwrites_differing_local_row(
         == "Local content that does not match the import at all."
     )
     assert len(dest_db.list_kept_briefings()) == 1  # no second row for source 101
+
+    # The conflicting local briefing's own kept scripts must be
+    # byte-unchanged -- none of the incoming bundle's scripts were grafted
+    # onto it (task-1870 fix-wave F1).
+    local_scripts = dest_db.list_kept_scripts(local_kept_id)
+    assert len(local_scripts) == 1
+    assert local_scripts[0]["preset_name"] == "local-only-preset"
+    assert local_scripts[0]["roster_snapshot_json"] == '{"roster": ["Local"]}'
+    assert local_scripts[0]["turns_json"] == '[{"speaker": "Local", "text": "Mine"}]'
 
     assert any(
         "source_briefing_id=101" in warning and "conflict" in warning.lower()
@@ -352,6 +455,49 @@ def test_script_conflict_reported_and_local_row_not_overwritten(source_env, tmp_
     assert any("kept script(s)" in warning for warning in status.warnings), (
         status.warnings
     )
+
+
+# --- Import: partial mid-scripts failure --------------------------------
+
+
+def test_partial_scripts_failure_still_counts_the_briefing_as_imported(
+    source_env, tmp_path
+):
+    """A malformed `scripts` payload (a string instead of a list) raises
+    deep inside `_import_kept_scripts` -- iterating a string yields
+    characters, and the first one's `.get(...)` call raises
+    `AttributeError` -- *after* the kept briefing row is already durably
+    inserted. The import summary must count the briefing as imported and
+    name the script failure as a warning, not report the whole item as
+    failed: reporting it failed would tell a user to retry, and a retry
+    would then see it as an ordinary "already present" skip, hiding that
+    the parent row already exists (task-1870 fix-wave F5)."""
+    db_paths, kept_id = source_env
+    valid_output = _create_chatbook(db_paths, kept_id, tmp_path)
+    malformed_output = _replace_kept_json_scripts(
+        valid_output, kept_id, "not-a-list", tmp_path / "malformed-scripts.zip"
+    )
+
+    dest_paths = _db_paths(tmp_path / "dest")
+    importer = ChatbookImporter(dest_paths)
+    status = ImportStatus()
+    ok, message = importer.import_chatbook(
+        malformed_output,
+        content_selections={ContentType.KEPT_BRIEFING: [str(kept_id)]},
+        import_status=status,
+    )
+    assert ok, message
+    assert status.successful_items == 1
+    assert status.failed_items == 0
+
+    dest_db = _dest_db(dest_paths)
+    restored = dest_db.get_kept_briefing_by_source(101)
+    assert restored is not None  # durably inserted despite the script failure
+
+    assert any(
+        "kept scripts could not be imported" in warning
+        for warning in status.warnings
+    ), status.warnings
 
 
 # --- Backward compatibility ---------------------------------------------

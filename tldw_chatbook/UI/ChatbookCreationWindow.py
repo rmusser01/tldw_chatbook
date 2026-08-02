@@ -242,9 +242,17 @@ class ChatbookCreationWindow(ModalScreen):
             # many will come along.
             kept_node = tree.root.add("📰 Kept Briefings", expand=False)
             kept_briefings = db.list_kept_briefings(limit=200)
+            # A grouped COUNT, not a per-briefing len(list_kept_scripts(...))
+            # -- the latter materialized every kept script's full
+            # turns_json/roster_snapshot_json (a complete cast transcript) on
+            # the UI thread purely to discard it and keep the length
+            # (task-1870 fix-wave F3).
+            kept_script_counts = db.kept_script_counts(
+                [kept["id"] for kept in kept_briefings]
+            )
 
             for kept in kept_briefings:
-                script_count = len(db.list_kept_scripts(kept["id"], limit=1000))
+                script_count = kept_script_counts.get(kept["id"], 0)
                 label = kept.get("watchlist_name") or f"Kept briefing {kept['id']}"
                 if script_count:
                     label += f" ({script_count} script{'s' if script_count != 1 else ''})"

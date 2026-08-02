@@ -1337,6 +1337,7 @@ class ChatbookImporter:
                         overflow_count=payload.get("overflow_count", 0),
                         origin=payload.get("origin", "manual"),
                         original_created_at=payload.get("original_created_at"),
+                        kept_at=payload.get("kept_at"),
                     )
                     newly_inserted = True
                 except ConflictError:
@@ -1356,12 +1357,13 @@ class ChatbookImporter:
                     if not self._kept_briefing_content_matches(existing, payload):
                         conflict = True
 
-                scripts_inserted, scripts_present, scripts_conflicted = (
-                    self._import_kept_scripts(
-                        db, target_kept_id, payload.get("scripts") or []
-                    )
-                )
-
+                # Count the briefing's own outcome now, before touching its
+                # kept scripts: the row is already durably present (either
+                # freshly inserted, or an existing row we deliberately left
+                # alone), so a script-level failure below must not turn an
+                # already-successful briefing insert into a false "failed"
+                # count (task-1870 fix-wave F5 -- see the per-item try
+                # around `_import_kept_scripts`).
                 if newly_inserted:
                     status.successful_items += 1
                 else:
@@ -1370,9 +1372,51 @@ class ChatbookImporter:
                         status.add_warning(
                             "Kept briefing conflict: source_briefing_id="
                             f"{source_briefing_id} already exists locally with "
-                            "different content; existing kept briefing was not "
-                            "modified."
+                            "different content; the existing kept briefing "
+                            "and its kept script(s) were not modified."
                         )
+
+                if conflict:
+                    # Refuse the whole incoming item as a unit -- parent AND
+                    # children. `target_kept_id` here is the *unrelated*
+                    # local briefing that merely happens to share the same
+                    # source id, so importing the incoming scripts under it
+                    # would graft someone else's cast history onto the
+                    # user's own briefing while the warning above claims
+                    # nothing was touched (task-1870 fix-wave F1). The
+                    # byte-identical (non-conflict) branch above is
+                    # unaffected -- scripts still import additively there,
+                    # which is the ordinary re-keep/idempotent-import path.
+                    logger.info(
+                        "ChatbookImporter._import_kept_briefings: kept briefing "
+                        f"source_briefing_id={source_briefing_id} conflicts with "
+                        "an existing local row; its kept scripts were not imported."
+                    )
+                    continue
+
+                try:
+                    scripts_inserted, scripts_present, scripts_conflicted = (
+                        self._import_kept_scripts(
+                            db, target_kept_id, payload.get("scripts") or []
+                        )
+                    )
+                except Exception as script_exc:
+                    # The briefing itself is already counted above and is
+                    # durably in the DB -- an honest report says so, and
+                    # names the script failure as a warning instead of
+                    # reporting the whole item as failed (task-1870
+                    # fix-wave F5).
+                    status.add_warning(
+                        f"Kept briefing (source_briefing_id={source_briefing_id}): "
+                        f"kept scripts could not be imported: {script_exc}"
+                    )
+                    logger.opt(exception=True).error(
+                        "ChatbookImporter._import_kept_briefings: Error importing "
+                        "kept scripts for source_briefing_id={}",
+                        source_briefing_id,
+                    )
+                    continue
+
                 if scripts_conflicted:
                     status.add_warning(
                         f"Kept briefing (source_briefing_id={source_briefing_id}): "
@@ -1436,6 +1480,7 @@ class ChatbookImporter:
             turns_json = script_payload.get("turns_json", "[]")
             model_used = script_payload.get("model_used")
             original_created_at = script_payload.get("original_created_at")
+            kept_at = script_payload.get("kept_at")
 
             if source_script_id is not None:
                 try:
@@ -1447,6 +1492,7 @@ class ChatbookImporter:
                         turns_json=turns_json,
                         model_used=model_used,
                         original_created_at=original_created_at,
+                        kept_at=kept_at,
                     )
                     inserted += 1
                 except ConflictError:
@@ -1485,6 +1531,7 @@ class ChatbookImporter:
                 turns_json=turns_json,
                 model_used=model_used,
                 original_created_at=original_created_at,
+                kept_at=kept_at,
             )
             inserted += 1
 

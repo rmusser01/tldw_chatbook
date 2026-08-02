@@ -127,6 +127,46 @@ def test_create_and_get_kept_briefing_round_trips_all_fields(tmp_path: Path) -> 
         db.close_connection()
 
 
+def test_create_kept_briefing_accepts_explicit_kept_at(tmp_path: Path) -> None:
+    """`kept_at` defaults to `CURRENT_TIMESTAMP`, but the chatbook importer
+    (task-1870) needs to preserve the *originating* device's keep time on a
+    cross-device import rather than silently re-stamp it with the import
+    moment -- an explicit `kept_at` must be honored verbatim, exactly like
+    `original_created_at` already is (task-1870 fix-wave F4)."""
+    db = _make_db(tmp_path)
+    try:
+        kept_id = db.create_kept_briefing(
+            source_briefing_id=201,
+            watchlist_name="W",
+            body_markdown="B",
+            origin="manual",
+            kept_at="2020-01-01T00:00:00Z",
+        )
+        row = db.get_kept_briefing(kept_id)
+        assert row["kept_at"] == datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    finally:
+        db.close_connection()
+
+
+def test_create_kept_briefing_without_kept_at_uses_column_default(
+    tmp_path: Path,
+) -> None:
+    """Omitting `kept_at` (every caller except the chatbook importer) must
+    still fall through to the column's own `DEFAULT CURRENT_TIMESTAMP`."""
+    db = _make_db(tmp_path)
+    try:
+        kept_id = db.create_kept_briefing(
+            source_briefing_id=202,
+            watchlist_name="W",
+            body_markdown="B",
+            origin="manual",
+        )
+        row = db.get_kept_briefing(kept_id)
+        assert row["kept_at"] is not None
+    finally:
+        db.close_connection()
+
+
 def test_create_kept_briefing_applies_defaults_for_optional_fields(
     tmp_path: Path,
 ) -> None:
@@ -459,6 +499,34 @@ def test_create_kept_script_round_trips_all_fields(tmp_path: Path) -> None:
         db.close_connection()
 
 
+def test_create_kept_script_accepts_explicit_kept_at(tmp_path: Path) -> None:
+    """Mirrors `create_kept_briefing`'s explicit `kept_at` param -- the
+    chatbook importer (task-1870) needs a kept script's `kept_at` to
+    survive a cross-device import verbatim rather than being re-stamped
+    (task-1870 fix-wave F4)."""
+    db = _make_db(tmp_path)
+    try:
+        kept_id = db.create_kept_briefing(
+            source_briefing_id=203,
+            watchlist_name="W",
+            body_markdown="B",
+            origin="manual",
+        )
+        script_id = db.create_kept_script(
+            kept_id,
+            source_script_id=None,
+            preset_name="p",
+            roster_snapshot_json="{}",
+            turns_json="[]",
+            kept_at="2020-01-02T00:00:00Z",
+        )
+        rows = db.list_kept_scripts(kept_id)
+        row = next(r for r in rows if r["id"] == script_id)
+        assert row["kept_at"] == datetime(2020, 1, 2, 0, 0, tzinfo=timezone.utc)
+    finally:
+        db.close_connection()
+
+
 def test_get_kept_script_by_source_returns_matching_row(tmp_path: Path) -> None:
     """`get_kept_script_by_source` (task-1870) mirrors
     `get_kept_briefing_by_source` -- used by the chatbook importer to
@@ -661,6 +729,115 @@ def test_kept_script_source_ids_excludes_nulls(tmp_path: Path) -> None:
             turns_json="[]",
         )
         assert db.kept_script_source_ids(kept_id) == {200, 201}
+    finally:
+        db.close_connection()
+
+
+def test_kept_script_counts_returns_correct_counts_for_multiple_briefings(
+    tmp_path: Path,
+) -> None:
+    """A grouped `COUNT(*)`, not a per-briefing
+    `len(list_kept_scripts(...))` -- backs the chatbook creation UI's
+    content tree, which used to materialize every kept script's full
+    `turns_json`/`roster_snapshot_json` on the UI thread purely to compute
+    a subtitle count (task-1870 fix-wave F3)."""
+    db = _make_db(tmp_path)
+    try:
+        two_scripts_id = db.create_kept_briefing(
+            source_briefing_id=30,
+            watchlist_name="Two Scripts",
+            body_markdown="B",
+            origin="manual",
+        )
+        one_script_id = db.create_kept_briefing(
+            source_briefing_id=31,
+            watchlist_name="One Script",
+            body_markdown="B",
+            origin="manual",
+        )
+        zero_scripts_id = db.create_kept_briefing(
+            source_briefing_id=32,
+            watchlist_name="Zero Scripts",
+            body_markdown="B",
+            origin="manual",
+        )
+        for _ in range(2):
+            db.create_kept_script(
+                two_scripts_id,
+                source_script_id=None,
+                preset_name="p",
+                roster_snapshot_json="{}",
+                turns_json="[]",
+            )
+        db.create_kept_script(
+            one_script_id,
+            source_script_id=None,
+            preset_name="p",
+            roster_snapshot_json="{}",
+            turns_json="[]",
+        )
+
+        counts = db.kept_script_counts(
+            [two_scripts_id, one_script_id, zero_scripts_id]
+        )
+
+        assert counts == {
+            two_scripts_id: 2,
+            one_script_id: 1,
+            zero_scripts_id: 0,
+        }
+    finally:
+        db.close_connection()
+
+
+def test_kept_script_counts_omits_scripts_for_ids_not_requested(
+    tmp_path: Path,
+) -> None:
+    """A briefing's scripts must not leak into another briefing's count
+    just because both exist in the database -- only requested ids appear,
+    each scoped to its own `kept_briefing_id`."""
+    db = _make_db(tmp_path)
+    try:
+        requested_id = db.create_kept_briefing(
+            source_briefing_id=33,
+            watchlist_name="Requested",
+            body_markdown="B",
+            origin="manual",
+        )
+        other_id = db.create_kept_briefing(
+            source_briefing_id=34,
+            watchlist_name="Not requested",
+            body_markdown="B",
+            origin="manual",
+        )
+        db.create_kept_script(
+            other_id,
+            source_script_id=None,
+            preset_name="p",
+            roster_snapshot_json="{}",
+            turns_json="[]",
+        )
+
+        counts = db.kept_script_counts([requested_id])
+
+        assert counts == {requested_id: 0}
+        assert other_id not in counts
+    finally:
+        db.close_connection()
+
+
+def test_kept_script_counts_returns_zero_for_nonexistent_ids(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    try:
+        assert db.kept_script_counts([9999]) == {9999: 0}
+    finally:
+        db.close_connection()
+
+
+def test_kept_script_counts_returns_empty_dict_for_empty_input(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    try:
+        assert db.kept_script_counts([]) == {}
     finally:
         db.close_connection()
 

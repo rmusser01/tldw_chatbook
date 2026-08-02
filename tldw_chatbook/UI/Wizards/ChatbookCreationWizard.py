@@ -304,12 +304,18 @@ class ContentSelectionStep(WizardStep):
                     logger.debug(
                         f"Found {len(kept_briefings) if kept_briefings else 0} kept briefings"
                     )
+                    # A grouped COUNT, not a per-briefing
+                    # len(list_kept_scripts(...)) -- the latter materialized
+                    # every kept script's full turns_json/roster_snapshot_json
+                    # (a complete cast transcript) on the UI thread purely to
+                    # discard it and keep the length (task-1870 fix-wave F3).
+                    kept_script_counts = main_db.kept_script_counts(
+                        [kept.get("id") for kept in kept_briefings]
+                    )
 
                     for kept in kept_briefings:
                         kept_id = kept.get("id")
-                        script_count = len(
-                            main_db.list_kept_scripts(kept_id, limit=1000)
-                        )
+                        script_count = kept_script_counts.get(kept_id, 0)
                         title = kept.get("watchlist_name") or (
                             f"Kept briefing {kept_id}"
                         )
