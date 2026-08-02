@@ -917,7 +917,11 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
     if source and not is_http_url(source):
         try:
             if Path(source).stat().st_size == 0:
-                raise FileIngestionError(
+                # (task-2015) A zero-byte file fails identically on every
+                # attempt -- permanent, so the queue row withholds Retry
+                # (the retryable raise below stays retryable: installing
+                # the missing tooling genuinely can fix an extraction miss).
+                raise PermanentIngestError(
                     f"{name} is empty; there was nothing to ingest."
                 )
         except OSError:
