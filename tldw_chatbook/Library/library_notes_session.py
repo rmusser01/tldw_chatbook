@@ -332,6 +332,10 @@ class DatabaseNoteSessionCoordinator:
         """Make every currently pending detail-load completion stale."""
         self._session_request_token += 1
 
+    def close_session(self) -> None:
+        """End the active session and invalidate every pending completion."""
+        self._close_session()
+
     async def open_session(
         self,
         note_id: str,
@@ -738,6 +742,9 @@ class DatabaseNoteSessionCoordinator:
 
         try:
             reply = await self._port.load_note(operation.note_id)
+        except asyncio.CancelledError:
+            self._finish_conflict_operation(operation)
+            raise
         except Exception:
             if not self._conflict_operation_is_current(operation):
                 self._finish_conflict_operation(operation)
@@ -838,7 +845,11 @@ class DatabaseNoteSessionCoordinator:
             in_conflict=False,
             status_message="Unsaved changes",
         )
-        save_outcome = await self.request_save(explicit=True)
+        try:
+            save_outcome = await self.request_save(explicit=True)
+        except asyncio.CancelledError:
+            self._finish_conflict_operation(operation)
+            raise
         if not self._conflict_operation_matches_session(operation):
             self._finish_conflict_operation(operation)
             return ConflictOutcome(

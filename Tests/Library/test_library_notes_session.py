@@ -217,6 +217,20 @@ async def test_invalidating_a_pending_open_makes_its_completion_stale():
 
 
 @pytest.mark.asyncio
+async def test_close_session_clears_loaded_state_and_create_token():
+    port = FakeDatabaseNotePort()
+    coordinator = _coordinator(port)
+    await coordinator.open_session("n-1", untouched_create_token="create-1")
+
+    assert coordinator.untouched_create_token == "create-1"
+
+    coordinator.close_session()
+
+    assert coordinator.snapshot is None
+    assert coordinator.untouched_create_token is None
+
+
+@pytest.mark.asyncio
 async def test_genuine_mutation_increments_revision_once_and_marks_dirty():
     port = FakeDatabaseNotePort()
     coordinator = _coordinator(port)
@@ -596,6 +610,29 @@ async def test_duplicate_or_opposite_conflict_action_is_ignored():
     assert port.load_calls == ["n-1", "n-1"]
     gate.set()
     assert (await first).kind is ConflictOutcomeKind.RELOADED
+
+
+@pytest.mark.asyncio
+async def test_cancelled_conflict_refresh_releases_the_operation_gate():
+    gate = asyncio.Event()
+    port = FakeDatabaseNotePort()
+    coordinator = _coordinator(port)
+    await coordinator.open_session("n-1")
+    await _seed_conflict(coordinator, port)
+    port.load_replies.append(
+        DatabaseNotePortLoadReply.loaded(_detail(body="remote", version=8))
+    )
+    port.load_gates.append(gate)
+
+    operation = asyncio.create_task(coordinator.resolve_conflict(ConflictAction.RELOAD))
+    await _wait_for_call_count(port.load_calls, 2)
+    operation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+
+    assert coordinator.conflict_resolution_running is False
+    assert (await coordinator.flush()).kind is NoteFlushOutcomeKind.CONFLICTED
 
 
 @pytest.mark.asyncio

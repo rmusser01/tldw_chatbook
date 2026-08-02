@@ -115,8 +115,10 @@ from ...Library.library_media_viewer_state import (
     find_content_matches,
 )
 from ...Library.library_notes_state import (
+    DatabaseNoteSavePayload,
     LibraryNoteEditorState,
     LibraryNotesListState,
+    NormalizedDatabaseNote,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
@@ -126,6 +128,18 @@ from ...Library.library_notes_state import (
     patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
+)
+from ...Library.library_notes_session import (
+    ConflictAction,
+    ConflictOutcomeKind,
+    DatabaseNotePortLoadReply,
+    DatabaseNotePortSaveReply,
+    DatabaseNoteSessionCoordinator,
+    NoteFlushOutcome,
+    NoteFlushOutcomeKind,
+    NoteLoadOutcomeKind,
+    NoteSaveOutcome,
+    NoteSaveOutcomeKind,
 )
 from ...Library.library_notes_sync_state import (
     AUTO_SYNC_INTERVAL_SECONDS,
@@ -478,6 +492,179 @@ LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"
 # retrieval did not run, so there is nothing to be grounded in and the
 # recovery copy those statuses already render is the honest answer.
 LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES = frozenset({"ready", "empty"})
+
+class _LibraryDatabaseNoteSessionPort:
+    """Adapt the existing Library note services to the portable session port."""
+
+    def __init__(
+        self,
+        *,
+        run_service_call: Any,
+        notes_scope_service: Any,
+        notes_service: Any,
+        user_id: str,
+        clock: Any,
+    ) -> None:
+        self._run_service_call = run_service_call
+        self._notes_scope_service = notes_scope_service
+        self._notes_service = notes_service
+        self._user_id = user_id
+        self._clock = clock
+
+    @staticmethod
+    def _keyword_strings(records: Any) -> tuple[str, ...]:
+        """Return semantic keyword strings in their service-provided order."""
+        if records is None:
+            return ()
+        if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
+            raise TypeError("Keyword detail was not a sequence.")
+        keywords: list[str] = []
+        for record in records:
+            value = record.get("keyword") if isinstance(record, Mapping) else record
+            if value is None:
+                continue
+            keyword = value if isinstance(value, str) else str(value)
+            if keyword:
+                keywords.append(keyword)
+        return tuple(keywords)
+
+    async def load_note(self, note_id: str) -> DatabaseNotePortLoadReply:
+        """Fetch detail plus keywords and return one coherent typed reply."""
+        get_note_detail = getattr(self._notes_scope_service, "get_note_detail", None)
+        if not callable(get_note_detail):
+            return DatabaseNotePortLoadReply.failed("Note loading is unavailable.")
+        try:
+            detail = await self._run_service_call(
+                get_note_detail,
+                scope="local_note",
+                note_id=note_id,
+                user_id=self._user_id,
+                isolate_in_worker=True,
+            )
+            if detail is None:
+                return DatabaseNotePortLoadReply.missing()
+            if not isinstance(detail, Mapping):
+                return DatabaseNotePortLoadReply.failed(
+                    "Note detail was incomplete. Press Retry."
+                )
+
+            get_keywords = getattr(self._notes_service, "get_keywords_for_note", None)
+            if callable(get_keywords):
+                keyword_records = await self._run_service_call(
+                    get_keywords,
+                    self._user_id,
+                    note_id,
+                    isolate_in_worker=True,
+                )
+            elif "keywords" in detail:
+                keyword_records = detail["keywords"]
+            else:
+                return DatabaseNotePortLoadReply.failed(
+                    "Keyword loading is unavailable. Press Retry."
+                )
+            keywords = self._keyword_strings(keyword_records)
+            raw_note_id = detail.get("id", detail.get("note_id", note_id))
+            raw_title = detail.get("title", "")
+            raw_body = detail.get("content", detail.get("body", ""))
+            created_at = detail.get("created_at", "")
+            modified_at = detail.get(
+                "last_modified", detail.get("updated_at", created_at)
+            )
+            normalized = NormalizedDatabaseNote(
+                note_id=str(raw_note_id),
+                title=raw_title if isinstance(raw_title, str) else str(raw_title or ""),
+                body=raw_body if isinstance(raw_body, str) else str(raw_body or ""),
+                keywords=keywords,
+                version=int(detail.get("version", 0)),
+                created_at=(
+                    created_at if isinstance(created_at, str) else str(created_at or "")
+                ),
+                modified_at=(
+                    modified_at
+                    if isinstance(modified_at, str)
+                    else str(modified_at or "")
+                ),
+            )
+        except Exception as error:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library note session for {note_id!r}."
+            )
+            failure_detail = str(error).strip()
+            return DatabaseNotePortLoadReply.failed(
+                (
+                    f"Unable to load note — {failure_detail.rstrip('.')}. Press Retry."
+                    if failure_detail
+                    else "Unable to load note. Press Retry."
+                )
+            )
+        return DatabaseNotePortLoadReply.loaded(normalized)
+
+    async def save_note(
+        self,
+        note_id: str,
+        expected_version: int,
+        payload: DatabaseNoteSavePayload,
+    ) -> DatabaseNotePortSaveReply:
+        """Persist one exact versioned payload and normalize the service reply."""
+        save_note = getattr(self._notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            return DatabaseNotePortSaveReply.failed("Note saving is unavailable.")
+        try:
+            result = await self._run_service_call(
+                save_note,
+                scope="local_note",
+                title=payload.title,
+                content=payload.body,
+                note_id=note_id,
+                version=expected_version,
+                user_id=self._user_id,
+                keywords=list(payload.keywords),
+                isolate_in_worker=True,
+            )
+        except ConflictError:
+            return DatabaseNotePortSaveReply.conflict()
+        except Exception as error:
+            logger.opt(exception=True).warning(
+                f"Library note save failed for {note_id!r}."
+            )
+            return DatabaseNotePortSaveReply.failed(str(error))
+
+        if result is False:
+            return DatabaseNotePortSaveReply.conflict()
+        modified_at = self._clock().isoformat()
+        if result is True:
+            return DatabaseNotePortSaveReply.saved(
+                version=expected_version + 1,
+                modified_at=modified_at,
+                keywords=payload.keywords,
+            )
+        if isinstance(result, Mapping):
+            try:
+                version = int(result.get("version", expected_version + 1))
+                keywords = (
+                    self._keyword_strings(result["keywords"])
+                    if "keywords" in result
+                    else payload.keywords
+                )
+            except (TypeError, ValueError) as error:
+                return DatabaseNotePortSaveReply.failed(
+                    f"Save returned invalid note metadata: {error}"
+                )
+            returned_modified = result.get(
+                "last_modified", result.get("updated_at", modified_at)
+            )
+            return DatabaseNotePortSaveReply.saved(
+                version=version,
+                modified_at=(
+                    returned_modified
+                    if isinstance(returned_modified, str)
+                    else str(returned_modified or modified_at)
+                ),
+                keywords=keywords,
+            )
+        return DatabaseNotePortSaveReply.failed(
+            "Save returned an unexpected result — edits kept. Press Save to retry."
+        )
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
@@ -1721,18 +1908,23 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_trust_confirming_reset: bool = False
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
-        self._library_note_version: int | None = None
-        self._library_note_dirty: bool = False
+        note_session_port = _LibraryDatabaseNoteSessionPort(
+            run_service_call=self._run_library_service_call,
+            notes_scope_service=getattr(app_instance, "notes_scope_service", None),
+            notes_service=getattr(app_instance, "notes_service", None),
+            user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
+            clock=lambda: datetime.now(timezone.utc),
+        )
+        self._library_note_session = DatabaseNoteSessionCoordinator(
+            note_session_port,
+            clock=lambda: datetime.now(timezone.utc),
+        )
+        self._library_note_load_state: str = "idle"
+        self._library_note_load_message: str = ""
         self._library_note_autosave_state: str = "idle"
         self._library_notes_autosave_timer: Timer | None = None
-        self._library_note_conflict_snapshot: LibraryNoteEditorState | None = None
         self._library_note_confirming_delete: bool = False
         self._library_note_preview: bool = False
-        # Live-capture snapshot seeded whenever the Preview toggle fires, so
-        # neither entering nor leaving preview drops unsaved edits (the
-        # Markdown widget shown in preview mode has no widget text of its
-        # own to read back). See ``handle_library_note_preview_toggle``.
-        self._library_note_preview_snapshot: LibraryNoteEditorState | None = None
         # Guards against the spurious ``Input.Changed`` that Textual fires
         # when an ``Input(value=...)`` widget mounts with a non-empty
         # initial value: without this, opening a note (or leaving a
@@ -2005,6 +2197,86 @@ class LibraryScreen(BaseAppScreen):
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
+
+    @property
+    def _library_note_detail(self) -> Mapping[str, Any] | None:
+        """Return a read-only compatibility projection of the session snapshot."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            return None
+        return {
+            "id": snapshot.note_id,
+            "title": snapshot.title,
+            "content": snapshot.body,
+            "keywords": snapshot.keywords_text,
+            "version": snapshot.version,
+            "created_at": snapshot.baseline.created_at,
+            "last_modified": snapshot.baseline.modified_at,
+        }
+
+    @property
+    def _library_note_version(self) -> int | None:
+        """Return the coordinator-owned optimistic-lock version."""
+        snapshot = self._library_note_session.snapshot
+        return snapshot.version if snapshot is not None else None
+
+    @property
+    def _library_note_dirty(self) -> bool:
+        """Return whether the canonical coordinator draft has unsaved edits."""
+        snapshot = self._library_note_session.snapshot
+        return snapshot.dirty if snapshot is not None else False
+
+    @property
+    def _library_note_conflict_snapshot(self) -> LibraryNoteEditorState | None:
+        """Return the canonical draft presentation while conflict is active."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None or not snapshot.in_conflict:
+            return None
+        return self._library_note_editor_state()
+
+    @property
+    def _library_note_preview_snapshot(self) -> LibraryNoteEditorState | None:
+        """Return the canonical draft presentation while preview is active."""
+        if not self._library_note_preview:
+            return None
+        return self._library_note_editor_state()
+
+    def _library_note_editor_state(self) -> LibraryNoteEditorState | None:
+        """Project the one canonical session snapshot into incumbent canvas state."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            return None
+        baseline_state = build_library_note_editor_state(
+            {
+                "id": snapshot.note_id,
+                "title": snapshot.baseline.title,
+                "content": snapshot.baseline.body,
+                "keywords": snapshot.baseline.keywords,
+                "version": snapshot.version,
+                "created_at": snapshot.baseline.created_at,
+                "last_modified": snapshot.baseline.modified_at,
+            }
+        )
+        if snapshot.in_conflict:
+            status = notes_autosave_status_text(
+                "conflict", word_count=self._note_word_count(snapshot.body)
+            )
+            if snapshot.status_message != "Conflict — review the choices below.":
+                status = f"{status} · {snapshot.status_message}"
+        else:
+            status = snapshot.status_message
+        meta_line = baseline_state.meta_line
+        if status:
+            meta_line = f"{meta_line} · {status}" if meta_line else status
+        return LibraryNoteEditorState(
+            note_id=snapshot.note_id,
+            title=snapshot.title,
+            content=snapshot.body,
+            keywords_text=snapshot.keywords_text,
+            version=snapshot.version,
+            meta_line=meta_line,
+            has_note=True,
+        )
 
     def _register_footer_shortcuts(self) -> None:
         """Register Library shortcuts via BaseAppScreen's persisting API.
@@ -2724,14 +2996,13 @@ class LibraryScreen(BaseAppScreen):
         tabs mid-edit.
 
         Returns:
-            False whenever unsaved edits survive the flush -- an unresolved
-            save conflict (the user must resolve the banner) or a failed
-            save (state "error"; the edits are still only in the editor).
-            Both veto the navigation so the screen instance holding the
-            edits is not discarded. True once nothing dirty remains.
+            True only for the coordinator's typed ``PERMITTED`` result and
+            successful prompt/skill barriers. Conflict, failure, validation,
+            blocked, and stale Notes outcomes all veto navigation even when a
+            presentation scalar or snapshot appears clean.
         """
         file_notes_flush_allowed = await self._flush_active_file_notes()
-        await self._flush_library_note_save()
+        note_flush = await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
         if not skill_flush_allowed:
@@ -2743,7 +3014,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
         return (
             file_notes_flush_allowed
-            and not self._library_note_dirty
+            and note_flush.kind is NoteFlushOutcomeKind.PERMITTED
             and prompt_flush_allowed
             and skill_flush_allowed
         )
@@ -2813,8 +3084,8 @@ class LibraryScreen(BaseAppScreen):
         context: Mapping[str, Any],
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._apply_navigation_context_state(context, recompose=False)
         if self.is_mounted:
@@ -2928,29 +3199,21 @@ class LibraryScreen(BaseAppScreen):
             # this is exercised only by tests until such a producer is wired --
             # not orphaned wiring.
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-            self._selected_note_id = note_id
-            self._library_notes_view = "editor"
-            self._library_note_detail = None
-            self._library_note_version = None
-            self._library_note_dirty = False
-            self._library_note_autosave_state = "idle"
-            self._library_note_conflict_snapshot = None
-            self._library_note_confirming_delete = False
-            self._library_note_preview = False
-            self._library_note_preview_snapshot = None
-            self._library_note_editor_armed = False
-            # LIB-14: a deep link always lands on a note by explicit id
-            # (never "Blank note"), so neither flag ever applies to it --
-            # clear both defensively in case a still-open session blank
-            # from a DIFFERENT note is left behind by this jump.
+            if self.is_mounted:
+                self._begin_library_note_load(note_id)
+            else:
+                self._library_note_session.close_session()
+                self._selected_note_id = note_id
+                self._library_notes_view = "editor"
+                self._library_note_load_state = "loading"
+                self._library_note_load_message = ""
+                self._library_note_autosave_state = "idle"
+                self._library_note_confirming_delete = False
+                self._library_note_preview = False
+                self._library_note_editor_armed = False
+            # A deep link never owns the current blank-note GC identity.
             self._library_note_pending_blank_gc_id = None
             self._library_note_session_blank_id = None
-            if self.is_mounted:
-                self.run_worker(
-                    self._refresh_library_note_detail(note_id),
-                    exclusive=True,
-                    group="library_note_detail",
-                )
         if open_source_type and open_source_id and self.is_mounted:
             self.run_worker(
                 self._open_pending_library_source(),
@@ -3477,8 +3740,8 @@ class LibraryScreen(BaseAppScreen):
         batched-join DB seam or N per-row ``fetch_keywords_for_prompt`` calls;
         the notes list canvas sets the precedent for skipping this (its own
         bulk ``list_notes`` fetch has never carried keywords either -- only
-        the single-note editor enriches, via
-        ``_fetch_library_note_keywords``), so this deliberately matches that
+        the single-note session port enriches in its normalized load reply),
+        so this deliberately matches that
         precedent rather than fetching keywords per row here. ``details``,
         unlike keywords, IS cheap to carry (a single extra column on the same
         query, Task 8b D2) -- ``build_prompts_list_state``'s filter/secondary-
@@ -4987,37 +5250,44 @@ class LibraryScreen(BaseAppScreen):
                     shell.canvas_kind == "notes"
                     and self._library_notes_view == "editor"
                 ):
-                    if self._library_note_conflict_snapshot is not None:
-                        # A save just lost an optimistic-lock race: recompose
-                        # from the user's own kept text (never the stale
-                        # ``_library_note_detail``) with the Overwrite/Reload
-                        # actions surfaced.
+                    editor_state = self._library_note_editor_state()
+                    if (
+                        editor_state is not None
+                        and self._library_note_conflict_snapshot
+                    ):
                         yield LibraryNotesCanvas(
                             mode="editor",
-                            editor_state=self._library_note_conflict_snapshot,
+                            editor_state=editor_state,
                             conflict=True,
                             id="library-notes-canvas",
                         )
-                    elif self._library_note_detail is None:
-                        yield Static(
-                            "Loading note…",
-                            id="library-note-loading",
-                            classes="destination-purpose",
-                            markup=False,
-                        )
-                    else:
-                        # The Preview snapshot (when present) carries the
-                        # live -- possibly unsaved -- text captured by the
-                        # last Preview toggle, so restoring from preview (or
-                        # any other recompose while it's live) never reverts
-                        # to the stale on-disk ``_library_note_detail``.
-                        editor_state = (
-                            self._library_note_preview_snapshot
-                            if self._library_note_preview_snapshot is not None
-                            else build_library_note_editor_state(
-                                self._library_note_detail
+                    elif editor_state is None:
+                        with Vertical(id="library-note-load-state"):
+                            yield Button(
+                                "‹ Back to list",
+                                id="library-note-back",
+                                classes="library-canvas-action",
+                                compact=True,
                             )
-                        )
+                            load_copy = (
+                                self._library_note_load_message
+                                if self._library_note_load_state == "failed"
+                                else "Loading note…"
+                            )
+                            yield Static(
+                                load_copy,
+                                id="library-note-loading",
+                                classes="destination-purpose",
+                                markup=False,
+                            )
+                            if self._library_note_load_state == "failed":
+                                yield Button(
+                                    "Retry",
+                                    id="library-note-load-retry",
+                                    classes="library-canvas-action",
+                                    compact=True,
+                                )
+                    else:
                         yield LibraryNotesCanvas(
                             mode="editor",
                             editor_state=editor_state,
@@ -5697,60 +5967,27 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     async def _refresh_library_note_detail(self, note_id: str) -> None:
-        """Fetch and store the full detail for a selected Library note.
-
-        Mirrors ``_refresh_library_media_detail``: offloads the (possibly
-        blocking) ``get_note_detail`` service call via
-        ``_run_library_service_call`` and recomposes once the fetched detail
-        (or a cleared/failed state) has been stored.
-
-        Triggered by ``handle_library_notes_row`` on note-row selection;
-        ``compose_content`` renders the stored ``_library_note_detail`` via
-        ``build_library_note_editor_state`` once this worker completes.
+        """Open one normalized coordinator session and apply its typed outcome.
 
         Args:
             note_id: The Library note id to fetch full detail for.
         """
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        get_note_detail = getattr(service, "get_note_detail", None)
-        if not callable(get_note_detail):
-            self._library_note_detail = None
-            self._library_note_version = None
-            if self.is_mounted:
-                self.refresh(recompose=True)
-            return
-        try:
-            detail = await self._run_library_service_call(
-                get_note_detail,
-                scope="local_note",
-                note_id=note_id,
-                user_id=getattr(self.app_instance, "notes_user_id", None)
-                or "default_user",
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to load Library note detail for {note_id!r}."
-            )
-            detail = None
-        # Discard out-of-order results: if the user has since selected a
-        # different note (or left the editor), a slower in-flight fetch for
-        # the previous selection must not overwrite the current one -- the
-        # same stale-race guard as ``_refresh_library_media_detail``.
         if (
             note_id != self._selected_note_id
             or self._library_notes_view != "editor"
             or self._library_notes_source != "database"
         ):
             return
-        if not isinstance(detail, Mapping):
-            # The note no longer exists -- deleted elsewhere, or a stale
-            # ghost row from an already-out-of-date list snapshot. Leaving
-            # ``_library_note_detail`` at ``None`` here would strand the
-            # canvas on the "Loading note…" placeholder forever (it never
-            # becomes a real dict). Fall back to the list view instead of
-            # that dead end, mirroring the delete-success flow's full
-            # snapshot reload.
+        outcome = await self._library_note_session.open_session(note_id)
+        if outcome.kind is NoteLoadOutcomeKind.STALE:
+            return
+        if (
+            note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+            or self._library_notes_source != "database"
+        ):
+            return
+        if outcome.kind is NoteLoadOutcomeKind.MISSING:
             logger.info(
                 f"Library note {note_id!r} is no longer available; returning to list."
             )
@@ -5760,74 +5997,40 @@ class LibraryScreen(BaseAppScreen):
             if self.is_mounted:
                 self.refresh(recompose=True)
             return
-        self._library_note_detail = detail
-        keywords = await self._fetch_library_note_keywords(note_id)
-        # Fetching keywords is a second await point: re-check freshness the
-        # same way ``_refresh_library_media_detail`` re-checks after its own
-        # second (highlights) fetch, so a switch that happened during that
-        # fetch cannot land keywords for the wrong note.
-        if (
-            note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
-            or self._library_notes_source != "database"
-        ):
+        if outcome.kind is NoteLoadOutcomeKind.FAILED:
+            self._library_note_load_state = "failed"
+            self._library_note_load_message = (
+                outcome.message or "Unable to load note. Press Retry."
+            )
+            if self.is_mounted:
+                self.refresh(recompose=True)
             return
-        if keywords is not None and isinstance(self._library_note_detail, Mapping):
-            enriched_detail = dict(self._library_note_detail)
-            enriched_detail["keywords"] = keywords
-            self._library_note_detail = enriched_detail
-        editor_state = build_library_note_editor_state(self._library_note_detail)
-        self._library_note_version = editor_state.version
-        self._library_note_dirty = False
+
+        self._library_note_load_state = "loaded"
+        self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
-        self._library_note_conflict_snapshot = None
         self._library_note_preview = False
-        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_note_editor)
 
-    async def _fetch_library_note_keywords(self, note_id: str) -> list[Any] | None:
-        """Fetch a Library note's keywords for the in-canvas editor.
-
-        ``notes_scope_service.get_note_detail``'s local-scope shape is the
-        raw ``notes`` table row and never carries a ``keywords`` field (see
-        ``NotesInteropService.get_note_by_id``) -- keywords live in a
-        separate join table. This fetches them through the standalone
-        Notes screen's own seam, ``app.notes_service.get_keywords_for_note``
-        (``NotesInteropService.get_keywords_for_note(user_id, note_id)``,
-        which returns the ``ChaChaNotes_DB.get_keywords_for_note`` row
-        shape -- each item a mapping with a ``keyword`` key), offloaded off
-        the UI loop the same way every other Library service call is.
-
-        Args:
-            note_id: The Library note id to fetch keywords for.
-
-        Returns:
-            The fetched keyword records, or ``None`` when
-            ``app.notes_service`` (or the method) is unavailable or the
-            fetch fails -- callers should leave the detail's keywords field
-            untouched in that case, the same quiet-absent behavior as
-            before this enrichment existed.
-        """
-        notes_service = getattr(self.app_instance, "notes_service", None)
-        get_keywords_for_note = getattr(notes_service, "get_keywords_for_note", None)
-        if not callable(get_keywords_for_note):
-            return None
-        try:
-            keywords = await self._run_library_service_call(
-                get_keywords_for_note,
-                self._library_notes_user_id(),
-                note_id,
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to load keywords for Library note {note_id!r}."
-            )
-            return None
-        return list(keywords) if isinstance(keywords, list) else None
+    def _begin_library_note_load(self, note_id: str) -> None:
+        """Reset presentation, invalidate old work, and start one editor load."""
+        self._library_note_session.close_session()
+        self._selected_note_id = note_id
+        self._library_notes_view = "editor"
+        self._library_note_load_state = "loading"
+        self._library_note_load_message = ""
+        self._library_note_autosave_state = "idle"
+        self._library_note_confirming_delete = False
+        self._library_note_preview = False
+        self._library_note_editor_armed = False
+        self.run_worker(
+            self._refresh_library_note_detail(note_id),
+            exclusive=True,
+            group="library_note_detail",
+        )
 
     def _arm_library_note_editor(self) -> None:
         """Enable dirty-tracking once the notes editor's mount-time
@@ -5843,16 +6046,14 @@ class LibraryScreen(BaseAppScreen):
         selection so every exit from the editor leaves save/autosave/
         conflict tracking in a clean ``idle`` state for the next note.
         """
+        self._library_note_session.close_session()
         self._library_notes_view = "list"
-        self._library_note_detail = None
         self._selected_note_id = ""
-        self._library_note_version = None
-        self._library_note_dirty = False
+        self._library_note_load_state = "idle"
+        self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
-        self._library_note_conflict_snapshot = None
         self._library_note_confirming_delete = False
         self._library_note_preview = False
-        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         # Defense in depth: the normal exit path is ``_flush_library_note_
         # save`` (which GCs a still-pending blank note and clears both
@@ -6001,8 +6202,8 @@ class LibraryScreen(BaseAppScreen):
                 LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
             )
             return
-        await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
         self._reset_library_export_transient_state(scope)
@@ -7386,34 +7587,14 @@ class LibraryScreen(BaseAppScreen):
 
     # ----- Notes editor: save, autosave, conflict policy -----------------
 
-    def _mark_library_note_dirty(self) -> None:
-        """Record an in-progress edit and (re)arm the autosave debounce.
-
-        Ignored until ``_library_note_editor_armed`` is set (see that
-        flag's docstring) and while a save conflict is being shown --
-        autosaving against a version that is already known to be stale
-        would just recreate the same conflict on a timer.
-        """
-        if not self._library_note_editor_armed:
+    def _schedule_library_note_autosave(self) -> None:
+        """Rearm debounce after one genuine coordinator-owned draft mutation."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None or snapshot.in_conflict or snapshot.saving:
             return
-        self._library_note_dirty = True
-        # LIB-14: a real edit (this is only reached once armed, i.e. never
-        # for the mount-time phantom Input/TextArea.Changed) stops the
-        # title Input from showing the "Untitled" placeholder on the next
-        # recompose -- no recompose is forced here, matching this method's
-        # existing silent (no per-keystroke recompose) discipline; the
-        # mounted Input already shows whatever the user is typing
-        # regardless of this flag. Deliberately does NOT clear
-        # ``_library_note_session_blank_id`` -- that flag's whole purpose
-        # is to survive edits so a later "typed then deleted everything"
-        # exit still GCs (see that flag's own docstring).
-        self._library_note_pending_blank_gc_id = None
-        if self._library_note_autosave_state == "conflict":
-            return
+        self._library_note_autosave_state = "idle"
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
-        # Read as a bare module global (not a captured default) so tests can
-        # monkeypatch LIBRARY_NOTES_AUTOSAVE_SECONDS to a short interval.
         self._library_notes_autosave_timer = self.set_timer(
             LIBRARY_NOTES_AUTOSAVE_SECONDS, self._fire_library_note_autosave
         )
@@ -7425,7 +7606,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Input change event emitted by the editor's title field.
         """
-        self._mark_library_note_dirty()
+        if not self._library_note_editor_armed:
+            return
+        if self._library_note_session.mutate(title=event.value):
+            self._schedule_library_note_autosave()
 
     @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
@@ -7434,7 +7618,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Text change event emitted by the editor's body ``TextArea``.
         """
-        self._mark_library_note_dirty()
+        if not self._library_note_editor_armed:
+            return
+        if self._library_note_session.mutate(body=event.text_area.text):
+            self._schedule_library_note_autosave()
 
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
@@ -7443,7 +7630,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Input change event emitted by the editor's keywords field.
         """
-        self._mark_library_note_dirty()
+        if not self._library_note_editor_armed:
+            return
+        if self._library_note_session.mutate(keywords_text=event.value):
+            self._schedule_library_note_autosave()
 
     def _fire_library_note_autosave(self) -> None:
         """Debounce-timer callback: kick the actual autosave worker."""
@@ -7478,7 +7668,17 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_note_meta_base_line(self) -> str:
         """The static Created/Modified/version portion of the meta line."""
-        return build_library_note_editor_state(self._library_note_detail).meta_line
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            return ""
+        return build_library_note_editor_state(
+            {
+                "id": snapshot.note_id,
+                "version": snapshot.version,
+                "created_at": snapshot.baseline.created_at,
+                "last_modified": snapshot.baseline.modified_at,
+            }
+        ).meta_line
 
     def _update_library_note_meta_static(self, *, content: str) -> None:
         """Targeted update of the meta line's autosave status suffix.
@@ -7499,272 +7699,208 @@ class LibraryScreen(BaseAppScreen):
         status_text = notes_autosave_status_text(
             self._library_note_autosave_state, word_count=self._note_word_count(content)
         )
+        snapshot = self._library_note_session.snapshot
+        if (
+            snapshot is not None
+            and snapshot.status_message
+            and (
+                snapshot.dirty
+                or self._library_note_autosave_state in {"error", "validation"}
+            )
+        ):
+            word_count = self._note_word_count(content)
+            word_copy = f"{word_count} words" if word_count != 1 else "1 word"
+            status_text = f"{word_copy} · {snapshot.status_message}"
         base_meta_line = self._library_note_meta_base_line()
         meta_static.update(
             f"{base_meta_line} · {status_text}" if base_meta_line else status_text
         )
 
+    def _patch_library_note_list_from_session(self) -> None:
+        """Patch list caches from the payload the coordinator actually saved."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
+            return
+        baseline = snapshot.baseline
+        self._local_source_records["notes"] = patch_note_records_after_save(
+            self._local_source_records.get("notes", ()),
+            baseline.note_id,
+            title=baseline.title,
+            modified_at=baseline.modified_at,
+        )
+        if self._library_notes_filter_records is not None:
+            self._library_notes_filter_records = list(
+                patch_note_records_after_save(
+                    self._library_notes_filter_records,
+                    baseline.note_id,
+                    title=baseline.title,
+                    modified_at=baseline.modified_at,
+                )
+            )
+
+    def _focus_library_note_validation_field(self, field: str) -> None:
+        """Restore keyboard focus to the field named by a validation veto."""
+        selector = {
+            "title": "#library-note-title",
+            "body": "#library-note-body",
+            "keywords": "#library-note-keywords",
+        }.get(field)
+        if selector is None or not self.is_mounted:
+            return
+
+        def focus_field() -> None:
+            try:
+                self.query_one(selector).focus()
+            except (NoMatches, QueryError):
+                return
+
+        self.call_after_refresh(focus_field)
+
+    def _focus_library_note_conflict_callout(self) -> None:
+        """Move keyboard focus to the explanatory conflict callout."""
+        try:
+            callout = self.query_one("#library-note-conflict-copy", Static)
+        except (NoMatches, QueryError):
+            return
+        callout.can_focus = True
+        callout.focus()
+
+    def _apply_library_note_saved_presentation(
+        self,
+        outcome: NoteSaveOutcome,
+    ) -> None:
+        """Present saved only when the outcome still covers the latest draft."""
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None or snapshot.note_id != self._selected_note_id:
+            return
+        if outcome.kind is NoteSaveOutcomeKind.SAVED:
+            self._patch_library_note_list_from_session()
+        is_current_clean_revision = (
+            not snapshot.dirty
+            and outcome.revision is not None
+            and outcome.revision == snapshot.saved_revision
+        )
+        self._library_note_autosave_state = (
+            "saved" if is_current_clean_revision else "idle"
+        )
+        self._update_library_note_meta_static(content=snapshot.body)
+
+    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
+        """Translate one typed coordinator save outcome into screen presentation."""
+        snapshot = self._library_note_session.snapshot
+        if outcome.kind is NoteSaveOutcomeKind.STALE or snapshot is None:
+            return
+        if snapshot.note_id != self._selected_note_id:
+            return
+        if outcome.kind in {
+            NoteSaveOutcomeKind.SAVED,
+            NoteSaveOutcomeKind.ACKNOWLEDGED,
+        }:
+            self._apply_library_note_saved_presentation(outcome)
+            return
+        if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
+            self._library_note_autosave_state = "conflict"
+            self._library_note_preview = False
+            self._library_note_editor_armed = False
+            if self._library_notes_autosave_timer is not None:
+                self._library_notes_autosave_timer.stop()
+                self._library_notes_autosave_timer = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
+                self.call_after_refresh(self._focus_library_note_conflict_callout)
+            return
+        self._library_note_autosave_state = (
+            "validation"
+            if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO
+            else "error"
+        )
+        validation_field = outcome.veto.field if outcome.veto is not None else ""
+        if self._library_note_preview:
+            self._library_note_preview = False
+            self._library_note_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
+                self._focus_library_note_validation_field(validation_field)
+            return
+        self._update_library_note_meta_static(content=snapshot.body)
+        self._focus_library_note_validation_field(validation_field)
+
     async def _save_library_note(self, *, explicit: bool) -> None:
-        """Save the open Library note's current editor text.
-
-        Reads title/content/keywords via ``_read_library_note_editor_fields``
-        (which tolerates the Preview toggle, falling back to the live-capture
-        snapshot for the body when ``#library-note-body`` isn't mounted),
-        sanitizes the fields, and calls ``save_note`` through the offloaded
-        service seam (``note_id``/``version`` supplied, so this is always the
-        update path). A successful save bumps ``_library_note_version`` in memory
-        and updates only the meta line -- it never recomposes, so the
-        ``TextArea``/``Input`` widget instances stay identical across a
-        save. A version conflict (a falsy result from the seam, or a
-        ``ConflictError`` raised by the real local notes service on a
-        stale ``expected_version``) cancels the autosave timer and
-        recomposes into the conflict UI, re-seeded from the user's live
-        widget text -- never from the stale ``_library_note_detail``.
-
-        The save is awaited inline (see ``_flush_library_note_save``, which
-        bypasses the exclusive ``library_note_save`` worker group), so
-        another note can become selected while this call is still in
-        flight. Every branch below therefore re-checks that the note this
-        save was *for* is still the selected one -- and the editor is still
-        showing -- before mutating any shared editor state, mirroring the
-        stale-result guard in ``_refresh_library_note_detail`` and
-        ``_resolve_library_note_conflict``.
+        """Ask the portable coordinator to serialize the canonical draft.
 
         Args:
             explicit: Whether this save was triggered by the Save button
-                (``True``) or the autosave debounce/flush (``False``). Not
-                currently used to vary behavior, but kept for call-site
-                clarity and future use (e.g. differentiated error copy).
+                (``True``) or the autosave debounce/flush (``False``). The
+                coordinator uses an explicit no-op Save to acknowledge an
+                untouched newly created note without calling persistence.
         """
-        if self._library_notes_view != "editor" or not self._selected_note_id:
-            return
-        note_id = self._selected_note_id
-        fields = self._read_library_note_editor_fields()
-        if fields is None:
-            return
-        raw_title, raw_content, raw_keywords_text = fields
-
-        # LIB-14: the title Input can now render genuinely empty (see
-        # ``title_placeholder_only``) for a pristine "Blank note" the user
-        # tabs/clicks past without typing a title -- a note otherwise
-        # always has a non-blank title, so an empty save falls back to the
-        # same "Untitled" default the create seam itself uses, rather than
-        # persisting a blank one.
-        title = self._sanitize_media_field(raw_title, max_length=300) or "Untitled"
-        content = self._sanitize_note_content(
-            raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
-        )
-        keywords = self._library_note_keywords_from_input(raw_keywords_text)
-
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        save_note = getattr(service, "save_note", None)
-        if not callable(save_note):
-            return
-
-        self._library_note_autosave_state = "saving"
-
-        try:
-            result = await self._run_library_service_call(
-                save_note,
-                scope="local_note",
-                title=title,
-                content=content,
-                note_id=note_id,
-                version=self._library_note_version,
-                user_id=self._library_notes_user_id(),
-                keywords=keywords,
-                isolate_in_worker=True,
-            )
-        except ConflictError:
-            result = False
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library note save failed for {note_id!r}."
-            )
-            if (
-                note_id != self._selected_note_id
-                or self._library_notes_view != "editor"
-            ):
-                return
-            self._library_note_autosave_state = "error"
-            self._update_library_note_meta_static(content=raw_content)
-            return
-
-        # Discard a stale result: the user has since switched to a
-        # different note (or left the editor) while this save was in
-        # flight. Mutating shared state past this point would land this
-        # note's save result -- version bump, meta line, or conflict UI --
-        # on whatever note is now selected.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
-            return
-
-        if result:
-            if isinstance(result, Mapping):
-                version = result.get("version")
-                if version is not None:
-                    self._library_note_version = version
-            else:
-                self._library_note_version = (self._library_note_version or 0) + 1
-            if isinstance(self._library_note_detail, dict):
-                # Patch the just-saved fields into the cached detail mirror
-                # too, not just ``version`` -- a save never recomposes the
-                # editor itself, but a *later* recompose (entering the
-                # delete-confirm state, toggling Preview, ...) rebuilds the
-                # editor's widgets fresh from this detail. Leaving
-                # title/content stale here would silently revert the
-                # just-saved edit back to its pre-save text on that
-                # recompose.
-                self._library_note_detail["version"] = self._library_note_version
-                self._library_note_detail["title"] = title
-                self._library_note_detail["content"] = content
-                if isinstance(result, Mapping) and "keywords" in result:
-                    self._library_note_detail["keywords"] = result["keywords"]
-                elif keywords is not None:
-                    self._library_note_detail["keywords"] = keywords
-            # Patch the cached notes-list snapshot too (title + a fresh
-            # last_modified), not just the detail mirror: the list view is
-            # rendered from these records on the next Back-to-list, and
-            # without this it kept showing the pre-save title, stale
-            # relative age, and stale Newest ordering until a full
-            # snapshot refetch landed (2026-07 UAT finding).
-            saved_stamp = datetime.now(timezone.utc).isoformat()
-            self._local_source_records["notes"] = patch_note_records_after_save(
-                self._local_source_records.get("notes", ()),
-                note_id,
-                title=title,
-                modified_at=saved_stamp,
-            )
-            if self._library_notes_filter_records is not None:
-                self._library_notes_filter_records = list(
-                    patch_note_records_after_save(
-                        self._library_notes_filter_records,
-                        note_id,
-                        title=title,
-                        modified_at=saved_stamp,
-                    )
-                )
-            self._library_note_dirty = False
-            self._library_note_autosave_state = "saved"
-            self._update_library_note_meta_static(content=raw_content)
-            return
-
-        # Falsy result: another writer changed the note first (an
-        # optimistic-lock version conflict). Stop any pending autosave and
-        # recompose into the conflict UI, re-seeded from the user's live
-        # widget text so nothing they typed is lost.
-        self._library_note_autosave_state = "conflict"
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
-        base_meta_line = self._library_note_meta_base_line()
-        conflict_status = notes_autosave_status_text(
-            "conflict", word_count=self._note_word_count(raw_content)
-        )
-        self._library_note_conflict_snapshot = LibraryNoteEditorState(
-            note_id=note_id,
-            title=raw_title,
-            content=raw_content,
-            keywords_text=raw_keywords_text,
-            version=self._library_note_version,
-            meta_line=(
-                f"{base_meta_line} · {conflict_status}"
-                if base_meta_line
-                else conflict_status
-            ),
-            has_note=True,
-        )
-        self._library_note_preview = False
-        self._library_note_preview_snapshot = None
-        self._library_note_editor_armed = False
-        if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_note_editor)
-
-    async def _flush_library_note_save(self) -> None:
-        """Save any pending edit before the notes editor is left.
-
-        Called at the top of the Back handler, note-row selection, and
-        rail-row selection so a dirty edit is never silently discarded by
-        navigating away.
-
-        Cancels the pending autosave timer, then WAITS for any save already
-        running in the ``library_note_save`` worker group (an autosave that
-        fired just before this navigation) before deciding whether an inline
-        save is still needed. Without the wait, this inline flush and the
-        in-flight autosave both call ``save_note`` with the same
-        not-yet-bumped version -- an optimistic-lock conflict that fires
-        against the note's *own* autosave and pops a spurious "changed
-        elsewhere" banner, aborting the navigation. After the in-flight save
-        finishes it has already persisted the text and cleared the dirty
-        flag, so the re-check below usually short-circuits; the inline save
-        only runs when edits genuinely remain, and then against the bumped
-        version.
-
-        LIB-14 (AC#5): this is also the single choke point every editor-exit
-        path already awaits before tearing the editor down, so it doubles
-        as the GC point for this session's "Blank note" whenever it ends
-        up empty -- see ``_gc_pending_blank_note``. The GC check runs
-        BEFORE the dirty check below and is gated on final live emptiness,
-        not on ``_library_note_dirty``, so it covers both a note that was
-        never touched (never dirty) AND one that was typed into and then
-        emptied back out again (dirty, but finally empty) -- the latter
-        being the case the first version of this fix (dirty-gated) missed.
-        A real in-progress edit that leaves genuine content behind is
-        never at risk of being mistaken for GC-eligible, since the
-        emptiness check reads the live fields, not the dirty flag.
-        """
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
-        for worker in list(self.workers):
-            if worker.group == "library_note_save" and not worker.is_finished:
-                try:
-                    await worker.wait()
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        "In-flight note-save worker errored while flushing; continuing.",
-                    )
-        # LIB-14 (review round 1 fix, task-2858 T3): decide GC-vs-save on
-        # this session's blank note (if any is open) from its FINAL live
-        # state, not from ``_library_note_dirty`` -- a dirty-gated check
-        # would route "typed then deleted everything back to empty"
-        # through the save branch below, persisting exactly the stray
-        # "Untitled" row AC#5 forbids. Reading live fields (never the
-        # stale ``_library_note_detail``) covers both "never touched"
-        # (fields are trivially empty) and "typed then emptied" (fields
-        # are empty again after edits) with the ONE check -- no separate
-        # not-dirty branch is needed any more. The scope guard is
-        # structural: ``_library_note_session_blank_id`` is only ever set
-        # by the "Blank note" create path, so a pre-existing note that the
-        # user empties out never matches here and always falls through to
-        # the normal save branch.
+        snapshot = self._library_note_session.snapshot
         if (
-            self._library_note_session_blank_id
-            and self._library_note_session_blank_id == self._selected_note_id
+            self._library_notes_view != "editor"
+            or snapshot is None
+            or snapshot.note_id != self._selected_note_id
         ):
-            fields = self._read_library_note_editor_fields()
-            if fields is not None:
-                raw_title, raw_content, raw_keywords_text = fields
-                # "Effectively empty" = title, body, AND keywords all blank
-                # -- keywords count too (a user-provided tag on an
-                # otherwise-blank note is still user content worth
-                # keeping, not noise). The title Input never actually
-                # holds the literal string "Untitled" unless the user
-                # typed it themselves (LIB-14a renders it as an empty
-                # value + a placeholder, never a real value) -- so a
-                # plain ``.strip()`` emptiness check already captures
-                # "still showing the placeholder" with no separate
-                # "Untitled"-string special case needed.
-                if (
-                    not raw_title.strip()
-                    and not raw_content.strip()
-                    and not raw_keywords_text.strip()
-                ):
-                    await self._gc_pending_blank_note()
-                    return
-        if not self._library_note_dirty:
             return
-        await self._save_library_note(explicit=False)
+        self._library_note_autosave_state = "saving"
+        self._update_library_note_meta_static(content=snapshot.body)
+        outcome = await self._library_note_session.request_save(explicit=explicit)
+        self._apply_library_note_save_outcome(outcome)
+
+    async def _flush_library_note_save(self) -> NoteFlushOutcome:
+        """Cross the coordinator's pending-work barrier before navigation."""
+        if self._library_notes_autosave_timer is not None:
+            self._library_notes_autosave_timer.stop()
+            self._library_notes_autosave_timer = None
+        before = self._library_note_session.snapshot
+        before_saved_revision = before.saved_revision if before is not None else None
+        outcome = await self._library_note_session.flush()
+        snapshot = self._library_note_session.snapshot
+        if outcome.kind is NoteFlushOutcomeKind.PERMITTED:
+            if (
+                snapshot is not None
+                and before_saved_revision is not None
+                and snapshot.saved_revision > before_saved_revision
+            ):
+                self._patch_library_note_list_from_session()
+                self._library_note_autosave_state = (
+                    "idle" if snapshot.dirty else "saved"
+                )
+                self._update_library_note_meta_static(content=snapshot.body)
+            return outcome
+        if snapshot is None:
+            return outcome
+        if outcome.kind is NoteFlushOutcomeKind.CONFLICTED:
+            self._library_note_autosave_state = "conflict"
+            self._library_note_preview = False
+            self._library_note_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
+                self.call_after_refresh(self._focus_library_note_conflict_callout)
+            return outcome
+        if outcome.kind is NoteFlushOutcomeKind.BLOCKED:
+            return outcome
+        self._library_note_autosave_state = (
+            "validation"
+            if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO
+            else "error"
+        )
+        if (
+            outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO
+            and self._library_note_preview
+        ):
+            self._library_note_preview = False
+            self._library_note_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
+        else:
+            self._update_library_note_meta_static(content=snapshot.body)
+        if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
+            self._focus_library_note_validation_field(outcome.save_outcome.veto.field)
+        return outcome
 
     async def _gc_pending_blank_note(self) -> None:
         """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
@@ -7854,162 +7990,59 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_local_source_snapshot()
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
-        """Resolve a shown save conflict via the Overwrite or Reload action.
-
-        Both paths silently re-fetch the note's current server-side detail
-        first (no "Loading…" placeholder -- the conflict UI stays put while
-        this happens).
-
-        * ``overwrite=True``: take only the fresh ``version`` from that
-          detail and re-save the user's *live* editor text (read fresh from
-          the widgets, not the recompose-time snapshot, so further edits
-          made while the conflict banner was showing are not lost) with
-          that version. On success, the local detail mirror is patched
-          (not fully reloaded) with the saved fields so a normal-mode
-          recompose renders the kept text, and the conflict state clears.
-        * ``overwrite=False``: discard the local edits and recompose the
-          editor from the freshly fetched detail.
-
-        Either path falls back to the list view (with the same "no longer
-        available" warning ``_refresh_library_note_detail`` shows) when the
-        re-fetch discovers the note was deleted elsewhere entirely -- not
-        just version-bumped again -- so neither action can strand the
-        canvas on a permanent "Loading…" placeholder (Reload) or a
-        conflict UI that can never be resolved (Overwrite).
+        """Resolve a conflict through the coordinator's token-gated action.
 
         Args:
             overwrite: ``True`` for Overwrite, ``False`` for Reload.
         """
-        note_id = self._selected_note_id
-        if not note_id or self._library_note_autosave_state != "conflict":
+        action = ConflictAction.OVERWRITE if overwrite else ConflictAction.RELOAD
+        outcome = await self._library_note_session.resolve_conflict(action)
+        if outcome.kind in {
+            ConflictOutcomeKind.STALE,
+            ConflictOutcomeKind.ALREADY_RUNNING,
+            ConflictOutcomeKind.NOT_IN_CONFLICT,
+        }:
             return
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        get_note_detail = getattr(service, "get_note_detail", None)
-        if not callable(get_note_detail):
-            return
-        try:
-            detail = await self._run_library_service_call(
-                get_note_detail,
-                scope="local_note",
-                note_id=note_id,
-                user_id=self._library_notes_user_id(),
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to reload Library note {note_id!r} after a save conflict.",
-            )
-            return
-        if note_id != self._selected_note_id:
-            return  # The user navigated away while the re-fetch was in flight.
-
-        if not isinstance(detail, Mapping):
-            # The note is gone entirely (deleted elsewhere) rather than
-            # merely changed again -- neither Reload nor Overwrite has
-            # anything left to reconcile against. Mirrors
-            # ``_refresh_library_note_detail``'s missing-note fallback so
-            # this never leaves the canvas stuck in the conflict UI or on
-            # an unresolvable "Loading…" placeholder.
-            logger.info(
-                f"Library note {note_id!r} is no longer available; returning to list."
-            )
+        if outcome.kind is ConflictOutcomeKind.MISSING and not overwrite:
             self._reset_library_note_editor_state()
             self._notify_library_note_missing_warning()
             self._refresh_local_source_snapshot()
             if self.is_mounted:
                 self.refresh(recompose=True)
             return
-
-        if not overwrite:
-            self._library_note_detail = detail
-            editor_state = build_library_note_editor_state(self._library_note_detail)
-            self._library_note_version = editor_state.version
-            self._library_note_conflict_snapshot = None
-            self._library_note_dirty = False
+        snapshot = self._library_note_session.snapshot
+        validation_field = ""
+        if outcome.kind is ConflictOutcomeKind.OVERWRITTEN:
+            if outcome.save_outcome is not None:
+                self._apply_library_note_saved_presentation(outcome.save_outcome)
+        elif outcome.kind is ConflictOutcomeKind.RELOADED:
             self._library_note_autosave_state = "idle"
-            self._library_note_preview = False
-            self._library_note_preview_snapshot = None
-            self._library_note_editor_armed = False
-            if self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_note_editor)
-            return
-
-        fresh_version = build_library_note_editor_state(detail).version
-        if fresh_version is None:
-            return
-        try:
-            title_widget = self.query_one("#library-note-title", Input)
-            body_widget = self.query_one("#library-note-body", TextArea)
-            keywords_widget = self.query_one("#library-note-keywords", Input)
-        except (NoMatches, QueryError):
-            return
-        title = self._sanitize_media_field(title_widget.value, max_length=300)
-        content = self._sanitize_note_content(
-            body_widget.text, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
-        )
-        keywords = self._library_note_keywords_from_input(keywords_widget.value)
-
-        save_note = getattr(service, "save_note", None)
-        if not callable(save_note):
-            return
-        try:
-            result = await self._run_library_service_call(
-                save_note,
-                scope="local_note",
-                title=title,
-                content=content,
-                note_id=note_id,
-                version=fresh_version,
-                user_id=self._library_notes_user_id(),
-                keywords=keywords,
-                isolate_in_worker=True,
+        elif outcome.kind in {
+            ConflictOutcomeKind.RENEWED_CONFLICT,
+            ConflictOutcomeKind.DRAFT_CHANGED,
+            ConflictOutcomeKind.MISSING,
+        }:
+            self._library_note_autosave_state = "conflict"
+        elif outcome.kind is ConflictOutcomeKind.FAILED:
+            self._library_note_autosave_state = (
+                "conflict" if snapshot is not None and snapshot.in_conflict else "error"
             )
-        except ConflictError:
-            result = False
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to overwrite Library note {note_id!r} after a save conflict.",
-            )
-            return
-        if note_id != self._selected_note_id:
-            return
-        if not result:
-            # Someone else won this race too; keep showing the conflict UI
-            # (still seeded with the user's text) so they can try again.
-            return
-
-        if isinstance(result, Mapping):
-            version = result.get("version")
-            self._library_note_version = (
-                version if version is not None else fresh_version + 1
-            )
-        else:
-            self._library_note_version = fresh_version + 1
-
-        patched_detail: dict[str, Any] = (
-            dict(self._library_note_detail)
-            if isinstance(self._library_note_detail, Mapping)
-            else {}
-        )
-        patched_detail["id"] = note_id
-        patched_detail["title"] = title
-        patched_detail["content"] = content
-        patched_detail["version"] = self._library_note_version
-        if isinstance(detail, Mapping):
-            for key in ("created_at", "last_modified", "updated_at"):
-                if key in detail:
-                    patched_detail[key] = detail[key]
-        self._library_note_detail = patched_detail
-        self._library_note_conflict_snapshot = None
-        self._library_note_dirty = False
-        self._library_note_autosave_state = "saved"
+        elif outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:
+            self._library_note_autosave_state = "validation"
+            if (
+                outcome.save_outcome is not None
+                and outcome.save_outcome.veto is not None
+            ):
+                validation_field = outcome.save_outcome.veto.field
         self._library_note_preview = False
-        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_note_editor)
+            if snapshot is not None and snapshot.in_conflict:
+                self.call_after_refresh(self._focus_library_note_conflict_callout)
+            elif validation_field:
+                self._focus_library_note_validation_field(validation_field)
 
     @on(Button.Pressed, "#library-note-conflict-overwrite")
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
@@ -8022,8 +8055,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self.run_worker(
             self._resolve_library_note_conflict(overwrite=True),
-            exclusive=True,
-            group="library_note_save",
+            group="library_note_conflict",
         )
 
     @on(Button.Pressed, "#library-note-conflict-reload")
@@ -8037,57 +8069,29 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self.run_worker(
             self._resolve_library_note_conflict(overwrite=False),
-            exclusive=True,
-            group="library_note_save",
+            group="library_note_conflict",
         )
 
     # ----- Notes editor: preview, export, copy, use-in-console -----------
 
     def _read_library_note_editor_fields(self) -> tuple[str, str, str] | None:
-        """Read the note editor's current (possibly unsaved) title/content/keywords.
-
-        Tolerates the Preview toggle: when ``#library-note-body`` is a
-        read-only ``Markdown`` widget (no live text of its own), the body
-        falls back to the live-capture snapshot taken when Preview was
-        entered (see ``handle_library_note_preview_toggle``) instead of the
-        stale ``_library_note_detail``.
+        """Project canonical draft fields for non-persistence utilities.
 
         Returns:
-            ``(title, content, keywords_text)`` read from the live widgets
-            (and/or the preview snapshot), or ``None`` if the editor isn't
-            mounted.
+            ``(title, content, keywords_text)`` from the coordinator snapshot,
+            or ``None`` when no Database Note session is active.
         """
-        try:
-            title = self.query_one("#library-note-title", Input).value
-            keywords_text = self.query_one("#library-note-keywords", Input).value
-        except (NoMatches, QueryError):
+        snapshot = self._library_note_session.snapshot
+        if snapshot is None:
             return None
-        if self._library_note_preview:
-            content = (
-                self._library_note_preview_snapshot.content
-                if self._library_note_preview_snapshot is not None
-                else ""
-            )
-        else:
-            try:
-                content = self.query_one("#library-note-body", TextArea).text
-            except (NoMatches, QueryError):
-                return None
-        return title, content, keywords_text
+        return snapshot.title, snapshot.body, snapshot.keywords_text
 
     @on(Button.Pressed, "#library-note-preview")
     def handle_library_note_preview_toggle(self, event: Button.Pressed) -> None:
         """Toggle the note editor between edit and read-only Markdown preview.
 
-        Captures the live editor text (via ``_read_library_note_editor_fields``,
-        which already knows how to read through a prior Preview toggle)
-        *before* flipping the flag and recomposing, so neither entering nor
-        leaving preview silently drops in-progress edits -- the same
-        live-widget-capture discipline ``_save_library_note``'s conflict
-        branch already uses. A no-op while a save conflict is showing: that
-        recompose branch ignores ``preview`` entirely (it always shows the
-        live conflict text), so toggling here would have no visible effect
-        beyond leaving a stale flag/snapshot behind.
+        The coordinator already owns every raw field, so recomposition can
+        switch presentation without taking a second mutable draft snapshot.
 
         Args:
             event: Button press event emitted by the editor's Preview/Edit
@@ -8099,19 +8103,8 @@ class LibraryScreen(BaseAppScreen):
             or self._library_note_autosave_state == "conflict"
         ):
             return
-        fields = self._read_library_note_editor_fields()
-        if fields is None:
+        if self._library_note_session.snapshot is None:
             return
-        title, content, keywords_text = fields
-        self._library_note_preview_snapshot = LibraryNoteEditorState(
-            note_id=self._selected_note_id,
-            title=title,
-            content=content,
-            keywords_text=keywords_text,
-            version=self._library_note_version,
-            meta_line=self._library_note_meta_base_line(),
-            has_note=True,
-        )
         self._library_note_preview = not self._library_note_preview
         self._library_note_editor_armed = False
         self.refresh(recompose=True)
@@ -8726,8 +8719,8 @@ class LibraryScreen(BaseAppScreen):
         row_id: str,
     ) -> None:
         """Recompose a rail destination while source admission is held."""
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         if not await self._flush_library_prompt_save():
             return
@@ -12340,7 +12333,7 @@ class LibraryScreen(BaseAppScreen):
         been stored.
 
         Unlike notes' ``get_note_detail`` (which never carries keywords, so
-        the editor separately enriches via ``_fetch_library_note_keywords``),
+        its private session port enriches the normalized load reply),
         the local backend's ``get_prompt`` seam is backed by
         ``PromptsDatabase.fetch_prompt_details``, which already joins
         keywords into the returned mapping -- no second enrichment call is
@@ -14358,8 +14351,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Sync" action.
         """
         event.stop()
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
@@ -14373,7 +14366,9 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "‹ Back to notes" action.
         """
         event.stop()
-        await self._flush_library_note_save()
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
         self._library_notes_view = "list"
         self._reset_library_notes_sync_transient_state()
         self.refresh(recompose=True)
@@ -16333,45 +16328,20 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a note row button.
         """
         event.stop()
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         note_id = str(getattr(event.button, "note_id", "") or "")
         if self._library_notes_select_mode:
             self._library_notes_row_selection.toggle(note_id)
             _apply_library_row_toggle(self, "notes", event.button, note_id)
             return
-        if note_id:
-            self._selected_note_id = note_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._library_notes_view = "editor"
-        self._library_note_detail = None
-        self._library_note_version = None
-        self._library_note_dirty = False
-        self._library_note_autosave_state = "idle"
-        self._library_note_conflict_snapshot = None
-        self._library_note_confirming_delete = False
-        self._library_note_preview = False
-        self._library_note_preview_snapshot = None
-        self._library_note_editor_armed = False
-        # LIB-14: switching to a (possibly different) note by row press --
-        # the flush above already resolved the PREVIOUS note's own
-        # save-vs-GC decision by id equality before this reassigns
-        # ``_selected_note_id``, but clear both flags explicitly here too
-        # (rather than relying solely on the id-equality guard elsewhere
-        # never matching a future note) so neither can read as "this note"
-        # for whatever gets opened next.
+        # A normal row switch never carries the blank-note GC identity.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
         if note_id:
-            # Exclusive in its own group so rapidly switching rows cancels the
-            # previous in-flight detail fetch instead of letting a slower older
-            # fetch finish and overwrite the newer selection's editor.
-            self.run_worker(
-                self._refresh_library_note_detail(note_id),
-                exclusive=True,
-                group="library_note_detail",
-            )
+            self._begin_library_note_load(note_id)
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-notes-select-toggle")
@@ -16397,7 +16367,9 @@ class LibraryScreen(BaseAppScreen):
                 Select/Done toggle.
         """
         event.stop()
-        await self._flush_library_note_save()
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
         self._library_notes_select_mode = not self._library_notes_select_mode
         self._library_notes_row_selection.clear()
         self.refresh(recompose=True)
@@ -16473,8 +16445,8 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return False
         self._reset_library_note_editor_state()
         self._refresh_local_source_snapshot()
@@ -16493,6 +16465,22 @@ class LibraryScreen(BaseAppScreen):
         the Notes canvas.
         """
         await self._exit_library_note_editor_guarded()
+
+    @on(Button.Pressed, "#library-note-load-retry")
+    def handle_library_note_load_retry(self, event: Button.Pressed) -> None:
+        """Retry the current typed note-load failure without leaving Editor."""
+        event.stop()
+        note_id = self._selected_note_id
+        if not note_id or self._library_notes_view != "editor":
+            return
+        self._library_note_load_state = "loading"
+        self._library_note_load_message = ""
+        self.run_worker(
+            self._refresh_library_note_detail(note_id),
+            exclusive=True,
+            group="library_note_detail",
+        )
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-note-delete")
     async def handle_library_note_delete(self, event: Button.Pressed) -> None:
@@ -16520,8 +16508,8 @@ class LibraryScreen(BaseAppScreen):
         # fail against an already-gone row and surface a spurious warning).
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._library_note_confirming_delete = True
         self._library_note_editor_armed = False
@@ -16867,20 +16855,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_note_create_warning("Could not create the note.")
             return
 
-        self._selected_note_id = created_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._library_notes_view = "editor"
-        self._library_note_detail = None
-        self._library_note_version = None
-        self._library_note_dirty = False
-        self._library_note_autosave_state = "idle"
-        self._library_note_conflict_snapshot = None
-        self._library_note_confirming_delete = False
-        self._library_note_preview = False
-        self._library_note_preview_snapshot = None
-        self._library_note_editor_armed = False
-        self._library_note_pending_blank_gc_id = created_id if blank else None
-        self._library_note_session_blank_id = created_id if blank else None
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         # Reuses the same full local-source reload the initial mount load
@@ -16888,11 +16863,9 @@ class LibraryScreen(BaseAppScreen):
         # targeted append, since notes have no existing "patch the cached
         # snapshot" mutation path the way media edits/deletes do.
         self._refresh_local_source_snapshot()
-        self.run_worker(
-            self._refresh_library_note_detail(created_id),
-            exclusive=True,
-            group="library_note_detail",
-        )
+        self._begin_library_note_load(created_id)
+        self._library_note_pending_blank_gc_id = created_id if blank else None
+        self._library_note_session_blank_id = created_id if blank else None
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -18751,8 +18724,8 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if source_type == "media":
-            await self._flush_library_note_save()
-            if self._library_note_dirty:
+            note_flush = await self._flush_library_note_save()
+            if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
@@ -18778,22 +18751,11 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if source_type == "notes":
-            await self._flush_library_note_save()
-            if self._library_note_dirty:
+            note_flush = await self._flush_library_note_save()
+            if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return
-            # Reset first for a clean slate (also stops any autosave timer,
-            # clears dirty/conflict/preview state), then apply the actual
-            # open-target fields -- equivalent final state to the note_id
-            # navigation-context branch's inline field-by-field reset.
-            self._reset_library_note_editor_state()
-            self._library_notes_view = "editor"
-            self._selected_note_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-            self.run_worker(
-                self._refresh_library_note_detail(record_id),
-                exclusive=True,
-                group="library_note_detail",
-            )
+            self._begin_library_note_load(record_id)
             self.refresh(recompose=True)
             return
 
