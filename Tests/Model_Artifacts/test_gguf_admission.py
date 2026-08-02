@@ -1295,7 +1295,7 @@ def test_validate_local_gguf_inspects_same_open_descriptor_and_closes_it(
 ):
     _supported_runtime(monkeypatch)
     selected = tmp_path / "chosen.gguf"
-    selected.write_bytes(make_gguf())
+    selected.write_bytes(make_gguf(tensors=(TensorFixture(data=b"x" * (64 * 1024)),)))
     real_open = gguf.os.open
     real_inspect = gguf.inspect_gguf
     opened: list[int] = []
@@ -1310,7 +1310,9 @@ def test_validate_local_gguf_inspects_same_open_descriptor_and_closes_it(
         descriptor = handle.fileno()
         inspected.append(descriptor)
         assert os.fstat(descriptor).st_size == file_size
-        return real_inspect(handle, file_size=file_size)
+        metadata = real_inspect(handle, file_size=file_size)
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == metadata.data_offset
+        return metadata
 
     monkeypatch.setattr(gguf.os, "open", capture_open)
     monkeypatch.setattr(gguf, "inspect_gguf", inspect)

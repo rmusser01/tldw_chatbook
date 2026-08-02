@@ -570,7 +570,7 @@ def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
 
     try:
         try:
-            handle = os.fdopen(descriptor, "rb", closefd=False)
+            handle = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
         except OSError:
             raise GGUFPathError(
                 "Selected local GGUF could not be opened safely"
