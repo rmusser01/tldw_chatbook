@@ -2,7 +2,7 @@
 id: TASK-2011
 title: >-
   Library ingest stale pre-flight result resurrects a cleared summary
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
@@ -28,7 +28,23 @@ after the submit resurrects the cleared summary: observed twice live as
 
 ## Acceptance Criteria (the what)
 
-- [ ] A pre-flight result whose analysis started before a submit/clear never
+- [x] A pre-flight result whose analysis started before a submit/clear never
       repopulates the summary after the clear.
-- [ ] A pre-flight result for the current (uncleared, unsuperseded) trigger
+- [x] A pre-flight result for the current (uncleared, unsuperseded) trigger
       still applies normally.
+
+## Implementation Notes
+
+Generation stamp, not better cancellation: `_library_ingest_preflight_generation`
+(int, screen-owned) is bumped by a new `_invalidate_library_ingest_preflight()`
+helper and by every `_trigger_library_ingest_preflight`; the worker carries the
+generation it was started under and `_apply_library_ingest_preflight_result`
+drops any result whose generation is no longer current. All three raw-clear
+sites now route through the helper: the path Clear button, `_do_submit_ingest`
+(whose comment previously promised cancellation was sufficient — it is not,
+cancellation is cooperative), and `_reset_library_ingest_transient_state`
+(canvas re-entry, which replaces the whole form and was equally exposed).
+Files: `tldw_chatbook/UI/Screens/library_screen.py`,
+`Tests/UI/test_library_shell.py`
+(`test_library_ingest_stale_preflight_result_is_dropped_after_clear`).
+Verified: new test red→green; `-k "ingest or preflight"` subset 29/29.

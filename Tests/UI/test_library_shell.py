@@ -11794,3 +11794,47 @@ async def test_a_condition_met_during_the_last_pause_is_not_a_timeout():
         )
 
     assert found is not None, "an already-satisfied condition must not time out"
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
+    """(task-2011) A pre-flight worker started BEFORE a submit/clear must not
+    repopulate the summary it cleared: ``_do_submit_ingest`` empties
+    ``form.preflight`` on purpose, and worker cancellation is cooperative, so
+    the guard is a generation stamp, not the cancel."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        stale_generation = screen._library_ingest_preflight_generation
+        # The submit/clear path invalidates any in-flight pre-flight.
+        screen._invalidate_library_ingest_preflight()
+        assert screen._library_ingest_form.preflight is None
+
+        late_result = PreflightResult(
+            type_groups={"generic": ["/tmp/whatever.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=277,
+            truncated=False,
+            total_files=1,
+        )
+        # The worker thread delivers its result with the generation it was
+        # started under -- one bump ago.
+        screen._apply_library_ingest_preflight_result(late_result, stale_generation)
+        assert screen._library_ingest_form.preflight is None, (
+            "stale pre-flight result must be dropped, not applied"
+        )
+
+        # A result carrying the CURRENT generation still applies.
+        screen._apply_library_ingest_preflight_result(
+            late_result, screen._library_ingest_preflight_generation
+        )
+        assert screen._library_ingest_form.preflight is late_result

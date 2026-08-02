@@ -1286,6 +1286,11 @@ class LibraryScreen(BaseAppScreen):
         # Pre-flight analysis worker for the ingest path field. Cancelled
         # and replaced on every new trigger so rapid edits never stack.
         self._library_ingest_preflight_worker: Worker | None = None
+        # Monotonic stamp for pre-flight validity. Worker cancellation is
+        # cooperative, so a cancelled worker can still deliver its result;
+        # `_apply_library_ingest_preflight_result` drops any result whose
+        # generation is no longer current (task-2011).
+        self._library_ingest_preflight_generation: int = 0
         # Explicit user-started curated model install. It is separate from
         # inference: providers never acquire models on first use. The same
         # worker slot tracks BOTH the preflight step (plan computation) and
@@ -4653,15 +4658,11 @@ class LibraryScreen(BaseAppScreen):
         reappears when the user comes back to the canvas. The job queue
         itself is registry-owned and untouched by this reset -- only the
         local form echo resets. Any in-flight pre-flight worker is
-        cancelled so its late result cannot repopulate the fresh form.
+        cancelled AND generation-fenced (cancellation is cooperative, so a
+        finished worker's late result would otherwise still land on the
+        fresh form -- task-2011).
         """
-        if self._library_ingest_preflight_worker is not None:
-            try:
-                if not self._library_ingest_preflight_worker.is_finished:
-                    self._library_ingest_preflight_worker.cancel()
-            except Exception:
-                pass
-            self._library_ingest_preflight_worker = None
+        self._invalidate_library_ingest_preflight()
         self._library_ingest_form = LibraryIngestFormState()
 
     # ----- Export canvas -------------------------------------------------
@@ -12059,11 +12060,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Clear" action.
         """
         event.stop()
-        self._cancel_library_ingest_preflight()
-        form = self._library_ingest_form
-        form.path = ""
-        form.preflight = None
-        form.preflight_checking = False
+        self._invalidate_library_ingest_preflight()
+        self._library_ingest_form.path = ""
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#ingest-preflight-choose")
@@ -12357,6 +12355,22 @@ class LibraryScreen(BaseAppScreen):
             pass
         self._library_ingest_preflight_worker = None
 
+    def _invalidate_library_ingest_preflight(self) -> None:
+        """Drop the current pre-flight echo AND fence off in-flight workers.
+
+        Worker cancellation is cooperative (``@work(thread=True)``), so a
+        worker that has already finished analysing can still deliver its
+        result after this runs. Bumping the generation makes
+        ``_apply_library_ingest_preflight_result`` drop that late result
+        instead of resurrecting the summary this method just cleared
+        (task-2011: observed live as "Enter a file path to start." rendered
+        together with "1 plain text file · 277 B").
+        """
+        self._library_ingest_preflight_generation += 1
+        self._cancel_library_ingest_preflight()
+        self._library_ingest_form.preflight = None
+        self._library_ingest_form.preflight_checking = False
+
     def _trigger_library_ingest_preflight(self, path: str) -> None:
         """Start (or restart) the pre-flight worker for ``path``.
 
@@ -12367,12 +12381,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_form.preflight_checking = False
             return
         self._cancel_library_ingest_preflight()
+        self._library_ingest_preflight_generation += 1
+        generation = self._library_ingest_preflight_generation
         self._library_ingest_form.preflight_checking = True
         self.refresh(recompose=True)
-        self._library_ingest_preflight_worker = self._run_library_ingest_preflight(path)
+        self._library_ingest_preflight_worker = self._run_library_ingest_preflight(
+            path, generation
+        )
 
     @work(thread=True)
-    def _run_library_ingest_preflight(self, path: str) -> None:
+    def _run_library_ingest_preflight(self, path: str, generation: int) -> None:
         """Analyze ``path`` on a worker thread and apply the result."""
         raw_scan_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
         try:
@@ -12393,13 +12411,23 @@ class LibraryScreen(BaseAppScreen):
                 truncated=False,
                 total_files=0,
             )
-        self.app.call_from_thread(self._apply_library_ingest_preflight_result, result)
+        self.app.call_from_thread(
+            self._apply_library_ingest_preflight_result, result, generation
+        )
 
     def _apply_library_ingest_preflight_result(
         self,
         result: PreflightResult,
+        generation: int,
     ) -> None:
-        """Merge a pre-flight result into the form echo and refresh."""
+        """Merge a pre-flight result into the form echo and refresh.
+
+        Drops results from a superseded generation: a clear/submit or a
+        newer trigger bumped the counter after this worker started, so its
+        result describes a path the form is no longer showing (task-2011).
+        """
+        if generation != self._library_ingest_preflight_generation:
+            return
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
         self.refresh(recompose=True)
@@ -12562,11 +12590,11 @@ class LibraryScreen(BaseAppScreen):
         # The summary described the file that just left the form, so keeping
         # it would leave the canvas asserting two things at once: "Enter a
         # file path to start." next to "1 plain text file - 333 B", which
-        # reads as though something is still staged. Any in-flight analysis is
-        # cancelled too, so a late result cannot repopulate what was cleared.
-        self._cancel_library_ingest_preflight()
-        form.preflight = None
-        form.preflight_checking = False
+        # reads as though something is still staged. Cancellation alone is
+        # cooperative and cannot stop a worker that already finished; the
+        # generation bump inside the invalidate is what actually fences the
+        # late result out (task-2011).
+        self._invalidate_library_ingest_preflight()
         self.refresh(recompose=True)
 
     def _load_library_ingest_options_from_config(self) -> None:
