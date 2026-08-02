@@ -1,7 +1,7 @@
 ---
 id: TASK-1301
 title: Add Speech model setup to the first-run wizard
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 00:30'
 labels:
@@ -26,12 +26,12 @@ Use the reusable model-artifact setup controls in the Full first-run track so us
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Full setup track includes a skippable Speech transcription step while Quick setup remains unchanged.
-- [ ] #2 The step defaults to English and presents Parakeet v2 INT8 as the recommended managed model, with supported language and precision changes using the canonical STT policy and catalog.
-- [ ] #3 Before downloading, the step shows the exact dependency closure, source revision, license, precision, bytes, destination, staging requirement, and free-space result and requires explicit consent.
-- [ ] #4 Download, verification, activation, cancellation, retry, and installed-state behavior reuse the TASK-596 controls and TASK-595 service without duplicate artifact or network logic.
-- [ ] #5 Transcription configuration is persisted only after a verified artifact is active; re-running the wizard prefills the persisted language, model, and precision without exposing secrets.
-- [ ] #6 Skip and failures never trap the user, and the final Summary reports persisted transcription configuration and installed readiness rather than transient widget state.
+- [x] #1 The Full setup track includes a skippable Speech transcription step while Quick setup remains unchanged.
+- [x] #2 The step defaults to English and presents Parakeet v2 INT8 as the recommended managed model, with supported language and precision changes using the canonical STT policy and catalog.
+- [x] #3 Before downloading, the step shows the exact dependency closure, source revision, license, precision, bytes, destination, staging requirement, and free-space result and requires explicit consent.
+- [x] #4 Download, verification, activation, cancellation, retry, and installed-state behavior reuse the TASK-596 controls and TASK-595 service without duplicate artifact or network logic.
+- [x] #5 Transcription configuration is persisted only after a verified artifact is active; re-running the wizard prefills the persisted language, model, and precision without exposing secrets.
+- [x] #6 Skip and failures never trap the user, and the final Summary reports persisted transcription configuration and installed readiness rather than transient widget state.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,31 @@ before parallel work, per the TASK-595/596 duplicate-implementation guard.
 5. RED-first tests: step present+skippable in Full track, Quick track unchanged, consent gate,
    persist-only-after-active, prefill-on-rerun, skip/failure never traps, summary honesty.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped on feat/wizard-speech-setup-1301 (12 commits, three review rounds). A skippable Speech
+transcription step in the Full track only (Quick byte-identical, pinned): recommended Parakeet v2
+INT8 via the curated registry, language/precision from the canonical STT policy+catalog, consent
+through the shared ModelInstallModal preflight, download/verify/activate/cancel/retry/installed
+state entirely through the TASK-596 controls + TASK-595 service (zero duplicate artifact/network
+logic, reviewer-verified), config persisted ONLY after a verified artifact is active.
+
+Review rounds mattered: round 1 found five Importants — copy pointing at a nonexistent
+"Settings ▸ Speech" (real destination is Lab ▸ Models, verified from routes), the Install button
+below the fold at the wizard's own 120x40 budget, commit() clobbering an existing remote-whisper
+config on a silent re-run (AC#5's prefill clause was unimplemented), no runtime gate (would download
+~660MB onto installs without onnx-asr and report ✓), and no Retry/Delete on a broken artifact.
+Round 2 verified all five fixed (mutation evidence) and caught three residuals from the fixes:
+Rich markup eating the extras name from the recovery instruction (markup=False), a promise no
+control could deliver in the installed+active+config-elsewhere state (resolved with a real
+"Use Parakeet v2 as my default" affordance riding the existing commit path — new UI surface,
+called out in the PR), and Summary claiming ✓ while the step said "runtime not installed"
+(Summary now reflects the runtime probe). Round 3: Approved, AC#1-6 all met.
+
+Parked as follow-ups (reviewer-endorsed): third hardcoded v3 language table awaiting a real
+catalog consumer; service_factory seam not covering the install path; ~115ms wizard-open import;
+cosmetic reload-window button greying. Tests: 756 across the sweep; per-file counts and all
+RED/mutation evidence in .superpowers/sdd/2026-08-01-speech-setup/.
+<!-- SECTION:NOTES:END -->
