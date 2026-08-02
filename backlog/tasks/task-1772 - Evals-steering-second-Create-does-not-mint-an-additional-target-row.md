@@ -1,9 +1,10 @@
 ---
 id: TASK-1772
 title: 'Evals steering: second Create does not mint an additional target row'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 21:10'
+updated_date: '2026-08-02 14:15'
 labels:
   - evals
   - test-failure
@@ -22,3 +23,9 @@ Tests/UI/test_evals_steering_e2e.py::test_two_ui_authored_targets_one_steered_li
 - [ ] #1 The failing test passes, or is replaced by one that pins the intended behavior
 - [ ] #2 Root cause is stated: whether the second Create genuinely fails to add a row, or the test's assumption about row identity is wrong
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Claimed 2026-08-02 (ppqq clone). In-flight check run per backlog/docs/lessons-backlog-hygiene.md: no open PR or remote branch for this id.
+<!-- SECTION:NOTES:END -->

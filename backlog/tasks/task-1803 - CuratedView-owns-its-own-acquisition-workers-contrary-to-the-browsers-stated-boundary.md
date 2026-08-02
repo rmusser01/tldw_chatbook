@@ -3,9 +3,10 @@ id: TASK-1803
 title: >-
   CuratedView owns its own acquisition workers, contrary to the browser's stated
   boundary
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 00:43'
+updated_date: '2026-08-02 14:15'
 labels:
   - models
   - architecture
@@ -25,3 +26,9 @@ The TASK-596 design states that widgets and views never call preflight/provision
 - [ ] #2 A screen-level recompose mid-install cannot orphan the worker or drop progress, without compensating delivery logic
 - [ ] #3 The compensating logic added by the delta port is removed once ownership moves
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Claimed 2026-08-02 (ppqq clone). In-flight check run per backlog/docs/lessons-backlog-hygiene.md: no open PR or remote branch for this id.
+<!-- SECTION:NOTES:END -->

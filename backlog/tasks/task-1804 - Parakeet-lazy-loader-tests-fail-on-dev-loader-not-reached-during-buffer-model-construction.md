@@ -3,9 +3,10 @@ id: TASK-1804
 title: >-
   Parakeet lazy-loader tests fail on dev: loader not reached during buffer model
   construction
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 01:25'
+updated_date: '2026-08-02 14:15'
 labels:
   - stt
   - test-failure
@@ -24,3 +25,9 @@ Tests/Local_Ingestion/test_transcription_service_lazy_mlx.py has 2 failures on d
 - [ ] #1 Both failing tests pass, or are replaced by tests pinning the intended lazy-loading behavior
 - [ ] #2 It is stated whether the loader genuinely stopped being used or the test's expectation is stale
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Claimed 2026-08-02 (ppqq clone). In-flight check run per backlog/docs/lessons-backlog-hygiene.md: no open PR or remote branch for this id.
+<!-- SECTION:NOTES:END -->
