@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import io
 import struct
 import unicodedata
@@ -49,6 +50,48 @@ _ADMISSION_NONRELATIVE_IMPORT_ROOTS = frozenset(
     }
 )
 _ADMISSION_RELATIVE_IMPORT = "..Utils.path_validation"
+_DEFERRED_EXPECTED_IMPORT_TARGETS = frozenset(
+    {
+        ".gguf_admission",
+        ".gguf_admission.GGUFError",
+        ".gguf_admission.GGUFMetadata",
+        ".gguf_admission._sanitize_display",
+        ".gguf_admission.normalize_platform_target",
+        ".gguf_admission.require_transcribe_cpp_architecture",
+        ".service",
+        ".service.ArtifactDescriptor",
+        ".service.ArtifactFile",
+        ".service.ArtifactFormat",
+        ".service.ArtifactRef",
+        ".service.ArtifactRole",
+        ".service.ProvenanceClass",
+        "__future__",
+        "__future__.annotations",
+        "collections.abc",
+        "collections.abc.Iterable",
+        "re",
+    }
+)
+_DEFERRED_EXPECTED_CONSTANT_NAMES = frozenset(
+    {
+        "TRANSCRIBE_CPP_VERSION",
+        "_PINNED_RUNTIME_RELEASE",
+        "_RUNTIME_CONSTRAINT_CLAUSE",
+    }
+)
+_DEFERRED_EXPECTED_CLASS_NAMES = ("GGUFAmbiguousCuratedMatchError",)
+_DEFERRED_EXPECTED_FUNCTION_NAMES = (
+    "_release_tuple",
+    "_compatible_release",
+    "runtime_constraint_admits_pinned_version",
+    "_eligible_curated_descriptor",
+    "_local_model_label",
+    "_local_gguf_descriptor",
+    "select_gguf_descriptor",
+)
+_DEFERRED_AST_SHA256 = (
+    "946cf9435472622869579ee9ca7131d2d8b29af94909092552213ed73c3abd8f"
+)
 
 
 def _import_targets(source: str) -> set[str]:
@@ -58,21 +101,38 @@ def _import_targets(source: str) -> set[str]:
         if isinstance(node, ast.Import):
             targets.update(alias.name for alias in node.names)
             continue
-        if not isinstance(node, ast.ImportFrom):
+        if isinstance(node, ast.ImportFrom):
+            prefix = "." * node.level
+            if node.module is None:
+                targets.update(f"{prefix}{alias.name}" for alias in node.names)
+                continue
+            module_target = f"{prefix}{node.module}"
+            targets.add(module_target)
+            targets.update(f"{module_target}.{alias.name}" for alias in node.names)
             continue
-        prefix = "." * node.level
-        if node.module is None:
-            targets.update(f"{prefix}{alias.name}" for alias in node.names)
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "__import__"
+        ):
             continue
-        module_target = f"{prefix}{node.module}"
-        targets.add(module_target)
-        targets.update(f"{module_target}.{alias.name}" for alias in node.names)
+        if (
+            node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            targets.add(node.args[0].value)
+        else:
+            targets.add("<dynamic __import__>")
     return targets
 
 
 def _unapproved_admission_import_targets(source: str) -> set[str]:
     unapproved: set[str] = set()
     for target in _import_targets(source):
+        if target.endswith(".*"):
+            unapproved.add(target)
+            continue
         if target.startswith("."):
             if target != _ADMISSION_RELATIVE_IMPORT and not target.startswith(
                 f"{_ADMISSION_RELATIVE_IMPORT}."
@@ -82,6 +142,100 @@ def _unapproved_admission_import_targets(source: str) -> set[str]:
         if target.split(".", 1)[0] not in _ADMISSION_NONRELATIVE_IMPORT_ROOTS:
             unapproved.add(target)
     return unapproved
+
+
+def _deferred_source() -> str:
+    deferred_path = Path(gguf.__file__).parent / "_deferred_gguf_managed_import.py"
+    return deferred_path.read_text(encoding="utf-8")
+
+
+def _normalized_ast_value(value: object) -> object:
+    if isinstance(value, ast.AST):
+        return (
+            type(value).__name__,
+            tuple(
+                (field, _normalized_ast_value(getattr(value, field)))
+                for field in value._fields
+                if field != "type_params"
+            ),
+        )
+    if isinstance(value, list):
+        return tuple(_normalized_ast_value(item) for item in value)
+    return value
+
+
+def _deferred_ast_fingerprint(source: str) -> str:
+    normalized = repr(_normalized_ast_value(ast.parse(source))).encode("utf-8")
+    return hashlib.sha256(normalized).hexdigest()
+
+
+def _assert_deferred_source_contract(source: str) -> None:
+    tree = ast.parse(source)
+    docstring = ast.get_docstring(tree) or ""
+    assert "DEFERRED" in docstring
+    assert "TASK-1861" in docstring
+
+    assert _import_targets(source) == _DEFERRED_EXPECTED_IMPORT_TARGETS
+
+    all_bindings: list[ast.expr | None] = []
+    constant_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if target.id == "__all__":
+                    all_bindings.append(node.value)
+                else:
+                    constant_names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "__all__":
+                all_bindings.append(node.value)
+            else:
+                constant_names.add(node.target.id)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "__all__":
+                all_bindings.append(node.value)
+            else:
+                constant_names.add(node.target.id)
+
+    assert len(all_bindings) == 1
+    assert isinstance(all_bindings[0], ast.Tuple)
+    assert not all_bindings[0].elts
+    assert constant_names == _DEFERRED_EXPECTED_CONSTANT_NAMES
+
+    class_names = tuple(
+        node.name for node in tree.body if isinstance(node, ast.ClassDef)
+    )
+    assert class_names == _DEFERRED_EXPECTED_CLASS_NAMES
+    function_names = tuple(
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    assert function_names == _DEFERRED_EXPECTED_FUNCTION_NAMES
+
+    deferred_error = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "GGUFAmbiguousCuratedMatchError"
+    )
+    assert len(deferred_error.bases) == 1
+    assert isinstance(deferred_error.bases[0], ast.Name)
+    assert deferred_error.bases[0].id == "GGUFError"
+    assert _deferred_ast_fingerprint(source) == _DEFERRED_AST_SHA256
+
+
+def _replace_deferred_function_body_with_pass(source: str, name: str) -> str:
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    function.body = [ast.Pass()]
+    return ast.unparse(ast.fix_missing_locations(tree))
 
 
 def _gguf_header(*, tensors: int = 0, metadata: int = 0) -> bytes:
@@ -938,6 +1092,8 @@ def test_admission_import_boundary_allows_only_parser_dependencies():
         "import ctypes",
         "import cffi",
         "from textual.app import App",
+        '__import__("httpx")',
+        "from dataclasses import *",
     ],
 )
 def test_admission_import_boundary_rejects_disallowed_targets(source: str):
@@ -961,41 +1117,7 @@ def test_deferred_gguf_managed_import_is_source_only_and_unreferenced():
     deferred_path = model_artifacts / "_deferred_gguf_managed_import.py"
 
     source = deferred_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    docstring = ast.get_docstring(tree) or ""
-    assert "DEFERRED" in docstring
-    assert "TASK-1861" in docstring
-
-    empty_all = any(
-        isinstance(node, ast.AnnAssign)
-        and isinstance(node.target, ast.Name)
-        and node.target.id == "__all__"
-        and isinstance(node.value, ast.Tuple)
-        and not node.value.elts
-        for node in tree.body
-    )
-    assert empty_all
-
-    defined_functions = {
-        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-    }
-    assert {
-        "runtime_constraint_admits_pinned_version",
-        "_eligible_curated_descriptor",
-        "_local_gguf_descriptor",
-        "select_gguf_descriptor",
-    } <= defined_functions
-    assert "inspect_gguf" not in defined_functions
-
-    deferred_error = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef)
-        and node.name == "GGUFAmbiguousCuratedMatchError"
-    )
-    assert len(deferred_error.bases) == 1
-    assert isinstance(deferred_error.bases[0], ast.Name)
-    assert deferred_error.bases[0].id == "GGUFError"
+    _assert_deferred_source_contract(source)
 
     init_source = (model_artifacts / "__init__.py").read_text(encoding="utf-8")
     assert "_deferred_gguf_managed_import" not in init_source
@@ -1007,3 +1129,34 @@ def test_deferred_gguf_managed_import_is_source_only_and_unreferenced():
         and "_deferred_gguf_managed_import" in path.read_text(encoding="utf-8")
     ]
     assert references == []
+
+
+def test_deferred_source_contract_rejects_recovered_function_pass_body():
+    mutated = _replace_deferred_function_body_with_pass(
+        _deferred_source(),
+        "_release_tuple",
+    )
+    assert _deferred_ast_fingerprint(mutated) != _DEFERRED_AST_SHA256
+
+    with pytest.raises(AssertionError):
+        _assert_deferred_source_contract(mutated)
+
+
+def test_deferred_source_contract_rejects_pinned_version_change():
+    source = _deferred_source()
+    mutated = source.replace(
+        'TRANSCRIBE_CPP_VERSION = "0.1.3"',
+        'TRANSCRIBE_CPP_VERSION = "9.9.9"',
+    )
+    assert mutated != source
+    assert _deferred_ast_fingerprint(mutated) != _DEFERRED_AST_SHA256
+
+    with pytest.raises(AssertionError):
+        _assert_deferred_source_contract(mutated)
+
+
+def test_deferred_source_contract_rejects_later_nonempty_all_assignment():
+    mutated = f'{_deferred_source()}\n__all__ = ("select_gguf_descriptor",)\n'
+
+    with pytest.raises(AssertionError):
+        _assert_deferred_source_contract(mutated)
