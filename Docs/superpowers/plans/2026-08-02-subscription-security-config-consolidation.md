@@ -270,7 +270,7 @@ Run:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
-  Tests/Subscriptions/test_subscription_security_config_contract.py::test_shipped_config_does_not_advertise_subscription_security_switches \
+  Tests/Subscriptions/test_subscription_security_config_contract.py::test_shipped_subscription_config_has_no_security_child_table \
   Tests/test_config_console_defaults.py -q
 ```
 
