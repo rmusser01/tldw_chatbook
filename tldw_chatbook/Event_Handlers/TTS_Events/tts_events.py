@@ -926,11 +926,22 @@ class TTSEventHandler:
                 buffered_chunks: list[bytes] = []
                 buffered_bytes = 0
                 # Collected alongside `buffered_chunks` (which gets cleared
-                # on every flush) ONLY for wav -- see the streaming-seam
-                # comment above `_create_tts_artifact` for why WAV
-                # eligibility is decided from these, AFTER the unmodified
-                # write loop below, rather than before it.
-                wav_collect: list[bytes] | None = [] if audio_format == "wav" else None
+                # on every flush) ONLY for a wav response a sink could
+                # actually consume -- see the streaming-seam comment above
+                # `_create_tts_artifact` for why WAV eligibility is decided
+                # from these, AFTER the unmodified write loop below, rather
+                # than before it. Fix-round F3: gated on `sink_available()`
+                # too, not format alone -- `buffered_chunks` is already
+                # flushed and cleared in `_TTS_ARTIFACT_WRITE_BATCH_BYTES`
+                # batches, keeping peak memory bounded; `wav_collect`
+                # retains the WHOLE body for the lifetime of the call, so
+                # holding one when no sink could ever use it (the exact
+                # case the Global Constraint says must be left alone) would
+                # regress that bound for every wav response on a machine
+                # with no `sounddevice` at all -- e.g. a headless/CI box.
+                wav_collect: list[bytes] | None = (
+                    [] if _wants_wav_collection(audio_format) else None
+                )
 
                 def cleanup_late_write() -> None:
                     self._schedule_cancelled_artifact_cleanup(
@@ -1128,19 +1139,57 @@ class TTSEventHandler:
                 an opportunistic upgrade that simply didn't pan out.
 
         Returns:
-            The metrics `outcome_code` ("success" or "streaming_failed")
-            once the response has been fully consumed -- drained, stopped
-            (a deliberate interruption, e.g. one-voice displacement or a
-            later barge-in; not an error), or failed (only when
+            The metrics `outcome_code`: `"success"` for a natural drain,
+            `"interrupted"` for a deliberate stop (e.g. one-voice
+            displacement or a later barge-in -- not an error, but distinct
+            from a completed drain), or `"streaming_failed"` (only when
             `fallback_on_failure` is `False`). `None` when the sink failed
             to OPEN, or -- only when `fallback_on_failure` is `True` -- also
             when it failed mid-stream: either way, the caller must fall
             through to its own alternate path, so this method posts nothing
             and touches no bookkeeping in that case.
+
+        Note:
+            The response/provider lease this generation is holding (see
+            `_generate_tts`'s `response.aclose()`, in its own `finally`)
+            stays held for the FULL DURATION of `pump()` below -- i.e.
+            through actual playback, not just until the bytes were
+            received -- since `_generate_tts` cannot release it until this
+            method returns. Fix-round F8: worth noting explicitly as a
+            trade-off, not a bug -- pre-Task-4 the lease was released right
+            after the legacy write loop finished receiving bytes, well
+            before the file was ever played. With
+            `TTSService`'s 4-concurrent-operation cap this is not a
+            practical blocker in Console's single-utterance-at-a-time
+            usage, but it does mean a provider reconfiguration (or another
+            concurrent request) can now be delayed by up to one utterance's
+            playback length.
         """
         await self._stop_prior_legacy_clip()
         sink = StreamingPcmSink(on_event=self._post_sink_event)
-        sink.open(plan.sample_rate, plan.channels)
+        # Fix-round F2: `open()` is documented thread-safe and never
+        # raises, but it is NOT free -- lazily importing `sounddevice` on
+        # first use plus building/starting the real `OutputStream` measured
+        # ~65-110ms on a quiet machine, and CoreAudio device-open latency
+        # can be much worse when another process holds the device. Every
+        # OTHER blocking call in this class already goes through this same
+        # `_run_blocking_tts_io` offload seam (`>100ms -> worker`); `open()`
+        # is no exception, and reusing the seam (rather than a bare
+        # `asyncio.to_thread`) gets its cancellation handling for free: if
+        # this coroutine is cancelled while `open()` is still running on
+        # its own thread (which cannot itself be interrupted), the
+        # `on_cancelled_result`/`on_late_cancelled_result` hooks below
+        # still guarantee `sink.stop()` runs once `open()` actually
+        # finishes -- otherwise a sink that reached "open" only AFTER the
+        # cancellation had already unwound this call stack would never
+        # reach a terminal state at all (the carried terminal-call
+        # guarantee). `sink.stop()` is a safe, idempotent no-op if `open()`
+        # instead reached "failed" on its own.
+        await self._run_blocking_tts_io(
+            lambda: sink.open(plan.sample_rate, plan.channels),
+            on_cancelled_result=lambda _: sink.stop(),
+            on_late_cancelled_result=lambda _: sink.stop(),
+        )
         if sink.state == "failed":
             return None
 
@@ -1150,6 +1199,13 @@ class TTSEventHandler:
             skip_bytes=plan.skip_bytes,
             max_bytes=plan.data_bytes,
         )
+        # Fix-round F8: the `outcome_code` values returned below
+        # ("success"/"interrupted"/"streaming_failed") are a DELIBERATE
+        # expansion of `_generate_tts`'s metric label set, not covered by
+        # `_tts_outcome_code`'s bounded exception-type mapping (that
+        # function only ever runs for the legacy path's `except Exception`
+        # branch) -- listed together here as the closed set this method
+        # can produce, for anyone auditing metric label cardinality.
         if result.outcome in ("drained", "stopped"):
             await self._post_tts_message(
                 TTSProgressEvent(
@@ -1161,7 +1217,17 @@ class TTSEventHandler:
             await self._post_tts_message(
                 TTSCompleteEvent(message_id=message_id, audio_file=None)
             )
-            return "success"
+            if result.outcome == "drained":
+                return "success"
+            # "stopped": the sink was interrupted -- one-voice displacement
+            # by a later utterance, an explicit stop, or a barge-in -- not
+            # a natural drain. Still posted as a normal completion (no
+            # error: an interruption is not a failure, and there is
+            # nothing more useful to tell the user), but fix-round F8:
+            # labeled distinctly in the metric rather than folded into
+            # "success", which would misrepresent playback that was cut
+            # short as if it had played out in full.
+            return "interrupted"
 
         logger.warning(
             "Streaming TTS playback failed (outcome={}, reason={}, "
@@ -1592,8 +1658,33 @@ class TTSEventHandler:
             # message-scoped legacy-file-stop logic below. A no-op when
             # nothing is currently live.
             stop_live_sink()
+            if event.message_id is None:
+                # Fix-round F4: the bare/global stop -- e.g.
+                # `chat_screen.py`'s dictation-start, unconditionally
+                # posted before opening the mic, specifically to protect
+                # the mic/speaker mutual-exclusion invariant -- silenced
+                # the sink above but, before this fix, left legacy FILE
+                # playback untouched: every branch below requires a truthy
+                # `message_id`, so a bare stop was always a no-op for the
+                # legacy player. `_stop_prior_legacy_clip` unconditionally
+                # silences whatever the single-slot legacy player
+                # currently owns, which is exactly the "stop everything"
+                # semantics a bare stop needs. Deliberately scoped to ONLY
+                # the bare/global stop: a message-scoped stop keeps its
+                # own more careful message-id-matched logic below,
+                # unchanged (task-559 unit 2) -- stopping message A must
+                # never silence a different, still-playing message B.
+                await self._stop_prior_legacy_clip()
 
         if event.action == "play" and event.message_id:
+            # Fix-round F1: symmetric with `_stop_prior_legacy_clip` (which
+            # silences a legacy clip before a NEW streaming utterance
+            # starts) -- a legacy play request must silence a currently
+            # LIVE sink first, or the two independent audio-output paths
+            # (the sink's own `sounddevice.OutputStream` vs. the legacy
+            # `SimpleAudioPlayer`) would overlap into a double voice. A
+            # no-op when nothing is currently live.
+            stop_live_sink()
             # Get audio file with lock
             async with self._audio_files_lock:
                 audio_file = self._audio_files.get(event.message_id)
@@ -1817,6 +1908,23 @@ class TTSEventHandler:
 #######################################################################################################################
 #
 # Helper Functions
+
+
+def _wants_wav_collection(audio_format: str) -> bool:
+    """Whether wav bytes should be retained for the post-write sink-eligibility check.
+
+    Fix-round F3 (task-4 review): gated on BOTH the format AND
+    `sink_available()` -- not format alone -- so a machine with no
+    `sounddevice` at all (the exact case the Global Constraint says the
+    legacy path must be left byte- and memory-profile-identical for) never
+    pays the whole-body memory cost the legacy write loop's own
+    `_TTS_ARTIFACT_WRITE_BATCH_BYTES` batching was specifically designed to
+    avoid. `sink_available()` is a cheap `importlib.util.find_spec` probe
+    (measured at ~0.008ms), so hoisting it into this gate costs nothing.
+    A plain function (not inlined) so the gate itself is directly
+    unit-testable without needing to drive a full `_generate_tts` call.
+    """
+    return audio_format == "wav" and sink_available()
 
 
 async def _replay_drained_bytes(data: bytes) -> AsyncIterator[bytes]:

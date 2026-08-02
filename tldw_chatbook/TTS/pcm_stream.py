@@ -70,8 +70,13 @@ def sink_plan(
             "wav", "mp3". Compared case-sensitively against the two formats
             the sink understands; anything else is ineligible.
         sample_rate: The response's declared sample rate. Required for
-            "pcm" (returns `None` when absent); ignored for "wav", where the
-            validated header is authoritative.
+            "pcm" -- returns `None` when absent OR when present but not an
+            `int` (fix-round F8: an adapter/legacy-bridge bug supplying a
+            wrong-typed value must fail closed here, not raise deep inside
+            `StreamingPcmSink.open`'s `sample_rate * blocksize_ms // 1000`
+            arithmetic, where it would otherwise be swallowed by
+            `_generate_tts`'s generic exception handling) -- ignored for
+            "wav", where the validated header is authoritative.
         first_bytes: The response body (or its head). Required for "wav" --
             validated as a canonical PCM16 RIFF/WAVE body via
             `validate_pcm16_wav`. Unused for "pcm". Must be the COMPLETE WAV
@@ -96,7 +101,7 @@ def sink_plan(
         and their bytes are not audio.
     """
     if audio_format == _FORMAT_RAW_PCM:
-        if sample_rate is None:
+        if sample_rate is None or type(sample_rate) is not int:
             return None
         resolved_channels = _DEFAULT_CHANNELS if channels is None else channels
         return SinkPlan(

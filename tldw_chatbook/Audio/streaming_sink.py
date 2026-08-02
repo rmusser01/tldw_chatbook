@@ -1181,11 +1181,18 @@ async def pump(
                 chunk = chunk[remaining_skip:]
                 remaining_skip = 0
             if max_bytes is not None:
-                # `bytes_fed` is only ever mutated below, after this whole
-                # chunk has finished feeding (or the function has already
-                # returned) -- so at this point it accurately reflects every
-                # byte fed from every PRIOR chunk, making it safe to compute
-                # the remaining budget once, here, per chunk.
+                # `bytes_fed` IS mutated per-slice inside the inner `while
+                # chunk:` loop below (fix-round F8: the prior wording here
+                # claimed otherwise) -- but that loop for the PREVIOUS
+                # chunk has always already run to completion (or the
+                # function has already returned/broken out of the outer
+                # loop) by the time control reaches back here for a NEW
+                # chunk, so `bytes_fed` still accurately reflects every
+                # byte fed from every prior chunk at this exact point,
+                # making it safe to compute the remaining budget once, here,
+                # per chunk. `chunk` itself is then pre-trimmed to that
+                # budget below, so the inner loop feeding it whole cannot
+                # overshoot even though it mutates `bytes_fed` as it goes.
                 remaining_budget = max_bytes - bytes_fed
                 if remaining_budget <= 0:
                     break
