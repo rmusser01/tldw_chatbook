@@ -1,9 +1,11 @@
 ---
 id: TASK-601
 title: Add generation-fenced local STT executor
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:04'
+updated_date: '2026-08-02 23:52'
 labels:
   - stt
   - processes
@@ -14,8 +16,11 @@ dependencies:
   - TASK-599
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+  - backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+  - Docs/superpowers/specs/2026-08-02-task-601-local-stt-executor-design.md
+  - Docs/superpowers/plans/2026-08-02-task-601-local-stt-executor.md
 priority: high
 ---
 
@@ -35,3 +40,9 @@ Create one app-owned heavy-media process boundary that gives batch transcription
 - [ ] #6 FFmpeg and other preparation subprocesses are owned and terminated as a platform process tree before temporary cleanup on Windows, macOS, and Linux.
 - [ ] #7 Process tests cover same-model reuse, identity recycle, idle leases, crash release, stale callbacks, child cleanup, CPU retry in a fresh worker, and shutdown.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Define and test the private IPC, resident model identity, privacy, and exactly-once terminal contract. 2. Add and test one narrow POSIX/Windows worker-generation process-tree containment boundary. 3. Implement and spawn-test the generation-fenced LocalSTTExecutor controller and worker loop. 4. Add the smallest audio/video transcription-runner injection seam, reusable transcribe.cpp runtime, Parakeet residency, local snapshot validation, and managed lease lifetime. 5. Route only Parakeet ONNX and transcribe.cpp Library batch jobs through the executor while preserving the general parse pool and existing parent writer. 6. Run only TASK-601-focused tests/static checks, collect native macOS evidence, review the complete diff, and document the still-open Windows/Linux gates. ADR required: no. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md and backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md. Reason: those accepted ADRs already govern the process, residency, lease, fencing, retry, and direct-local GGUF boundaries.
+<!-- SECTION:PLAN:END -->
