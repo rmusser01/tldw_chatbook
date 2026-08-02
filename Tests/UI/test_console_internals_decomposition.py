@@ -6,7 +6,7 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.events import Paste
+from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
@@ -4216,3 +4216,51 @@ async def test_console_session_settings_action_noop_while_setup_modal_blocking()
         await pilot.pause(0.2)
         assert len(host.screen_stack) == before_depth
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleSettingsModal"
+
+
+@pytest.mark.asyncio
+async def test_alt_letter_is_not_captured_as_composer_typing():
+    """TASK-1800: Alt+<letter> must not be swallowed as composer text.
+
+    `ChatScreen.on_key` routes every `is_printable` key into the draft. The
+    real terminal parser yields `Key("alt+m", "m")` (`_xterm_parser.py`
+    renames the key but passes the bare letter as `character`), so the chord
+    was `is_printable`, got captured as typing, and the screen's own
+    `Binding("alt+m", ...)` never ran -- pressing it inserted a literal "m"
+    into the user's draft.
+
+    **This cannot be written with `pilot.press("alt+m")`.** Textual's test
+    pilot builds the event as `char = key if len(key) == 1 else None`
+    (`app.py`), so a pilot alt-chord arrives with `character=None` and
+    `is_printable` False -- the bug is invisible to it. That is why the whole
+    suite passed while a real terminal typed stray letters into the draft.
+    The event below is constructed the way the parser really builds it.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        for chord, letter in (("alt+m", "m"), ("alt+w", "w"), ("alt+t", "t")):
+            event = Key(chord, letter)
+            assert event.is_printable, "precondition: the parser marks these printable"
+            console.on_key(event)
+            await pilot.pause(0.05)
+            assert composer.draft_text() == "", (
+                f"{chord} was typed into the draft: {composer.draft_text()!r}"
+            )
+            assert not event._forwarded, f"{chord} should not be consumed here"
+
+        # Control: the same letters WITHOUT alt must still reach the draft.
+        # A guard that skipped on `character` alone would pass above and
+        # silently break all text entry.
+        for letter in ("m", "w", "t"):
+            console.on_key(Key(letter, letter))
+            await pilot.pause(0.05)
+        assert composer.draft_text() == "mwt", (
+            f"plain typing broke: {composer.draft_text()!r}"
+        )

@@ -1512,6 +1512,37 @@ def _run_dictionary_summary_off_thread(
     )
 
 
+#: Modifier prefixes that make a key a CHORD rather than text input, even
+#: when it carries a printable ``character``. Textual's terminal parser
+#: renames the key (``alt+m``) but passes the bare letter through as the
+#: character (``_xterm_parser.py``), so ``is_printable`` is True for every
+#: ``alt+<letter>``. Without this check ``ChatScreen.on_key``'s
+#: printable-capture branch swallowed the chord as typing -- pressing Alt+M
+#: inserted a literal "m" into the draft and the screen's own
+#: ``Binding("alt+m", ...)`` never ran (TASK-1800).
+#:
+#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
+#: they leak today: their characters are C0 control bytes, which are not
+#: printable, so they never reached that branch. ``alt`` is the one that
+#: does. Listing all four keeps the rule "a modified key is not text" true
+#: by construction rather than by accident of the control-byte encoding.
+_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
+
+
+def _is_modified_chord(key: str) -> bool:
+    """Return whether ``key`` names a modifier chord rather than plain text.
+
+    Args:
+        key: Textual key name, e.g. ``"m"``, ``"alt+m"``, ``"shift+alt+m"``.
+
+    Returns:
+        True when any modifier prefix appears in the name. ``shift+`` alone
+        is deliberately NOT a chord -- ``shift+a`` is how a capital letter
+        arrives, and treating it as a chord would break typing.
+    """
+    return any(prefix in key for prefix in _CHORD_MODIFIER_PREFIXES)
+
+
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -19051,7 +19082,11 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.is_printable and event.character is not None:
+        if (
+            event.is_printable
+            and event.character is not None
+            and not _is_modified_chord(event.key)
+        ):
             composer.insert_text(event.character)
             self._sync_console_workbench_actions_from_draft()
             self._dismiss_console_guidance()
