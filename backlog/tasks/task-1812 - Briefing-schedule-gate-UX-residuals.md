@@ -1,7 +1,7 @@
 ---
 id: TASK-1812
 title: Briefing schedule gate/UX residuals
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 19:08'
 updated_date: '2026-08-02 09:30'
