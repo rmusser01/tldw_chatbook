@@ -34,6 +34,33 @@ QUADRANT_GLYPHS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
 # speckled glyphs.
 _FLAT_CELL_SPREAD = 8.0
 
+# Shade ramp for the monochrome path, darkest to lightest. The colour mosaic
+# puts 100% of its information in BACKGROUND colour -- a flat cell is a space
+# glyph with `on rgb(...)` -- so when colour is unavailable every cell becomes
+# an ordinary space and the image does not degrade, it disappears entirely.
+# Textual converts the whole app to monochrome when NO_COLOR is set
+# (`textual/app.py` -> `filter.py`), which is one confirmed way a user sees no
+# portrait at all. In that mode the GLYPH has to carry the luminance instead.
+#
+# Block Elements only (U+2591-2588), the same universal range the quadrant
+# glyphs come from, so this adds no new font risk.
+_SHADE_RAMP = " ░▒▓█"
+
+
+def _shade_glyph(lum: float) -> str:
+    """Return the shade glyph for a 0-255 luminance.
+
+    Args:
+        lum: Mean luminance of the cell.
+
+    Returns:
+        One character from ``_SHADE_RAMP``; darker luminance maps to a
+        sparser glyph so the rendering reads like the original image rather
+        than its negative.
+    """
+    index = int(lum / 256 * len(_SHADE_RAMP))
+    return _SHADE_RAMP[min(index, len(_SHADE_RAMP) - 1)]
+
 
 def _luminance(rgb: tuple[int, int, int]) -> float:
     return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
@@ -54,6 +81,7 @@ def mosaic_from_image(
     box_lines: int,
     *,
     fit: str = "contain",
+    monochrome: bool = False,
 ) -> Text:
     """Render ``image`` into a quadrant-glyph mosaic fitting a cell box.
 
@@ -73,6 +101,12 @@ def mosaic_from_image(
         fit: "contain" (default) letterboxes the whole image inside the
             box; "cover" scales to FILL the box and center-crops the
             overflow (object-fit: cover) -- aspect is preserved either way.
+        monochrome: Render luminance as SHADE GLYPHS instead of colour. The
+            colour path stores the whole image in background colour, so a
+            terminal without colour shows a box of blank spaces rather than
+            a portrait; set this when colour is unavailable (Textual sets
+            ``App.no_color`` from ``NO_COLOR``) so the glyph carries the
+            image instead.
 
     Returns:
         A non-wrapping Rich ``Text`` renderable, one line per cell row.
@@ -121,6 +155,12 @@ def mosaic_from_image(
             ]
             lums = [_luminance(c) for c in cell]
             spread = max(lums) - min(lums)
+            if monochrome:
+                # One glyph per cell from the mean luminance: no colour is
+                # consulted at all, so the result survives a monochrome
+                # filter that would blank the coloured path entirely.
+                text.append(_shade_glyph(sum(lums) / len(lums)))
+                continue
             if spread < _FLAT_CELL_SPREAD:
                 r, g, b = _mean(cell)
                 text.append(" ", style=f"on rgb({r},{g},{b})")

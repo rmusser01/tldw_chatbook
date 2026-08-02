@@ -113,3 +113,57 @@ def test_contain_stays_default():
 
     lines = text.plain.split("\n")
     assert len(lines) < 5
+
+
+@pytest.mark.unit
+def test_monochrome_mosaic_stays_visible_without_colour():
+    """A colourless terminal must still show the portrait, not a blank box.
+
+    The colour mosaic encodes 100% of its information in BACKGROUND colour:
+    a flat cell is a space glyph with `on rgb(...)`. Strip colour -- Textual
+    does exactly that when NO_COLOR is set (`app.py` -> monochrome filter) --
+    and every cell becomes an ordinary space, so the avatar does not degrade,
+    it vanishes. A Windows user reported precisely that: no character image
+    at all in the Console rail.
+
+    In monochrome mode the glyph itself must carry the luminance, so the
+    portrait survives with no colour at all.
+    """
+    import io
+    import re
+
+    from rich.console import Console
+
+    # Left half dark, right half light -- a shape that must remain readable.
+    img = PILImage.new("RGB", (32, 32), (10, 10, 10))
+    for y in range(32):
+        for x in range(16, 32):
+            img.putpixel((x, y), (245, 245, 245))
+
+    def emitted(renderable, **console_kw):
+        buf = io.StringIO()
+        Console(file=buf, width=20, force_terminal=True, **console_kw).print(renderable)
+        return buf.getvalue()
+
+    # Colour path is unchanged: still carries the image, however it is drawn.
+    colour = emitted(mosaic_from_image(img, 16, 8, fit="contain"),
+                     color_system="truecolor")
+    assert re.findall(r"\x1b\[[0-9;]*m", colour), "colour mosaic lost its colour"
+
+    # Monochrome path: no colour escapes available, so the GLYPHS must carry it.
+    mono = mosaic_from_image(img, 16, 8, fit="contain", monochrome=True)
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", emitted(mono, color_system=None))
+    glyphs = set(plain.replace("\n", "")) - {" "}
+    assert glyphs, (
+        "monochrome mosaic rendered nothing but spaces -- invisible, which is "
+        "the reported bug"
+    )
+    # And it must be a real image, not a solid block: the dark half and the
+    # light half have to use different glyphs.
+    rows = [r for r in plain.splitlines() if r.strip()]
+    assert rows, "no rows rendered"
+    widest = max(rows, key=len)
+    left, right = widest[: len(widest) // 2], widest[len(widest) // 2 :]
+    assert set(left) != set(right), (
+        f"monochrome mosaic is uniform -- shape lost: {widest!r}"
+    )

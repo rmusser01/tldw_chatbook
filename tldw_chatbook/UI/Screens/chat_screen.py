@@ -1378,6 +1378,7 @@ def _character_avatar_fallback_renderable(
     *,
     box_cols: int = CHARACTER_AVATAR_COLS,
     box_lines: int = CHARACTER_AVATAR_LINES,
+    monochrome: bool = False,
 ):
     """Bake the rail avatar's non-graphics renderable from a PIL image.
 
@@ -1389,10 +1390,18 @@ def _character_avatar_fallback_renderable(
         pil: The decoded portrait.
         box_cols: Target width in columns (task-1661: rail-derived).
         box_lines: Target height in lines.
+        monochrome: Carry the image in shade GLYPHS rather than background
+            colour. The coloured mosaic is spaces styled ``on rgb(...)``, so
+            with colour unavailable it renders as a blank box -- the avatar
+            does not degrade, it disappears. Textual switches the whole app
+            to monochrome when ``NO_COLOR`` is set, which is one confirmed
+            way a user sees no portrait at all.
     """
     from ...Utils.mosaic_render import mosaic_from_image
 
-    return mosaic_from_image(pil, box_cols, box_lines, fit="contain")
+    return mosaic_from_image(
+        pil, box_cols, box_lines, fit="contain", monochrome=monochrome
+    )
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -7634,7 +7643,10 @@ class ChatScreen(BaseAppScreen):
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
                 pixels = _character_avatar_fallback_renderable(
-                    spec["pil"], box_cols=box_cols, box_lines=box_lines
+                    spec["pil"],
+                    box_cols=box_cols,
+                    box_lines=box_lines,
+                    monochrome=bool(getattr(self.app, "no_color", False)),
                 )
             widget = Static(
                 pixels if pixels is not None else "",
