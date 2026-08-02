@@ -69,15 +69,46 @@ def _literal_collection_values(node: ast.AST) -> set[str] | None:
     return None
 
 
+def _egress_metadata_endpoints(source_tree: ast.Module) -> frozenset[str]:
+    """Return endpoint literals assigned to the egress metadata policy."""
+    endpoints: set[str] = set()
+    for node in source_tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name)
+            and target.id in {"_METADATA_IPS", "METADATA_HOSTNAMES"}
+            for target in node.targets
+        ):
+            continue
+        endpoints.update(
+            child.value
+            for child in ast.walk(node.value)
+            if isinstance(child, ast.Constant) and isinstance(child.value, str)
+        )
+    return frozenset(endpoints)
+
+
 @pytest.fixture(scope="module")
 def _policy_inventory() -> _PolicyInventory:
     """Scan production Python sources once for all shared-policy duplicates."""
-    endpoint_paths = {endpoint: set() for endpoint in CANONICAL_METADATA_ENDPOINTS}
+    source_paths = _production_python_files()
+    egress_source_path = PACKAGE_ROOT / EGRESS_POLICY_PATH
+    egress_tree = _source_tree(egress_source_path)
+    metadata_endpoints = CANONICAL_METADATA_ENDPOINTS | _egress_metadata_endpoints(
+        egress_tree
+    )
+    endpoint_paths = {endpoint: set() for endpoint in metadata_endpoints}
     violations: dict[tuple[Path, int], set[str]] = {}
 
-    for source_path in _production_python_files():
+    for source_path in source_paths:
         relative_path = source_path.relative_to(PACKAGE_ROOT)
-        for node in ast.walk(_source_tree(source_path)):
+        source_tree = (
+            egress_tree
+            if source_path == egress_source_path
+            else _source_tree(source_path)
+        )
+        for node in ast.walk(source_tree):
             if isinstance(node, ast.Constant) and node.value in endpoint_paths:
                 endpoint_paths[node.value].add(relative_path)
 
@@ -123,6 +154,30 @@ def test_literal_collection_values_handles_static_mixed_collections(
     node = ast.parse(source, mode="eval").body
 
     assert _literal_collection_values(node) == expected
+
+
+def test_egress_metadata_endpoints_include_future_assigned_literals() -> None:
+    """The ownership scan follows new endpoints declared by egress policy."""
+    source_tree = ast.parse(
+        """
+_METADATA_IPS = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),
+        ipaddress.ip_address("192.0.2.99"),
+    }
+)
+METADATA_HOSTNAMES = frozenset(
+    {"metadata.google.internal", "metadata.future.invalid"}
+)
+"""
+    )
+
+    assert _egress_metadata_endpoints(source_tree) == {
+        "169.254.169.254",
+        "192.0.2.99",
+        "metadata.google.internal",
+        "metadata.future.invalid",
+    }
 
 
 def test_shipped_subscription_config_has_no_security_child_table() -> None:
