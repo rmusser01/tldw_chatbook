@@ -102,9 +102,7 @@ This must inspect the real template, not a copied fixture.
 
 ### Step 2: Write the metadata single-owner sentinel
 
-In the same test module, parse every production `tldw_chatbook/**/*.py` file
-with `ast`. For each exact canonical metadata string below, collect the relative
-paths containing that string constant:
+In the same test module, retain the following fixed regression baseline:
 
 ```python
 CANONICAL_METADATA_ENDPOINTS = {
@@ -118,8 +116,14 @@ CANONICAL_EGRESS_PATH = Path("Utils/egress.py")
 ```
 
 Assert every endpoint has exactly `{CANONICAL_EGRESS_PATH}` as its production
-owner. Scanning AST string constants avoids false positives from comments while
-still catching renamed duplicate tables.
+owner. Also derive additional current endpoints from the top-level
+`Assign`/`AnnAssign` declarations of `_METADATA_IPS` and
+`METADATA_HOSTNAMES` in `Utils/egress.py`, and apply the same single-owner check
+to the union. Scanning AST string constants avoids false positives from
+comments while still catching renamed duplicate tables. Collect the inventory
+in a module-scoped fixture that parses every production Python file once,
+reusing the already-parsed egress tree, and sort endpoints and paths so failure
+diagnostics are deterministic.
 
 ### Step 3: Write the scheme-policy sentinel
 
@@ -131,19 +135,22 @@ blocked-scheme markers:
 BLOCKED_SCHEME_MARKERS = {"file", "ftp", "gopher", "javascript", "data"}
 ```
 
-Also assert the live subscription contract explicitly:
+Read the `SecurityValidator` class assignments from
+`Subscriptions/security.py`'s AST without importing the `Subscriptions`
+package, then assert the source contract explicitly:
 
 ```python
-assert "BLOCKED_SCHEMES" not in SecurityValidator.__dict__
-assert "METADATA_ENDPOINTS" not in SecurityValidator.__dict__
-assert SecurityValidator.ALLOWED_SCHEMES == {"http", "https"}
+assert not validator_duplicate_attributes
+assert validator_allowed_schemes == {"http", "https"}
 ```
 
 The threshold allows ordinary isolated scheme strings elsewhere while catching
 an authoritative-looking denylist. The retained HTTP/HTTPS allowlist is not a
 denylist and is required independently of the SSRF kill switch. There are no
 excluded production paths: any future legitimate duplicate must first add an
-explicit consistency test and deliberately revise this sentinel.
+explicit consistency test and deliberately revise this sentinel. Sort scheme
+names and violation locations in diagnostics so hash iteration cannot make
+failure output unstable.
 
 ### Step 4: Run the new contract tests and verify RED
 
@@ -651,3 +658,70 @@ tests, and this task's plan/design/task docs. It contains no dependency, vendor,
 or licence-metadata edits, and no hot-path algorithm, I/O, or concurrency
 changes. No performance benchmark is warranted for that deletion-only scope;
 the installed-distribution contract above is the licence/package evidence.
+
+## Final closeout verification evidence
+
+Recorded 2026-08-02 after the final rebase, sentinel corrections, and
+whole-branch review. This section supersedes the pre-closeout blockers above;
+the interrupted pre-rebase run and stale ancestry/format findings remain only
+as historical evidence. Tasks 0 through 6 and all of their planned steps are
+complete.
+
+### A. Reviewed base and branch hygiene
+
+The reviewed development base was
+`5a7400801ef75e1f9b510d8ab22fa883ad8a597b`. At final verification the branch
+was clean, 19 commits ahead, and not behind `origin/dev`.
+`git merge-base --is-ancestor origin/dev HEAD`, branch diff/status checks,
+`git diff --check`, the stale-key scan, and the source-only subscription import
+isolation probe were green. The final diff remained limited to TASK-859's
+config/security/documentation files, three targeted tests, and task evidence.
+
+### B. Focused and subscription verification
+
+The final focused matrix completed with **115 passed and 1
+`RequestsDependencyWarning`**. The latest rebase also introduced unrelated
+feed-server subscription tests. The first sandboxed `Tests/Subscriptions` run
+therefore reported **33 socket-permission failures**; rerunning the same suite
+with the required socket access outside the sandbox completed with **604 passed
+and the same warning**.
+
+Static verification was green: normal Ruff lint for the selected config,
+security, wiring, and contract files; Ruff with only the inherited E402 rule
+ignored for `Tests/Utils/test_egress.py`; selected Ruff format checks;
+`compileall` for every changed Python file; and both working-tree and branch
+`git diff --check` checks. The installed-distribution contract completed with
+**1 passed**, covering the packaged licence metadata and notices.
+
+### C. Full-suite result and exact-base comparison
+
+The repository suite is **not claimed green**. It completed on the pre-rebase
+feature branch pinned to base
+`1ff1ee8a61aee628c7b0a48fefd917dff54c9b8a` with **27,214 passed, 203 skipped,
+13 failed, 0 errors, and 124 warnings in 5h33m44s**. All 13 exact failing node
+IDs were rerun in isolation on both that feature branch and an untouched
+worktree at the pinned base; both produced the identical result: **6 failed and
+7 passed**.
+
+The six deterministic failures were the persistent-diagnostic inventory, LLM
+destination-action census, unified-shell worker-count census, watchlists source
+form `size0`, watchlists frequency control `size1`, and monochrome mosaic-color
+contracts. The other seven nodes passed in isolation on both revisions and are
+order-dependent full-suite flakes. No failure reproduced only on the TASK-859
+branch, so the comparison found no branch-specific full-suite regression.
+
+### D. Independent final review and bounded assessment
+
+The final whole-branch reviewer independently reran the **115-test focused
+matrix**, a **13-pass config source-template probe**, the **1-pass installed
+distribution contract**, and static, ancestry, and branch-diff checks. All were
+green and the reviewer reported no findings.
+
+The security assessment is bounded by the focused egress matrix, including the
+invariant that FTP remains rejected when egress policy is disabled. The diff
+adds no dependency, vendored code, licence metadata, hot-path algorithm, I/O,
+or concurrency behavior, so no performance benchmark is warranted. The
+installed-distribution contract is the package/licence evidence. The incident
+that exposed the disabled-egress scheme gap is recorded in
+`backlog/docs/lessons-testing-evidence.md`: exercise disabled and bypass modes
+before deleting an apparently duplicate guard.

@@ -3,11 +3,11 @@ id: TASK-859
 title: >-
   Delete or implement the unread [subscriptions.security] switches and stale
   metadata denylist
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 04:35'
-updated_date: '2026-08-02 13:56'
+updated_date: '2026-08-02 22:01'
 labels:
   - security
   - config
@@ -24,10 +24,10 @@ Separately, Subscriptions/security.py:79,85-89 defines its own BLOCKED_SCHEMES a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The [subscriptions.security] keys either actually gate the behavior they claim to (SSRF protection, redirect cap, SSL verification, XXE protection, timeout), routed through the real egress.py/monitoring_engine.py controls, or are removed from config.py and the default TOML
-- [ ] #2 Subscriptions/security.py's BLOCKED_SCHEMES and METADATA_ENDPOINTS are either removed in favor of Utils/egress.py's enforcement, or kept in sync with it (including the two currently-missing entries) and demonstrably consulted somewhere
-- [ ] #3 A test confirms that toggling whichever [subscriptions.security] keys survive actually changes runtime behavior (e.g. redirect count, SSL verification), not just that the config value round-trips
-- [ ] #4 No security-relevant metadata/scheme denylist exists in more than one place without a test tying them together
+- [x] #1 The [subscriptions.security] keys either actually gate the behavior they claim to (SSRF protection, redirect cap, SSL verification, XXE protection, timeout), routed through the real egress.py/monitoring_engine.py controls, or are removed from config.py and the default TOML
+- [x] #2 Subscriptions/security.py's BLOCKED_SCHEMES and METADATA_ENDPOINTS are either removed in favor of Utils/egress.py's enforcement, or kept in sync with it (including the two currently-missing entries) and demonstrably consulted somewhere
+- [x] #3 A test confirms that toggling whichever [subscriptions.security] keys survive actually changes runtime behavior (e.g. redirect count, SSL verification), not just that the config value round-trips
+- [x] #4 No security-relevant metadata/scheme denylist exists in more than one place without a test tying them together
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,47 @@ Reason: Removes misleading unused configuration and duplicate dead policy data w
 6. Correct subscription architecture documentation to name the real controls and legacy-section behavior.
 7. Run focused, subscription-wide, full-suite, static, packaging/licence, review, lesson, and final-verification gates; then complete task/design/plan hygiene.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Removed the unread `[subscriptions.security]` table from the shipped TOML and
+deleted the unused `SecurityValidator.BLOCKED_SCHEMES` and
+`SecurityValidator.METADATA_ENDPOINTS` data, leaving `Utils/egress.py` as the
+single metadata/private-address policy owner. Retained the subscription-local
+HTTP/HTTPS `ALLOWED_SCHEMES` boundary because disabled egress returns before its
+scheme check; removing that guard would have admitted FTP whenever
+`[web_security].enabled = false`. Existing user configuration is not rewritten,
+so legacy tables remain harmless, ignored, and safe to delete.
+
+Added direct runtime coverage for enabled/disabled `[web_security]`, disabled
+egress plus FTP, input/exception contracts, and every canonical metadata
+endpoint. Added a source-only AST sentinel that retains the fixed five endpoint
+baseline, derives new endpoints from egress assignments, parses production
+files once, and reports deterministic duplicate-policy diagnostics without
+importing the `Subscriptions` package. Updated `Subscriptions/SUB-Arch.md`, the
+design, and the plan to describe the actual optional monitor `ssl_verify`
+mapping, network parser fallbacks, direct stdlib OPML path, and unused XML
+validator accurately. Review hardened the sentinel's collection, assignment,
+import-isolation, and diagnostic contracts; the final independent review found
+no remaining issues.
+
+Final verification on base `5a7400801ef75e1f9b510d8ab22fa883ad8a597b`
+recorded 115 focused passes, 604 `Tests/Subscriptions` passes outside the
+sandbox, one installed-distribution contract pass, and green Ruff, format,
+compile, diff, ancestry, stale-key, and import-isolation checks. The full suite
+is not claimed green: on the pre-rebase branch pinned to base
+`1ff1ee8a61aee628c7b0a48fefd917dff54c9b8a` it completed with 27,214 passed,
+203 skipped, 13 failed, 0 errors, and 124 warnings in 5h33m44s. Rerunning all 13
+nodes on both that branch and its untouched base produced the same six
+deterministic failures and seven order-dependent full-suite flakes, with no
+branch-specific reproduction.
+
+ADR required: no; this deletion preserves the existing TASK-328 security and
+runtime boundaries. Security evidence is the focused egress matrix, including
+the disabled-policy FTP invariant. The change adds no dependency, vendored
+code, licence metadata, hot-path algorithm, I/O, or concurrency behavior, so no
+performance benchmark was warranted; the installed-wheel contract supplies the
+licence/package evidence. Added the reusable lesson that apparent duplicate
+guards must be tested in disabled/bypass modes before consolidation.
+<!-- SECTION:NOTES:END -->

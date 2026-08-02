@@ -1,5 +1,7 @@
 # Subscription Security Configuration Consolidation (TASK-859)
 
+**Status:** Implemented and verified
+
 ## Context
 
 The shipped configuration advertises five settings under
@@ -126,11 +128,16 @@ or test-only application is introduced.
    while `[web_security].enabled` is false.
 4. Metadata tests cover every canonical egress endpoint, including
    `100.100.100.200` and `fd00:ec2::254`.
-5. An AST-based architecture sentinel scans production Python string constants
-   and fails if canonical metadata endpoint data appears outside
-   `Utils/egress.py`. A separate assertion prevents the unused
-   `BLOCKED_SCHEMES` denylist from returning while allowing the required
-   subscription HTTP/HTTPS allowlist.
+5. An AST-based architecture sentinel retains a fixed five-endpoint regression
+   baseline and also derives any additional current endpoints from the
+   top-level `Assign`/`AnnAssign` declarations of `_METADATA_IPS` and
+   `METADATA_HOSTNAMES` in `Utils/egress.py`. It fails if any resulting endpoint
+   string appears outside that canonical source. The same source-only scan
+   reads `SecurityValidator` class assignments without importing the
+   `Subscriptions` package, prevents the unused `BLOCKED_SCHEMES` and
+   `METADATA_ENDPOINTS` attributes from returning, and requires the subscription
+   HTTP/HTTPS allowlist. A module-scoped inventory parses each production file
+   once and sorts endpoint, path, and scheme diagnostics deterministically.
 
 Focused verification covers `Tests/Utils/test_egress.py`,
 `Tests/Subscriptions/test_subscription_egress_wiring.py`, and the new
