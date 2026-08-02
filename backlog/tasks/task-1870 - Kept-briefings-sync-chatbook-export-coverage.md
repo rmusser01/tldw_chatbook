@@ -1,7 +1,7 @@
 ---
 id: TASK-1870
 title: 'Kept briefings: sync/chatbook-export coverage'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02 00:16'
 updated_date: '2026-08-02 13:34'
