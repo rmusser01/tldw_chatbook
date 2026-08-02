@@ -12,6 +12,7 @@ impossible.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -38,16 +39,47 @@ class _StyledCardHarness(App[None]):
         yield ChatApprovalCard()
 
 
+async def _show_batch(app, pilot, calls: list[dict]) -> None:
+    """Render `calls` on the card and wait for real geometry, by CONDITION.
+
+    `ChatApprovalCard.on_mount` hides `#approval-batch-body` through
+    `call_after_refresh`. A fixed number of `pilot.pause()` calls RACES that
+    deferred hide: land `set_batch` first and the hide runs afterwards,
+    leaving every region at 0 -- a machine-speed-dependent failure, and the
+    exact shape of the flaky test filed as TASK-1900. So this waits for the
+    two states it actually depends on instead of counting frames: first that
+    the deferred hide has run, then that the rows have been laid out.
+
+    Args:
+        app: The mounted harness app.
+        pilot: Its `Pilot`, used to let the event loop settle between checks.
+        calls: Pending calls to render, in `set_batch` shape.
+
+    Raises:
+        AssertionError: If either state is not reached within the deadline.
+    """
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        body = app.query("#approval-batch-body")
+        if body and not body.first().display:
+            break
+    else:
+        raise AssertionError("card never finished its deferred mount hide")
+
+    app.query_one(ChatApprovalCard).set_batch(calls, timeout_seconds=45.0)
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        rows = list(app.query(".approval-row"))
+        if len(rows) == len(calls) and all(r.region.width > 0 for r in rows):
+            return
+    raise AssertionError("approval rows never received a non-zero layout")
+
+
 async def _row_geometry(cols: int, calls: list[dict]):
     app = _StyledCardHarness()
     async with app.run_test(size=(cols, 40)) as pilot:
-        # `on_mount` defers hiding the batch body via `call_after_refresh`;
-        # without this pause that deferred hide lands AFTER set_batch and
-        # every region measures 0.
-        await pilot.pause()
-        app.query_one(ChatApprovalCard).set_batch(calls, timeout_seconds=45.0)
-        await pilot.pause()
-        await pilot.pause()
+        await _show_batch(app, pilot, calls)
         row = app.query_one(".approval-row")
         args = app.query_one(".approval-row-args", Static)
         # The SVG export is what the compositor actually painted. `render()`
@@ -60,6 +92,12 @@ async def _row_geometry(cols: int, calls: list[dict]):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cols", [80, 120, 212])
 async def test_arguments_get_full_row_width_at_every_supported_size(cols: int):
+    """The row's arguments span it, at every width the Console supports.
+
+    Args:
+        cols: Terminal width under test -- 80 is the classic floor where the
+            54 fixed cells of controls hurt most, 212 a full-screen session.
+    """
     row_w, args_w, _text = await _row_geometry(
         cols,
         [{"llm_name": "read_file", "arguments": {"path": "~/notes/secrets.md"}}],
@@ -88,6 +126,11 @@ async def test_the_distinguishing_part_of_a_path_is_visible_at_80_columns():
 async def test_the_action_bar_stays_reachable_on_a_short_terminal(rows: int):
     """The commit controls must never be pushed off screen by row count.
 
+    Args:
+        rows: Number of pending calls in the batch. 4 is the count this
+            change would have broken without the row cap; 10 is well past
+            what fits, so the rows must scroll rather than grow.
+
     The card is `height: auto` inside a plain Container (`ChatTaskCards`), so
     a long batch simply grew past the viewport and took Submit / Approve-all /
     Deny-all with it. This was ALREADY broken before TASK-1846 -- on an 80x24
@@ -100,8 +143,9 @@ async def test_the_action_bar_stays_reachable_on_a_short_terminal(rows: int):
     """
     app = _StyledCardHarness()
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        app.query_one(ChatApprovalCard).set_batch(
+        await _show_batch(
+            app,
+            pilot,
             [
                 {
                     "llm_name": "read_file",
@@ -110,10 +154,7 @@ async def test_the_action_bar_stays_reachable_on_a_short_terminal(rows: int):
                 }
                 for i in range(rows)
             ],
-            timeout_seconds=45.0,
         )
-        await pilot.pause()
-        await pilot.pause()
 
         region = app.query_one("#approval-submit").region
         assert region.y + region.height <= 24, (
@@ -124,23 +165,21 @@ async def test_the_action_bar_stays_reachable_on_a_short_terminal(rows: int):
 
 @pytest.mark.asyncio
 async def test_a_row_hugs_its_content_instead_of_ballooning():
-    """The headline is a Horizontal, and Horizontals default to `height: 1fr`.
+    """`.approval-row-controls` is a Horizontal, and those default to 1fr.
 
     That is the fr-inside-flex trap this stylesheet block already documents
-    for `.approval-row` itself. Left at the default the new headline grows to
+    for `.approval-row` itself. Left at the default the controls row grows to
     14 lines and the row to 15 (measured), so two pending calls would fill an
     80x24 terminal with one visible row. Caught only by measuring: the args
     width and action-bar tests both still pass while the row is 3x too tall.
     """
     app = _StyledCardHarness()
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        app.query_one(ChatApprovalCard).set_batch(
+        await _show_batch(
+            app,
+            pilot,
             [{"llm_name": "read_file", "arguments": {"path": "~/notes/secrets.md"}}],
-            timeout_seconds=45.0,
         )
-        await pilot.pause()
-        await pilot.pause()
 
         row = app.query_one(".approval-row")
         assert row.region.height <= 6, (
