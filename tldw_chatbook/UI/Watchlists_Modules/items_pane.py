@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -90,6 +91,13 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         self._column_keys: list[ColumnKey] = []
 
     def compose(self):
+        """Build the toolbar (refresh, search, status filter) and the items
+        table, one row per filtered item.
+
+        Rows are added here ONCE; runtime status/queued changes repaint single
+        cells via `update_item_status_cell` / `update_item_queued_cell` rather
+        than recomposing (a recompose destroys the live table and drops focus).
+        """
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="items-refresh-button", variant="primary")
             # TASK-995: same one-row-strip/three-row-child clipping the
@@ -116,11 +124,22 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         filtered = self._filtered_items()
         self._rendered_items = filtered
         for item in filtered:
+            # `DataTable` markup-parses `str` cells, so item-derived free text
+            # (a feed title such as `[bold red]`, a source name) would be
+            # INTERPRETED rather than displayed -- and remote feed content
+            # reaches these cells verbatim (TASK-1348 AC#1). Escape at this
+            # boundary, following the rule `content_pane.render_article`
+            # states in full: defend where the parser actually is. `status`
+            # and `created_at` are app-controlled today, but they are escaped
+            # too so every VARIABLE cell is uniformly safe and nobody has to
+            # re-audit which columns happen to carry remote text. The Queued
+            # column is exempt: it is one of two app CONSTANTS (`_QUEUED_GLYPH`
+            # or ""), never item-derived, so there is nothing to escape.
             table.add_row(
-                str(item.get("title") or "Untitled"),
-                str(item.get("source_name") or "-"),
-                str(item.get("status") or "-"),
-                str(item.get("created_at") or "-"),
+                escape_markup(str(item.get("title") or "Untitled")),
+                escape_markup(str(item.get("source_name") or "-")),
+                escape_markup(str(item.get("status") or "-")),
+                escape_markup(str(item.get("created_at") or "-")),
                 self._QUEUED_GLYPH if item.get("queued_for_briefing") else "",
                 key=str(item.get("id") or id(item)),
             )
@@ -210,7 +229,13 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         except NoMatches:
             return
         try:
-            table.update_cell(str(item_id), self._column_keys[2], str(status))
+            # Escape at this repaint boundary too, exactly as `compose()`'s
+            # `add_row` does -- `DataTable.update_cell` markup-parses its
+            # value the same way, so leaving the sibling write site unescaped
+            # would silently reopen the sink `compose()` closed (TASK-1348).
+            table.update_cell(
+                str(item_id), self._column_keys[2], escape_markup(str(status))
+            )
         except CellDoesNotExist:
             # The row is not currently rendered (filtered out, or the table
             # has been rebuilt since). Nothing to repaint; not an error.
