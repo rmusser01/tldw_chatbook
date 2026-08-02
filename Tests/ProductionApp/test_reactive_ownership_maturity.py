@@ -141,13 +141,30 @@ async def _wait_for_screen(
     canonical_tab: str,
     *,
     previous_screen: object | None = None,
+    original_screen: object | None = None,
 ):
+    """Poll until ``app.screen`` is a freshly-switched-to instance of ``screen_type``.
+
+    Two independent exclusions, both by identity:
+
+    - ``previous_screen``: whatever was mounted immediately before this call
+      (any route). Guards the race where the predicate's first check -- run
+      before any ``pilot.pause`` -- could still see the still-mounted
+      outgoing screen and match it by (type, tab) alone.
+    - ``original_screen``: the SAME route's screen instance from an earlier
+      visit (e.g. loop 1's instance, when this call is loop 2's revisit).
+      This is the mechanism by which
+      ``test_registered_routes_use_fresh_production_owners_and_safe_snapshots``
+      proves a revisited route gets a genuinely new screen, not a cached/
+      reused one -- dropping it would make that assertion vacuous.
+    """
     await _wait_until(
         pilot,
         lambda: (
             type(app.screen) is screen_type
             and app.current_tab == canonical_tab
             and app.screen is not previous_screen
+            and app.screen is not original_screen
             and app.screen.is_mounted
         ),
         f"production TldwCli did not route to exact {screen_type.__name__}",
@@ -449,13 +466,16 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
         )
 
     app = _production_app(monkeypatch)
+    original_screens: dict[str, object] = {}
     # Threaded through every ``_wait_for_screen`` call across both loops
     # below (never reset): "search" folding into Library (RAG UX v2 PR-1,
     # Task 1) makes "search" and "ingest" adjacent ROUTE_SPECS entries that
     # share the exact same (LibraryScreen, TAB_LIBRARY) target. Without
     # excluding the immediately-preceding screen by identity, the first,
     # pre-``pilot.pause`` predicate check could match the still-mounted
-    # outgoing screen before ``switch_screen`` has actually run.
+    # outgoing screen before ``switch_screen`` has actually run. This is
+    # ADDITIONAL to, not a replacement for, the ``original_screen`` exclusion
+    # below -- see ``_wait_for_screen``'s docstring for why both are needed.
     last_screen: object | None = None
 
     async with app.run_test(size=(180, 55)) as pilot:
@@ -468,6 +488,7 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
                 canonical_tab,
                 previous_screen=last_screen,
             )
+            original_screens[route] = screen
             last_screen = screen
             await _exercise_route(route, screen, pilot)
             assert all(not hasattr(app, name) for name in RETIRED_TLDW_REACTIVES)
@@ -485,6 +506,7 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
                 screen_type,
                 canonical_tab,
                 previous_screen=last_screen,
+                original_screen=original_screens[route],
             )
             last_screen = screen
             await _assert_restored_route(route, screen, pilot)
