@@ -371,7 +371,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
             self._scripts = list(scripts)
             self.calls = 0
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **_kwargs):
             chunks = self._scripts[self.calls]
             self.calls += 1
             for chunk in chunks:

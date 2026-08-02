@@ -908,7 +908,7 @@ class _ChunkGateway:
         self._scripts = list(scripts)
         self.calls = 0
 
-    async def stream_chat(self, resolution, messages, tools=None):
+    async def stream_chat(self, resolution, messages, tools=None, **_kwargs):
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:

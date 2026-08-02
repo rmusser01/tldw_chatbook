@@ -797,7 +797,10 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
     gateway = controller.provider_gateway
     real_stream_chat = gateway.stream_chat
 
-    async def stop_before_first_chunk(resolution, messages):
+    # `**kwargs` (forwarded verbatim): the agent bridge now always hands the
+    # gateway this run's `signals=`, since usage capture is no longer a
+    # citation-repair-only concern.
+    async def stop_before_first_chunk(resolution, messages, **kwargs):
         # Mirror ConsoleChatController.stop_active_run(): mark the message
         # stopped and flip should_cancel *before* the gateway ever streams
         # a chunk into the store -- simulating Stop landing while the
@@ -813,7 +816,7 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # run's per-session cancel_event, never the shared `_stop_requested`
         # flag -- simulate Stop via the real internal signalling path.
         controller._signal_stop(session_id=session_id)
-        async for chunk in real_stream_chat(resolution, messages):
+        async for chunk in real_stream_chat(resolution, messages, **kwargs):
             yield chunk
 
     gateway.stream_chat = stop_before_first_chunk

@@ -137,7 +137,7 @@ async def test_gateway_runner_accumulates_streamed_chunks():
         async def resolve_for_send(self, selection):
             return _Resolution()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **_kwargs):
             for chunk in ("A guarded ", "archivist."):
                 yield chunk
 
@@ -163,7 +163,7 @@ async def test_gateway_runner_reports_an_unready_provider():
         async def resolve_for_send(self, selection):
             return _Resolution()
 
-        async def stream_chat(self, resolution, messages):  # pragma: no cover
+        async def stream_chat(self, resolution, messages, **_kwargs):  # pragma: no cover
             raise AssertionError("must not send when the provider is not ready")
             yield ""
 
@@ -221,7 +221,7 @@ async def test_gateway_runner_reports_chunks_as_they_stream():
         async def resolve_for_send(self, selection):
             return _Resolution()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **_kwargs):
             for chunk in ("one ", "two"):
                 yield chunk
 
