@@ -1275,6 +1275,252 @@ async def test_system_analysis_opt_out_survives_recipe_path_replacement() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("include_system", [True, False])
+async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_fill(
+    include_system: bool,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        started.set()
+        await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id,
+            kind="no_change",
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field("goal", "content", "Edited before Fill.")
+        await pilot.pause()
+        edited_definition = modal.query_one(PromptBlockEditor).state.definition
+        assert modal.state.dirty is True
+
+        analysis_context = modal.query_one("#console-prompts-include-system", Checkbox)
+        disclosure = str(
+            modal.query_one(
+                "#console-prompts-recipe-analysis-disclosure", Static
+            ).renderable
+        )
+        assert str(analysis_context.label) == (
+            "Include system prompt as analysis context"
+        )
+        assert analysis_context.value is True
+        assert "Fill" in disclosure
+        assert "System apply" in disclosure
+        assert modal.query_one("#prompt-editor-apply-system", Checkbox).value is False
+
+        analysis_context.value = not include_system
+        await pilot.pause()
+        analysis_context.value = include_system
+        await pilot.pause()
+
+        assert modal._include_system_context is include_system
+        assert modal.query_one(PromptBlockEditor).state.definition == edited_definition
+        assert modal.state.dirty is True
+
+        modal.query_one("#console-prompts-recipe-fill", Button).press()
+        await started.wait()
+        await pilot.pause()
+
+        assert (
+            modal.query_one("#console-prompts-include-system", Checkbox).value
+            is include_system
+        )
+        assert driver.requests[-1].system_prompt == (
+            "Be accurate." if include_system else None
+        )
+        assert driver.requests[-1].system_fingerprint == (
+            "system-fingerprint" if include_system else None
+        )
+        assert driver.requests[-1].recipe_definition == replace(
+            edited_definition,
+            kind="block_recipe",
+        )
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_compact_recipe_working_copy_scrolls_to_the_block_editor() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+
+        scroll = modal.query_one("#console-prompts-recipe-scroll")
+        scroll.scroll_end(animate=False)
+        await pilot.pause()
+
+        editor = modal.query_one(PromptBlockEditor)
+        footer = modal.query_one("#console-prompts-footer")
+        assert editor.region.y < footer.region.y
+        assert editor.region.bottom > modal.query_one("#console-prompts-body").region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("navigation", ["close", "back", "escape"])
+async def test_held_improve_activation_navigation_cancels_and_ignores_late_resolution(
+    navigation: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    activation_calls = 0
+
+    async def activate() -> Any:
+        nonlocal activation_calls
+        activation_calls += 1
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            await release.wait()
+        return driver.context
+
+    kwargs = driver.kwargs()
+    kwargs["activate_improvement_context"] = activate
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        improve = modal.query_one("#console-prompts-improve", Button)
+        improve.press()
+        await started.wait()
+        await asyncio.sleep(0.05)
+
+        if navigation == "close":
+            modal.query_one("#console-prompts-close", Button).press()
+        elif navigation == "back":
+            modal.query_one("#console-prompts-back", Button).press()
+        else:
+            modal.action_back()
+        await asyncio.sleep(0.05)
+        dismissed_while_held = app.screen is not modal
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert dismissed_while_held is True
+        assert modal.state.mode == "browse"
+        assert activation_calls == 1
+        assert driver.requests == []
+
+
+@pytest.mark.asyncio
+async def test_held_improve_activation_disables_duplicate_resolution() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    activation_calls = 0
+
+    async def activate() -> Any:
+        nonlocal activation_calls
+        activation_calls += 1
+        started.set()
+        await release.wait()
+        return driver.context
+
+    kwargs = driver.kwargs()
+    kwargs["activate_improvement_context"] = activate
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        improve = modal.query_one("#console-prompts-improve", Button)
+        improve.press()
+        await started.wait()
+        await asyncio.sleep(0.05)
+
+        disabled_while_held = improve.disabled
+        resolving_copy = str(
+            modal.query_one("#console-prompts-browse-status", Static).renderable
+        )
+        modal.post_message(ConsolePromptsBrowse.ImproveRequested())
+        await asyncio.sleep(0.05)
+        calls_while_held = activation_calls
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert disabled_while_held is True
+        assert "Resolving" in resolving_copy
+        assert calls_while_held == 1
+        assert activation_calls == 1
+        assert modal.state.mode == "improve"
+
+
+@pytest.mark.asyncio
+async def test_invalidated_activation_token_ignores_late_resolution() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def activate() -> Any:
+        started.set()
+        await release.wait()
+        return driver.context
+
+    kwargs = driver.kwargs()
+    kwargs["activate_improvement_context"] = activate
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        activation_id = modal._next_activation_id()
+        modal._active_activation_id = activation_id
+        activation = asyncio.create_task(
+            modal._run_improvement_activation(activation_id)
+        )
+        await started.wait()
+
+        modal._active_activation_id = None
+        release.set()
+        await activation
+        await pilot.pause()
+
+        assert modal.state.mode == "browse"
+        assert driver.requests == []
+
+
+@pytest.mark.asyncio
 async def test_auto_success_returns_one_apply_transaction_and_closes() -> None:
     backend = _PromptBackend()
     driver = _ImprovementDriver(

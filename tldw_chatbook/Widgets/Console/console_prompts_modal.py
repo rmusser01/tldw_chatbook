@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 from collections.abc import Callable, Mapping
@@ -10,7 +11,7 @@ from typing import Any, Literal
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -178,6 +179,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     #console-prompts-title { text-style: bold; color: $text; }
     #console-prompts-location { color: $text-muted; }
     #console-prompts-body { width: 100%; height: 1fr; min-height: 0; }
+    #console-prompts-recipe-scroll { width: 100%; height: 1fr; }
     #console-prompts-footer { width: 100%; height: 3; align: right middle; }
     #console-prompts-dirty-guard {
         display: none; width: 100%; height: auto; padding: 1;
@@ -239,6 +241,9 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._request_counter = 0
         self._active_request_id: str | None = None
         self._improvement_worker: Any | None = None
+        self._activation_counter = 0
+        self._active_activation_id: str | None = None
+        self._activation_worker: Any | None = None
         self._last_improvement_mode: Literal["auto", "review", "recipe"] | None = None
         self._captured_improvement_request: Any | None = None
         self._pending_persistence_result: ConsolePromptsResult | None = None
@@ -301,6 +306,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
         self._recipe_selecting = False
+        self._cancel_improvement_activation()
         if self._active_request_id is not None:
             self._active_request_id = None
             worker = self._improvement_worker
@@ -352,6 +358,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     async def _back_internal(self, *, discard: bool = False) -> None:
+        self._cancel_improvement_activation()
         if self._active_request_id is not None:
             self._cancel_improvement()
             return
@@ -873,6 +880,94 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._request_counter += 1
         return f"prompt-improvement-{self._request_counter}"
 
+    def _next_activation_id(self) -> str:
+        self._activation_counter += 1
+        return f"prompt-improvement-activation-{self._activation_counter}"
+
+    def _set_activation_busy(self, active: bool) -> None:
+        try:
+            browse = self.query_one(ConsolePromptsBrowse)
+            improve = browse.query_one("#console-prompts-improve", Button)
+        except NoMatches:
+            return
+        improve.disabled = active or bool(
+            self._improve_unavailable_reason and self._improvement_context is None
+        )
+        if active:
+            improve.tooltip = "Resolving the current provider, model, and endpoint."
+            browse.show_status(
+                "Resolving current provider, model, and endpoint…",
+                retry=False,
+            )
+        else:
+            improve.tooltip = self._improve_unavailable_reason or None
+
+    def _begin_improvement_activation(self) -> None:
+        if self._active_activation_id is not None:
+            return
+        activation_id = self._next_activation_id()
+        self._active_activation_id = activation_id
+        self._set_activation_busy(True)
+        self._activation_worker = self.run_worker(
+            self._run_improvement_activation(activation_id),
+            exclusive=True,
+            group=f"console-prompt-improvement-activation-{id(self)}",
+        )
+
+    def _cancel_improvement_activation(self) -> bool:
+        if self._active_activation_id is None:
+            return False
+        self._active_activation_id = None
+        worker = self._activation_worker
+        self._activation_worker = None
+        if worker is not None:
+            worker.cancel()
+        return True
+
+    async def _run_improvement_activation(self, activation_id: str) -> None:
+        try:
+            if self._activate_improvement_context is not None:
+                try:
+                    context = await _maybe_await(self._activate_improvement_context())
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    if self._active_activation_id != activation_id:
+                        return
+                    self._improve_unavailable_reason = (
+                        "Prompt improvement could not resolve the current provider target. "
+                        "Review Console provider settings and reopen Improve."
+                    )
+                else:
+                    if self._active_activation_id != activation_id:
+                        return
+                    if context is not None:
+                        self._improvement_context = context
+                        pinned_resolution = getattr(
+                            context,
+                            "pinned_resolution",
+                            None,
+                        )
+                        if pinned_resolution is not None:
+                            self._manual_apply_resolution = pinned_resolution
+                        self._improve_unavailable_reason = str(
+                            getattr(context, "model_unavailable_reason", "") or ""
+                        ).strip()
+            if self._active_activation_id != activation_id:
+                return
+            if (
+                not self._improve_unavailable_reason
+                or self._improvement_context is not None
+            ):
+                await self.enter_mode("improve")
+                if self._improve_unavailable_reason:
+                    self._set_improvement_status(self._improve_unavailable_reason)
+        finally:
+            if self._active_activation_id == activation_id:
+                self._active_activation_id = None
+                self._activation_worker = None
+                self._set_activation_busy(False)
+
     def _begin_improvement(self, mode: Literal["auto", "review", "recipe"]) -> None:
         if self._active_request_id is not None:
             return
@@ -1179,6 +1274,25 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 id="console-prompts-provider-summary",
                 markup=False,
             ),
+            Checkbox(
+                "Include system prompt as analysis context",
+                value=self._include_system_context,
+                id="console-prompts-include-system",
+                disabled=not bool(
+                    getattr(
+                        self._improvement_context,
+                        "current_system_prompt",
+                        "",
+                    )
+                ),
+            ),
+            Static(
+                "Controls analysis context for Fill only. It does not enable "
+                "System apply; System apply remains a separate, off-by-default "
+                "review choice.",
+                id="console-prompts-recipe-analysis-disclosure",
+                markup=False,
+            ),
             Static("", id="console-prompts-improvement-status", markup=False),
             Button("Retry save", id="console-prompts-persistence-retry"),
             PromptBlockEditor(
@@ -1202,8 +1316,13 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                     self._improve_unavailable_reason
                     or "Add text to the unsent message before using AI fill."
                 )
-            widgets.insert(2, fill)
-        await body.mount(*widgets)
+            widgets.insert(4, fill)
+        await body.mount(
+            VerticalScroll(
+                *widgets,
+                id="console-prompts-recipe-scroll",
+            )
+        )
 
     def _show_dirty_guard(self) -> None:
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
@@ -1217,38 +1336,9 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         guard.display = False
 
     @on(ConsolePromptsBrowse.ImproveRequested)
-    async def _improve_requested(
-        self, event: ConsolePromptsBrowse.ImproveRequested
-    ) -> None:
+    def _improve_requested(self, event: ConsolePromptsBrowse.ImproveRequested) -> None:
         event.stop()
-        if self._activate_improvement_context is not None:
-            try:
-                context = await _maybe_await(self._activate_improvement_context())
-            except Exception:
-                self._improve_unavailable_reason = (
-                    "Prompt improvement could not resolve the current provider target. "
-                    "Review Console provider settings and reopen Improve."
-                )
-            else:
-                if context is not None:
-                    self._improvement_context = context
-                    pinned_resolution = getattr(
-                        context,
-                        "pinned_resolution",
-                        None,
-                    )
-                    if pinned_resolution is not None:
-                        self._manual_apply_resolution = pinned_resolution
-                    self._improve_unavailable_reason = str(
-                        getattr(context, "model_unavailable_reason", "") or ""
-                    ).strip()
-        if (
-            not self._improve_unavailable_reason
-            or self._improvement_context is not None
-        ):
-            await self.enter_mode("improve")
-            if self._improve_unavailable_reason:
-                self._set_improvement_status(self._improve_unavailable_reason)
+        self._begin_improvement_activation()
 
     @on(Checkbox.Changed, "#console-prompts-include-system")
     def _include_system_changed(self, event: Checkbox.Changed) -> None:
@@ -1564,6 +1654,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         elif button_id == "console-prompts-close":
             event.stop()
             self._recipe_selecting = False
+            self._cancel_improvement_activation()
             if self._active_request_id is not None:
                 self._cancel_improvement()
                 return
