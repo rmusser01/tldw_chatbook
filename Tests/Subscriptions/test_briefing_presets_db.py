@@ -129,13 +129,20 @@ def test_list_briefing_presets_offset_pages_through_every_row_without_gaps_or_re
 
     limit = 3
     seen: list[str] = []
-    offset = 0
-    while True:
-        page = db.list_briefing_presets(limit=limit, offset=offset)
+    # 7 rows / limit 3 -> 3 pages + the empty terminator; cap far above so
+    # an offset-ignoring regression fails fast instead of spinning to the
+    # global timeout (task-1761).
+    max_pages = 10
+    for page_number in range(max_pages):
+        page = db.list_briefing_presets(limit=limit, offset=page_number * limit)
         if not page:
             break
         seen.extend(row["name"] for row in page)
-        offset += limit
+    else:
+        pytest.fail(
+            "list_briefing_presets never returned an empty page within "
+            f"{max_pages} pages -- offset is likely being ignored"
+        )
 
     assert seen == names
 
@@ -307,13 +314,22 @@ def test_list_briefing_scripts_offset_pages_through_every_row_without_gaps_or_re
 
     limit = 3
     seen: list[int] = []
-    offset = 0
-    while True:
-        page = db.list_briefing_scripts(briefing_id, limit=limit, offset=offset)
+    # 7 rows / limit 3 -> 3 pages + the empty terminator; cap far above so
+    # an offset-ignoring regression fails fast instead of spinning to the
+    # global timeout (task-1761).
+    max_pages = 10
+    for page_number in range(max_pages):
+        page = db.list_briefing_scripts(
+            briefing_id, limit=limit, offset=page_number * limit
+        )
         if not page:
             break
         seen.extend(row["id"] for row in page)
-        offset += limit
+    else:
+        pytest.fail(
+            "list_briefing_scripts never returned an empty page within "
+            f"{max_pages} pages -- offset is likely being ignored"
+        )
 
     assert seen == expected_newest_first
 
