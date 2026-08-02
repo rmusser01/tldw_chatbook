@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from unittest.mock import MagicMock
 
 import pytest
@@ -274,13 +275,96 @@ async def test_stale_search_and_resolve_completions_cannot_replace_newer_results
         assert "old/result" not in _text(view)
 
         view._resolve_generation = 4
-        view._apply_resolve_result(3, older_resolved, None)
-        view._apply_resolve_result(4, newer_resolved, None)
+        view._apply_resolve_result(
+            3,
+            "old/result",
+            "old query",
+            older_resolved,
+            None,
+        )
+        view._apply_resolve_result(
+            4,
+            "new/result",
+            "new query",
+            newer_resolved,
+            None,
+        )
         await pilot.pause()
         rendered = _text(view)
 
     assert "new/result · model-q4.gguf" in rendered
     assert "old/result · model-q4.gguf" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_same_generation_resolve_rejects_a_different_repository_response() -> None:
+    """An adapter identity mismatch must never expose an installable candidate."""
+    adapter = _Adapter(resolved=_resolved("other/repository"))
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+        candidate_buttons = list(view.query(".remote-candidate").results(Button))
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+
+    assert "other/repository · model-q4.gguf" not in rendered
+    assert candidate_buttons == []
+    assert view._selected_catalog is None
+    assert search_disabled is False
+
+
+@pytest.mark.asyncio
+async def test_same_generation_resolve_rejects_when_repository_input_changes() -> None:
+    """Input drift during one request must not make its completion installable."""
+    started = Event()
+    release = Event()
+
+    class _WaitingAdapter(_Adapter):
+        async def resolve(
+            self,
+            repository: str,
+            *,
+            token: str | None = None,
+        ) -> ResolvedRemoteModel:
+            self.resolve_calls.append((repository, token))
+            started.set()
+            release.wait(timeout=2)
+            return self.resolved
+
+    adapter = _WaitingAdapter(resolved=_resolved("owner/repository"))
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "owner/repository"
+        await pilot.click("#remote-model-search")
+        for _attempt in range(20):
+            if started.is_set():
+                break
+            await pilot.pause()
+        assert started.is_set(), "resolve worker did not reach the adapter"
+
+        query.value = "new/repository"
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = _text(view)
+        candidate_buttons = list(view.query(".remote-candidate").results(Button))
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+
+    assert "owner/repository · model-q4.gguf" not in rendered
+    assert candidate_buttons == []
+    assert view._selected_catalog is None
+    assert search_disabled is False
 
 
 @pytest.mark.asyncio
@@ -315,8 +399,15 @@ async def test_discovery_errors_render_sanitized_retry_guidance(
     app = _RemoteApp(view)
 
     async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
         view._resolve_generation = 1
-        view._apply_resolve_result(1, None, error)
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            None,
+            error,
+        )
         await pilot.pause()
         rendered = _text(view)
 
@@ -333,8 +424,15 @@ async def test_incomplete_shard_warnings_render_bounded_candidate_and_indexes() 
     app = _RemoteApp(view)
 
     async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
         view._resolve_generation = 1
-        view._apply_resolve_result(1, resolved, None)
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            resolved,
+            None,
+        )
         await pilot.pause()
         rendered = _text(view)
 
@@ -350,8 +448,15 @@ async def test_candidate_selection_freezes_catalog_and_disables_all_replacement_
     view._preflight_model = MagicMock()
 
     async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
         view._resolve_generation = 1
-        view._apply_resolve_result(1, resolved, None)
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            resolved,
+            None,
+        )
         await pilot.pause()
         await pilot.click(".remote-candidate")
         await pilot.pause()

@@ -245,7 +245,7 @@ class RemoteView(Widget):
         self._set_metadata_controls_disabled(True)
         if is_exact_repository(query):
             self._set_status("Inspecting repository…")
-            self._resolve_remote(query, self._resolve_generation)
+            self._resolve_remote(query, self._resolve_generation, query)
             return
         self._set_status("Searching remote models…")
         self._search_remote(query, self._search_generation)
@@ -263,7 +263,8 @@ class RemoteView(Widget):
         self._selected_catalog = None
         self._set_metadata_controls_disabled(True)
         self._set_status("Inspecting repository…")
-        self._resolve_remote(repository, self._resolve_generation)
+        relevant_input = self.query_one("#remote-model-query", Input).value.strip()
+        self._resolve_remote(repository, self._resolve_generation, relevant_input)
 
     @on(Button.Pressed, ".remote-candidate")
     def _candidate_pressed(self, event: Button.Pressed) -> None:
@@ -344,7 +345,12 @@ class RemoteView(Widget):
         self._refresh_with_status(message)
 
     @work(thread=True, group="remote_model_resolve", exit_on_error=False)
-    def _resolve_remote(self, repository: str, generation: int) -> None:
+    def _resolve_remote(
+        self,
+        repository: str,
+        generation: int,
+        relevant_input: str,
+    ) -> None:
         """Resolve one exact repository off the Textual event loop."""
         try:
             resolver = self._credential_resolver_factory()
@@ -356,6 +362,8 @@ class RemoteView(Widget):
             self.app.call_from_thread(
                 self._apply_resolve_result,
                 generation,
+                repository,
+                relevant_input,
                 None,
                 exc,
             )
@@ -363,6 +371,8 @@ class RemoteView(Widget):
         self.app.call_from_thread(
             self._apply_resolve_result,
             generation,
+            repository,
+            relevant_input,
             resolved,
             None,
         )
@@ -370,11 +380,31 @@ class RemoteView(Widget):
     def _apply_resolve_result(
         self,
         generation: int,
+        requested_repository: str,
+        relevant_input: str,
         resolved: ResolvedRemoteModel | None,
         error: BaseException | None,
     ) -> None:
-        """Apply only the current repository-resolution generation."""
+        """Apply only the current repository-resolution identity."""
         if generation != self._resolve_generation:
+            return
+        current_input = self.query_one("#remote-model-query", Input).value.strip()
+        repository_is_current = (
+            requested_repository == relevant_input
+            if is_exact_repository(relevant_input)
+            else any(
+                result.repository == requested_repository for result in self._results
+            )
+        )
+        if (
+            current_input != relevant_input
+            or not repository_is_current
+            or (
+                resolved is not None
+                and resolved.repository != requested_repository
+            )
+        ):
+            self._set_metadata_controls_disabled(False)
             return
         self._set_metadata_controls_disabled(False)
         if error is not None or resolved is None:
