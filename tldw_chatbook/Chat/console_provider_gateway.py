@@ -272,6 +272,10 @@ class ConsoleProviderResolution:
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
         streaming: Whether streaming responses are requested.
+        prompt_caching: Opt-in for the Anthropic per-turn ``cache_control``
+            breakpoint. Set only for Anthropic resolutions (and only when
+            ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
+            which drops the kwarg entirely in ``_chat_api_kwargs``.
     """
 
     provider: str
@@ -297,6 +301,7 @@ class ConsoleProviderResolution:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
+    prompt_caching: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -986,6 +991,29 @@ class ConsoleProviderGateway:
                 api_key_source=readiness.api_key_source,
             )
 
+        # Console sends are multi-turn by construction, so they -- and ONLY
+        # they -- opt into the Anthropic per-turn cache_control breakpoint.
+        # A one-shot caller of `chat_with_anthropic` (summarization, evals,
+        # websearch) would pay the 1.25x cache-write premium on its whole
+        # prefix and never read it back, so the flag is stamped here rather
+        # than defaulted on inside the provider.
+        #
+        # NOTE: this flag does not gate the kill-switch end-to-end by
+        # itself -- `chat_with_anthropic` ANDs it with
+        # `_anthropic_caching_enabled()`, which reads `[caching]
+        # anthropic_enabled` directly via `get_cli_setting()` and already
+        # disables every cache_control breakpoint (system, tool, AND this
+        # per-turn one) when the switch is off, regardless of what this
+        # resolution carries. This value only needs to be *truthful* for
+        # whatever inspects `ConsoleProviderResolution.prompt_caching`
+        # (introspection/tests/telemetry), which is why the config-shape
+        # bug below mattered even though sends were never at risk.
+        prompt_caching: bool | None = None
+        if identity.execution_key == "anthropic":
+            prompt_caching = bool(
+                _caching_config_value(app_config).get("anthropic_enabled", True)
+            )
+
         return ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "",
@@ -995,6 +1023,7 @@ class ConsoleProviderGateway:
             execution_key=identity.execution_key,
             api_key=readiness.api_key,
             api_key_source=readiness.api_key_source,
+            prompt_caching=prompt_caching,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -1387,6 +1416,14 @@ class ConsoleProviderGateway:
         # themselves when the payload has none, so the extraction is
         # provider-neutral. Mid-array system rows never occur on this path
         # (`_provider_message_payloads` emits user/assistant only).
+        #
+        # The join deliberately normalizes: each row is `.strip()`ed and the
+        # rows are joined with "\n\n". The result is therefore NOT byte-verbatim
+        # with respect to the source rows -- but it IS a pure function of them,
+        # so the same rows always produce the same bytes. That determinism is
+        # what Anthropic prefix caching needs (a stable system block across
+        # consecutive turns); see the cache-stability test in
+        # Tests/Chat/test_console_provider_gateway.py.
         payload = list(messages)
         system_parts: list[str] = []
         while payload and payload[0].get("role") == "system":
@@ -1416,6 +1453,10 @@ class ConsoleProviderGateway:
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
             "tools": tools,
+            # None for every non-Anthropic resolution, so the strip below
+            # removes the key entirely and other providers' kwargs are byte
+            # for byte what they were before prompt caching existed.
+            "prompt_caching": resolution.prompt_caching,
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 
@@ -1574,6 +1615,26 @@ class ConsoleProviderGateway:
 def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, object]:
     value = source.get(key, {})
     return value if isinstance(value, Mapping) else {}
+
+
+def _caching_config_value(app_config: Mapping[str, object]) -> Mapping[str, object]:
+    """Return the ``[caching]`` section from either config shape.
+
+    Boot-time/live Console config (``load_settings()``) never projects
+    ``[caching]`` to the top level the way it does ``api_settings`` or
+    ``chat_defaults`` -- it only survives nested under
+    ``COMPREHENSIVE_CONFIG_RAW`` (see ``config.py``'s ``load_settings``).
+    A plain ``app_config.get("caching")`` therefore always misses on the
+    live Console config and silently reads the kill-switch as always-on
+    (Qodo finding, PR #1239). Prefer a top-level ``caching`` key when a
+    caller supplies one directly (e.g. tests), and fall back to the
+    nested raw-TOML shape otherwise.
+    """
+    top_level = _mapping_value(app_config, "caching")
+    if top_level:
+        return top_level
+    raw = _mapping_value(app_config, "COMPREHENSIVE_CONFIG_RAW")
+    return _mapping_value(raw, "caching")
 
 
 def _is_iterable_response(response: Any) -> bool:

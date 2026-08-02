@@ -44,7 +44,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
 #
@@ -961,6 +961,64 @@ def _anthropic_supports_caching(model: str) -> bool:
     )
 
 
+def _anthropic_caching_enabled() -> bool:
+    """[caching].anthropic_enabled kill-switch for ALL Anthropic cache_control.
+
+    Defaults to True when the section or key is absent (prompt caching is the
+    shipped task-323 behavior; this gate only adds an opt-out). Any config
+    read failure also defaults to True so a broken config file cannot
+    silently change request shapes.
+
+    Returns:
+        True when cache_control breakpoints should be emitted.
+    """
+    try:
+        return bool(get_cli_setting("caching", "anthropic_enabled", True))
+    except Exception as exc:
+        logger.warning(
+            f"caching config read failed; defaulting anthropic prompt caching ON: {exc!r}"
+        )
+        return True
+
+
+def _without_cache_control(obj: Any) -> Any:
+    """Deep-copy ``obj`` with every ``cache_control`` key removed.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        The same structure minus all ``cache_control`` entries.
+    """
+    if isinstance(obj, dict):
+        return {
+            key: _without_cache_control(value)
+            for key, value in obj.items()
+            if key != "cache_control"
+        }
+    if isinstance(obj, list):
+        return [_without_cache_control(item) for item in obj]
+    return obj
+
+
+def _contains_cache_control(obj: Any) -> bool:
+    """True when any nested dict carries a ``cache_control`` key.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        True when ``cache_control`` appears anywhere within ``obj``.
+    """
+    if isinstance(obj, dict):
+        return "cache_control" in obj or any(
+            _contains_cache_control(value) for value in obj.values()
+        )
+    if isinstance(obj, list):
+        return any(_contains_cache_control(item) for item in obj)
+    return False
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -1027,11 +1085,71 @@ def chat_with_anthropic(
     tools: Optional[List[Dict[str, Any]]] = None,  # New: Anthropic tool format
     thinking_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    prompt_caching: Optional[bool] = None,
     # Anthropic doesn't typically use seed, response_format (for JSON object mode directly), n, user identifier, logit_bias,
     # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
 ):
+    """Call the Anthropic Messages API (streaming or non-streaming).
+
+    Args:
+        input_data: List of message objects (OpenAI-style ``role``/``content``
+            dicts). ``role: "tool"`` entries are converted to Anthropic
+            ``tool_result`` blocks; assistant ``tool_calls`` echoes are
+            converted to ``tool_use`` blocks.
+        model: Anthropic model ID. Falls back to config, then
+            ``"claude-sonnet-5"``.
+        api_key: Anthropic API key. Falls back to config; raises if still
+            missing.
+        system_prompt: Optional system prompt sent as the top-level
+            ``system`` field.
+        temp: Sampling temperature. Falls back to config, then ``0.7``.
+        topp: Nucleus sampling parameter (Anthropic ``top_p``).
+        topk: Anthropic ``top_k`` sampling parameter.
+        streaming: Whether to stream the response via SSE. Falls back to
+            config, then ``False``.
+        max_tokens: Maximum tokens to generate. Falls back to config
+            (``max_tokens_to_sample``/``max_tokens``), then ``4096``.
+        stop_sequences: Custom stop sequences (Anthropic ``stop_sequences``).
+        tools: Tools in OpenAI function-call or native Anthropic shape;
+            normalized to Anthropic's ``{name, description, input_schema}``.
+        thinking_effort: Extended-thinking effort level, when the model
+            supports it (translated to a thinking token budget).
+        thinking_budget_tokens: Explicit extended-thinking token budget;
+            takes precedence over ``thinking_effort`` when both are set.
+        prompt_caching: Opt-in for the PER-TURN message ``cache_control``
+            breakpoint. Only multi-turn callers (the Console gateway) should
+            pass True: the breakpoint bills the whole conversation prefix at
+            the 1.25x cache-write premium, which a one-shot call (media
+            summarization, websearch, evals, document generation) can never
+            earn back because it never sends a second turn. The system and
+            last-tool breakpoints are NOT gated on this flag — those shipped
+            provider-wide in task-323 and are harmless for one-shots, whose
+            short system prefix falls below the cacheable minimum and is
+            simply not cached. Also subject to the provider-wide
+            ``[caching].anthropic_enabled`` kill-switch
+            (``_anthropic_caching_enabled()``), which disables ALL
+            ``cache_control`` breakpoints regardless of this flag.
+        custom_prompt_arg: Legacy/unused prompt override, retained for call
+            signature compatibility.
+
+    Returns:
+        Non-streaming: a normalized OpenAI-style response dict (``choices``
+        with ``message``, ``usage``, etc.) built from the Anthropic Messages
+        API response. Streaming: a generator yielding OpenAI-style SSE
+        strings (``"data: {...}\\n\\n"``, terminated by ``"data: [DONE]\\n\\n"``).
+
+    Raises:
+        ChatConfigurationError: No API key is available (argument or config).
+        ChatBadRequestError: No valid user message could be built from
+            ``input_data``, or the API returned a 4xx error other than 401/429.
+        ChatAuthenticationError: The API returned 401 (invalid/expired key).
+        ChatRateLimitError: The API returned 429 (rate limited).
+        ChatProviderError: Any other HTTP error status, a network-level
+            request failure, or an unexpected exception while calling the
+            API.
+    """
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
@@ -1204,6 +1322,7 @@ def chat_with_anthropic(
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
+    caching_active = _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
     data = {
         "model": current_model,
         "max_tokens": current_max_tokens,  # Changed from max_tokens_to_sample to the parameter
@@ -1211,7 +1330,7 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None:
-        if _anthropic_supports_caching(current_model) and system_prompt:
+        if caching_active and system_prompt:
             # cache_control on the system prompt (the largest stable prefix)
             # activates Anthropic prompt caching; per the tools->system->messages
             # hierarchy this caches tools+system. Applied for both streaming and
@@ -1252,7 +1371,7 @@ def chat_with_anthropic(
         data["stop_sequences"] = stop_sequences
     if tools is not None:
         tools_payload = _anthropic_tools_payload(tools)
-        if _anthropic_supports_caching(current_model) and tools_payload:
+        if caching_active and tools_payload:
             # Optional second breakpoint on the last converted tool. A fresh dict
             # so the caller's input `tools` are never mutated.
             tools_payload[-1] = {
@@ -1264,6 +1383,34 @@ def chat_with_anthropic(
         data["thinking"] = thinking_config
     if output_config is not None:
         data["output_config"] = output_config
+
+    if (
+        caching_active
+        and prompt_caching
+        and anthropic_messages
+        and isinstance(anthropic_messages[-1].get("content"), list)
+        and anthropic_messages[-1]["content"]
+    ):
+        # Per-turn breakpoint (cost-ticker PR2): mark the last content block
+        # of the final message so the WHOLE conversation prefix becomes a
+        # reusable cache entry next turn -- the task-323 system/tools
+        # breakpoints alone never cache message history. Budget:
+        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        #
+        # OPT-IN (`prompt_caching`), unlike the two breakpoints above: this
+        # one bills the entire conversation prefix at the 1.25x write
+        # premium, so a one-shot caller pays ~25% extra input and can never
+        # read the entry back. Only the Console gateway (multi-turn by
+        # construction) sets the flag; every other caller of
+        # `chat_with_anthropic` leaves it None and is unaffected.
+        #
+        # Fresh dict so no caller-held block is mutated (same rule as the
+        # tools breakpoint above).
+        last_content = anthropic_messages[-1]["content"]
+        last_content[-1] = {
+            **last_content[-1],
+            "cache_control": {"type": "ephemeral"},
+        }
 
     api_url = (
         anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
@@ -1298,7 +1445,31 @@ def chat_with_anthropic(
                 stream=current_streaming,
                 timeout=180,
             )
-        response.raise_for_status()
+            if (
+                response.status_code == 400
+                and _contains_cache_control(data)
+                and "cache_control" in (response.text or "")
+            ):
+                # Caching must never break sends (cost-ticker PR2): odd
+                # proxies/gateways can reject cache_control. Retry exactly
+                # once without any breakpoints; every other error path is
+                # untouched. Reading .text here is safe -- it is the error
+                # body, not a stream.
+                logger.warning(
+                    "Anthropic: endpoint rejected cache_control; retrying without prompt caching."
+                )
+                log_counter(
+                    "anthropic_cache_control_degrade",
+                    labels={"model": current_model},
+                )
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=_without_cache_control(data),
+                    stream=current_streaming,
+                    timeout=180,
+                )
+            response.raise_for_status()
 
         if current_streaming:
             logger.debug(

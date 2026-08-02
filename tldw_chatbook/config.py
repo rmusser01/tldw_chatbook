@@ -2261,6 +2261,21 @@ ingest_directory_scan_limit = 1000
 # Per-type ingestion options are persisted here by the Library ingest canvas.
 [library.ingest_options]
 
+[caching]
+# Anthropic prompt caching (cache_control breakpoints on the system prompt and
+# the tool list for every Anthropic call; plus one on the latest message for
+# Console sends only, which are the multi-turn ones). Cache writes bill at
+# 1.25x input and reads at ~0.1x, so multi-turn chat wins after two sends
+# inside the 5-minute TTL.
+# The loss condition: sends more than ~5 minutes apart never hit a live cache,
+# so every send re-pays the 1.25x write premium on the conversation prefix
+# with no reads at all -- the cost ticker will show it (writes in the
+# breakdown, no cache-read line). Set false if that is your usage pattern.
+# Set false to disable the cache_control breakpoints this client adds;
+# caller-supplied native Anthropic tool dicts already carrying cache_control
+# still pass through verbatim.
+anthropic_enabled = true
+
 [splash_screen]
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens

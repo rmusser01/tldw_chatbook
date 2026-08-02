@@ -22,9 +22,13 @@ Today the app has **none** of the required substrate:
   table has no usage column.
 - There is no real pricing table (only a stale, blended $/1K list used by
   Evals).
-- No request ever sets `cache_control` — for Anthropic there is currently no
-  cache to break. OpenAI-style providers cache automatically but the app
-  never accounts for it.
+- Anthropic caching is PARTIAL (amended 2026-08-02: task-323 landed system-block
+  + last-tool `cache_control` for all callers after this spec's exploration
+  snapshot): conversation HISTORY is never cached — no per-turn message
+  breakpoint exists, so every send re-pays the full message history. There is
+  no config kill-switch and no degrade path if an endpoint rejects
+  `cache_control`. OpenAI-style providers cache automatically; PR1's adapters
+  already account for it.
 
 ## Decisions (user-approved during brainstorming)
 
@@ -156,18 +160,54 @@ round-trip on real in-memory SQLite.
 
 ## PR2 — Prompt-caching enablement
 
-Only the **native Anthropic console path** changes requests; every other
-provider's requests are untouched. `cache_control` is injected by the
-console gateway — non-console callers of `chat_with_anthropic` are
-unaffected (pass-through test asserts legacy paths emit no
-`cache_control`).
+> **Amended 2026-08-02 (PR2 planning):** task-323 shipped the system-block and
+> last-tool breakpoints for ALL `chat_with_anthropic` callers (not console-only)
+> before PR2 started, and PR1 shipped the OpenAI implicit-cache accounting.
+> PR2's remaining scope: the per-turn message breakpoint, the
+> `[caching] anthropic_enabled` toggle (provider-level, gating all three
+> breakpoints, default on — matching shipped reality), the 4xx degrade, and
+> prefix-stability tests. The "system string → block array" implementation
+> note is already implemented.
+>
+> **Re-amended 2026-08-02 (final review):** the original "injected by the
+> console gateway only" scoping is NOT obsolete — it is still correct for the
+> per-turn breakpoint, and PR2's first cut wrongly made that one
+> provider-wide too, taxing every one-shot Anthropic call in the app. See
+> "Breakpoint containment" below for the shipped split.
+
+**Breakpoint containment (amended 2026-08-02, final review).** The three
+breakpoints are NOT all provider-wide:
+
+- The **system-block** and **last-tool** breakpoints are provider-wide —
+  every `chat_with_anthropic` caller gets them (task-323, shipped before
+  PR2). That is economically safe for a one-shot call: a short system
+  prefix sits below Anthropic's cacheable minimum, so it is simply not
+  cached and nothing is billed differently.
+- The **per-turn message** breakpoint is **Console-opt-in**. It marks the
+  whole conversation prefix for caching, which bills at the 1.25× write
+  premium; a one-shot caller (media summarization loops, websearch, evals,
+  prompt engineering, the document generator) never sends a second turn
+  and so can never read the entry back — it would just pay ~25% more input
+  forever. The Console gateway therefore stamps
+  `ConsoleProviderResolution.prompt_caching = True` (Anthropic resolutions
+  only, and only when `[caching] anthropic_enabled` is on);
+  `chat_api_call` forwards it via `PROVIDER_PARAM_MAP["anthropic"]`, and
+  `chat_with_anthropic` gates the per-turn site on
+  `caching_active and prompt_caching`. Every other provider's map omits
+  the key, so it is silently dropped.
+
+Non-console callers of `chat_with_anthropic` therefore never get the
+per-turn breakpoint — the pass-through test asserts exactly that
+(`Tests/Chat/test_anthropic_native_tools.py::test_message_breakpoint_absent_without_opt_in`,
+plus the None/False variants).
 
 ### Anthropic explicit caching
 
-- **Breakpoints (2 of 4 allowed)**: one on the last system-prompt block,
-  one on the last content block of the newest message turn. The per-turn
-  breakpoint makes the conversation prefix reusable and grows it
-  incrementally each turn.
+- **Breakpoints: 3 of 4 allowed (system + last tool + per-turn)**: one on
+  the last system-prompt block, one on the last converted tool, one on the
+  last content block of the newest message turn. The per-turn breakpoint
+  makes the conversation prefix reusable and grows it incrementally each
+  turn. The 4th slot is deliberately held in reserve (see Risks).
 - **TTL**: 5-minute ephemeral only. (1-hour doubles the write premium —
   wrong trade for interactive chat; not in v1.)
 - **Config**: `[caching] anthropic_enabled`, default **on** (console chat
@@ -178,20 +218,26 @@ unaffected (pass-through test asserts legacy paths emit no
   breakpoints and log a diagnostic. Caching must never break sends.
 - Sub-minimum prefixes silently don't cache (no error) — PR3 shows this
   honestly as "no cache" from usage ground truth.
-- Implementation note: the gateway extracts leading system rows into the
+- ~~Implementation note: the gateway extracts leading system rows into the
   provider call's `system_message` string parameter, so
   `chat_with_anthropic` must convert that string into a system **block
   array** to carry `cache_control` — the byte-stability test covers the
-  conversion.
+  conversion.~~ (amended: already shipped via task-323/PR1)
 
 ### Prefix-stability audit (part of PR2)
 
 - System prompt: verified byte-stable — `_leading_system_message()`
   passes `self.system_prompt` verbatim, no interpolation. Keep it that
   way; add a test asserting two consecutive payload builds are
-  byte-identical except for the appended turn.
+  byte-identical except for the appended turn. **Done** —
+  `Tests/Chat/test_anthropic_prefix_stability.py`.
 - The gateway's leading-system-row extraction must produce byte-identical
-  system blocks across turns — dedicated test.
+  system blocks across turns — dedicated test. **Done** —
+  `Tests/Chat/test_console_provider_gateway.py::test_chat_api_kwargs_system_message_is_byte_stable_across_turns`.
+  Correction to an earlier claim: that extraction is **not** verbatim — it
+  `.strip()`s each leading system row and joins them with `"\n\n"`. It is
+  however a pure function of those rows, so the same rows always produce the
+  same bytes, which is all prefix caching requires.
 - Skill substitution and chat dictionaries rewrite **only the final user
   turn**, at/after the last breakpoint — cache-safe, no change needed.
 - Staged workspace sources appear only in the context-snapshot/inspector
@@ -207,16 +253,17 @@ unaffected (pass-through test asserts legacy paths emit no
 
 ### OpenAI implicit caching
 
-Zero request changes. Start reading `prompt_tokens_details.cached_tokens`
-into the PR1 `cache_read` bucket.
+~~Zero request changes. Start reading `prompt_tokens_details.cached_tokens`
+into the PR1 `cache_read` bucket.~~ (amended: already shipped via task-323/PR1)
 
 ### PR2 testing
 
 Payload-shape tests via the stub provider (breakpoint placement/count);
 byte-identical consecutive-build test; leading-system stability test;
-per-provider cache-field accounting tests; legacy-path no-`cache_control`
-pass-through test. Live acceptance signal:
-`cache_read_input_tokens > 0` on the second consecutive real send.
+per-provider cache-field accounting tests; legacy-path pass-through test
+(non-console callers get **no per-turn `cache_control`**; the provider-wide
+system/tool breakpoints are expected and asserted present). Live acceptance
+signal: `cache_read_input_tokens > 0` on the second consecutive real send.
 
 ---
 
@@ -355,6 +402,18 @@ isolation across session tabs.
   ticker itself makes this visible (write costs appear in the breakdown),
   and `[caching] anthropic_enabled = false` is the escape hatch; an
   auto-disable heuristic is listed as a follow-up.
+- **Cache lookback window (~20 blocks)**: Anthropic looks back only a
+  bounded number of content blocks (~20) from each `cache_control`
+  breakpoint when matching a prefix. A tool-heavy agent turn can add more
+  than that in a SINGLE exchange (tool_use + tool_result blocks
+  accumulate fast), pushing the previous breakpoint out of range — the
+  next send then silently misses and re-writes the whole prefix at 1.25×
+  instead of reading it at ~0.1×. There is no error; the only signal is
+  `cache_read_input_tokens == 0` in the ticker. We ship 3 of the 4 allowed
+  breakpoints and deliberately hold the 4th in reserve: the mitigation is
+  a second, older message breakpoint that keeps a long turn inside the
+  window. Follow-up candidate, not in this PR — it needs live
+  hit-rate evidence to place correctly.
 - **Pricing staleness**: mitigated by `as_of` date in tooltip + config
   overrides; never fabricate a price for unknown models (tokens-only
   display instead).

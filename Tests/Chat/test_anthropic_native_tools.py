@@ -792,7 +792,7 @@ def test_streaming_two_interleaved_tool_blocks_reassemble_distinctly(mock_post):
     assert json.loads(calls[1]["function"]["arguments"]) == {}
 
 
-def _sent_anthropic(mock_post, model, **extra):
+def _sent_anthropic(mock_post, model, messages_payload=None, **extra):
     """Drive chat_with_anthropic with an explicit model; return the sent JSON."""
     mock_response = Mock()
     mock_response.json.return_value = _anthropic_text_response()
@@ -801,7 +801,9 @@ def _sent_anthropic(mock_post, model, **extra):
     mock_post.return_value = mock_response
     chat_api_call(
         "anthropic",
-        messages_payload=[{"role": "user", "content": "hi"}],
+        messages_payload=messages_payload
+        if messages_payload is not None
+        else [{"role": "user", "content": "hi"}],
         api_key="test-key",
         model=model,
         streaming=False,
@@ -867,3 +869,154 @@ def test_caching_model_no_tools_system_only(mock_post):
     sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", system_message="Hi.")
     assert isinstance(sent["system"], list)
     assert "tools" not in sent  # no tools passed -> no tools key
+
+
+@patch("requests.Session.post")
+def test_caching_disabled_via_config_strips_all_breakpoints(mock_post):
+    """[caching] anthropic_enabled = false removes system AND tool AND
+    message breakpoints; payload shape otherwise unchanged."""
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+        side_effect=lambda section, key=None, default=None: (
+            False if (section, key) == ("caching", "anthropic_enabled") else default
+        ),
+    ):
+        sent = _sent_anthropic(
+            mock_post,
+            "claude-sonnet-4-6",
+            system_message="be terse",
+            tools=OPENAI_TOOLS,
+            # even an explicit Console opt-in loses to the kill-switch
+            prompt_caching=True,
+        )
+    assert isinstance(sent["system"], str)  # string form, no block array
+    assert "cache_control" not in json.dumps(sent)
+
+
+@patch("requests.Session.post")
+def test_caching_default_on_when_section_absent(mock_post):
+    """No [caching] section -> enabled (the existing task-323 behavior)."""
+    sent = _sent_anthropic(mock_post, "claude-sonnet-4-6", system_message="be terse")
+    assert isinstance(sent["system"], list)
+    assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def _count_cache_controls(obj):
+    """Count every cache_control key anywhere in the payload."""
+    if isinstance(obj, dict):
+        return ("cache_control" in obj) + sum(
+            _count_cache_controls(v) for v in obj.values()
+        )
+    if isinstance(obj, list):
+        return sum(_count_cache_controls(item) for item in obj)
+    return 0
+
+
+@patch("requests.Session.post")
+def test_caching_model_marks_last_message_block(mock_post):
+    """The final message's LAST content block carries the per-turn breakpoint;
+    earlier messages and earlier blocks of the final message carry none."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=True,
+        messages_payload=[
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+        ],
+    )
+    messages = sent["messages"]
+    assert messages[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert _count_cache_controls(messages[:-1]) == 0
+    assert _count_cache_controls(messages[-1]["content"][:-1]) == 0
+
+
+@patch("requests.Session.post")
+def test_breakpoint_budget_never_exceeds_four(mock_post):
+    """system + last-tool + per-turn = 3 total, within Anthropic's 4-cap."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        system_message="be terse",
+        tools=OPENAI_TOOLS,
+        prompt_caching=True,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent) == 3
+
+
+@patch("requests.Session.post")
+def test_non_caching_model_gets_no_message_breakpoint(mock_post):
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-2.1",
+        prompt_caching=True,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent) == 0
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_never_emits_ttl_key(mock_post):
+    """5-minute default only — a ttl key would double the write premium."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=True,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert sent["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "ttl" not in json.dumps(sent)
+
+
+# ---- per-turn breakpoint is CONSOLE-ONLY (spec's pass-through guarantee) ----
+#
+# The per-turn breakpoint bills the whole conversation prefix at the 1.25x
+# cache-write premium. A one-shot caller (media summarization loops,
+# websearch, evals, prompt engineering, the document generator) never sends
+# a second turn, so it can never read that entry back -- it would just pay
+# ~25% more input forever. These tests pin that only an explicit
+# `prompt_caching=True` (stamped by the Console gateway) turns it on.
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_without_opt_in(mock_post):
+    """Default (no `prompt_caching` kwarg): NO per-turn message breakpoint,
+    while the provider-wide task-323 system/tool breakpoints stay."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        system_message="be terse",
+        tools=OPENAI_TOOLS,
+        messages_payload=[
+            {"role": "user", "content": "summarize this"},
+        ],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0
+    # task-323 breakpoints are untouched by the opt-in gate:
+    assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert sent["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert _count_cache_controls(sent) == 2
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_when_opt_in_is_none(mock_post):
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=None,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_when_opt_in_is_false(mock_post):
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=False,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0
