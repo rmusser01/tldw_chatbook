@@ -10,6 +10,7 @@ labels:
   - ux
 dependencies:
   - TASK-1971
+  - TASK-1973
 priority: high
 ---
 

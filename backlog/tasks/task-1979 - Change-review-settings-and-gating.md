@@ -16,7 +16,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-User control and honest availability: [workspaces.change_review] config section (enabled, max_file_bytes, max_files, max_total_bytes, retention_days, diff_display_max_lines) with env overrides; a per-workspace toggle in Settings beside folder roots; feature-absent states with honest copy — no git binary ('Change review needs git — install git to enable'), no folder roots configured. Toggles take effect without restart (poke the live config tree — the app_config-captured-once trap).
+User control and honest availability: flat [change_review] config section (enabled, max_file_bytes, max_files, max_total_bytes, retention_days, diff_display_max_lines) with env overrides; a per-workspace toggle in Settings beside folder roots; feature-absent states with honest copy — no git binary ('Change review needs git — install git to enable'), no folder roots configured. Toggles take effect without restart (poke the live config tree — the app_config-captured-once trap).
 
 Spec: `Docs/superpowers/specs/2026-08-02-agent-change-review-design.md`.
 <!-- SECTION:DESCRIPTION:END -->

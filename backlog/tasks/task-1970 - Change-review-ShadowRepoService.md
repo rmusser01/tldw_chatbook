@@ -28,4 +28,6 @@ Spec: `Docs/superpowers/specs/2026-08-02-agent-change-review-design.md`.
 - [ ] #4 Two concurrent snapshot calls on one root serialize instead of failing on index.lock
 - [ ] #5 `shutil.which('git')` absent -> the service reports unavailable; nothing raises
 - [ ] #6 Forced excludes (.git/, node_modules/, .venv/, __pycache__/, build dirs) live in info/exclude and are honored
+- [ ] #7 All porcelain/diff parsing is `-z` NUL-delimited: a filename containing spaces AND a newline round-trips through snapshot, diff, and revert
+- [ ] #8 The cross-process lock is portable (atomic mkdir lockdir, no flock) and passes on the Windows CI lane
 <!-- AC:END -->

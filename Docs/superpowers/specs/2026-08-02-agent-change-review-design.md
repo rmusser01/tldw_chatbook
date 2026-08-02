@@ -56,9 +56,16 @@ shared across workspaces that include the same root, stored under the app data
 dir:
 
 ```
-~/.local/share/tldw_cli/<user>/change_review/<sha256(root)[:16]>/git/
+<app data dir>/change_review/<sha256(root)[:16]>/git/   # via the app's data-dir helper
 ```
 
+(A flat `[change_review]` config section, deliberately not nested under
+`[workspaces]`: `get_cli_setting`'s dotted-section form has a recorded
+history of silently dropping caller defaults in this repo.)
+
+- All porcelain/diff parsing uses `-z` NUL-delimited output: paths with
+  spaces, newlines, or arbitrary UTF-8 are data, and revert executes
+  deletions from parsed paths.
 - `GIT_DIR` lives there; `core.worktree` points at the root. Nothing named
   `.git` is ever created inside the user's tree.
 - Every git invocation passes explicit `--git-dir`/`--work-tree`, never `cd`s,
@@ -70,12 +77,20 @@ dir:
   - `core.hooksPath` → empty dir (global husky-style hooks must not fire on
     snapshots);
   - `gc.auto=0` (GC is ours to schedule, §6).
-- The user's `.gitignore` files are respected automatically. Forced excludes
+- The user's `.gitignore` files are respected for noise control — **with one
+  carve-out that protects the core promise**: any path the run's recorded
+  file tools touched is force-added (`git add -f`) at snapshot time, so a
+  direct agent edit to an ignored file (`.env` is the canonical case)
+  ALWAYS surfaces in the review. Script side effects into ignored
+  directories remain a documented blind spot until phase 2. Forced excludes
   (`.git/`, common junk: `node_modules/`, `.venv/`, `__pycache__/`, build
   dirs) live in the shadow repo's `info/exclude`, plus **dynamic oversize
   excludes**: git cannot exclude by size, so a pre-scan appends paths larger
   than `max_file_bytes` to `info/exclude` (recorded, surfaced in the review as
-  "N oversized files untracked").
+  "N oversized files untracked"). The oversize scan also runs on NEW files
+  at every snapshot (cheap — `status` already lists them), so a large
+  artifact the agent downloads mid-turn is excluded and disclosed rather
+  than committed into the shadow store.
 
 ### Nested repos (known hole, handled honestly)
 
@@ -95,7 +110,14 @@ A "turn" is one agent run (`run_reply`). Around it:
 
 1. **Run start:** `add -A` + snapshot commit → baseline **B** (skipped if the
    tree is clean relative to the previous snapshot — then B = previous tip).
-2. **Run end:** same → **E**.
+   B is kicked **in parallel with the model request** and awaited at the
+   tool-dispatch gate: it must complete before the first tool executes, not
+   before the send, so the model's own first-token latency absorbs the
+   snapshot cost. `core.untrackedCache=true` keeps the per-turn status scan
+   cheap on large roots.
+2. **Run end:** same → **E** — on EVERY terminal path, including failed and
+   cancelled runs: a run that died halfway through editing is when review
+   matters most.
 3. `B == E` → no changes, no card.
 4. The turn's changes are exactly `diff(B, E)`; summary via
    `diff --numstat -M`, per-file content via `diff -M` / `show`.
@@ -111,8 +133,9 @@ absent with honest Settings copy, and runs behave exactly as today.
 
 ### Concurrency
 
-- Per-root lock (in-process asyncio/threading lock + `flock` file lock for
-  cross-process safety) around snapshot/revert; `index.lock` collisions retried
+- Per-root lock (in-process lock + a portable atomic-`mkdir` lockdir for
+  cross-process safety — `flock` does not exist on Windows and CI runs
+  Windows lanes) around snapshot/revert; `index.lock` collisions retried
   with backoff. Two fleet sessions writing one workspace is a today-case, not
   a corner.
 - Overlapping runs on one root share the timeline; each run's record still
@@ -204,6 +227,8 @@ file tools", never "not by the agent".
   registration scan: over budget → tracking disabled for that root with
   honest copy ("narrow the root or add excludes"), never a silent half-track.
 - Dynamic oversize excludes per §1.
+- History rows whose snapshots were pruned render as "pruned by retention"
+  in the turn selector rather than erroring.
 - **Retention:** turn snapshots pruned past `retention_days` (default 30):
   drop `change_snapshots` rows, then `reflog expire` + `git gc --prune` in the
   shadow repo, scheduled off the existing maintenance path. Orphaned shadow
@@ -224,6 +249,10 @@ file tools", never "not by the agent".
   before anything is overwritten.
 - Every revert is followed by a fresh snapshot commit, and the turn's
   `reverted` field is updated — history stays true.
+- **Reverts refuse while any run is active on the root** ("finish or stop
+  the run first"): the per-root lock serializes git operations, but the
+  agent's own file tools do not take it — reverting under a writing agent
+  would interleave clobbers.
 - Reverts are app actions (not agent tool calls): they bypass the tool gate
   by design but run under the same per-root lock, and each file's outcome is
   reported individually — a partial failure is never silent.
@@ -231,7 +260,7 @@ file tools", never "not by the agent".
 ## 8. Configuration
 
 ```toml
-[workspaces.change_review]
+[change_review]
 enabled = true            # global kill; per-workspace override in Settings
 max_file_bytes = 5_000_000
 max_files = 50_000

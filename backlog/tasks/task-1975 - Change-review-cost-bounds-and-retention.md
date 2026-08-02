@@ -28,5 +28,7 @@ Spec: `Docs/superpowers/specs/2026-08-02-agent-change-review-design.md`.
 - [ ] #2 A file exceeding max_file_bytes lands in info/exclude, is absent from diffs, and the untracked count is disclosed in the review
 - [ ] #3 Retention run prunes rows older than the cutoff AND shrinks the shadow repo (object count measured before/after)
 - [ ] #4 A shadow repo whose root no longer exists is removed by GC
-- [ ] #5 All knobs read from [workspaces.change_review] with env-var overrides per repo convention
+- [ ] #5 All knobs read from the flat [change_review] section (NOT dotted-nested -- the get_cli_setting dotted form has dropped defaults before) with env-var overrides per repo convention
+- [ ] #6 An oversized file CREATED during a turn is excluded at E-snapshot time and disclosed, never committed to the shadow store
+- [ ] #7 A history row whose snapshots were pruned renders 'pruned by retention' instead of erroring
 <!-- AC:END -->

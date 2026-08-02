@@ -31,4 +31,6 @@ Spec: `Docs/superpowers/specs/2026-08-02-agent-change-review-design.md`.
 - [ ] #4 Undo-all on a turn whose file was ALSO changed by a later turn warns before clobbering
 - [ ] #5 After revert, a fresh snapshot exists and `reverted` reflects what happened
 - [ ] #6 A revert failure on one file reports that file and completes the rest
+- [ ] #7 Revert refuses with 'finish or stop the run first' while ANY run is active on the root (sabotage: removing the guard fails the test)
+- [ ] #8 Undo-all on a multi-root turn restores every root's files
 <!-- AC:END -->

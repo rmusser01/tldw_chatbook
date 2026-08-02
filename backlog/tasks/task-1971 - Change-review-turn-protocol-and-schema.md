@@ -30,4 +30,7 @@ Spec: `Docs/superpowers/specs/2026-08-02-agent-change-review-design.md`.
 - [ ] #4 Snapshot failure (e.g. git binary removed mid-session) stores tracking_error and the agent reply still completes
 - [ ] #5 Registering a root triggers its initial snapshot in the background; the first send performs no full-tree add
 - [ ] #6 Schema migration applies cleanly to an existing AgentRunsDB
+- [ ] #7 B runs in parallel with the model request and completes before the FIRST tool executes (asserted by ordering probe), so a send adds no user-visible snapshot latency
+- [ ] #8 A FAILED or cancelled run still records E and its row -- the half-finished edit set is reviewable
+- [ ] #9 An agent file-tool write to a .gitignore'd path (e.g. .env) appears in the turn's diff (force-add carve-out); a SCRIPT write to an ignored dir does not, and the limit is documented
 <!-- AC:END -->
