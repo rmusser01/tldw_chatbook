@@ -1498,6 +1498,77 @@ async def test_the_queue_write_runs_off_the_event_loop_thread():
 
 
 @pytest.mark.asyncio
+async def test_the_item_status_write_runs_off_the_event_loop_thread():
+    """TASK-1541: pin the load-bearing part of moving `_update_item_status`'s
+    write off the UI thread.
+
+    Same shape as `test_the_queue_write_runs_off_the_event_loop_thread`
+    directly above: `run_worker` alone only *schedules* a coroutine back onto
+    the SAME event loop, and `WatchlistsBackendController._maybe_await` only
+    awaits an argument that is already awaitable -- it never puts a plain
+    synchronous call on a thread. `_update_item_status_off_loop` is the
+    `asyncio.to_thread` boundary that actually gets `SubscriptionsDB.
+    mark_item_status` off it. A mutation that drops that boundary and awaits
+    the controller directly on the loop passes every other item-action test
+    unchanged (the end state -- status written, cell repainted -- is
+    identical either way); only watching WHICH thread runs the call can tell
+    the two apart.
+
+    Pressing the Inspector's `Ingest` button drives the SAME shared
+    `_update_item_status` every one of Ingest/Ignore/the unread toggle/
+    mark-read-on-open funnels through, so exercising it here pins the fix for
+    all four.
+    """
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="status-thread-ident")
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_write = db.mark_item_status
+
+    def _spy(item_id_arg, status_arg):
+        write_thread_ids.append(threading.get_ident())
+        return real_write(item_id_arg, status_arg)
+
+    db.mark_item_status = _spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        row_key = str(pane.items[0]["id"])
+
+        # `LocalWatchlistsService._db()` builds a brand-new `SubscriptionsDB`
+        # on every call (`app.py`'s `_wire_watchlists_and_notifications_
+        # services`), so the instance-level spy above -- on THIS `db` object
+        # -- is invisible to the real write path unless `db_factory` is
+        # repointed at this exact object. Same reasoning as
+        # `_open_items_with_seeded_item`'s `watchlist_bundle_service._db`
+        # reassignment just above, done here only after the initial mount's
+        # background loads have settled, for the identical race reason.
+        app.local_watchlists_service.db_factory = lambda: db
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-ingest-button", Button)
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if write_thread_ids:
+                break
+
+        assert write_thread_ids, "the write must have run at all"
+        assert write_thread_ids[0] != loop_thread_id, (
+            "SubscriptionsDB.mark_item_status must run off the event-loop "
+            "thread (asyncio.to_thread), not synchronously inside the "
+            "worker on the same thread that runs the event loop"
+        )
+
+
+@pytest.mark.asyncio
 async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
     """Step 1's other half: toggling back clears the flag, the indicator,
     and restores the button's original label -- not a one-way ratchet."""

@@ -202,6 +202,28 @@ NOISE_SELECTORS_SAVED_TOAST = (
 #: `_mark_item_read_on_open`'s `run_worker` call.
 _ITEM_STATUS_WORKER_GROUP = "wl-item-status"
 
+#: Per-item worker group prefix for the Ingest/Ignore actions (TASK-1541).
+#: `_ITEM_STATUS_WORKER_GROUP` above already gives the read/unread pair their
+#: own group so a fast `j` run's mark-read write cannot cancel an unrelated
+#: "Check now" fetch; Ingest/Ignore never got the same treatment and stayed
+#: in the plain `exclusive=True` default group shared with ~25 other call
+#: sites. That was harmless only because the write itself ran synchronously
+#: with no real `await` boundary a cancellation could land on -- see
+#: `_update_item_status_off_loop`'s docstring. Moving the write onto
+#: `asyncio.to_thread` gives it a genuine suspension point, so leaving Ingest/
+#: Ignore in the default group would newly let an unrelated action (or a
+#: DIFFERENT item's Ingest/Ignore) cancel this item's in-flight write --
+#: exactly the risk that matters here, since `SubscriptionsDB` sets no
+#: `busy_timeout` pragma and a contended write can sit for the length of
+#: SQLite's default lock wait while the user is free to select a different
+#: item in the meantime. Formatting the group per item id (rather than one
+#: shared group, or `_ITEM_STATUS_WORKER_GROUP` itself) means only a REPEAT
+#: Ingest/Ignore on the SAME item supersedes its own earlier write -- the
+#: same "last press wins" contract `_toggle_briefing_queue` already accepts
+#: for the briefing-queue flag -- while two DIFFERENT items' writes can never
+#: cancel each other.
+_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX = "wl-item-status-action:"
+
 #: Item statuses the reader's "Mark unread" button must never overwrite: they
 #: are not read/unread states at all, and `new` would destroy the record.
 #: A frozenset, since `_blocking_status_for` now asks the backend for the
@@ -6401,7 +6423,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ingested"), exclusive=True)
+        item_id = entity.get("id")
+        self.run_worker(
+            self._update_item_status(item_id, "ingested"),
+            exclusive=True,
+            # TASK-1541: per-item group, not the default one -- see
+            # `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX`'s note.
+            group=f"{_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX}{item_id}",
+        )
 
     @on(IgnoreRequested)
     def handle_ignore_requested(self, event: IgnoreRequested) -> None:
@@ -6409,7 +6438,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
+        item_id = entity.get("id")
+        self.run_worker(
+            self._update_item_status(item_id, "ignored"),
+            exclusive=True,
+            # TASK-1541: per-item group, not the default one -- see
+            # `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX`'s note.
+            group=f"{_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX}{item_id}",
+        )
 
     @on(ToggleBriefingQueueRequested)
     def handle_toggle_briefing_queue_requested(
@@ -6594,14 +6630,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
         mutated in place instead, so a later status check already sees the
         new value without forcing a rebuild.
+
+        TASK-1541: the write itself goes through `_update_item_status_
+        off_loop`, not a direct `await self._controller.update_item_status(
+        ...)`. See that method's docstring for why a plain `await` here still
+        ran the transactional `SubscriptionsDB.mark_item_status` UPDATE on
+        the event-loop thread despite this coroutine already being dispatched
+        through `run_worker`.
         """
         notify = getattr(self.app_instance, "notify", None)
         try:
-            await self._controller.update_item_status(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-                status=status,
-            )
+            await self._update_item_status_off_loop(item_id=item_id, status=status)
             if patch_item is not None:
                 patch_item["status"] = status
                 # Whole-branch review (Important): the in-place patch is
@@ -6620,6 +6659,55 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if refresh:
             self.run_worker(self._load_items(), exclusive=True)
             self._refresh_overview_data()
+
+    async def _update_item_status_off_loop(
+        self, *, item_id: Any, status: str
+    ) -> dict[str, Any]:
+        """Drive the item-status write to completion off the UI thread.
+
+        TASK-1541. `_update_item_status` used to `await
+        self._controller.update_item_status(...)` directly, and every layer
+        of that call chain -- `WatchlistsBackendController.update_item_status`
+        -> `WatchlistScopeService.update_item` -> `LocalWatchlistsService.
+        update_item` -> `SubscriptionsDB.mark_item_status` -- is an `async
+        def` with no genuine `await` of its own. `_maybe_await` (the
+        controller's own helper) only awaits a value that is ALREADY
+        awaitable; it never puts a plain synchronous call on a thread. So
+        awaiting that chain runs the whole thing, including the transactional
+        `UPDATE`, synchronously to completion on whichever thread awaits the
+        outermost coroutine -- and `run_worker` only *schedules* a coroutine
+        back onto this SAME event loop, it does not move it to a thread
+        (identical shape to `_toggle_briefing_queue`'s fix, whose docstring
+        names this exact trap). `SubscriptionsDB` sets no `busy_timeout`
+        pragma, so a second app instance (or a background check) contending
+        for the same row blocked the UI thread for the length of the lock
+        wait, not just the write.
+
+        Mirrors `library_screen.py`'s `_run_library_service_call(...,
+        isolate_in_worker=True)`: `asyncio.to_thread` gives the worker thread
+        no event loop of its own, so `asyncio.run` builds a throwaway one
+        there to drive the controller coroutine to completion, rather than
+        resuming it back on this loop. `runtime_backend` is read here, on
+        the calling (event-loop) thread, and passed into the thread body as a
+        plain string -- the worker body itself must never read a screen
+        reactive directly.
+
+        Returns:
+            The controller's result dict, unused by the only current caller
+            but kept so a future caller does not have to re-add it.
+        """
+        runtime_backend = self.runtime_backend
+
+        def _invoke() -> dict[str, Any]:
+            return asyncio.run(  # policy-exception: worker-thread loop
+                self._controller.update_item_status(
+                    runtime_backend=runtime_backend,
+                    item_id=item_id,
+                    status=status,
+                )
+            )
+
+        return await asyncio.to_thread(_invoke)
 
     def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
         """Push a patched status into the mounted Items table's Status cell."""
