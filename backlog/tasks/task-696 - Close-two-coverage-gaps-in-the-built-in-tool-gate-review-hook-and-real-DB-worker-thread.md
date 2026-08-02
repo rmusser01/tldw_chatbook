@@ -3,7 +3,7 @@ id: TASK-696
 title: >-
   Close two coverage gaps in the built-in tool gate (review hook, real-DB
   worker thread)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 06:45'
 labels:
@@ -27,7 +27,19 @@ TASK-545 P2's whole-branch review found two acceptance criteria that are satisfi
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] A test drives a real gated built-in tool call through `build_tool_review_hook` and asserts an approval row is emitted for it, replacing reliance on the synthetic risky-tool double for this path
-- [ ] A test executes `create_note` on a non-main thread against a real `CharactersRAGDB` (temp path) and asserts the row persists and is readable
-- [ ] Both tests fail if the behavior they cover regresses (demonstrate, e.g. by sabotage)
+- [x] A test drives a real gated built-in tool call through `build_tool_review_hook` and asserts an approval row is emitted for it, replacing reliance on the synthetic risky-tool double for this path
+- [x] A test executes `create_note` on a non-main thread against a real `CharactersRAGDB` (temp path) and asserts the row persists and is readable
+- [x] Both tests fail if the behavior they cover regresses (demonstrate, e.g. by sabotage)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`Tests/Agents/test_builtin_gate_real_tool_coverage.py`, two tests:
+
+**AC#1** drives the real `ReadFileTool` (`risk_tags ("reads",)`) through the real `BuiltinToolGate` + `build_tool_review_hook` and asserts a pending approval row (reason `risk_floored`, `server_key` builtin) reaches the card callback -- and that the refusal travels back per call id. Sabotage: dropping `reads` from `BUILTIN_HIGH_RISK_TAGS` fails it with "would have executed silently: []" -- the exact regression the AC feared.
+
+**AC#2** runs the real `CreateNoteTool.execute` on a real non-main thread against a real `CharactersRAGDB` at a temp path (the config global patched to it -- redirected, not faked away), then reads the row back on the MAIN thread through the same instance: both directions of the cross-thread contract the design spec flagged. Sabotage: severing `add_note`'s write fails it with "the note vanished across threads".
+
+Both tests passed on first run and were therefore sabotage-verified immediately (AC#3), per the programme's standing rule that a first-run pass proves nothing until the failure mode is demonstrated.
+<!-- SECTION:NOTES:END -->
