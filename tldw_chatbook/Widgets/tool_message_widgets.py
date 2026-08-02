@@ -1,6 +1,26 @@
 # tool_message_widgets.py
-"""
-Specialized message widgets for displaying tool calls and tool results in the chat interface.
+"""Tool call/result message widgets for the Character-Chat (CCP) window.
+
+OWNERSHIP (TASK-1846). These widgets render tool activity for the CCP
+window ONLY -- the sole production caller is
+``UI/CCP_Modules/ccp_message_manager.py``. The Console does NOT use them
+and deliberately cannot:
+
+* these extend ``ChatMessage``; the Console transcript is built from
+  ``ConsoleTranscriptMessage(Static)`` rows whose selection, ``sync_message``
+  and jump-pill behaviour depend on that widget type;
+* these format with Rich MARKUP (``[bold green]``, ``[red]``), while the
+  Console's marker text is deliberately markup-OFF -- see
+  ``console_agent_bridge.format_agent_step_marker``, which documents that
+  escaping for a parser that never runs left literal backslashes in the
+  rendered marker.
+
+Adopting one renderer across both surfaces was considered and rejected for
+those two reasons: it would break one surface's row model or the other's
+escaping contract. The file is named generically, which previously read as
+"this is where tool rendering lives" -- it is not. If you are changing what
+the CONSOLE shows for a tool call, you want ``format_agent_step_marker``
+and ``console_transcript.py``.
 """
 
 import json

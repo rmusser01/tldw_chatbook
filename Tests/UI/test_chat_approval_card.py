@@ -228,3 +228,44 @@ def test_a_timed_out_approval_produces_its_own_marker():
     assert "not run" in low or "auto-denied" in low, (
         f"the marker must say the call did NOT run: {marker!r}"
     )
+
+
+@pytest.mark.unit
+def test_the_approval_card_carries_its_design_system_treatment():
+    """TASK-1846: the highest-stakes surface must not render as body text.
+
+    `.ds-approval-card` is the design system's approval treatment -- thick
+    border in the approval-required colour, 12% tint -- and it was applied by
+    NOTHING. `#chat-approval-card` had zero CSS rules of its own, so the card
+    asking permission to let an agent reach the outside world looked exactly
+    like a paragraph.
+    """
+    import inspect
+
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
+
+    src = inspect.getsource(mod.ChatApprovalCard)
+    assert "ds-approval-card" in src, (
+        "the card does not apply the design system's approval treatment"
+    )
+
+
+@pytest.mark.unit
+def test_tool_trace_is_not_the_faintest_text_on_screen():
+    """TASK-1846: the record of what touched the machine must be legible.
+
+    `.console-transcript-message-tool` rendered `dim italic` in muted grey --
+    the audit trail was the least readable text in the transcript, and rows
+    are not focusable so it could not even be selected by keyboard.
+    """
+    from pathlib import Path
+
+    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    import re
+
+    m = re.search(r"\.console-transcript-message-tool\s*\{([^}]*)\}", css, re.S)
+    assert m, "tool-row rule is missing"
+    body = m.group(1)
+    assert "dim" not in body, (
+        f"the tool trace is still dimmed below every other row: {body.strip()!r}"
+    )

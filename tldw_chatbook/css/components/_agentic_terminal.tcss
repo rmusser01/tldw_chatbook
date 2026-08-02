@@ -3117,9 +3117,15 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
+/* TASK-1846: this is the record of what an agent did to the user's machine
+   -- what it read, what it wrote, what left the box. It rendered `dim italic`
+   in muted grey, making the audit trail the LEAST legible text in the
+   transcript. Tools are the egress boundary; their trace should read at
+   least as clearly as ordinary prose. Italic is kept as the quiet
+   distinguishing mark from user/assistant rows; `dim` is not. */
 .console-transcript-message-tool {
-    color: $ds-text-muted;
-    text-style: dim italic;
+    color: $ds-text-primary;
+    text-style: italic;
 }
 
 .console-transcript-message-system {

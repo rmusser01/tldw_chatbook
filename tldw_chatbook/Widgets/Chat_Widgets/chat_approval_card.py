@@ -243,6 +243,14 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
 class ChatApprovalCard(Container):
     """Inline approval card for privileged agent actions."""
 
+    #: TASK-1846: `.ds-approval-card` is the design system's approval
+    #: treatment (thick border in the approval-required colour, 12% tint) and
+    #: it was applied by NOTHING -- `#chat-approval-card` had no rules at all,
+    #: so the card asking permission for an agent to reach the outside world
+    #: rendered as ordinary body text. This is the surface's whole visual
+    #: identity; it belongs on the class, not on each mount site.
+    DEFAULT_CLASSES = "ds-approval-card"
+
     def first_focus_widget_id(self) -> str:
         """Return the id the keyboard should land on when this card is reached.
 

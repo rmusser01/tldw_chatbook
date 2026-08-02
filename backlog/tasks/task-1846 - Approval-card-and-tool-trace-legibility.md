@@ -1,7 +1,7 @@
 ---
 id: TASK-1846
 title: 'Approval card is unstyled and the tool trace is the faintest text on screen'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 19:30'
 labels:
@@ -41,3 +41,33 @@ Direction for the row: put decision controls on their own line beneath the ident
 
 Keep `redact_mapping` on every path including any expanded view -- argument redaction is why the card can show payloads at all.
 <!-- SECTION:NOTES:END -->
+
+## Progress (2026-08-01)
+
+<!-- SECTION:PROGRESS:BEGIN -->
+**Done:** `.ds-approval-card` now applied via `DEFAULT_CLASSES` (it was defined in
+the design system and applied by nothing, so the card rendered as body text);
+tool-trace rows no longer `dim` — they carry `$ds-text-primary` with italic kept
+as the quiet distinguishing mark.
+
+**`tool_message_widgets.py`: adopt was REJECTED on evidence, not skipped.** The
+decision was "adopt", but the two renderers are structurally incompatible:
+
+1. `ToolResultMessage` extends `ChatMessage`; the Console transcript is built
+   from `ConsoleTranscriptMessage(Static)` rows whose selection, `sync_message`
+   and jump-pill behaviour depend on that widget type.
+2. CCP formats with Rich MARKUP (`[bold green]`, `[red]`); the Console's marker
+   text is deliberately markup-OFF — `format_agent_step_marker` documents that
+   escaping for a parser that never runs left literal backslashes in markers.
+
+Sharing one renderer would break one surface's row model or the other's escaping
+contract. Instead the module docstring now names its sole consumer and says
+plainly that the Console does not and cannot use it, pointing changers at
+`format_agent_step_marker`/`console_transcript.py` — which removes the decoy
+without a risky refactor.
+
+**Still open:** the row's information budget (26+14+14 = 54 fixed cells for
+controls) and moving decision controls onto their own line so arguments get full
+width. Deferred as a layout change wanting live verification at several terminal
+widths.
+<!-- SECTION:PROGRESS:END -->
