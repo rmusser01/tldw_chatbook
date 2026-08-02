@@ -3170,6 +3170,21 @@ class ConsoleComposerBar(Horizontal):
         chip.update(Content(body))
 
     def compose(self) -> ComposeResult:
+        """Build the expanded and collapsed composer presentations.
+
+        The expanded row reads, left to right: the ``Composer ▾`` collapse
+        toggle, the ``☰`` overflow-menu button, the visible draft (with its
+        hidden compatibility/status companions), then the fixed-width action
+        row holding ``Mic``, the ``MIC_SEND_GAP`` buffer, ``Send``, and the
+        display-toggled ``Stop``/``✕`` controls. The collapsed presentation
+        is a one-row status line with ``Stop`` (while a run is active) and
+        ``Expand ▴``. Both presentations are always mounted;
+        ``set_collapsed`` display-toggles between them so editor state
+        survives without remounting.
+
+        Yields:
+            Child widgets for both composer presentations.
+        """
         expanded = Horizontal(
             id="console-composer-expanded",
             classes="console-composer-presentation",
