@@ -30,12 +30,24 @@ except ImportError:
 PYAUDIO_AVAILABLE = False
 SOUNDDEVICE_AVAILABLE = False
 
+# Final whole-branch review (streaming-pcm-sink, C1), belt-and-braces: all
+# three backend probes below catch `Exception`, not just `ImportError`.
+# `sounddevice` in particular calls `Pa_Initialize()` at IMPORT TIME
+# (`_initialize()`, module scope) and raises `PortAudioError` -- a
+# `RuntimeError` subclass, not `ImportError` -- when PortAudio itself can't
+# initialize (headless container, no ALSA, CoreAudio unavailable, audio
+# server down), which an `except ImportError` alone lets propagate
+# uncaught. `Audio/__init__.py` no longer imports this module eagerly
+# (same review, same fix), so this module is now reached only when a
+# caller genuinely wants a real audio backend -- but it must still degrade
+# to "unavailable" rather than raise when that backend can't come up,
+# exactly as the package already promises for a merely-missing package.
 try:
     import pyaudio
 
     PYAUDIO_AVAILABLE = True
     logger.info("PyAudio backend available")
-except ImportError:
+except Exception:
     pyaudio = SimpleNamespace(PyAudio=None, paInt16=8)
     logger.warning("PyAudio not available. Install with: pip install pyaudio")
 
@@ -44,7 +56,7 @@ try:
 
     SOUNDDEVICE_AVAILABLE = True
     logger.info("Sounddevice backend available")
-except ImportError:
+except Exception:
     sd = SimpleNamespace(
         InputStream=None,
         query_devices=lambda: [],
@@ -59,7 +71,7 @@ try:
 
     VAD_AVAILABLE = True
     logger.info("WebRTC VAD available for voice activity detection")
-except ImportError:
+except Exception:
     webrtcvad = SimpleNamespace(Vad=None)
     logger.warning("WebRTC VAD not available. Install with: pip install webrtcvad")
 

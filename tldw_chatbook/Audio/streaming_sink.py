@@ -86,11 +86,18 @@ production it is left `None` and `open()` lazily builds a real
 be driven synchronously and deterministically (no wall-clock sleeps, no
 real audio hardware).
 
-Note: `sounddevice` is not imported at module scope by *this* file, but
-`tldw_chatbook.Audio.__init__` currently imports `recording_service` eagerly,
-which does import `sounddevice` (and pyaudio, webrtcvad) at module scope --
-so in practice, importing anything from the `Audio` package already pulls
-in the audio backend regardless of what this module does on its own.
+Note: `sounddevice` is not imported at module scope by *this* file. It used
+to be true in practice anyway, because `tldw_chatbook.Audio.__init__`
+eagerly imported `recording_service` (which does import `sounddevice`,
+`pyaudio`, and `webrtcvad` at module scope) -- final whole-branch review,
+C1: that eager import made `sounddevice`'s own `Pa_Initialize()` call (at
+IMPORT TIME) able to fail the entire app's import with an uncaught
+`PortAudioError` whenever this module was reached from `Event_Handlers/
+TTS_Events/tts_events.py`'s own module-scope import. `Audio/__init__.py`
+now lazily exports `AudioRecordingService`/`AudioRecordingError` (the
+`__getattr__` pattern it already used for the dictation stack), so
+importing this module -- or any other submodule of the `Audio` package --
+no longer transitively imports `recording_service`/`sounddevice` at all.
 """
 
 from __future__ import annotations
