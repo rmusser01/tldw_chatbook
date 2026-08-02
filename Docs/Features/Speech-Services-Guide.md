@@ -423,6 +423,51 @@ nothing on its own. Without this rule, playback still running at capture
 start would be picked up by the open mic and transcribed into the new
 draft.
 
+**Streaming playback.** Spoken feedback (and Console **Speak**, same speech
+pipeline) can play some responses live through the audio device instead of
+waiting on a finished file.
+
+*What streams today.* Only the audio.cpp adapter's response is eligible —
+its complete PCM16-WAV body validates as a playable stream. tldw_chatbook
+still writes that response to a temporary artifact exactly as before, but
+the instant it validates, playback moves to the live device and the
+now-redundant temp file is discarded immediately instead of being kept for
+file-based playback. That makes playback interruptible at the device — a
+new capture or a new utterance cuts audio within roughly two audio blocks
+instead of waiting on a file — and leaves nothing on disk to replay or
+export for that turn. Latency to first sound is unchanged: audio.cpp still
+delivers one complete WAV per request, not incremental chunks, so there is
+no "starts talking sooner" win here, only the interruptibility one.
+
+*What still falls back byte-identically to the pre-streaming path* — same
+temp file, same file-based playback, same everything:
+
+- Every legacy-bridge provider (openai, elevenlabs, kokoro, chatterbox,
+  alltalk, higgs, ...) — that bridge never populates a response sample
+  rate, and without one the sink cannot open. Unblocking these is a filed,
+  three-leg follow-up (plumb a sample rate onto legacy-bridge responses,
+  add a caller-scoped raw-PCM request option, and add a PCM-safe legacy
+  fallback) — none of it has shipped yet, so do not expect these providers
+  to stream.
+- Any compressed format (MP3, Opus, AAC, FLAC).
+- `sounddevice` not installed, or the sink otherwise unavailable.
+- A device failure at open or mid-stream.
+
+*Numbers.* Playback becomes audible once 300 ms of audio is buffered; an
+interrupting stop reaches silence within 2 audio blocks — about 40 ms at
+the default 20 ms block size — by aborting the output stream rather than
+draining it.
+
+*No configuration changed.* `dictation.spoken_feedback` and the `[app_tts]`
+settings above behave exactly as documented; this is an internal delivery
+upgrade for responses the sink already recognized as safe, not a new
+setting.
+
+*For test authors.* Every test is guarded against opening a real audio
+device by default (`Tests/conftest.py`'s autouse `_no_real_audio_device`
+fixture patches out the `sounddevice` import); a test that genuinely needs
+real hardware must opt out with `@pytest.mark.real_audio_device`.
+
 ## Voice Commands
 
 ### Built-in Commands
@@ -816,5 +861,5 @@ max_identifier_characters = 256
 
 ---
 
-**Last Updated**: 2026-07-29
-**Version**: 2.4 (Console voice control V2: spoken commands and spoken feedback)
+**Last Updated**: 2026-08-02
+**Version**: 2.5 (streaming spoken-feedback playback for audio.cpp responses)
