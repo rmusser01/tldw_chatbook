@@ -147,6 +147,28 @@ class ConsoleChatPersistence(Protocol):
         ``None``.
         """
 
+    def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
+        """Persist normalized usage as a version-neutral, local-only write.
+
+        Unlike ``update_message_content``'s optional ``usage_json`` kwarg
+        (which rides a content update and legitimately bumps the row's
+        version), this method exists SOLELY for a usage-only flush against
+        an already-terminal message -- the Stop-path case described on
+        ``ConsoleChatStore.set_message_usage``. It must not advance
+        ``version``/``last_modified`` (the ``messages_sync_update`` trigger
+        watches those columns, not just content, so bumping them on a
+        usage-only write would enqueue a ``sync_log`` row whose payload can
+        never carry ``usage_json`` -- pure cross-device churn for a column
+        that is local-only by design).
+
+        Entirely optional: this whole method, not just a kwarg, may be
+        absent. The store probes for it with ``hasattr``/``callable``
+        (same philosophy as ``_persistence_accepts_kwarg``) and falls back
+        to the ordinary content-carrying update path when it is not
+        present, so narrow test fakes written before this method existed
+        keep working unchanged.
+        """
+
     def get_message_version(self, message_id: str) -> int | None:
         """Return the current positive durable row version, if trustworthy.
 
@@ -2030,7 +2052,7 @@ class ConsoleChatStore:
             return self._snapshot(message)
         message.usage = usage
         if message.status not in {"pending", "streaming"}:
-            self._persist_existing_message(message)
+            self._persist_usage_only(message)
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
@@ -3042,6 +3064,52 @@ class ConsoleChatStore:
             except Exception:
                 logger.warning("terminal_citation_persistence_abandoned")
                 return None
+
+    def _persist_usage_only(self, message: ConsoleChatMessage) -> None:
+        """Flush an already-terminal message's usage without a version bump.
+
+        This is the Stop-path terminal flush described on
+        ``set_message_usage``: the message's content/version were already
+        persisted by an earlier terminal mark, and only ``usage_json`` is
+        new here. Routing that through the ordinary content path
+        (``_persist_existing_message`` -> ``update_message_content`` ->
+        ``CharactersRAGDB.update_message``) would still bump ``version``/
+        ``last_modified`` on a write where content did not change, which
+        trips the ``messages_sync_update`` trigger's ``WHEN`` clause (it
+        watches those two columns, not just content) and enqueues a
+        ``sync_log`` row whose payload can never carry ``usage_json`` --
+        cross-device churn, and a spurious optimistic-lock version bump, for
+        a column that is local-only by design (Qodo round).
+
+        Prefers the persistence adapter's ``update_message_usage`` method
+        (a version-neutral, local-only column write -- see
+        ``ChatPersistenceService.update_message_usage``) when the adapter
+        provides one, probed the same hasattr+callable way as
+        ``_persistence_accepts_kwarg`` so narrow test fakes that predate
+        this method are not broken. Those older fakes -- and the
+        not-yet-durably-created case -- fall back to the pre-existing
+        content-carrying ``_persist_existing_message`` path unchanged, so
+        behavior degrades gracefully rather than breaking.
+        """
+        if self.persistence is None:
+            return
+        if message.persisted_message_id is None or message.usage is None:
+            self._persist_existing_message(message)
+            return
+        usage_writer = getattr(self.persistence, "update_message_usage", None)
+        if callable(usage_writer):
+            usage_writer(
+                message_id=message.persisted_message_id,
+                usage_json=message.usage.to_json(),
+            )
+            # Sync v2 (a separate, content-carrying sync pipeline) never
+            # transmits usage_json either, and the terminal mark that
+            # preceded this usage-only flush already enqueued this
+            # message's content once -- re-enqueueing identical content
+            # here would be the same flavor of profitless churn this fix
+            # is removing from the legacy sync_log trigger path.
+            return
+        self._persist_existing_message(message)
 
     def _persist_existing_message(
         self,

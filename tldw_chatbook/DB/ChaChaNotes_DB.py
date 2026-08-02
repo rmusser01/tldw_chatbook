@@ -8651,6 +8651,74 @@ UPDATE db_schema_version
             )
             raise
 
+    def update_message_usage_local(self, message_id: str, usage_json: str) -> bool:
+        """Write a message's local-only ``usage_json`` WITHOUT bumping sync metadata.
+
+        ``update_message`` (above) is the general-purpose row updater: it
+        always advances ``version``/``last_modified`` and sets ``client_id``,
+        because those three columns are exactly what the
+        ``messages_sync_update`` trigger's ``WHEN`` clause watches to decide
+        a row changed and needs to go in ``sync_log`` -- and the trigger's
+        payload only ever carries syncable columns (content, images,
+        ranking, parent, timestamps), never ``usage_json``.
+
+        Console cost-ticker usage is deliberately LOCAL-ONLY: it is derived
+        from this device's own provider responses, is never part of the
+        sync payload, and every device recomputes/repersists its own copy
+        independently. Routing a usage-only write through
+        ``update_message`` would therefore still bump ``version``/
+        ``last_modified`` (the trigger fires on those columns changing) and
+        enqueue a ``sync_log`` row -- pure churn, since the payload that
+        row would carry can never include the ``usage_json`` that actually
+        changed, plus a spurious optimistic-lock version bump the message's
+        real (syncable) content never asked for. This method instead writes
+        ONLY the ``usage_json`` column directly, leaving ``version``,
+        ``last_modified``, and ``client_id`` untouched -- so the trigger's
+        ``WHEN`` clause has nothing to fire on and no sync-log churn is
+        produced.
+
+        Bypassing optimistic locking here is safe specifically because this
+        column is local-only: it is excluded from every sync payload, is
+        written by a single writer per device (this process, right after
+        pricing its own provider call), and last-write-wins on ONE
+        unsynced column carries none of the cross-device conflict risk
+        optimistic locking exists to catch on syncable columns.
+
+        Args:
+            message_id: The UUID of the message to update.
+            usage_json: The normalized ``ProviderUsage.to_json()`` payload
+                to store.
+
+        Returns:
+            True if a non-deleted row with this id was found and updated;
+            False if no such row exists (already deleted, or unknown id).
+
+        Raises:
+            CharactersRAGDBError: For database integrity or other database
+                errors while performing the write.
+        """
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE messages SET usage_json = ? WHERE id = ? AND deleted = 0",
+                    (usage_json, message_id),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.IntegrityError as e:
+            logger.opt(exception=True).error(
+                f"SQLite integrity error writing local usage for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error writing local usage: {e}"
+            ) from e
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error writing local usage for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error writing local usage: {e}"
+            ) from e
+
     def soft_delete_message(
         self, message_id: str, expected_version: int
     ) -> Optional[bool]:

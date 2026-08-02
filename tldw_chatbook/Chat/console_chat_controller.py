@@ -6051,6 +6051,18 @@ class ConsoleChatController:
             self.store.set_message_usage(assistant_message_id, total)
         except KeyError:
             pass
+        except Exception as exc:
+            # Broadened past KeyError (Qodo round): `set_message_usage` now
+            # persists immediately for an already-terminal message (the
+            # stop-path flush, see its own docstring), so any
+            # SQLite/persistence exception raised from that flush would
+            # otherwise escape into stop/cancel control flow -- exactly the
+            # "never fail a send" contract this method promises. Swallow and
+            # log instead; a dropped usage attach is a missing cost figure,
+            # not a broken turn.
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("usage_attach_failed")
 
     async def _run_direct_provider_reply(
         self,

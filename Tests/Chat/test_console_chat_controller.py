@@ -4283,6 +4283,81 @@ async def test_stopped_stream_persists_partial_input_usage():
     assert '"partial": true' in persisted[-1]
 
 
+class _RaisingOnUsageWritePersistence(_UsageRecordingPersistence):
+    """Like ``_UsageRecordingPersistence``, but its content update raises
+    once the write actually carries a ``usage_json`` payload -- simulating
+    a SQLite/persistence exception during the stop-path's usage-only
+    terminal flush."""
+
+    def update_message_content(self, **kwargs):
+        if kwargs.get("usage_json") is not None:
+            raise RuntimeError("simulated persistence failure during usage flush")
+        return super().update_message_content(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_stop_path_usage_attach_survives_a_persistence_exception():
+    """Qodo round (Finding 1): ``_attach_stream_usage`` is documented "must
+    never fail a send", but it used to only catch ``KeyError`` around
+    ``store.set_message_usage``. Since that call now persists immediately
+    for an already-terminal message (the stop-path flush, F3), ANY
+    exception the persistence layer raises during that flush -- not just a
+    missing message -- must not escape into stop/cancel control flow. A
+    persistence adapter whose ``update_message_content`` raises
+    ``RuntimeError`` specifically on the usage-carrying write proves the
+    broadened ``except Exception`` swallows it and the stop outcome (status,
+    content) is unaffected.
+    """
+
+    class StalledAnthropicGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"input_tokens": 3571, "cache_read_input_tokens": 6656}
+                    )
+                self.started.set()
+                yield "partial"
+                await self.never_release.wait()
+                yield "ignored"
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _RaisingOnUsageWritePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = StalledAnthropicGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    # Must not raise: the RuntimeError from the persistence layer's usage
+    # write must be swallowed inside `_attach_stream_usage`, not propagate
+    # out through the stream task.
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result.accepted
+
+    stopped = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ][-1]
+    assert stopped.status == "stopped"
+    assert stopped.content == "partial"
+    # The in-memory attach still happened (the send itself never failed) --
+    # only the DURABLE write behind it raised and was swallowed.
+    assert stopped.usage is not None
+    assert stopped.usage.uncached_input == 3571
+
+
 @pytest.mark.asyncio
 async def test_billed_turn_without_visible_content_still_records_usage():
     """F7 (decided): a turn that reported usage but emitted no content -- a

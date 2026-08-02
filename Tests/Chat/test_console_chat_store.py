@@ -2670,6 +2670,65 @@ def test_set_message_usage_after_a_terminal_mark_flushes_to_persistence():
     assert '"partial": true' in persistence.usage_values[-1]
 
 
+def test_stop_path_usage_flush_uses_local_write_and_leaves_version_unchanged():
+    """Qodo round (Finding 4), AC (d)(ii): the same Stop-path late-usage-
+    attach flush as the F3 test above, but against a REAL
+    ``ChatPersistenceService``/``CharactersRAGDB`` pair instead of a hand-
+    rolled fake -- proving the usage-only flush actually lands through
+    ``update_message_usage_local`` (no version/last_modified bump, no
+    ``sync_log`` row) rather than only through a fake that can't observe
+    that distinction.
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.ensure_session(title="Chat 1")
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(message.id, "partial answer")
+        stopped = store.mark_message_stopped(message.id)
+        assert stopped.status == "stopped"
+
+        persisted_id = store.get_message(message.id).persisted_message_id
+        assert persisted_id is not None
+        row_after_stop = db.get_message_by_id(persisted_id)
+        assert row_after_stop["usage_json"] is None
+        version_after_stop = row_after_stop["version"]
+        last_modified_after_stop = row_after_stop["last_modified"]
+        change_id_after_stop = db.get_latest_sync_log_change_id()
+
+        store.set_message_usage(
+            message.id,
+            ProviderUsage(
+                uncached_input=3571,
+                cache_read=6656,
+                provider="anthropic",
+                model="claude-sonnet-5",
+                partial=True,
+            ),
+        )
+
+        row_after_usage = db.get_message_by_id(persisted_id)
+        assert row_after_usage["usage_json"] is not None
+        assert '"uncached_input": 3571' in row_after_usage["usage_json"]
+        assert '"cache_read": 6656' in row_after_usage["usage_json"]
+        # The load-bearing assertion: the usage-only flush did NOT bump
+        # version/last_modified a second time on top of the stop flush.
+        assert row_after_usage["version"] == version_after_stop
+        assert row_after_usage["last_modified"] == last_modified_after_stop
+
+        new_entries = db.get_sync_log_entries(
+            since_change_id=change_id_after_stop, entity_type="messages"
+        )
+        assert new_entries == [], (
+            "the usage-only local flush must not enqueue a sync_log row"
+        )
+    finally:
+        db.close_connection()
+
+
 class _UsageUpdatePersistence(RecordingPersistence):
     """RecordingPersistence that keeps every usage_json it is handed."""
 

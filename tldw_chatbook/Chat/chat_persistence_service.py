@@ -567,6 +567,38 @@ class ChatPersistenceService:
             )
         )
 
+    def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
+        """Persist a message's normalized usage WITHOUT touching sync metadata.
+
+        Routes to :meth:`CharactersRAGDB.update_message_usage_local`, a
+        direct, version-neutral column write, rather than
+        ``update_message_content``/``self.db.update_message``. The Console
+        cost ticker's ``usage_json`` column is local-only (derived from this
+        device's own provider responses, never part of the sync payload), so
+        going through the general-purpose row updater -- which always bumps
+        ``version``/``last_modified`` -- would trip the ``messages_sync_update``
+        trigger's ``WHEN`` clause on those two columns alone and enqueue a
+        ``sync_log`` row whose payload can never carry the ``usage_json``
+        that actually changed: pure cross-device churn (and a spurious
+        optimistic-lock version bump) for a write with no syncable content.
+
+        Callers should use this ONLY for a usage-only write (e.g. the Console
+        store's stop-path terminal flush, attaching usage after the message's
+        content/version have already been persisted). A normal write where
+        usage rides alongside changed content still belongs on
+        ``update_message_content``, since content changing a version IS a
+        legitimate, syncable change.
+
+        Args:
+            message_id: UUID of the message to update.
+            usage_json: Normalized ``ProviderUsage.to_json()`` payload.
+
+        Returns:
+            True if a non-deleted message with this id was found and
+            updated; False otherwise.
+        """
+        return self.db.update_message_usage_local(message_id, usage_json)
+
     def create_message(
         self,
         *,
