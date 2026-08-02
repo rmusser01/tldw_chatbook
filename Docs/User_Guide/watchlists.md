@@ -54,3 +54,30 @@ Ctrl+C when you are done.
 The app does not serve the folder for you. Its `[web_server]` setting is
 unrelated — that runs the whole chatbook UI in a browser instead of your
 terminal, and it is not a way to publish a feed.
+
+## Scheduled briefings
+
+By default, a briefing is written only when you press **Generate** in the
+Artifacts section — nothing runs unless you ask for it. The **cadence**
+picker next to the selection-mode and default-preset pickers in that same
+toolbar turns this into a recurring job for one watchlist: choose **Every
+12h**, **Daily**, or **Weekly**, and a new briefing is written on that
+schedule without you pressing anything. Choose **Off** — the default — to
+turn scheduling back off.
+
+A few things worth knowing before turning it on:
+
+- **It runs only while the app is open.** There is no background service —
+  a scheduled briefing fires from inside this app's own process, so closing
+  the app pauses the schedule. It picks back up, on the same rhythm, the
+  next time you open the app; nothing is generated while it is closed.
+- **It is opt-in, per watchlist, and off by default.** Generating a briefing
+  spends the LLM tokens your briefing preset is configured to use, so
+  turning scheduling on for one watchlist never turns it on for any other.
+- **A failed run never advances the schedule.** If a scheduled briefing
+  fails, the next tick simply tries again rather than skipping ahead — a
+  bad run costs a retry, never a missed watchlist.
+
+The Artifacts section's scope line states plainly which of these applies:
+"on request" when scheduling is off, or the actual cadence — "scheduled
+daily while the app is open", for example — when it is on.

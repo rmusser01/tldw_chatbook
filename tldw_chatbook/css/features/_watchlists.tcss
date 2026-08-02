@@ -1174,14 +1174,15 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
-/* Selection-mode and default-preset pickers (spec #2 phase 2a, Task 4).
+/* Selection-mode, default-preset, and cadence pickers (spec #2 phase 2a,
+ * Task 4; cadence added by phase 4, Task 4).
  * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,
  * rendered only when a watchlist is in scope (`ArtifactsPane.compose`) --
  * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
  * (layout/_panes.tcss), same as `#artifacts-toolbar` above it.
  *
- * Both `Select`s need the exact TASK-995 override `#sources-toolbar Select`
- * carries: the bare global `Select { width: 100%; margin-bottom: 1; }`
+ * All three `Select`s need the exact TASK-995 override `#sources-toolbar
+ * Select` carries: the bare global `Select { width: 100%; margin-bottom: 1; }`
  * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
  * of specificity, so without `margin: 0` here a one-row picker strip grows
  * a blank row underneath it, and without an explicit `width` each Select
@@ -1200,6 +1201,15 @@ WatchlistSourcePickerDialog {
 
 #artifacts-preset-select {
     width: 24;
+}
+
+/* Cadence's own options are the shortest of the three ("Off"/"Daily"/
+ * "Weekly"/"Every 12h"), so this can be narrower than its siblings --
+ * matching `#sources-status-filter`'s own width for a similar-length
+ * label set (features/_watchlists.tcss above).
+ */
+#artifacts-cadence-select {
+    width: 16;
 }
 
 /* Briefing preset manager modal (spec #2 phase 2a, Task 3).

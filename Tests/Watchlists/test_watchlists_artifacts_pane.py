@@ -1168,10 +1168,15 @@ async def _press_generate_button_and_wait_for_a_call(
 
 @pytest.mark.asyncio
 async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
-    """The mode/preset `Select`s and the `Presets…` `Button` have nothing to
-    act on without a single watchlist in scope, so -- unlike Generate/
-    Refresh, which stay visible to explain themselves -- they do not render
-    at all when `can_generate` is False.
+    """The mode/preset/cadence `Select`s and the `Presets…` `Button` have
+    nothing to act on without a single watchlist in scope, so -- unlike
+    Generate/Refresh, which stay visible to explain themselves -- they do
+    not render at all when `can_generate` is False.
+
+    Also pins the cadence picker's default: a fresh watchlist has never had
+    `briefing_cadence_seconds` written, so the Select must show "Off"
+    (`None`) -- the same fallback `ArtifactsPane.briefing_cadence_seconds`
+    itself defaults to.
     """
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
@@ -1181,6 +1186,8 @@ async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
         assert pane.can_generate is True
         assert pane.query_one("#artifacts-mode-select", Select)
         assert pane.query_one("#artifacts-preset-select", Select)
+        cadence_select = pane.query_one("#artifacts-cadence-select", Select)
+        assert cadence_select.value is None, "a fresh watchlist defaults to Off"
         assert pane.query_one("#artifacts-presets-button", Button)
 
         screen.tree_scope = TreeScope(kind="all")
@@ -1192,6 +1199,7 @@ async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
         assert pane.can_generate is False
         assert not pane.query("#artifacts-mode-select")
         assert not pane.query("#artifacts-preset-select")
+        assert not pane.query("#artifacts-cadence-select")
         assert not pane.query("#artifacts-presets-button")
         # Generate/Refresh, unlike the pickers, still explain themselves.
         assert pane.query_one("#artifacts-generate-button", Button)
@@ -1513,6 +1521,162 @@ async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobb
         (watchlist_a,),
     ).fetchone()
     assert row["default_briefing_preset_id"] == preset_a
+
+
+# --- 6b. Scheduled-briefing cadence picker (spec #2 phase 4, Task 4) --------
+#
+# Tasks 1-3 of phase 4 built the in-process claims, the `briefing_cadence_
+# seconds` column/writer, and the scheduler seam that reads it back through
+# `list_briefing_schedules`; none of it had a way in from this screen, and
+# the scope note above the toolbar still said "on request" unconditionally
+# -- a lie the moment a cadence could be stored at all. This section is what
+# retires both gaps: the third picker mirrors the mode/preset pickers'
+# established shape (`_briefing_picker_mount_absorbed` instance-keyed
+# absorption, `asyncio.to_thread` write, in-place pane patch, no screen
+# recompose) exactly, and the scope label test pins the honesty fix.
+
+
+@pytest.mark.asyncio
+async def test_cadence_select_shows_the_watchlists_stored_cadence_on_load():
+    """The read-path pin: Task 2's writer sets a cadence before Artifacts
+    ever opens, and the cadence Select must reflect it on the very first
+    render -- not merely hold it in some screen-private field.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=43_200)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        assert select.value == 43_200
+
+
+@pytest.mark.asyncio
+async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen():
+    """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
+    the instance-survival assertion: a picker change must patch the pane in
+    place, never rebuild it via `self.refresh(recompose=True)`. Mirrors
+    `test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen`
+    exactly, and -- like that test -- drives the REAL mounted `Select`'s
+    `value` setter (not a hand-set `pane.briefing_cadence_seconds`), so the
+    real `Select.Changed` -> `BriefingCadenceChanged` -> screen-handler
+    chain is what is actually under test.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_set = db.set_watchlist_briefing_settings
+
+    def _spy(watchlist_id_arg, **kwargs):
+        write_thread_ids.append(threading.get_ident())
+        return real_set(watchlist_id_arg, **kwargs)
+
+    db.set_watchlist_briefing_settings = _spy
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane_before.query_one("#artifacts-cadence-select", Select)
+        # The fresh-watchlist default, confirmed by the read path above --
+        # this is a genuine change, not a same-value mount-time no-op.
+        assert select.value is None
+
+        select.value = 86_400  # "Daily"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert write_thread_ids, "set_watchlist_briefing_settings must have run"
+        assert all(tid != loop_thread_id for tid in write_thread_ids), (
+            "the write must run off the event-loop thread (asyncio.to_thread)"
+        )
+
+        row = db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] == 86_400
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_cadence_seconds == 86_400
+        assert pane.briefing_cadence_seconds == 86_400
+
+
+@pytest.mark.asyncio
+async def test_choosing_off_clears_the_stored_cadence():
+    """`Off` maps to `None`, and picking it must clear `briefing_cadence_
+    seconds` back to NULL -- the DB column's own "never scheduled" state
+    (`set_watchlist_briefing_settings`'s `_UNSET`-sentinel shape: passing
+    `None` explicitly clears, distinct from not passing the kwarg at all).
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=604_800)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        assert select.value == 604_800, "the seeded weekly cadence must load first"
+
+        select.value = None  # "Off"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] is None
+        assert screen._briefing_cadence_seconds is None
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.briefing_cadence_seconds is None
+
+
+@pytest.mark.asyncio
+async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly():
+    """The honesty fix this task exists to ship: `_briefing_scope_label`
+    used to always say "on request", which stopped being true the moment a
+    cadence could be stored at all. Both directions, against the SAME
+    watchlist, driven through a real picker change (not a hand-set reactive
+    or a direct call to the private label method) -- and the label updates
+    in place, without waiting for another full `_load_briefings` reload.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert "on request" in pane.scope_label
+        assert "scheduled" not in pane.scope_label
+
+        select = pane.query_one("#artifacts-cadence-select", Select)
+        select.value = 43_200  # "Every 12h"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "on request" not in pane.scope_label
 
 
 # --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------

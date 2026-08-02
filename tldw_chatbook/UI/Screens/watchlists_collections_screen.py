@@ -88,6 +88,7 @@ from ..Watchlists_Modules.inspector_pane import (
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingCadenceChanged,
     BriefingDefaultPresetChanged,
     BriefingModeChanged,
     BriefingSelected,
@@ -103,6 +104,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     StopAudioRequested,
     SynthesizeAudioRequested,
     audio_file_path_is_safe,
+    cadence_scope_phrase,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -380,6 +382,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # actually use.
         self._briefing_selection_mode: str = MODE_AUTO_FEATURED
         self._briefing_default_preset_id: int | None = None
+        # Spec #2 phase 4, Task 4: the current watchlist's stored
+        # `briefing_cadence_seconds`, mirrored here for the identical
+        # rebuild-survival reason as the two fields above -- `_build_
+        # detail_pane` seeds a freshly built `ArtifactsPane` from this on
+        # every region rebuild. `None` (never scheduled) matches the
+        # column's own default and `ArtifactsPane.briefing_cadence_
+        # seconds`'s own fallback.
+        self._briefing_cadence_seconds: int | None = None
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -1432,6 +1442,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selection_mode = self._briefing_selection_mode
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
+            artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
             artifacts_pane.script_audio = self._loaded_script_audio
@@ -3232,12 +3243,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "a briefing covers one watchlist."
             )
         name = self._watchlist_display_name(watchlist_id)
+        # Spec #2 phase 4, Task 4: this used to always say "written on this
+        # device, on request" -- true in phase 1, when nothing could write
+        # `briefing_cadence_seconds`, but a lie the moment Task 2 gave that
+        # column a writer. `cadence_scope_phrase` answers `None` (never
+        # scheduled) with `None`, so "on request" stays the honest default;
+        # anything else names the actual cadence, "while the app is open"
+        # and all -- see that function's own docstring for why the phrase
+        # is worded that way.
+        cadence_phrase = cadence_scope_phrase(self._briefing_cadence_seconds)
+        provenance = (
+            f"written on this device — {cadence_phrase}"
+            if cadence_phrase is not None
+            else "written on this device, on request"
+        )
         # RAW, deliberately: the pane wraps this in a `rich.text.Text`, which
         # is never markup-parsed, so escaping here would put visible
         # backslashes in front of every bracket a real name contains. See
         # `ArtifactsPane.compose` for why that wrapper is load-bearing --
         # a bare `str` in a `Static` IS parsed as markup.
-        return f"Briefings for {name} · written on this device, on request"
+        return f"Briefings for {name} · {provenance}"
 
     async def _load_briefings(
         self, *, select_briefing_id: int | None = None
@@ -3264,6 +3289,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._selected_briefing = None
             self._briefing_selection_mode = MODE_AUTO_FEATURED
             self._briefing_default_preset_id = None
+            self._briefing_cadence_seconds = None
             self._loaded_scripts = []
             self._selected_script = None
             self._loaded_script_audio = None
@@ -3576,6 +3602,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_default_preset_id = settings_row.get(
                 "default_briefing_preset_id"
             )
+            self._briefing_cadence_seconds = settings_row.get(
+                "briefing_cadence_seconds"
+            )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
         if not self.is_mounted:
@@ -3591,6 +3620,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selection_mode = self._briefing_selection_mode
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
+        pane.briefing_cadence_seconds = self._briefing_cadence_seconds
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
         pane.script_audio = self._loaded_script_audio
@@ -3601,18 +3631,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
         """The watchlist's stored `briefing_selection_mode`/
-        `default_briefing_preset_id`, as a plain dict.
+        `default_briefing_preset_id`/`briefing_cadence_seconds`, as a plain
+        dict.
 
         Raw SQL against `db.conn`, matching `briefing_service._selection_
         mode`'s own read of the same column -- `WatchlistBundleService.
         list_watchlists`/`_get` deliberately select a narrower column list
         that predates these two (Task 1), so there is no existing
-        service-layer getter for them to reuse. Always called through
-        `asyncio.to_thread`; never call this directly from the UI thread.
+        service-layer getter for them to reuse. `briefing_cadence_seconds`
+        (spec #2 phase 4, Task 4) rides in the same read: one more column
+        on an already-narrow `WHERE id = ?` lookup, not a second query.
+        Always called through `asyncio.to_thread`; never call this
+        directly from the UI thread.
         """
         row = db.conn.execute(
-            "SELECT briefing_selection_mode, default_briefing_preset_id "
-            "FROM watchlists WHERE id = ?",
+            "SELECT briefing_selection_mode, default_briefing_preset_id, "
+            "briefing_cadence_seconds FROM watchlists WHERE id = ?",
             (watchlist_id,),
         ).fetchone()
         return dict(row) if row is not None else {}
@@ -4347,20 +4381,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         finally:
             self._feed_export_in_flight = False
 
-    # --- Briefing selection-mode and default-preset pickers (Task 4) -------
+    # --- Briefing selection-mode, default-preset, and cadence pickers -------
+    # (Task 4, phase 2a; cadence added by Task 4, phase 4)
     #
     # Same write-first-patch-after shape as `handle_toggle_briefing_queue_
     # requested` -> `_toggle_briefing_queue`: the handler answers the
     # no-database case from memory and dispatches a worker; the worker does
     # the write off the UI thread (`asyncio.to_thread`), then on success
-    # patches `_briefing_selection_mode`/`_briefing_default_preset_id` and
-    # the mounted pane's matching reactive DIRECTLY -- never `_load_
-    # briefings()`, which would re-query the database for a value this
-    # write already knows. No `exclusive=True`: each picker's own writes
-    # target a single row with `UPDATE ... WHERE id = ?`, so two overlapping
-    # presses are safe to interleave (last write wins), and cancelling one
-    # mid-write would leave `_briefing_selection_mode`/`_briefing_default_
-    # preset_id` disagreeing with what actually landed in the database.
+    # patches `_briefing_selection_mode`/`_briefing_default_preset_id`/
+    # `_briefing_cadence_seconds` and the mounted pane's matching reactive
+    # DIRECTLY -- never `_load_briefings()`, which would re-query the
+    # database for a value this write already knows. No `exclusive=True`:
+    # each picker's own writes target a single row with `UPDATE ... WHERE
+    # id = ?`, so two overlapping presses are safe to interleave (last write
+    # wins), and cancelling one mid-write would leave `_briefing_selection_
+    # mode`/`_briefing_default_preset_id`/`_briefing_cadence_seconds`
+    # disagreeing with what actually landed in the database.
 
     @on(BriefingModeChanged)
     def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
@@ -4481,6 +4517,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
         pane.default_preset_id = preset_id
+
+    @on(BriefingCadenceChanged)
+    def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
+        """Spec #2 phase 4, Task 4: same shape as `handle_briefing_mode_
+        changed`/`handle_briefing_default_preset_changed` above -- the
+        no-database case is answered from memory, the real write dispatches
+        a worker in the same `wl-briefing-settings-write` group (so an
+        overlapping mode/preset/cadence write for the same watchlist is
+        safe to interleave, last write wins, exactly like its two siblings).
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_cadence(db, watchlist_id, event.seconds),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_cadence(
+        self, db: Any, watchlist_id: int, seconds: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                briefing_cadence_seconds=seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the briefing schedule for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the schedule. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode`/`_write_briefing_default_
+        # preset` above -- the DB write is correctly keyed to `watchlist_id`
+        # and needs no change, but this patch must not land if Artifacts
+        # has since moved to a different watchlist.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_cadence_seconds = seconds
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.briefing_cadence_seconds = seconds
+        # Unlike mode/preset, the scope label's TEXT depends on cadence
+        # (`_briefing_scope_label` -> `cadence_scope_phrase`) -- without
+        # this, the honesty fix this task exists to ship would only take
+        # effect on the NEXT full `_load_briefings()` reload, not the
+        # instant the user picks a cadence, leaving the toolbar Select and
+        # the scope note disagreeing until then.
+        pane.scope_label = self._briefing_scope_label()
 
     # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
     #
