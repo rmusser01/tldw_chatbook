@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-02 16:17'
+updated_date: '2026-08-02 16:28'
 labels:
   - stt
   - gguf
@@ -44,9 +44,9 @@ Plan: Docs/superpowers/plans/2026-08-01-task-597-local-gguf-import.md
 
 ADR required: yes
 ADR path: backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md
-Reason: ADR-040 accepts direct local GGUF paths before managed acquisition and amends ADR-025 for this provider.
+Reason: ADR-040 accepts direct local GGUF paths before managed acquisition while preserving the prior store-facing prototype as private deferred TASK-1861 reference code.
 
-1. Rename gguf_import.py to gguf_admission.py and remove descriptor/store prototype code while preserving the reviewed bounded parser and exact compatibility declarations.
+1. Keep the renamed active gguf_admission.py parser/compatibility module store-free, recover the prior descriptor prototype from fd9956903^ into private _deferred_gguf_managed_import.py, and prove it is unexported and unreachable.
 2. Add one no-follow, same-handle validate_local_gguf boundary with typed path-safe errors, source identity evidence, and normalized wheel-candidate platform output.
-3. Verify focused and full tests, static checks, scope/privacy scans, and independent code review before Backlog closeout.
+3. Verify focused and full tests, static checks, active/deferred scope scans, and independent code review before Backlog closeout.
 <!-- SECTION:PLAN:END -->
