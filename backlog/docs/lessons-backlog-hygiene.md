@@ -189,7 +189,53 @@ confirmations.
 
 ---
 
+## Check for an in-flight PR before designing — claiming the task does not reserve it
+
+**TASK-595 and TASK-596, 2026-07-31 and 2026-08-01.** Both were implemented
+**twice, in parallel, by different agents**, and both duplicates were discovered
+only at merge time.
+
+TASK-595 was the first. The post-mortem
+(`Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-reconciliation.md`)
+proposed two guards: claim the task as `In Progress` before designing, and put
+the task id in the spec filename so a `find` surfaces it.
+
+**Both guards were applied to TASK-596. It was duplicated anyway, the very next
+day, more expensively.** The spec and plan were committed to `dev` at 09:42 with
+the task claimed and `task-596` in both filenames. PR #1175 — another agent's
+complete implementation of the same phase — merged at 13:40. Roughly 6,900 lines
+of work survived as ~1,000 lines of portable delta.
+
+**Why the guards failed, and why one of them backfired.** A claim on the board
+tells someone who *starts after reading it* to stay away. It says nothing about
+work already in flight, and nobody re-reads the board mid-build. Worse, the
+duplicate's branch name (`codex/task-596-model-browser-phase-1`), file paths,
+rail keys and phase decomposition matched the published plan closely enough that
+it had almost certainly been *worked from*. Publishing a design to a shared
+branch is an invitation as much as a claim: it hands a complete blueprint to
+anyone looking for work while giving the author a false sense of having
+coordinated.
+
+**What to do.** Search for in-flight work by task id — branches *and* pull
+requests — before designing, again before implementing, and periodically during
+any build long enough for someone else to start one. It costs one second:
+
+```bash
+gh pr list --state all --search "596" --json number,title,state,headRefName
+git for-each-ref --format='%(refname:short)' refs/remotes/ | grep -i '596'
+find / -name "*task-596*" -not -path "*/.git/*" 2>/dev/null   # sibling clones
+```
+
+Neither TASK-595 nor TASK-596 ever had `gh pr list --search` run against it, in
+sessions spanning many hours each. That single command would have caught both.
+
+The board is not a lock. Treat a claim as documentation, and the PR list as the
+actual source of truth about who is building what.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`
 - `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`
+- `Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-reconciliation.md`
