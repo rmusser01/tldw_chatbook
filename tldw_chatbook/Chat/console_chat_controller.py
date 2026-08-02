@@ -5942,11 +5942,14 @@ class ConsoleChatController:
         self._active_stream_tasks[owner_id] = active_task
         self._stop_requested = False
         self._active_citation_repair_sessions[owner_id] = citation_repair_session
-        stream_signals = (
-            ConsoleProviderStreamSignals()
-            if citation_repair_session is not None
-            else None
-        )
+        # Unconditional (final-review F1): these signals used to be built
+        # only for citation repair, which left the DEFAULT send path -- the
+        # agent runtime, on by config default with the bridge always wired --
+        # forwarding `provider_stream_signals=None`, so the bridge never
+        # passed `signals=` to the gateway and NOTHING was ever captured for
+        # the path virtually every real send takes. Cost is not an opt-in
+        # feature of one repair mode; every run needs its own signals object.
+        stream_signals = ConsoleProviderStreamSignals()
         try:
             if (
                 self._agent_runtime_enabled
@@ -6009,20 +6012,43 @@ class ConsoleChatController:
         *,
         partial: bool,
     ) -> None:
-        """Best-effort: absent usage must never fail a send (spec PR1)."""
-        payload = getattr(stream_signals, "usage_payload", None)
-        if not payload:
+        """Sum every provider call this turn made; never fail a send (spec PR1).
+
+        One turn can make N provider calls (an agent loop runs one per step),
+        each of which the gateway closes out separately. Each payload is
+        normalized into disjoint buckets ON ITS OWN and the buckets are then
+        summed -- raw payloads are never merged across calls, or a later
+        call's ``prompt_tokens`` would be priced against an earlier call's
+        stale ``prompt_tokens_details.cached_tokens``.
+        """
+        if stream_signals is None:
             return
-        usage = ProviderUsage.from_provider_payload(
-            payload,
-            provider=str(getattr(resolution, "provider", "") or ""),
-            model=str(getattr(resolution, "model", "") or ""),
-            partial=partial,
-        )
-        if usage is None:
+        payloads_getter = getattr(stream_signals, "usage_payloads", None)
+        if callable(payloads_getter):
+            payloads = list(payloads_getter())
+        else:
+            # Tolerate narrow stand-ins that only expose the single-call
+            # attribute (the pre-accumulation shape), same defensive posture
+            # as the getattr-based resolution reads below.
+            single = getattr(stream_signals, "usage_payload", None)
+            payloads = [single] if single else []
+        provider = str(getattr(resolution, "provider", "") or "")
+        model = str(getattr(resolution, "model", "") or "")
+        total: ProviderUsage | None = None
+        for payload in payloads:
+            usage = ProviderUsage.from_provider_payload(
+                payload,
+                provider=provider,
+                model=model,
+                partial=partial,
+            )
+            if usage is None:
+                continue
+            total = usage if total is None else total.plus(usage)
+        if total is None:
             return
         try:
-            self.store.set_message_usage(assistant_message_id, usage)
+            self.store.set_message_usage(assistant_message_id, total)
         except KeyError:
             pass
 
@@ -6073,6 +6099,13 @@ class ConsoleChatController:
         # must never be torn down by a stale reference to THIS run's event.
         cancel_event = threading.Event()
         self._active_cancel_events[owner_id] = cancel_event
+        # Narrowed once, here, rather than inside the try below: every use
+        # in this method (the gateway dispatch, the usage attachments, the
+        # post-generation citation selection) then sees a real signals
+        # object. `_stream_assistant_response_inner` always supplies one;
+        # this belt keeps direct callers (tests) working.
+        if stream_signals is None:
+            stream_signals = ConsoleProviderStreamSignals()
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:
@@ -6087,8 +6120,6 @@ class ConsoleChatController:
         retry_prepared = False
         emitted_content = False
         try:
-            if stream_signals is None:
-                stream_signals = ConsoleProviderStreamSignals()
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 provider_messages,
@@ -6155,13 +6186,21 @@ class ConsoleChatController:
                     ),
                     session_id=owner_id,
                 )
+                # Billed-but-contentless turn (refusal/empty stream after
+                # usage arrived): spec's "total = money actually spent" wins
+                # over "failed sends produce no usage row", which covers
+                # transport failures where nothing was billed. Attached
+                # BEFORE the terminal mark so the mark flushes it.
+                self._attach_stream_usage(
+                    assistant_message_id, stream_signals, resolution, partial=True
+                )
                 if not prepare_retry:
                     try:
                         failed = self.store.mark_message_failed(assistant_message_id)
                     except KeyError:
                         return self._session_closed_result(session_id=owner_id)
                 return ConsoleSubmitResult(True, True, failed.content)
-            if citation_repair_session is not None and stream_signals is not None:
+            if citation_repair_session is not None:
                 try:
                     selection = await self._select_post_generation_body(
                         assistant_message_id=assistant_message_id,
@@ -6755,6 +6794,13 @@ class ConsoleChatController:
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
+                # Whatever the provider already billed for this turn's
+                # completed steps is real money -- record it (partial)
+                # before the terminal mark, exactly as the direct path's
+                # own CancelledError branch does.
+                self._attach_stream_usage(
+                    assistant_message_id, stream_signals, resolution, partial=True
+                )
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
@@ -6840,6 +6886,7 @@ class ConsoleChatController:
             run_id=run_id,
             citation_repair_session=citation_repair_session,
             stream_signals=stream_signals,
+            resolution=resolution,
         )
 
     def _agent_conversation_id(self, session_id: str) -> str:
@@ -6860,6 +6907,7 @@ class ConsoleChatController:
         run_id: str | None = None,
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
+        resolution: Any = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
@@ -6888,6 +6936,21 @@ class ConsoleChatController:
         # read-back, never an error, in either case.
         stopped_now = (current is not None and current.status == "stopped") or (
             cancel_event is not None and cancel_event.is_set()
+        )
+        # F1: the agent path's single usage attachment point. EVERY branch
+        # below settles the placeholder terminal (complete / stopped /
+        # failed), and usage must be on the message BEFORE that mark so the
+        # mark flushes it to persistence -- so attach once, here, ahead of
+        # all of them. `partial` is true for anything that is not a clean
+        # RUN_DONE: a stopped or errored turn still cost real money for the
+        # provider calls it did make, but its output side is incomplete.
+        # A no-op when the run captured no usage at all (best-effort: absent
+        # usage must never fail a send).
+        self._attach_stream_usage(
+            assistant_message_id,
+            stream_signals,
+            resolution,
+            partial=stopped_now or getattr(outcome, "status", None) != RUN_DONE,
         )
         if stopped_now:
             # The stopped message was already persisted by

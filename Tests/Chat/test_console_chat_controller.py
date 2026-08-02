@@ -4033,14 +4033,38 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
         f"unclaimed names must pass through unreviewed, got: {verdicts}"
     )
 class UsageEmittingGateway(StreamingGateway):
+    """Mirrors the real gateway's usage seam.
+
+    One ``stream_chat`` invocation is one provider CALL: payloads recorded
+    during the stream key-merge into the in-flight slot, and the call is
+    closed out in a ``finally`` -- exactly what
+    ``ConsoleProviderGateway.stream_chat`` does. Successive calls consume
+    successive entries of ``payloads_per_call`` so an agent turn's N calls
+    can be exercised.
+    """
+
+    payloads_per_call = ({"prompt_tokens": 100, "completion_tokens": 20},)
+
+    def __init__(self):
+        self.calls = 0
+
     async def stream_chat(self, resolution, messages, **kwargs):
         signals = kwargs.get("signals")
-        for chunk in ("hel", "lo"):
-            yield chunk
-        if signals is not None:
-            signals.record_usage_payload(
-                {"prompt_tokens": 100, "completion_tokens": 20}
-            )
+        index = self.calls
+        self.calls += 1
+        try:
+            for chunk in ("hel", "lo"):
+                yield chunk
+            if signals is not None and index < len(self.payloads_per_call):
+                payload = self.payloads_per_call[index]
+                # A payload may itself arrive split across chunks (Anthropic).
+                for fragment in (
+                    payload if isinstance(payload, tuple) else (payload,)
+                ):
+                    signals.record_usage_payload(fragment)
+        finally:
+            if signals is not None:
+                signals.close_usage_call()
 
 
 @pytest.mark.asyncio
@@ -4062,3 +4086,245 @@ async def test_completed_message_carries_normalized_usage():
     assert assistant.usage.output == 20
     assert assistant.usage.partial is False
     assert assistant.usage.provider  # attributed from resolution
+
+
+#
+# Final-review F1/F2/F3/F7: usage capture on every terminal path
+#
+class _UsageRecordingPersistence:
+    """Minimal persistence that records the usage_json it is handed."""
+
+    def __init__(self):
+        self.created = []
+        self.updated = []
+        self._counter = 0
+
+    def create_conversation(self, **kwargs):
+        return "conv-usage"
+
+    def create_message(self, **kwargs):
+        self.created.append(kwargs)
+        self._counter += 1
+        return f"msg-{self._counter}"
+
+    def update_message_content(self, **kwargs):
+        self.updated.append(kwargs)
+        return True
+
+    def usage_values(self):
+        return [
+            kwargs.get("usage_json")
+            for kwargs in (*self.created, *self.updated)
+            if kwargs.get("usage_json") is not None
+        ]
+
+
+class _GatewayDrivingBridge:
+    """Stub agent bridge that dispatches through the gateway exactly as the
+    real ``ConsoleAgentBridge`` does.
+
+    The load-bearing detail is `console_agent_bridge.py`'s own seam: it adds
+    ``signals=`` to the gateway call ONLY when ``provider_stream_signals`` is
+    non-None. The controller used to forward ``None`` on this (default!)
+    path, so nothing was ever captured for the agent runtime -- finding F1.
+    """
+
+    def __init__(self, gateway, store, *, calls_per_turn=1):
+        self._gateway = gateway
+        self._store = store
+        self._calls_per_turn = calls_per_turn
+        self.signals_seen = "never-called"
+
+    def run_reply(self, **kwargs):
+        self.signals_seen = kwargs.get("provider_stream_signals")
+        stream_kwargs = {}
+        if self.signals_seen is not None:
+            stream_kwargs["signals"] = self.signals_seen
+        assistant_message_id = kwargs["assistant_message_id"]
+
+        async def _drain():
+            text = ""
+            for _ in range(self._calls_per_turn):
+                async for chunk in self._gateway.stream_chat(
+                    kwargs["resolution"], kwargs["agent_messages"], **stream_kwargs
+                ):
+                    self._store.append_stream_chunk(assistant_message_id, chunk)
+                    text += chunk
+            return text
+
+        final_text = asyncio.run(_drain())
+        return "run-usage", RunOutcome(
+            status=RUN_DONE, steps=[], final_text=final_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_path_attaches_and_persists_usage():
+    """F1 regression: the DEFAULT send path (agent runtime on, bridge wired)
+    captured NOTHING because the controller only built stream signals for
+    citation repair. Every real send took this path.
+    """
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = UsageEmittingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge = _GatewayDrivingBridge(gateway, store)
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+
+    result = await controller.submit_draft("hi")
+    assert result.accepted
+
+    assert bridge.signals_seen not in (None, "never-called"), (
+        "the agent bridge must receive a real signals object, not None"
+    )
+    assistant = store.messages_for_session(session.id)[-1]
+    assert assistant.status == "complete"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 100
+    assert assistant.usage.output == 20
+    assert assistant.usage.partial is False
+    assert any('"uncached_input": 100' in value for value in persistence.usage_values())
+
+
+@pytest.mark.asyncio
+async def test_agent_turn_sums_usage_across_provider_calls():
+    """F2 regression at the turn level: an agent turn makes N provider calls.
+    Raw-payload key-merging made call 2's 900 prompt_tokens sit next to call
+    1's stale cached_tokens=4096 -> uncached_input 0 and a phantom cache read.
+    Correct: normalize per call, then SUM the disjoint buckets.
+    """
+
+    class TwoCallGateway(UsageEmittingGateway):
+        payloads_per_call = (
+            {
+                "prompt_tokens": 5000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 4096},
+            },
+            {"prompt_tokens": 900, "completion_tokens": 30},
+        )
+
+    store = ConsoleChatStore()
+    gateway = TwoCallGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    controller._agent_bridge = _GatewayDrivingBridge(gateway, store, calls_per_turn=2)
+    session = _arm_session(store)
+
+    assert (await controller.submit_draft("hi")).accepted
+
+    usage = store.messages_for_session(session.id)[-1].usage
+    assert usage is not None
+    assert usage.uncached_input == 1804  # (5000-4096) + 900
+    assert usage.cache_read == 4096  # call 1 only -- never re-billed for call 2
+    assert usage.output == 40
+
+
+@pytest.mark.asyncio
+async def test_stopped_stream_persists_partial_input_usage():
+    """F3 regression: ``stop_active_run`` finalizes the message BEFORE the
+    cancelled task attaches usage, and the second ``_mark_stream_stopped``
+    takes the read-back branch -- so nothing ever persisted the tokens the
+    provider had already billed. Anthropic-shaped: the input side arrives at
+    ``message_start``, long before any output tokens exist.
+    """
+
+    class StalledAnthropicGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"input_tokens": 3571, "cache_read_input_tokens": 6656}
+                    )
+                self.started.set()
+                yield "partial"
+                await self.never_release.wait()
+                yield "ignored"
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = StalledAnthropicGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result.accepted
+
+    stopped = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ][-1]
+    assert stopped.status == "stopped"
+    assert stopped.usage is not None
+    assert stopped.usage.uncached_input == 3571
+    assert stopped.usage.cache_read == 6656
+    assert stopped.usage.partial is True
+
+    persisted = persistence.usage_values()
+    assert persisted, "the stopped turn's usage never reached persistence"
+    assert '"uncached_input": 3571' in persisted[-1]
+    assert '"partial": true' in persisted[-1]
+
+
+@pytest.mark.asyncio
+async def test_billed_turn_without_visible_content_still_records_usage():
+    """F7 (decided): a turn that reported usage but emitted no content -- a
+    refusal, or a stream that ended after the usage chunk -- cost real money.
+    The spec's "total = money actually spent" beats "failed sends produce no
+    usage row", which is about transport failures where nothing was billed.
+    """
+
+    class ContentlessBilledGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"prompt_tokens": 812, "completion_tokens": 0}
+                    )
+                return
+                yield  # pragma: no cover -- makes this an async generator
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=ContentlessBilledGateway()
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    assert (await controller.submit_draft("hi")).accepted
+
+    assistant = store.messages_for_session(session.id)[-1]
+    assert assistant.status == "failed"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 812
+    assert assistant.usage.partial is True
+
+    # Documented boundary, NOT an oversight: the store never persists an
+    # empty-content message at all (`_persist_pending_message_if_ready`
+    # requires content), so this turn has no DB row for usage to ride on and
+    # `usage_values()` stays empty. The record still exists on the in-store
+    # message, which is what the live per-session ticker reads. Persisting
+    # contentless rows is a store-wide semantics change, out of scope here.
+    assert persistence.usage_values() == []
+    assert [entry["sender"] for entry in persistence.created] == ["user"]

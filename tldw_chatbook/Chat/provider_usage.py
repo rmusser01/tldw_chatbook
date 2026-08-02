@@ -35,6 +35,25 @@ class ProviderUsage:
     def total_tokens(self) -> int:
         return self.uncached_input + self.cache_read + self.cache_write + self.output
 
+    def plus(self, other: "ProviderUsage") -> "ProviderUsage":
+        """Return the bucket-wise sum of two provider CALLS in one turn.
+
+        An agent turn makes N provider calls; each is normalized on its own
+        (raw payloads must never be key-merged across calls -- one call's
+        stale ``cached_tokens`` beside another's ``prompt_tokens`` fabricates
+        a cache read) and the disjoint buckets are summed here. ``partial``
+        is sticky: any incomplete leg makes the whole turn's record partial.
+        """
+        return ProviderUsage(
+            uncached_input=self.uncached_input + other.uncached_input,
+            cache_read=self.cache_read + other.cache_read,
+            cache_write=self.cache_write + other.cache_write,
+            output=self.output + other.output,
+            provider=self.provider or other.provider,
+            model=self.model or other.model,
+            partial=self.partial or other.partial,
+        )
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
 
