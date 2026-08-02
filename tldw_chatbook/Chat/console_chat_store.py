@@ -1984,9 +1984,23 @@ class ConsoleChatStore:
     def set_message_usage(
         self, message_id: str, usage: ProviderUsage
     ) -> ConsoleChatMessage:
-        """Attach normalized usage; the terminal mark persists it."""
+        """Attach normalized usage; persist now if the message is already terminal.
+
+        In the normal ordering the caller attaches usage while the message is
+        still ``pending``/``streaming`` and the terminal mark that follows
+        flushes it. The Stop path inverts that: ``stop_active_run`` finalizes
+        the message synchronously (``mark_message_stopped`` -> terminal
+        flush) and only THEN cancels the stream task, whose ``CancelledError``
+        handler attaches the partial usage -- against an already-terminal
+        message whose second ``_mark_stream_stopped`` takes the read-back
+        branch and never persists again. Without this flush, a stopped
+        turn's real, already-billed input tokens were dropped on the floor
+        (final-review F3).
+        """
         message = self._message_or_raise(message_id)
         message.usage = usage
+        if message.status not in {"pending", "streaming"}:
+            self._persist_existing_message(message)
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:

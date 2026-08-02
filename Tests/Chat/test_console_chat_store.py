@@ -2602,20 +2602,71 @@ def test_deleting_an_anchor_node_purges_the_markers_it_anchored():
     ), "a marker is still anchored to a deleted node"
 
 
-def test_set_message_usage_sets_field_without_persist_call():
+def test_set_message_usage_on_a_streaming_message_defers_persistence():
+    """The normal ordering: usage lands on a still-streaming message and the
+    TERMINAL mark that follows is what flushes it (one write, not two)."""
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
-    store = ConsoleChatStore()
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session(title="Chat 1")
     message = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="hi"
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
     )
+    store.append_stream_chunk(message.id, "hi")
     usage = ProviderUsage(uncached_input=10, output=5, provider="openai", model="gpt-4o")
 
     updated = store.set_message_usage(message.id, usage)
 
     assert updated.usage == usage
     assert store.get_message(message.id).usage == usage
+    assert store.get_message(message.id).status == "streaming"
+    assert persistence.updated == [], "a streaming message must not flush early"
+
+
+def test_set_message_usage_after_a_terminal_mark_flushes_to_persistence():
+    """Final-review F3: on the Stop path the message is finalized BEFORE the
+    cancelled task attaches its partial usage, so the terminal mark cannot
+    flush it -- the attach itself has to. Without this, a stopped turn's
+    already-billed input tokens never reached the DB.
+    """
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    class UsageUpdatePersistence(RecordingPersistence):
+        def __init__(self):
+            super().__init__()
+            self.usage_values = []
+
+        def update_message_content(self, *, usage_json=None, **kwargs):
+            self.usage_values.append(usage_json)
+            return super().update_message_content(**kwargs)
+
+    persistence = UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "partial answer")
+    stopped = store.mark_message_stopped(message.id)
+    assert stopped.status == "stopped"
+    assert all(value is None for value in persistence.usage_values)
+
+    store.set_message_usage(
+        message.id,
+        ProviderUsage(
+            uncached_input=3571,
+            cache_read=6656,
+            provider="anthropic",
+            model="claude-sonnet-5",
+            partial=True,
+        ),
+    )
+
+    assert persistence.usage_values[-1] is not None
+    assert '"uncached_input": 3571' in persistence.usage_values[-1]
+    assert '"cache_read": 6656' in persistence.usage_values[-1]
+    assert '"partial": true' in persistence.usage_values[-1]
 
 
 def test_set_message_usage_unknown_id_raises_keyerror():
