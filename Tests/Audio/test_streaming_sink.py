@@ -424,6 +424,59 @@ def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
     assert any(isinstance(e, SinkFailed) for e in events)
 
 
+@pytest.mark.parametrize("kwargs", [
+    pytest.param(dict(sample_rate="24000"), id="string-sample-rate"),
+    pytest.param(dict(sample_rate=RATE, channels="1"), id="string-channels"),
+    pytest.param(dict(sample_rate=24000.0), id="float-sample-rate"),
+    pytest.param(dict(sample_rate=0), id="zero-sample-rate"),
+    pytest.param(dict(sample_rate=-RATE), id="negative-sample-rate"),
+    pytest.param(dict(sample_rate=RATE, channels=0), id="zero-channels"),
+    pytest.param(dict(sample_rate=RATE, channels=-1), id="negative-channels"),
+    pytest.param(dict(sample_rate=True), id="bool-sample-rate"),
+])
+def test_open_with_invalid_sample_rate_or_channels_fails_closed_instead_of_raising(kwargs):
+    """F3 fix-round: `open()` documents fail-closed on any failure, but used
+    to do arithmetic on `sample_rate`/`channels` (e.g.
+    `sample_rate * blocksize_ms // 1000`) before any validation guarded it
+    -- a wrong-typed value (e.g. `"24000"`) raised a `TypeError` straight
+    out of `open()` instead of transitioning the sink to `"failed"` and
+    emitting `SinkFailed`, as documented.
+
+    Uses `_mk()`'s `FakeStream` factory -- which performs no validation of
+    its own -- rather than the real `sounddevice` backend, so this pins
+    the sink's OWN guard specifically: a numerically "valid but wrong"
+    value like `0`/`-24000` would otherwise sail straight through a
+    permissive fake factory and reach `"open"`, and a real backend
+    rejecting it would only prove PortAudio's own validation works, not
+    this method's. Asserting the factory was never invoked (`"s" not in
+    h`) confirms the guard fires before any stream is even attempted, not
+    merely that the sink ends up `"failed"` for some other reason.
+    """
+    events = []
+    sink, h = _mk(events)
+    sink.open(**kwargs)   # must not raise
+    assert sink.state == "failed"
+    assert any(isinstance(e, SinkFailed) for e in events)
+    assert sink.terminal_reason == "failed"
+    assert "s" not in h, "guard must reject before the stream factory is ever called"
+
+
+def test_open_with_invalid_sample_rate_is_a_no_op_when_not_idle():
+    """A bad `open()` call on an already-open sink must stay the documented
+    no-op -- not clobber that sink's real state via `_fail()`. Regression
+    guard for the F3 fix: validation happens after the idle-state check,
+    not before it.
+    """
+    events = []
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    assert sink.state == "open"
+    events.clear()
+    sink.open(sample_rate="garbage")   # already open -> must be a no-op
+    assert sink.state == "open"
+    assert events == []
+
+
 def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
     """Fix-round H2 pin: `stop()` must never block waiting for the notify
     thread's queue to drain -- only `settle()` does that. A listener that

@@ -430,16 +430,54 @@ class StreamingPcmSink:
         instead of being left running, and the `"stopped"`/`"failed"`
         state that call already set is left in place.
 
+        `sample_rate`/`channels` are validated (fix-round F3) before any
+        arithmetic touches them: `TTS/pcm_stream.py`'s `sink_plan()`
+        already type-checks `sample_rate` for the one call path that goes
+        through it (citing this exact method's
+        `sample_rate * blocksize_ms // 1000` line as the reason), but that
+        does not protect `channels` -- unvalidated there -- or any other
+        caller of `open()` directly (including tests). A wrong-typed or
+        non-positive value previously reached that arithmetic unguarded,
+        raising a `TypeError`/`ZeroDivisionError`-shaped exception out of
+        `open()` -- violating this docstring's own "transitions to
+        `failed` ... instead of raising" contract.
+
         Args:
             sample_rate: Output sample rate in Hz. Used to size the
                 prebuffer and buffer-cap thresholds and to compute
-                frames-per-block from `blocksize_ms`.
-            channels: Number of output channels. Defaults to mono.
+                frames-per-block from `blocksize_ms`. Must be a positive
+                `int`; anything else fails the sink closed rather than
+                raising.
+            channels: Number of output channels. Defaults to mono. Must be
+                a positive `int`; anything else fails the sink closed
+                rather than raising.
         """
         with self._lock:
             if self._state != "idle":
                 return
-            frames_per_block = sample_rate * self._blocksize_ms // 1000
+        # Validated OUTSIDE the lock above (and hence after re-confirming
+        # "idle" there first): `_fail()` below acquires `self._lock`
+        # itself, and `threading.Lock` is not reentrant, so calling it
+        # while still holding the lock would deadlock. Checking "idle"
+        # first means a bad call on an already-open/-failed/-stopped sink
+        # stays the documented no-op instead of clobbering that sink's
+        # real terminal state via `_fail()`.
+        if type(sample_rate) is not int or sample_rate <= 0:
+            self._fail(f"invalid sample_rate: {sample_rate!r} (must be a positive int)")
+            return
+        if type(channels) is not int or channels <= 0:
+            self._fail(f"invalid channels: {channels!r} (must be a positive int)")
+            return
+        frames_per_block = sample_rate * self._blocksize_ms // 1000
+        if frames_per_block <= 0:
+            self._fail(
+                f"invalid frames_per_block ({frames_per_block}) derived from "
+                f"sample_rate={sample_rate}, blocksize_ms={self._blocksize_ms}"
+            )
+            return
+        with self._lock:
+            if self._state != "idle":
+                return
             self._bytes_per_frame = 2 * channels
             self._cap_bytes = BUFFER_CAP_SECONDS * sample_rate * self._bytes_per_frame
             self._prebuffer_bytes = PREBUFFER_MS * sample_rate * self._bytes_per_frame // 1000
