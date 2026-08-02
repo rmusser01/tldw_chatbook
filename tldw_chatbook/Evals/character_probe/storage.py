@@ -26,7 +26,7 @@ from .models import (
     ProbeSet,
 )
 from .prompt import compose_system_prompt
-from .tags import Tag, coerce_tag, resolve_vocabulary
+from .tags import Tag, canonical_slug, coerce_tag, resolve_vocabulary
 from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
@@ -1007,6 +1007,15 @@ def annotate_turn(
     replaces its tags and note rather than accumulating a second row (see
     ``EvalsDB.upsert_probe_turn_annotation``).
 
+    Every tag in ``tags`` is canonicalised and checked against
+    ``run_group_vocabulary(db, run_group_id)`` before anything is written.
+    An unknown tag has no kind, so the summary would have nothing to group
+    it under -- the same fail-loudly rule ``resolve_vocabulary`` and
+    ``coerce_tag`` already enforce for a bench's ``extra_tags``. Validation
+    runs over the whole list before the write, so a rejected annotation
+    leaves nothing behind: no partial write of "the tags checked out before
+    the bad one".
+
     Args:
         db: The evals database handle.
         run_group_id: The run group the conversation belongs to.
@@ -1016,9 +1025,30 @@ def annotate_turn(
         target_id: The target's id, as used in ``save_conversations``'s
             ``run_ids``.
         turn_index: The zero-based turn within the conversation.
-        tags: Tag slugs describing this turn.
+        tags: Tag slugs describing this turn. May be empty -- a note
+            without a tag is still a real observation.
         note: Free-text reviewer note for this turn.
+
+    Raises:
+        ValueError: If any tag, once canonicalised, is not in this run's
+            vocabulary -- naming the offending slug. Also propagated from
+            ``run_group_vocabulary`` if no runs share this ``run_group_id``.
     """
+    vocabulary = run_group_vocabulary(db, run_group_id)
+    known = {tag.slug for tag in vocabulary}
+    canonical: list[str] = []
+    for raw in tags or ():
+        slug = canonical_slug(str(raw))
+        if slug not in known:
+            raise ValueError(
+                f"{slug!r} is not a tag in this run's vocabulary "
+                f"({', '.join(sorted(known))}). Annotations are grouped by "
+                f"tag kind, so an unknown tag would have no kind to group "
+                f"under."
+            )
+        if slug not in canonical:
+            canonical.append(slug)
+
     db.upsert_probe_turn_annotation(
         run_group_id=run_group_id,
         card_id=card_id,
@@ -1026,7 +1056,7 @@ def annotate_turn(
         sample_index=sample_index,
         target_id=target_id,
         turn_index=turn_index,
-        tags=list(tags),
+        tags=canonical,
         note=note,
     )
 

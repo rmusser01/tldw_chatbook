@@ -93,11 +93,12 @@ def test_a_turn_annotation_persists_with_its_tags_and_note(db):
     assert stored["note"] == "drifted here"
 
 
-def test_re_annotating_the_same_turn_replaces_it(db):
-    run_id, target_id = _seed_run(db)
-    annotate_turn(db, "rg-1", 1, 0, 0, target_id, 0, ["refused"], "")
-    annotate_turn(db, "rg-1", 1, 0, 0, target_id, 0, ["in-character"], "fine actually")
-    stored = load_turn_annotations(db, "rg-1")[(1, 0, 0, target_id, 0)]
+def test_re_annotating_the_same_turn_replaces_it(db, probe_run_group):
+    annotate_turn(db, probe_run_group, 1, 0, 0, "t-1", 0, ["refused"], "")
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, ["in-character"], "fine actually"
+    )
+    stored = load_turn_annotations(db, probe_run_group)[(1, 0, 0, "t-1", 0)]
     assert stored["tags"] == ["in-character"]
 
 
@@ -534,3 +535,75 @@ def test_an_unknown_run_group_raises_naming_it(db):
     with pytest.raises(Exception) as exc:
         run_group_vocabulary(db, "no-such-group")
     assert "no-such-group" in str(exc.value)
+
+
+# --- annotate_turn tag validation (whole-branch review I4, task-5) -------
+
+
+def test_a_known_tag_is_stored(db, probe_run_group):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character"], note="third turn",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_an_unknown_tag_is_rejected_naming_it(db, probe_run_group):
+    with pytest.raises(ValueError) as exc:
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["brok-charcter"], note="",
+        )
+    assert "brok-charcter" in str(exc.value)
+
+
+def test_nothing_is_written_when_one_tag_of_several_is_unknown(
+    db, probe_run_group
+):
+    with pytest.raises(ValueError):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["broke-character", "no-such-tag"], note="",
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_a_non_canonical_tag_is_canonicalised_rather_than_rejected(
+    db, probe_run_group
+):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["Broke Character"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_duplicate_tags_are_stored_once(db, probe_run_group):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character", "broke-character"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_an_annotation_with_no_tags_but_a_note_is_allowed(
+    db, probe_run_group
+):
+    """A note without a tag is a real observation, not an empty write."""
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=[], note="odd phrasing",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["note"] == "odd phrasing"
+
+
+def test_a_benchs_extra_tag_is_accepted(db, probe_run_group_with_extra_tags):
+    annotate_turn(
+        db, probe_run_group_with_extra_tags, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group_with_extra_tags)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
