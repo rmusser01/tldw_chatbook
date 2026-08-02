@@ -13,6 +13,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
+    ADDITIONAL_CONTEXT_RESERVED_PREFIX,
     PromptBlockEditorState,
     delete_block,
     update_block,
@@ -27,7 +28,31 @@ def _state(
     system_content: str = "Be exact.",
     user_content: str = "Explain the result.",
     context_content: str = LONG_CONTEXT,
+    mapped_additional_context: bool = False,
 ) -> PromptBlockEditorState:
+    user_blocks = [
+        PromptBlock(
+            id="goal",
+            title="Goal",
+            syntax="freeform",
+            content=user_content,
+        ),
+        PromptBlock(
+            id="context",
+            title="Context",
+            syntax="freeform",
+            content=context_content,
+        ),
+    ]
+    if mapped_additional_context:
+        user_blocks.append(
+            PromptBlock(
+                id=ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+                title="Additional context",
+                syntax="markdown",
+                content="Unmatched evidence.",
+            )
+        )
     definition = BlockArtifactDefinition(
         kind="block_prompt",
         schema_version=2,
@@ -45,20 +70,7 @@ def _state(
             ),
             PromptLane(
                 id="user",
-                blocks=(
-                    PromptBlock(
-                        id="goal",
-                        title="Goal",
-                        syntax="freeform",
-                        content=user_content,
-                    ),
-                    PromptBlock(
-                        id="context",
-                        title="Context",
-                        syntax="freeform",
-                        content=context_content,
-                    ),
-                ),
+                blocks=tuple(user_blocks),
             ),
         ),
     )
@@ -210,6 +222,32 @@ async def test_cleared_xml_tag_can_be_duplicated_without_losing_draft() -> None:
         assert "Invalid" in str(
             app.query_one("#prompt-block-issue-goal-copy", Static).renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_mapped_additional_context_duplicate_click_is_disabled_and_safe() -> None:
+    app = BlockEditorHarness(_state(mapped_additional_context=True))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+        original_state = editor.state
+        duplicate = app.query_one(
+            "#prompt-block-duplicate-additional-context",
+            Button,
+        )
+
+        duplicate.press()
+        await pilot.pause()
+
+        assert duplicate.disabled is True
+        assert editor.state is original_state
+        assert not [
+            message
+            for message in app.messages
+            if isinstance(message, PromptBlockEditor.BlockActionRequested)
+            and message.action == "duplicate"
+        ]
 
 
 @pytest.mark.asyncio

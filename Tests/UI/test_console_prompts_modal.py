@@ -2261,6 +2261,75 @@ async def test_real_recipe_fill_with_additional_context_reaches_block_review() -
 
 
 @pytest.mark.asyncio
+async def test_mapped_context_blocks_recipe_save_until_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    outcome = await _real_additional_context_recipe_outcome(driver)
+    driver.outcomes.append(outcome)
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+    notifications: list[str] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notifications.append(str(message)),
+        )
+        modal.state = modal.state.select(
+            identity="prompt-7",
+            version=4,
+            source="local",
+            capabilities=backend.capabilities_result,
+        )
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-fill", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        editor = modal.query_one(PromptBlockEditor)
+        save_recipe = modal.query_one("#prompt-editor-save-recipe", Button)
+        editor._sync_footer()
+        modal._sync_editor_host_gates(editor)
+        await modal._save_editor_state(editor.state, artifact_type="recipe")
+
+        assert save_recipe.disabled is True
+        assert backend.save_calls == []
+        assert notifications == [
+            "Recipe save unavailable — delete the mapped Additional context block first."
+        ]
+
+        modal.query_one(
+            "#prompt-block-delete-additional-context",
+            Button,
+        ).press()
+        await pilot.pause()
+
+        assert save_recipe.disabled is False
+        save_recipe.press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert len(backend.save_calls) == 1
+    assert backend.save_calls[0]["artifact_type"] == "recipe"
+    saved_definition = backend.save_calls[0]["prompt_definition"]
+    assert saved_definition["kind"] == "block_recipe"
+    assert all(
+        block["id"] != ADDITIONAL_CONTEXT_RESERVED_PREFIX
+        for lane in saved_definition["lanes"]
+        for block in lane["blocks"]
+    )
+    assert notifications[-1] == "Recipe saved as a new artifact."
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("recipe_kind", ["outcome", "blank"])
 async def test_recipe_fill_snapshots_current_editor_definition(
     recipe_kind: str,

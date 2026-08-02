@@ -30,9 +30,13 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
     decompose_legacy_lanes,
 )
-from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import (
+    RECIPE_MAPPED_CONTEXT_BLOCKED_COPY,
+    PromptBlockEditor,
+)
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
+    set_artifact_type,
 )
 
 from .console_prompts_browse import ConsolePromptsBrowse
@@ -529,12 +533,19 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         ):
             button = editor.query_one(selector, Button)
             supported = self._supports_structured_save(artifact_type)
-            button.disabled = has_issues or not supported
+            recipe_conversion_blocked = bool(
+                artifact_type == "recipe" and not editor.state.can_save_as_recipe
+            )
+            button.disabled = has_issues or not supported or recipe_conversion_blocked
             if not supported:
                 button.tooltip = (
                     f"Save unavailable — {self.state.selected_source or self.state.source} "
                     f"does not support {kind}; switch source or keep editing."
                 )
+            elif recipe_conversion_blocked:
+                button.tooltip = RECIPE_MAPPED_CONTEXT_BLOCKED_COPY
+            else:
+                button.tooltip = None
         update = editor.query_one("#prompt-editor-update-original", Button)
         update.disabled = has_issues or not self._can_update_original()
         if not self._can_update_original():
@@ -1602,18 +1613,34 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self,
         editor_state: PromptBlockEditorState,
         *,
-        artifact_type: str,
+        artifact_type: Literal["prompt", "recipe"],
         update_original: bool = False,
     ) -> None:
+        artifact_label = artifact_type.title()
+        if editor_state.issues:
+            self.notify(
+                f"{artifact_label} save unavailable — resolve the highlighted block errors first.",
+                severity="warning",
+            )
+            return
+        try:
+            target_state = set_artifact_type(editor_state, artifact_type)
+        except ValueError:
+            message = (
+                RECIPE_MAPPED_CONTEXT_BLOCKED_COPY
+                if artifact_type == "recipe" and not editor_state.can_save_as_recipe
+                else f"{artifact_label} save unavailable — the structured blocks are not valid for that artifact type."
+            )
+            self.notify(message, severity="warning")
+            return
         if not self._supports_structured_save(artifact_type):
             self.notify(
-                "Prompt save is unavailable — the selected source does not support this structured artifact kind.",
+                f"{artifact_label} save is unavailable — the selected source does not support this structured artifact kind.",
                 severity="warning",
             )
             return
         record = self._selected_record or {}
-        kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
-        definition = replace(editor_state.definition, kind=kind)
+        definition = target_state.definition
         payload = {
             "source": self.state.selected_source or self.state.source,
             "prompt_identifier": (

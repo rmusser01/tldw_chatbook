@@ -48,6 +48,15 @@ class PromptBlockEditorState:
     system_origin: LegacyLaneOrigin | None = None
     user_origin: LegacyLaneOrigin | None = None
 
+    @property
+    def can_save_as_recipe(self) -> bool:
+        """Return whether this mounted Prompt is valid in the Recipe namespace."""
+        return not any(
+            _is_reserved_id(block.id)
+            for lane in self.definition.lanes
+            for block in lane.blocks
+        )
+
     @classmethod
     def from_definition(
         cls,
@@ -241,6 +250,8 @@ def duplicate_block(
 ) -> PromptBlockEditorState:
     """Insert a content-preserving copy after its source with a fresh ID."""
     lane_index, block_index, block = _locate_block(state.definition, block_id)
+    if not can_duplicate_block(block.id):
+        return state
     new_id = _next_id(f"{block.id}-copy", _block_ids(state.definition))
     duplicate = _replace_editor_block(
         block,
@@ -258,6 +269,11 @@ def duplicate_block(
         dirty_block_ids=state.dirty_block_ids | {new_id},
         edited_lane=lane.id,
     )
+
+
+def can_duplicate_block(block_id: str) -> bool:
+    """Return whether duplicating a block can produce a user-owned identity."""
+    return not _is_reserved_id(block_id)
 
 
 def delete_block(

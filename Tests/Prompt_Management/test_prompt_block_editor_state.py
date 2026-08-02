@@ -226,6 +226,31 @@ def test_mapped_additional_context_edits_and_reorder_survive_rebuild() -> None:
     )
 
 
+def test_mapped_additional_context_blocks_recipe_conversion_until_deleted() -> None:
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=_definition_with_additional_context(),
+    )
+
+    assert state.can_save_as_recipe is False
+
+    without_mapped_context = delete_block(
+        state,
+        ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+    )
+
+    assert without_mapped_context.can_save_as_recipe is True
+
+
+def test_duplicate_mapped_additional_context_is_a_safe_noop() -> None:
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=_definition_with_additional_context(),
+    )
+
+    assert duplicate_block(state, ADDITIONAL_CONTEXT_RESERVED_PREFIX) is state
+
+
 def test_recipe_mount_rejects_exact_additional_context_id() -> None:
     with pytest.raises(ValueError, match="reserved for mapped Additional context"):
         PromptBlockEditorState.from_definition(

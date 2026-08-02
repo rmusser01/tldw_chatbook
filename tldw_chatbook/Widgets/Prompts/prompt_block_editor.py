@@ -33,6 +33,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     PromptBlockValidationIssue,
     add_block,
+    can_duplicate_block,
     delete_block,
     duplicate_block,
     move_block,
@@ -45,6 +46,9 @@ BlockAction = Literal["move_up", "move_down", "duplicate", "delete", "add"]
 
 _NARROW_WIDTH = 90
 _SAFE_WIDGET_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+RECIPE_MAPPED_CONTEXT_BLOCKED_COPY = (
+    "Recipe save unavailable — delete the mapped Additional context block first."
+)
 
 
 class PromptBlockCard(Vertical):
@@ -106,11 +110,18 @@ class PromptBlockCard(Vertical):
                     classes="prompt-block-action",
                     disabled=self._is_last,
                 )
-                yield Button(
+                duplicate = Button(
                     "Duplicate",
                     id=f"prompt-block-duplicate-{self.token}",
                     classes="prompt-block-action",
+                    disabled=not can_duplicate_block(block.id),
                 )
+                if duplicate.disabled:
+                    duplicate.tooltip = (
+                        "Duplicate unavailable — mapped Additional context uses a "
+                        "reserved identity."
+                    )
+                yield duplicate
                 yield Button(
                     "Delete",
                     id=f"prompt-block-delete-{self.token}",
@@ -195,6 +206,13 @@ class PromptBlockCard(Vertical):
         self.query_one(
             f"#prompt-block-move-down-{self.token}", Button
         ).disabled = is_last
+        duplicate = self.query_one(f"#prompt-block-duplicate-{self.token}", Button)
+        duplicate.disabled = not can_duplicate_block(block.id)
+        duplicate.tooltip = (
+            "Duplicate unavailable — mapped Additional context uses a reserved identity."
+            if duplicate.disabled
+            else None
+        )
         self.set_class(bool(issues), "invalid")
         self.set_class(dirty, "dirty")
 
@@ -736,8 +754,15 @@ class PromptBlockEditor(Vertical):
         apply_reason.update(reason)
         apply_reason.set_class(issue_count > 0 or no_selected_content, "blocked")
 
-        for selector in ("#prompt-editor-save-prompt", "#prompt-editor-save-recipe"):
-            self.query_one(selector, Button).disabled = bool(issue_count)
+        self.query_one("#prompt-editor-save-prompt", Button).disabled = bool(
+            issue_count
+        )
+        save_recipe = self.query_one("#prompt-editor-save-recipe", Button)
+        recipe_conversion_blocked = not self._state.can_save_as_recipe
+        save_recipe.disabled = bool(issue_count) or recipe_conversion_blocked
+        save_recipe.tooltip = (
+            RECIPE_MAPPED_CONTEXT_BLOCKED_COPY if recipe_conversion_blocked else None
+        )
         update = self.query_one("#prompt-editor-update-original", Button)
         update.disabled = bool(issue_count) or not self._can_update_original
         self.query_one("#prompt-editor-apply", Button).disabled = bool(
@@ -915,6 +940,8 @@ class PromptBlockEditor(Vertical):
     def _request_save(self, artifact_type: Literal["prompt", "recipe"]) -> None:
         if self._state.issues:
             self._focus_first_error()
+            return
+        if artifact_type == "recipe" and not self._state.can_save_as_recipe:
             return
         if artifact_type == "prompt":
             self.post_message(self.SaveAsPromptRequested(self._state))
