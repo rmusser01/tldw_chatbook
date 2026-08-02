@@ -9,6 +9,7 @@ import requests
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
+    _anthropic_caching_enabled,
     _contains_cache_control,
     _without_cache_control,
 )
@@ -123,6 +124,30 @@ def test_no_retry_when_payload_has_no_cache_control(mock_post):
             streaming=False,
         )
     assert mock_post.call_count == 1
+
+
+def test_caching_enabled_defaults_true_and_warns_on_config_read_failure():
+    """A broken config read must fail OPEN (never silently change request
+    shapes) but must not fail SILENT -- the operator needs a signal that the
+    kill-switch read is broken, not just that caching happened to stay on."""
+    from loguru import logger as loguru_logger
+
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        with patch(
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+            side_effect=RuntimeError("config store unavailable"),
+        ):
+            result = _anthropic_caching_enabled()
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result is True
+    assert len(messages) == 1
+    assert "caching config read failed" in messages[0]
+    assert "defaulting anthropic prompt caching ON" in messages[0]
+    assert "config store unavailable" in messages[0]
 
 
 def test_without_cache_control_strips_recursively():

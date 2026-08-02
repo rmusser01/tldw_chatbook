@@ -974,7 +974,10 @@ def _anthropic_caching_enabled() -> bool:
     """
     try:
         return bool(get_cli_setting("caching", "anthropic_enabled", True))
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            f"caching config read failed; defaulting anthropic prompt caching ON: {exc!r}"
+        )
         return True
 
 
@@ -1091,6 +1094,30 @@ def chat_with_anthropic(
     """Call the Anthropic Messages API (streaming or non-streaming).
 
     Args:
+        input_data: List of message objects (OpenAI-style ``role``/``content``
+            dicts). ``role: "tool"`` entries are converted to Anthropic
+            ``tool_result`` blocks; assistant ``tool_calls`` echoes are
+            converted to ``tool_use`` blocks.
+        model: Anthropic model ID. Falls back to config, then
+            ``"claude-sonnet-5"``.
+        api_key: Anthropic API key. Falls back to config; raises if still
+            missing.
+        system_prompt: Optional system prompt sent as the top-level
+            ``system`` field.
+        temp: Sampling temperature. Falls back to config, then ``0.7``.
+        topp: Nucleus sampling parameter (Anthropic ``top_p``).
+        topk: Anthropic ``top_k`` sampling parameter.
+        streaming: Whether to stream the response via SSE. Falls back to
+            config, then ``False``.
+        max_tokens: Maximum tokens to generate. Falls back to config
+            (``max_tokens_to_sample``/``max_tokens``), then ``4096``.
+        stop_sequences: Custom stop sequences (Anthropic ``stop_sequences``).
+        tools: Tools in OpenAI function-call or native Anthropic shape;
+            normalized to Anthropic's ``{name, description, input_schema}``.
+        thinking_effort: Extended-thinking effort level, when the model
+            supports it (translated to a thinking token budget).
+        thinking_budget_tokens: Explicit extended-thinking token budget;
+            takes precedence over ``thinking_effort`` when both are set.
         prompt_caching: Opt-in for the PER-TURN message ``cache_control``
             breakpoint. Only multi-turn callers (the Console gateway) should
             pass True: the breakpoint bills the whole conversation prefix at
@@ -1100,7 +1127,28 @@ def chat_with_anthropic(
             last-tool breakpoints are NOT gated on this flag — those shipped
             provider-wide in task-323 and are harmless for one-shots, whose
             short system prefix falls below the cacheable minimum and is
-            simply not cached.
+            simply not cached. Also subject to the provider-wide
+            ``[caching].anthropic_enabled`` kill-switch
+            (``_anthropic_caching_enabled()``), which disables ALL
+            ``cache_control`` breakpoints regardless of this flag.
+        custom_prompt_arg: Legacy/unused prompt override, retained for call
+            signature compatibility.
+
+    Returns:
+        Non-streaming: a normalized OpenAI-style response dict (``choices``
+        with ``message``, ``usage``, etc.) built from the Anthropic Messages
+        API response. Streaming: a generator yielding OpenAI-style SSE
+        strings (``"data: {...}\\n\\n"``, terminated by ``"data: [DONE]\\n\\n"``).
+
+    Raises:
+        ChatConfigurationError: No API key is available (argument or config).
+        ChatBadRequestError: No valid user message could be built from
+            ``input_data``, or the API returned a 4xx error other than 401/429.
+        ChatAuthenticationError: The API returned 401 (invalid/expired key).
+        ChatRateLimitError: The API returned 429 (rate limited).
+        ChatProviderError: Any other HTTP error status, a network-level
+            request failure, or an unexpected exception while calling the
+            API.
     """
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()

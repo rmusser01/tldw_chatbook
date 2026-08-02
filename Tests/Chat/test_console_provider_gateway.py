@@ -2828,9 +2828,36 @@ async def test_anthropic_resolution_respects_caching_kill_switch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anthropic_resolution_respects_kill_switch_in_load_settings_shape() -> None:
+    """The live Console's config_provider is `load_settings()` output, which
+    nests the raw TOML under COMPREHENSIVE_CONFIG_RAW and never projects
+    `[caching]` to the top level the way it does `api_settings` (Qodo
+    finding, PR #1239): a plain `app_config.get("caching")` always misses
+    and the kill-switch silently reads as always-on. Pin resolution against
+    exactly that shape."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "k"}},
+            "COMPREHENSIVE_CONFIG_RAW": {"caching": {"anthropic_enabled": False}},
+        },
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is False
+
+
+@pytest.mark.asyncio
 async def test_non_anthropic_resolution_has_no_prompt_caching_flag() -> None:
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        config_provider=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-test-placeholder-not-a-key"}}
+        },
         chat_api_call_fn=lambda **_kwargs: "done",
     )
     resolution = await gateway.resolve_for_send(
