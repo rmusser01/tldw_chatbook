@@ -129,13 +129,21 @@ def test_list_briefing_presets_offset_pages_through_every_row_without_gaps_or_re
 
     limit = 3
     seen: list[str] = []
-    offset = 0
-    while True:
-        page = db.list_briefing_presets(limit=limit, offset=offset)
+    # Pages of seeded data + the empty terminator, derived from the data so
+    # the cap can never lag a future reseeding; exceeding it means offset is
+    # genuinely not advancing, and the walk fails fast instead of spinning
+    # to the global timeout (task-1761).
+    max_pages = len(names) // limit + 2
+    for page_number in range(max_pages):
+        page = db.list_briefing_presets(limit=limit, offset=page_number * limit)
         if not page:
             break
         seen.extend(row["name"] for row in page)
-        offset += limit
+    else:
+        pytest.fail(
+            "list_briefing_presets never returned an empty page within "
+            f"{max_pages} pages -- offset is likely being ignored"
+        )
 
     assert seen == names
 
@@ -307,13 +315,23 @@ def test_list_briefing_scripts_offset_pages_through_every_row_without_gaps_or_re
 
     limit = 3
     seen: list[int] = []
-    offset = 0
-    while True:
-        page = db.list_briefing_scripts(briefing_id, limit=limit, offset=offset)
+    # Pages of seeded data + the empty terminator, derived from the data so
+    # the cap can never lag a future reseeding; exceeding it means offset is
+    # genuinely not advancing, and the walk fails fast instead of spinning
+    # to the global timeout (task-1761).
+    max_pages = len(expected_newest_first) // limit + 2
+    for page_number in range(max_pages):
+        page = db.list_briefing_scripts(
+            briefing_id, limit=limit, offset=page_number * limit
+        )
         if not page:
             break
         seen.extend(row["id"] for row in page)
-        offset += limit
+    else:
+        pytest.fail(
+            "list_briefing_scripts never returned an empty page within "
+            f"{max_pages} pages -- offset is likely being ignored"
+        )
 
     assert seen == expected_newest_first
 

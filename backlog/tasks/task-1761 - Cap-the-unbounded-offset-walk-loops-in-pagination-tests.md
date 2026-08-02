@@ -1,7 +1,7 @@
 ---
 id: TASK-1761
 title: 'Cap the unbounded offset-walk loops in pagination tests'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 20:05'
 labels:
@@ -51,8 +51,21 @@ regresses.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the four `while True` offset-walk loops has a local iteration cap
-- [ ] #2 Exceeding the cap fails the test immediately with a clear, specific message (naming which
+- [x] #1 Each of the four `while True` offset-walk loops has a local iteration cap
+- [x] #2 Exceeding the cap fails the test immediately with a clear, specific message (naming which
       query/test hit it) rather than spinning to pytest's global timeout
-- [ ] #3 All four tests still pass unchanged under normal (non-regressed) behavior
+- [x] #3 All four tests still pass unchanged under normal (non-regressed) behavior
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+All four `while True` walks replaced with a bounded `for page_number in range(max_pages)` +
+`for/else` -> `pytest.fail` naming the query ("<query> never returned an empty page within N
+pages -- offset is likely being ignored"). max_pages=10 against 3 real pages, commented at each
+site with a task-1761 pointer. Verified by mutation: forcing `offset=0` in one walk fails in
+0.29s with the named message (vs. spinning to the 300s global timeout before); restored, all 48
+tests in the three files green. Scanned Tests/Subscriptions/ for new siblings of the shape --
+none beyond the four named (the pagination tests added by tasks 1812/1890/1870 are all bounded
+by construction). Done inline by the controller; no production code touched.
+<!-- SECTION:NOTES:END -->
