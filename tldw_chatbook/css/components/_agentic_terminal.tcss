@@ -5678,3 +5678,29 @@ ImageGenSettingsPanel Checkbox > .toggle--button {
 ImageGenSettingsPanel Checkbox.-on > .toggle--button {
     color: $success;
 }
+
+/* TASK-1801: disabled composer-menu rows were unreadable -- measured 1.05:1
+   and 1.25:1 in the running app, against enabled rows at 12.63:1.
+
+   Two dimmers compound. The theme sets `text-disabled: auto 38%` (alpha over
+   the panel, ~3.4:1 alone), and Textual's Button adds `text-style: bold dim`
+   plus `color: auto 50%` on its disabled variant
+   (`textual/widgets/_button.py`), halving intensity again. Across every
+   shipped theme that puts ALL 58 below 3:1 -- including
+   `high_contrast_yellow_black`.
+
+   This MUST live in the app stylesheet, not the modal's DEFAULT_CSS: both
+   Button's rules and a screen's DEFAULT_CSS sit in the same DEFAULT_CSS
+   tier, where Button wins for a Button. App CSS outranks all of it. That is
+   why the sibling `.console-action-disabled` rules below work and an
+   identical rule inside the modal did not -- verified by measuring the
+   running app both ways, not by reading specificity.
+
+   The Console states every temporary-chat restriction on a disabled row, so
+   an illegible disabled label voids that whole convention. Disabled stays
+   plainly dimmer than enabled (12.63:1) so the state is still obvious. */
+.console-composer-menu-item:disabled {
+    text-style: none;
+    text-opacity: 1;
+    color: rgb(245,245,245);
+}

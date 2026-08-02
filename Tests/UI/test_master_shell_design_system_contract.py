@@ -1,3 +1,4 @@
+import pytest
 import re
 from pathlib import Path
 
@@ -194,3 +195,65 @@ def test_library_mode_chip_selector_is_retired():
     assert "LIBRARY_MODES = {" not in library_screen
     assert "LIBRARY_MODE_BAR_HEIGHT" not in library_screen
     assert "LIBRARY_MODE_CHIP_WIDTH_PADDING" not in library_screen
+
+
+@pytest.mark.unit
+def test_disabled_menu_rows_survive_textuals_compounded_dim():
+    """TASK-1801: disabled composer-menu rows must stay legible.
+
+    Measured live, not read off token names -- which is why this survived
+    review. Two dimmers compound and neither is visible in the stylesheet:
+    the theme's ``text-disabled: auto 38%`` (~3.4:1 alone), and Textual's
+    ``Button:disabled`` adding ``text-style: bold dim`` plus
+    ``color: auto 50%``. All 58 shipped themes land below 3:1; the running
+    app measured **1.05:1 and 1.25:1**, against enabled rows at 12.63:1.
+
+    Two facts this test exists to pin, both established by measuring the
+    running app after a fix that looked correct and was not:
+
+    * the rule must live in the APP stylesheet. A screen's ``DEFAULT_CSS``
+      and ``Button``'s sit in the same tier, where ``Button`` wins for a
+      ``Button`` -- an identical rule inside the modal measured no change;
+    * ``text-style: none`` does NOT clear Textual's ``dim``. The declared
+      colour still renders at roughly half strength, so it has to be stated
+      bright enough to survive that.
+    """
+    from pathlib import Path
+
+    source = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+
+    match = re.search(
+        r"\.console-composer-menu-item:disabled\s*\{([^}]*)\}", source, re.S
+    )
+    assert match, (
+        "the disabled menu-row rule must live in the APP stylesheet -- inside "
+        "the modal's DEFAULT_CSS it is outranked by Button's own rules and "
+        "measurably does nothing"
+    )
+    body = match.group(1)
+
+    colour = re.search(r"color:\s*rgb\((\d+),\s*(\d+),\s*(\d+)\)", body)
+    assert colour, "the disabled colour must be stated explicitly, not left to a token"
+    channels = [int(c) for c in colour.groups()]
+    # Textual halves it; the post-dim value must still clear 3:1 on the
+    # modal's near-black background, which needs ~123+ after halving.
+    assert min(channels) >= 240, (
+        f"disabled colour {channels} is too dark to survive Textual's dim "
+        f"halving -- it would render near {min(channels) // 2}, measured "
+        "1.25:1 at rgb(150,150,150)"
+    )
+
+
+@pytest.mark.unit
+def test_console_action_row_disabled_rules_still_clear_dim():
+    """The action-row half of the same contract, so a future edit cannot
+    quietly delete the `text-style: none` that already protects it."""
+    from pathlib import Path
+
+    source = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    rules = re.findall(r"(\.console-action-disabled[^{]*)\{([^}]*)\}", source, re.S)
+    assert rules, "no .console-action-disabled rules found"
+    for selector, body in rules:
+        assert not re.search(r"text-style:[^;]*\bdim\b", body), (
+            f"{selector.strip()} compounds dim onto the theme alpha"
+        )
