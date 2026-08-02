@@ -51,7 +51,7 @@ def test_serialized_raw_replace_backup_and_downgrade_guard_use_effective_path(
 
     serialized = config.read_cli_config_serialized()
     loaded, backup = config.replace_cli_config_serialized(
-        '[encryption]\nenabled = true\n'
+        "[encryption]\nenabled = true\n"
         '[api_settings.openai]\napi_key = "new-SENTINEL"\n',
         create_backup=True,
     )

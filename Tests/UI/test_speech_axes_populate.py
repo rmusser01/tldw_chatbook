@@ -79,9 +79,7 @@ async def test_audio_cpp_voice_axis_rejects_a_different_catalog_revision(
         model_id: str,
         refresh: bool = False,
     ) -> TTSVoiceDiscoveryResult:
-        faked_service.voice_observation_calls.append(
-            (provider_id, model_id, refresh)
-        )
+        faked_service.voice_observation_calls.append((provider_id, model_id, refresh))
         return TTSVoiceDiscoveryResult(
             provider_id=provider_id,
             model_id=model_id,

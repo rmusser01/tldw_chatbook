@@ -122,11 +122,7 @@ def application_owned_config_directory(config_path: Path) -> Path | None:
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
     default_path = lexical_path(DEFAULT_CONFIG_PATH)
-    return (
-        default_path.parent
-        if lexical_path(config_path) == default_path
-        else None
-    )
+    return default_path.parent if lexical_path(config_path) == default_path else None
 
 
 def _report_config_path_posture(
@@ -854,21 +850,23 @@ def load_settings(force_reload: bool = False) -> Dict:
     # If [API] exists in the user's CLI config, it would have merged with/overridden the CLI defaults' [API]
     # Same applies to all other sections retrieved below.
 
-    paths_section = get_toml_section('Paths')
-    logging_section_server = get_toml_section('Logging')
-    processing_section = get_toml_section('Processing')
-    chunking_section = get_toml_section('Chunking')
-    embeddings_section = get_toml_section('Embeddings')
-    embedding_config_section = get_toml_section('embedding_config')  # Get the [embedding_config] table
-    chat_dicts_section = get_toml_section('ChatDictionaries')
-    auto_save_section = get_toml_section('AutoSave')
-    stt_settings_section = get_toml_section('STTSettings')
-    tts_settings_section = get_toml_section('TTSSettings')
-    search_engines_section = get_toml_section('SearchEngines')
-    search_settings_section = get_toml_section('SearchSettings')
-    web_scraper_section = get_toml_section('WebScraper')
-    confluence_section = get_toml_section('Confluence')
-    library_section = get_toml_section('library')
+    paths_section = get_toml_section("Paths")
+    logging_section_server = get_toml_section("Logging")
+    processing_section = get_toml_section("Processing")
+    chunking_section = get_toml_section("Chunking")
+    embeddings_section = get_toml_section("Embeddings")
+    embedding_config_section = get_toml_section(
+        "embedding_config"
+    )  # Get the [embedding_config] table
+    chat_dicts_section = get_toml_section("ChatDictionaries")
+    auto_save_section = get_toml_section("AutoSave")
+    stt_settings_section = get_toml_section("STTSettings")
+    tts_settings_section = get_toml_section("TTSSettings")
+    search_engines_section = get_toml_section("SearchEngines")
+    search_settings_section = get_toml_section("SearchSettings")
+    web_scraper_section = get_toml_section("WebScraper")
+    confluence_section = get_toml_section("Confluence")
+    library_section = get_toml_section("library")
 
     final_api_settings = get_toml_section("api_settings")
     final_logging_settings = get_toml_section("logging")
@@ -1035,9 +1033,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         # --- Configurations migrated from load_and_log_configs ---
         "anthropic_api": {
             "api_key": anthropic_api_key,
-            "model": api_section_legacy.get(
-                "anthropic_model", "claude-sonnet-5"
-            ),
+            "model": api_section_legacy.get("anthropic_model", "claude-sonnet-5"),
             "streaming": api_section_legacy.get("anthropic_streaming", False),
             "temperature": api_section_legacy.get("anthropic_temperature", 0.7),
             "top_p": api_section_legacy.get("anthropic_top_p", 0.95),
@@ -1949,7 +1945,6 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
-
         "library": {
             "ingest_directory_scan_limit": coerce_int_setting(
                 library_section.get("ingest_directory_scan_limit", 1000),
@@ -1960,9 +1955,8 @@ def load_settings(force_reload: bool = False) -> Dict:
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
         },
-
-        "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
-        "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
+        "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
+        "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
     }
 
     # Bridge TTSSettings defaults into APP_TTS_CONFIG for runtime use
@@ -3804,10 +3798,7 @@ def _load_cli_config_bootstrap_unlocked(
         loaded_config["_first_run"] = True
         bootstrap_succeeded = True
     except PrivatePathError as exc:
-        if (
-            application_directory is not None
-            and exc.result.reason == "missing_parent"
-        ):
+        if application_directory is not None and exc.result.reason == "missing_parent":
             logger.info(
                 f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
             )
@@ -4239,9 +4230,7 @@ def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> boo
                 return True
             continue
         if not (
-            is_sensitive_config_key(key)
-            and isinstance(value, str)
-            and value.strip()
+            is_sensitive_config_key(key) and isinstance(value, str) and value.strip()
         ):
             continue
         if value.startswith("<") and value.endswith(">"):
@@ -4258,10 +4247,7 @@ def _config_data_for_persistence(
 
     selected = copy.deepcopy(dict(config_data))
     encryption = selected.get("encryption", {})
-    if not (
-        isinstance(encryption, Mapping)
-        and encryption.get("enabled", False)
-    ):
+    if not (isinstance(encryption, Mapping) and encryption.get("enabled", False)):
         return selected
 
     password = get_encryption_password()
@@ -4296,9 +4282,7 @@ def export_cli_config_snapshot(
 
     config_path = get_cli_config_path()
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    snapshot_path = (
-        config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
-    )
+    snapshot_path = config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
     with _config_file_lock():
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
@@ -4502,6 +4486,7 @@ def _delete_config_keys(
             if current_level.pop(key, missing) is not missing:
                 changed = True
     return changed
+
 
 def _validate_config_mutation_targets(
     section_values: Mapping[str, Mapping[Any, Any]],
@@ -5327,9 +5312,10 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
-    return _get_custom_database_path(
-        "chachanotes_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+    return (
+        _get_custom_database_path("chachanotes_db_path")
+        or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+    )
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -5363,9 +5349,10 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_prompts.db"
-    return _get_custom_database_path(
-        "prompts_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_prompts.db"
+    return (
+        _get_custom_database_path("prompts_db_path")
+        or get_user_data_dir() / "tldw_chatbook_prompts.db"
+    )
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -5384,72 +5371,84 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_media_v2.db"
-    return _get_custom_database_path(
-        "media_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_media_v2.db"
+    return (
+        _get_custom_database_path("media_db_path")
+        or get_user_data_dir() / "tldw_chatbook_media_v2.db"
+    )
 
 
 def get_library_collections_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_collections_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_library_collections.db"
+    return (
+        _get_custom_database_path("library_collections_db_path")
+        or get_user_data_dir() / "tldw_chatbook_library_collections.db"
+    )
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_ingest_jobs_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+    return (
+        _get_custom_database_path("library_ingest_jobs_db_path")
+        or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+    )
 
 
 def get_workspaces_db_path() -> Path:
-    return _get_custom_database_path(
-        "workspaces_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_workspaces.db"
+    return (
+        _get_custom_database_path("workspaces_db_path")
+        or get_user_data_dir() / "tldw_chatbook_workspaces.db"
+    )
 
 
 def get_subscriptions_db_path() -> Path:
-    return _get_custom_database_path(
-        "subscriptions_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+    return (
+        _get_custom_database_path("subscriptions_db_path")
+        or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+    )
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return _get_custom_database_path(
-        "evals_db_path"
-    ) or get_user_data_dir() / "evals.db"
+    return (
+        _get_custom_database_path("evals_db_path") or get_user_data_dir() / "evals.db"
+    )
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return _get_custom_database_path(
-        "rag_indexing_db_path"
-    ) or get_user_data_dir() / "rag_indexing.db"
+    return (
+        _get_custom_database_path("rag_indexing_db_path")
+        or get_user_data_dir() / "rag_indexing.db"
+    )
 
 
 def get_notifications_db_path() -> Path:
-    return _get_custom_database_path(
-        "notifications_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_notifications.db"
+    return (
+        _get_custom_database_path("notifications_db_path")
+        or get_user_data_dir() / "tldw_chatbook_notifications.db"
+    )
 
 
 def get_research_db_path() -> Path:
-    return _get_custom_database_path(
-        "research_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_research.db"
+    return (
+        _get_custom_database_path("research_db_path")
+        or get_user_data_dir() / "tldw_chatbook_research.db"
+    )
 
 
 def get_writing_db_path() -> Path:
-    return _get_custom_database_path(
-        "writing_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_writing.db"
+    return (
+        _get_custom_database_path("writing_db_path")
+        or get_user_data_dir() / "tldw_chatbook_writing.db"
+    )
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return _get_custom_database_path(
-        "scheduled_tasks_db_path",
-        expand_before_validation=False,
-    ) or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    return (
+        _get_custom_database_path(
+            "scheduled_tasks_db_path",
+            expand_before_validation=False,
+        )
+        or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    )
 
 
 def get_cli_log_file_path() -> Path:

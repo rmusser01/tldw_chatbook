@@ -161,7 +161,10 @@ class _AvailableAudioCppCapabilities:
         exact_voice_model_ids,
     ) -> TTSNativeCapabilitySnapshot:
         assert provider_id == "audio_cpp"
-        assert tuple(exact_voice_model_ids) in {(), (self.snapshot.catalog.models[0].model_id,)}
+        assert tuple(exact_voice_model_ids) in {
+            (),
+            (self.snapshot.catalog.models[0].model_id,),
+        }
         return self.snapshot
 
     def configuration_revision(self, provider_id: str) -> int:
@@ -451,9 +454,7 @@ async def test_first_time_user_character_chat_journey(
             "model": "gpt-4o",
             "streaming": False,
         }
-        app.app_config["api_settings"] = {
-            "openai": {"api_key": FAKE_UAT_API_KEY}
-        }
+        app.app_config["api_settings"] = {"openai": {"api_key": FAKE_UAT_API_KEY}}
         # Returning from Settings re-syncs console actions; simulate it.
         personas._sync_title_and_console_actions()
         await pilot.pause(0.3)
@@ -477,9 +478,7 @@ async def test_first_time_user_character_chat_journey(
         # attribute on the Chat_Functions module covers the whole send path.
         import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 
-        monkeypatch.setattr(
-            chat_functions_module, "chat_api_call", fake_chat_api_call
-        )
+        monkeypatch.setattr(chat_functions_module, "chat_api_call", fake_chat_api_call)
 
         # -- 6. Start Chat again -> handoff to the Console ------------------
         # Baseline for the persistence check: anything the handoff/send
@@ -552,9 +551,10 @@ async def test_first_time_user_character_chat_journey(
             )
             print("composers:", list(chat_screen.query("#console-native-composer")))
             print("Inputs:", [w.id for w in chat_screen.query("Input")])
-            print("Statics sample:", [
-                str(w.render())[:60] for w in list(chat_screen.query("Static"))[:15]
-            ])
+            print(
+                "Statics sample:",
+                [str(w.render())[:60] for w in list(chat_screen.query("Static"))[:15]],
+            )
             raise
 
         # The Start-Chat handoff must have seeded a character-bound session
@@ -617,10 +617,17 @@ async def test_first_time_user_character_chat_journey(
                 print("run_state:", controller.run_state)
             try:
                 store = chat_screen._ensure_console_chat_store()
-                print("store sessions:", [
-                    (s.id, getattr(s, "title", "?"), getattr(s, "character_id", None))
-                    for s in store.sessions()
-                ])
+                print(
+                    "store sessions:",
+                    [
+                        (
+                            s.id,
+                            getattr(s, "title", "?"),
+                            getattr(s, "character_id", None),
+                        )
+                        for s in store.sessions()
+                    ],
+                )
                 print("active_session_id:", store.active_session_id)
                 print(
                     "workspace active:",
@@ -632,7 +639,10 @@ async def test_first_time_user_character_chat_journey(
             print("command input value:", repr(command_input.value))
             print(
                 "Static texts:",
-                [str(w.render())[:100] for w in list(chat_screen.query("Static"))[-15:]],
+                [
+                    str(w.render())[:100]
+                    for w in list(chat_screen.query("Static"))[-15:]
+                ],
             )
             raise
         assert provider_calls, "send path never reached the provider call seam"
@@ -647,8 +657,7 @@ async def test_first_time_user_character_chat_journey(
             f"after={len(after_conversation_ids)})"
         )
         message_counts = {
-            cid: db.count_messages_for_conversation(cid)
-            for cid in new_conversation_ids
+            cid: db.count_messages_for_conversation(cid) for cid in new_conversation_ids
         }
         assert any(count >= 2 for count in message_counts.values()), (
             "expected the new conversation to hold the user + assistant "
@@ -713,20 +722,17 @@ async def test_character_voice_portability_round_trip_to_complete_wav(
         source_db.close_connection()
 
     exported_payload = json.loads(exported)
-    assert (
-        exported_payload["data"]["extensions"][CHARACTER_CARD_TTS_EXTENSION_KEY]
-        == {
-            "schema_version": 1,
-            "profile_id": str(profile_id),
-            "name": "Portable Ann voice",
-            "provider_id": "audio_cpp",
-            "model_id": model_id,
-            "voice_id": voice_id,
-            "response_format": "wav",
-            "speed": 1.0,
-            "options": {},
-        }
-    )
+    assert exported_payload["data"]["extensions"][CHARACTER_CARD_TTS_EXTENSION_KEY] == {
+        "schema_version": 1,
+        "profile_id": str(profile_id),
+        "name": "Portable Ann voice",
+        "provider_id": "audio_cpp",
+        "model_id": model_id,
+        "voice_id": voice_id,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+    }
     card_path = tmp_path / "portable_ann.json"
     card_path.write_text(exported, encoding="utf-8")
 

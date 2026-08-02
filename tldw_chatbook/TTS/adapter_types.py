@@ -347,7 +347,9 @@ class TTSNativeCapabilityObservation:
         if type(self.observed_at) is not datetime:
             raise TypeError("Native capability observation time is invalid")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
-            raise ValueError("Native capability observation time must be timezone-aware")
+            raise ValueError(
+                "Native capability observation time must be timezone-aware"
+            )
 
 
 def _validate_voice_discovery_identifier(value: object, label: str) -> None:

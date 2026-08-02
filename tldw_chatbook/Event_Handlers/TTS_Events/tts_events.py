@@ -330,8 +330,7 @@ class TTSEventHandler:
 
     def __init__(
         self,
-        profile_service_loader: Callable[[], Awaitable[object | None]]
-        | None = None,
+        profile_service_loader: Callable[[], Awaitable[object | None]] | None = None,
     ):
         self._tts_service = None
         self._profile_service_loader = profile_service_loader
@@ -466,8 +465,7 @@ class TTSEventHandler:
                         event.validator,
                     )
                 logger.warning(
-                    "Console character speech resolution failed "
-                    "(outcome_code={})",
+                    "Console character speech resolution failed (outcome_code={})",
                     error.code,
                 )
                 await self._post_tts_message(
@@ -544,8 +542,7 @@ class TTSEventHandler:
             return None
         except Exception:
             logger.warning(
-                "Console speech snapshot rejected "
-                "(outcome_code=validator_failure)"
+                "Console speech snapshot rejected (outcome_code=validator_failure)"
             )
             await self._post_tts_message(
                 TTSCompleteEvent(
@@ -633,8 +630,7 @@ class TTSEventHandler:
                     raise
                 except Exception as error:
                     logger.warning(
-                        "TTS profile service load failed "
-                        "(exception_category={})",
+                        "TTS profile service load failed (exception_category={})",
                         type(error).__name__,
                     )
         resolver = CharacterTTSRequestResolver(profile_service)
@@ -713,8 +709,7 @@ class TTSEventHandler:
             if time_since_last < self.COOLDOWN_SECONDS:
                 wait_seconds = self.COOLDOWN_SECONDS - time_since_last
                 logger.warning(
-                    "TTS request rejected by message cooldown "
-                    "(wait_seconds={:.1f})",
+                    "TTS request rejected by message cooldown (wait_seconds={:.1f})",
                     wait_seconds,
                 )
                 await self._post_tts_message(
@@ -797,10 +792,7 @@ class TTSEventHandler:
                         "provider_id",
                         None,
                     )
-                    if (
-                        isinstance(candidate_provider_id, str)
-                        and candidate_provider_id
-                    ):
+                    if isinstance(candidate_provider_id, str) and candidate_provider_id:
                         provider_id = candidate_provider_id
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")

@@ -96,8 +96,12 @@ def _valid_wav_body(
     data_bytes = bytes((i * 7 + 3) % 256 for i in range(data_size))
     riff_payload = (
         b"WAVE"
-        + b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload
-        + b"data" + struct.pack("<I", data_size) + data_bytes
+        + b"fmt "
+        + struct.pack("<I", len(fmt_payload))
+        + fmt_payload
+        + b"data"
+        + struct.pack("<I", data_size)
+        + data_bytes
     )
     return b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
 

@@ -2957,10 +2957,11 @@ async def test_cancelled_profile_name_modal_is_dismissed_without_saving(
         widget = app.query_one(TTSPlaygroundWidget)
         widget._store_delivered_artifact(artifact, announce=False)
         save_button = app.query_one("#audio-save-profile-btn", Button)
-        save_button.scroll_visible(animate=False)
+        save_button.focus()
         await pilot.pause()
 
-        await pilot.click("#audio-save-profile-btn")
+        assert save_button.has_focus
+        await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: isinstance(

@@ -4369,9 +4369,7 @@ class SettingsScreen(BaseAppScreen):
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
-            return (
-                "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
-            )
+            return "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
         # task-1717: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
         # but nothing NAMED the model, so users trained on Save/Revert got

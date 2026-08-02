@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
 
+
 class _WriterPreferredGate:
     """A cancellation-safe shared/exclusive gate with writer preference."""
 
