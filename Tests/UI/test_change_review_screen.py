@@ -322,3 +322,116 @@ async def test_turn_selector_navigates_to_a_previous_turn(review_fixture):
         text = "\n".join(labels)
         assert "first_turn.txt" in text
         assert "new.txt" not in text, "turn 2's files leaked into turn 1's view"
+
+
+@pytest.mark.asyncio
+async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
+    """`u` -> confirm modal -> Revert: disk truth restored, view reloaded."""
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        modal = await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        assert "edit.txt" in str(
+            modal.query_one("#change-revert-confirm").children[0].renderable
+        )
+        await pilot.click("#change-revert-yes")
+        await _wait_for(
+            pilot,
+            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            "disk restored to baseline",
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_names_files_edited_after_the_turn(review_fixture):
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, run1, run2 = review_fixture
+    (root / "edit.txt").write_text("USER EDIT after the turn\n")
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        modal = await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        warning = modal.query_one("#change-revert-edited-warning", Static)
+        text = str(warning.renderable)
+        assert "edit.txt" in text and "overwrites" in text, (
+            f"the guard's warning does not NAME the file: {text!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    provider.run_active = lambda: True
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            ChangeRevertConfirmModal,
+        )
+
+        modal = await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        await pilot.click("#change-revert-yes")
+        await pilot.pause()
+        await pilot.pause()
+        assert (root / "edit.txt").read_text() == "after\n", (
+            "the revert ran under an active run"
+        )

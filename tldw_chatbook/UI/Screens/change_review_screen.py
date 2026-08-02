@@ -16,14 +16,15 @@ line by line with diff coloring, never markup-parsed: file content is data
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
-from textual.widgets import Select, Static, Tree
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Button, Select, Static, Tree
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import (
@@ -78,6 +79,7 @@ class AgentRunsChangeReviewProvider:
         service: ShadowRepoService,
         conversation_id: str,
         diff_display_max_lines: int | None = None,
+        run_active: "Callable[[], bool] | None" = None,
     ) -> None:
         """Create a provider over one conversation's recorded turns.
 
@@ -91,6 +93,10 @@ class AgentRunsChangeReviewProvider:
         self._db = db
         self._service = service
         self._conversation_id = conversation_id
+        #: TASK-1974: probe for an active run on this conversation's
+        #: workspace. The revert engine refuses while one is live -- the
+        #: per-root lock covers git ops, not the agent's own file tools.
+        self.run_active = run_active if run_active is not None else (lambda: False)
         if diff_display_max_lines is None:
             diff_display_max_lines = self._configured_cap()
         # Review finding: an explicit 0/negative/non-int cap would defeat
@@ -161,6 +167,39 @@ class AgentRunsChangeReviewProvider:
         repo = self._service.repo_for_root(row["root"])
         return repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
 
+    def preflight_revert(self, row: dict, paths: list[str]):
+        """The confirm dialog's data: which paths were edited after E.
+
+        Args:
+            row: One ``change_snapshots`` row.
+            paths: Paths the user asked to revert.
+
+        Returns:
+            The engine's :class:`RevertPreflight`.
+        """
+        from tldw_chatbook.Workspaces.change_revert import preflight_revert
+
+        return preflight_revert(self._service, row, paths)
+
+    def revert(self, row: dict, paths: list[str]):
+        """Restore ``paths`` to the turn's baseline.
+
+        Args:
+            row: One ``change_snapshots`` row.
+            paths: Paths to restore.
+
+        Returns:
+            The engine's per-path :class:`RevertOutcome` list.
+
+        Raises:
+            RevertRefusedError: A run is active on this workspace.
+        """
+        from tldw_chatbook.Workspaces.change_revert import revert_paths
+
+        return revert_paths(
+            self._service, self._db, row, paths, run_active=self.run_active
+        )
+
     def diff_text(self, row: dict, path: str) -> str:
         """One file's unified diff for a snapshot row.
 
@@ -183,6 +222,8 @@ class ChangeReviewScreen(Screen):
         Binding("j", "next_file", "Next file"),
         Binding("k", "previous_file", "Previous file"),
         Binding("enter", "focus_diff", "View diff", show=False),
+        Binding("u", "revert_file", "Revert file"),
+        Binding("U", "undo_all", "Undo all", show=False),
     ]
 
     def __init__(
@@ -414,6 +455,80 @@ class ChangeReviewScreen(Screen):
     def action_focus_diff(self) -> None:
         self.query_one("#change-review-diff", VerticalScroll).focus()
 
+    def action_revert_file(self) -> None:
+        """Revert the focused file (confirmed)."""
+        if not self._leaves or self._focused_leaf < 0:
+            return
+        row, change = self._leaves[self._focused_leaf]
+        self._confirm_and_revert(row, [change.path], f"Revert {change.path}?")
+
+    def action_undo_all(self) -> None:
+        """Revert every file in the active turn, per root (confirmed)."""
+        if self._active_turn is None or not self._leaves:
+            return
+        by_row: dict[int, tuple[dict, list[str]]] = {}
+        for row, change in self._leaves:
+            key = id(row)
+            by_row.setdefault(key, (row, []))[1].append(change.path)
+        total = len(self._leaves)
+        # Multi-root Undo-all: one confirm covering everything, then the
+        # engine runs per root row.
+        rows_paths = list(by_row.values())
+        all_edited: list[str] = []
+        for row, paths in rows_paths:
+            all_edited.extend(self._provider.preflight_revert(row, paths).edited_since)
+
+        def _apply(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            outcomes = []
+            for row, paths in rows_paths:
+                outcomes.extend(self._run_revert(row, paths))
+            self._report_outcomes(outcomes)
+
+        self.app.push_screen(
+            ChangeRevertConfirmModal(
+                f"Undo all {total} files from this turn?", all_edited
+            ),
+            callback=_apply,
+        )
+
+    def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
+        edited = self._provider.preflight_revert(row, paths).edited_since
+
+        def _apply(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            self._report_outcomes(self._run_revert(row, paths))
+
+        self.app.push_screen(
+            ChangeRevertConfirmModal(summary, edited), callback=_apply
+        )
+
+    def _run_revert(self, row: dict, paths: list[str]) -> list:
+        from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
+
+        try:
+            return self._provider.revert(row, paths)
+        except RevertRefusedError as exc:
+            self.notify(str(exc), severity="warning")
+            return []
+
+    def _report_outcomes(self, outcomes: list) -> None:
+        """Per-path honesty: failures are named, never rolled up silently."""
+        failed = [o for o in outcomes if not o.ok]
+        if failed:
+            names = ", ".join(f"{o.path} ({o.error})" for o in failed[:5])
+            self.notify(
+                f"{len(failed)} file(s) could not be reverted: {names}",
+                severity="error",
+            )
+        elif outcomes:
+            self.notify(f"Reverted {len(outcomes)} file(s).")
+        if self._active_turn is not None:
+            # Reload from disk truth -- the turn's diff no longer matches.
+            self._load_turn(self._active_turn)
+
     def action_dismiss_screen(self) -> None:
         self.dismiss(None)
 
@@ -461,3 +576,47 @@ class ChangeReviewScreen(Screen):
                 f"… diff truncated — {hidden} more lines", style="yellow"
             )
         content.update(text)
+
+
+class ChangeRevertConfirmModal(ModalScreen[bool]):
+    """Confirm a revert, naming user-edited files BY NAME (TASK-1974).
+
+    The list is the guard's whole point: files whose disk state differs from
+    the turn's end were changed by the user (or a later turn) after this
+    turn, and reverting will overwrite that work -- the dialog must say
+    exactly which files, not "some files changed".
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, summary: str, edited_since: list[str]) -> None:
+        super().__init__()
+        self._summary = summary
+        self._edited_since = edited_since
+
+    def compose(self) -> ComposeResult:
+        """Summary + the named-files warning + Revert/Cancel."""
+        with Vertical(id="change-revert-confirm"):
+            yield Static(self._summary, markup=False)
+            if self._edited_since:
+                names = "\n".join(f"  • {p}" for p in self._edited_since)
+                yield Static(
+                    "⚠ Changed since this turn (reverting overwrites "
+                    f"that work):\n{names}",
+                    id="change-revert-edited-warning",
+                    markup=False,
+                )
+            with Horizontal(id="change-revert-buttons"):
+                yield Button("Revert", id="change-revert-yes", variant="error")
+                yield Button("Cancel", id="change-revert-no")
+
+    @on(Button.Pressed, "#change-revert-yes")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#change-revert-no")
+    def _cancel_button(self) -> None:
+        self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)

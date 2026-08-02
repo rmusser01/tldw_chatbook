@@ -18004,6 +18004,14 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
             return
+        # TASK-1974: reverts refuse while a run is active -- the engine's
+        # probe reads THIS controller's live run state each time.
+        if controller is not None:
+            # CONSOLE_ACTIVE_RUN_STATUSES is this module's own constant.
+            provider.run_active = (
+                lambda: controller.run_state.status
+                in CONSOLE_ACTIVE_RUN_STATUSES
+            )
         from tldw_chatbook.UI.Screens.change_review_screen import (
             ChangeReviewScreen,
         )
