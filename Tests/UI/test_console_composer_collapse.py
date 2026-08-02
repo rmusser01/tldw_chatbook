@@ -798,14 +798,14 @@ async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
 
 
 @pytest.mark.asyncio
-async def test_composer_row_menu_left_of_draft_mic_beside_draft_send_gapped():
-    """Pin the requested composer row order and the Mic/Send buffer.
+async def test_composer_row_menu_left_of_draft_send_beside_draft_mic_gapped():
+    """Pin the requested composer row order and the Send/Mic buffer.
 
     ☰ sits left of the draft (right of Composer ▾) so overflow actions live
-    on the left button cluster; Mic hugs the draft's right edge; Send follows
-    Mic with a >=2-cell empty gap so a Mic press cannot land on Send. Stop's
-    budgeted-but-hidden slot sits AFTER Send, so a run starting or stopping
-    never shifts Mic or Send.
+    on the left button cluster; Send hugs the draft's right edge; Mic
+    follows Send across a >=2-cell empty gap so a press aimed at one cannot
+    land on the other. Stop's budgeted-but-hidden slot sits AFTER Mic, so a
+    run starting or stopping never shifts Send or Mic.
     """
     app = _ComposerGeometryApp()
 
@@ -819,13 +819,13 @@ async def test_composer_row_menu_left_of_draft_mic_beside_draft_send_gapped():
 
         assert collapse.region.right <= menu.region.x
         assert menu.region.right <= draft.region.x
-        # Mic is adjacent to the draft (the draft keeps its 1-cell margin);
+        # Send is adjacent to the draft (the draft keeps its 1-cell margin);
         # a right-aligned actions row would park Stop's hidden 8-cell budget
         # here instead.
-        assert draft.region.right <= mic.region.x
-        assert mic.region.x - draft.region.right <= 2
-        # The anti-misclick buffer between Mic and Send.
-        assert send.region.x - mic.region.right >= 2
+        assert draft.region.right <= send.region.x
+        assert send.region.x - draft.region.right <= 2
+        # The anti-misclick buffer between Send and Mic.
+        assert mic.region.x - send.region.right >= 2
 
         composer = app.query_one("#console-native-composer", ConsoleComposerBar)
         mic_x, send_x = mic.region.x, send.region.x
@@ -837,7 +837,7 @@ async def test_composer_row_menu_left_of_draft_mic_beside_draft_send_gapped():
         await pilot.pause()
         stop = app.query_one("#console-stop-generation", Button)
         assert stop.display
-        # Stop appears in its budgeted slot right of Send without moving
-        # Mic or Send.
-        assert send.region.right <= stop.region.x
+        # Stop appears in its budgeted slot right of Mic without moving
+        # Send or Mic.
+        assert mic.region.right <= stop.region.x
         assert (mic.region.x, send.region.x) == (mic_x, send_x)
