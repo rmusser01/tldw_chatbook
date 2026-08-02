@@ -25,6 +25,7 @@ import json
 import threading
 from io import StringIO
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
@@ -412,6 +413,142 @@ async def test_delete_cancelled_leaves_the_kept_briefing_in_place(tmp_path):
         chacha_db.close_connection()
 
 
+# --- Delete: robustness (task-1780 whole-branch review) ---------------------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_delete_toasts_and_does_not_exit_the_app(monkeypatch, tmp_path):
+    """FIX 1 (Important): `_run_delete` used to be a bare `try/finally`
+    with no `except` at all -- any exception surfacing from either of
+    `_handle_delete`'s two `await`s (the confirmation dialog, or the hard
+    delete itself: a `SQLITE_BUSY`/`CharactersRAGDBError` mid-delete is no
+    longer theoretical now that auto-keep writes ChaChaNotes concurrently
+    from the scheduler) took the WHOLE APPLICATION down via a Textual
+    worker's default `exit_on_error=True`.
+
+    Mutation target: remove the `except Exception` branch (or the guard's
+    `finally` re-arm) and this REDs -- either the app stops running mid-test
+    or `modal._delete_in_flight` never clears.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        modal = KeptBriefingsModal(chacha_db)
+
+        def _boom(_kept_id):
+            raise RuntimeError("simulated SQLITE_BUSY mid-delete")
+
+        monkeypatch.setattr(chacha_db, "delete_kept_briefing", _boom)
+
+        app = _ModalHost()
+        app.notify = Mock()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            await pilot.pause()
+
+            await pilot.click("#kbm-delete-button")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ConfirmationDialog)
+            )
+            await pilot.click("#confirm-button")
+
+            assert await _wait_until(pilot, lambda: not modal._delete_in_flight)
+
+            assert app.is_running, "a delete failure must not exit the application"
+            assert modal.is_mounted and modal.is_current, (
+                "the modal must survive and stay re-armed"
+            )
+            app.notify.assert_called_once()
+            _args, kwargs = app.notify.call_args
+            assert kwargs.get("severity") == "error"
+            assert kwargs.get("markup") is False
+
+        # The failed delete never reached ChaChaNotes: the row is intact,
+        # unrefreshed but consistent (never claimed to be anything else).
+        assert chacha_db.get_kept_briefing(kept_id) is not None
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_a_second_delete_press_while_in_flight_is_refused_with_a_toast(
+    monkeypatch, tmp_path
+):
+    """FIX 2 (Minor): a second Delete press while the first is still in
+    flight used to be a silent no-op -- unlike the screen's own Keep ("A
+    keep is already in progress. Nothing else was started."). A blocking
+    real `delete_kept_briefing` (a `threading.Event`, not a sleep/poll
+    race -- mirrors `test_a_second_cast_press_while_in_flight_is_refused_
+    by_the_modals_own_guard`'s own controllable-seam pattern) holds the
+    delete in flight deterministically through the one `await` window
+    `_dispatch_cast`'s own comment names: after the confirmation dialog
+    resolves, this modal is again the top screen and its own buttons are
+    clickable while the delete itself is still running.
+
+    Mutation target: drop the toast call and this REDs.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        modal = KeptBriefingsModal(chacha_db)
+
+        release = threading.Event()
+        calls: list[int] = []
+        real_delete = chacha_db.delete_kept_briefing
+
+        def _blocking_delete(target_id):
+            calls.append(target_id)
+            assert release.wait(timeout=5), "test setup: delete never released"
+            return real_delete(target_id)
+
+        monkeypatch.setattr(chacha_db, "delete_kept_briefing", _blocking_delete)
+
+        app = _ModalHost()
+        app.notify = Mock()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            await pilot.pause()
+
+            await pilot.click("#kbm-delete-button")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ConfirmationDialog)
+            )
+            await pilot.click("#confirm-button")
+            assert await _wait_until(pilot, lambda: bool(calls))
+
+            # A second press while the first delete is still blocked
+            # inside `to_thread` -- the modal is the top screen again.
+            app.notify.reset_mock()
+            await pilot.click("#kbm-delete-button")
+            await pilot.pause()
+            assert len(calls) == 1, (
+                "the second press must not have dispatched a second delete"
+            )
+            app.notify.assert_called_once()
+            _args, kwargs = app.notify.call_args
+            assert "already in progress" in _args[0]
+            assert kwargs.get("severity") == "warning"
+            assert kwargs.get("markup") is False
+
+            release.set()
+            assert await _wait_until(pilot, lambda: not modal._delete_in_flight)
+            assert await _wait_until(
+                pilot, lambda: chacha_db.get_kept_briefing(kept_id) is None
+            )
+
+        assert chacha_db.get_kept_briefing(kept_id) is None
+    finally:
+        chacha_db.close_connection()
+
+
 # --- Cast from kept ----------------------------------------------------------
 
 
@@ -547,6 +684,9 @@ async def test_a_second_cast_press_while_in_flight_is_refused_by_the_modals_own_
     the FIRST cast in flight deterministically while a second press is
     attempted; only ONE chat call may have happened by the time the second
     press returns.
+
+    Also pins FIX 2 (task-1780 whole-branch review): the second press must
+    now toast a refusal -- it used to be a silent no-op.
     """
     chacha_db = _chacha_db(tmp_path)
     try:
@@ -564,6 +704,7 @@ async def test_a_second_cast_press_while_in_flight_is_refused_by_the_modals_own_
         _use_fake_kept_cast_chat(monkeypatch, _blocking_chat)
 
         app = _ModalHost()
+        app.notify = Mock()
         async with app.run_test(size=(160, 42)) as pilot:
             app.push_screen(modal)
             assert await _wait_until(
@@ -581,6 +722,11 @@ async def test_a_second_cast_press_while_in_flight_is_refused_by_the_modals_own_
             assert len(calls) == 1, (
                 "the second press must not have dispatched a second cast"
             )
+            app.notify.assert_called_once()
+            _args, kwargs = app.notify.call_args
+            assert "already in progress" in _args[0]
+            assert kwargs.get("severity") == "warning"
+            assert kwargs.get("markup") is False
 
             release.set()
             assert await _wait_until(pilot, lambda: not modal._cast_in_flight)
@@ -589,6 +735,227 @@ async def test_a_second_cast_press_while_in_flight_is_refused_by_the_modals_own_
             )
 
         assert len(chacha_db.list_kept_scripts(kept_id)) == 1
+    finally:
+        chacha_db.close_connection()
+
+
+# --- Cast/delete mutual exclusion (task-1780 whole-branch review, FIX 3) ----
+
+
+@pytest.mark.asyncio
+async def test_cast_is_refused_while_a_delete_is_in_flight(monkeypatch, tmp_path):
+    """Pins `_dispatch_cast`'s own mutual-exclusion guard: a cast that
+    outlived a delete would try to `create_kept_script` against a
+    `kept_briefing_id` the foreign key no longer has. A blocking real
+    `delete_kept_briefing` holds `_delete_in_flight` through the one
+    `await` window after the confirmation dialog resolves (the identical
+    window `test_a_second_delete_press_...` exercises for a same-action
+    double-press); Cast is pressed in that same window instead.
+
+    Mutation target: drop the `_delete_in_flight` check from `_dispatch_
+    cast` and this REDs -- either a cast actually runs (the fake chat gets
+    called) or no refusal toast appears.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        modal = KeptBriefingsModal(chacha_db, subs_db=None)
+
+        release = threading.Event()
+        delete_calls: list[int] = []
+        real_delete = chacha_db.delete_kept_briefing
+
+        def _blocking_delete(target_id):
+            delete_calls.append(target_id)
+            assert release.wait(timeout=5), "test setup: delete never released"
+            return real_delete(target_id)
+
+        monkeypatch.setattr(chacha_db, "delete_kept_briefing", _blocking_delete)
+
+        chat = _FakeChat()
+        _use_fake_kept_cast_chat(monkeypatch, chat)
+
+        app = _ModalHost()
+        app.notify = Mock()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            await pilot.pause()
+
+            await pilot.click("#kbm-delete-button")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ConfirmationDialog)
+            )
+            await pilot.click("#confirm-button")
+            assert await _wait_until(pilot, lambda: bool(delete_calls))
+
+            await pilot.click("#kbm-cast-button")
+            await pilot.pause()
+            assert not chat.calls, "a cast must not run while a delete is in flight"
+            app.notify.assert_called_once()
+            _args, kwargs = app.notify.call_args
+            assert "delete is in progress" in _args[0]
+            assert kwargs.get("severity") == "warning"
+            assert kwargs.get("markup") is False
+
+            release.set()
+            assert await _wait_until(pilot, lambda: not modal._delete_in_flight)
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_delete_is_refused_while_a_cast_is_in_flight(monkeypatch, tmp_path):
+    """Mirror of the test above, the other direction: `_dispatch_delete`'s
+    own `_cast_in_flight` check. Mutation target: drop it and this REDs --
+    a delete would either open its confirmation dialog or actually run.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        modal = KeptBriefingsModal(chacha_db, subs_db=None)
+
+        release = threading.Event()
+        cast_calls: list[dict] = []
+
+        def _blocking_chat(**kwargs):
+            cast_calls.append(kwargs)
+            assert release.wait(timeout=5), "test setup: cast never released"
+            return json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+
+        _use_fake_kept_cast_chat(monkeypatch, _blocking_chat)
+
+        app = _ModalHost()
+        app.notify = Mock()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            await pilot.pause()
+
+            await pilot.click("#kbm-cast-button")
+            assert await _wait_until(pilot, lambda: modal._cast_in_flight)
+
+            await pilot.click("#kbm-delete-button")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog), (
+                "a delete must not even open its confirmation while a cast "
+                "is in flight"
+            )
+            app.notify.assert_called_once()
+            _args, kwargs = app.notify.call_args
+            assert "cast is in progress" in _args[0]
+            assert kwargs.get("severity") == "warning"
+            assert kwargs.get("markup") is False
+
+            release.set()
+            assert await _wait_until(pilot, lambda: not modal._cast_in_flight)
+
+        assert chacha_db.get_kept_briefing(kept_id) is not None
+    finally:
+        chacha_db.close_connection()
+
+
+# --- Listing bounds (task-1780 whole-branch review, FIX 4) ------------------
+
+
+@pytest.mark.asyncio
+async def test_kept_list_stays_quiet_exactly_at_its_display_cap(monkeypatch, tmp_path):
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        monkeypatch.setattr(kbm_module, "_KEPT_LIST_DISPLAY_CAP", 2)
+        for i in range(2):
+            _kept_briefing(
+                chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}"
+            )
+        modal = KeptBriefingsModal(chacha_db)
+
+        app = _ModalHost()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            assert len(modal.query("#kbm-kept-list Button")) == 2
+            assert not modal.query("#kbm-kept-list-overflow"), (
+                "exactly at the cap must not claim there is more"
+            )
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_kept_list_shows_an_overflow_line_past_its_display_cap(
+    monkeypatch, tmp_path
+):
+    """Shrinks `_KEPT_LIST_DISPLAY_CAP` rather than seeding hundreds of
+    real rows -- the established idiom for this class of test (mirrors
+    `_all_briefing_scripts`'s own page-size-shrink test in `test_
+    briefing_keep.py`). Mutation target: drop the overflow line and this
+    REDs.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        monkeypatch.setattr(kbm_module, "_KEPT_LIST_DISPLAY_CAP", 2)
+        for i in range(3):
+            _kept_briefing(
+                chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}"
+            )
+        modal = KeptBriefingsModal(chacha_db)
+
+        app = _ModalHost()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            assert len(modal.query("#kbm-kept-list Button")) == 2, (
+                "the display cap itself must still hold"
+            )
+            assert modal.query("#kbm-kept-list-overflow"), (
+                "more kept briefings than shown must say so honestly"
+            )
+    finally:
+        chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_kept_scripts_list_shows_an_overflow_line_past_its_display_cap(
+    monkeypatch, tmp_path
+):
+    """Mirror of the kept-list overflow test, for one kept briefing's own
+    kept-scripts list. Mutation target: drop the overflow line and this
+    REDs.
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        monkeypatch.setattr(kbm_module, "_KEPT_SCRIPTS_DISPLAY_CAP", 2)
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        for i in range(3):
+            chacha_db.create_kept_script(
+                kept_id,
+                source_script_id=None,
+                preset_name=f"Preset {i}",
+                roster_snapshot_json='[{"name": "Host"}]',
+                turns_json='[{"speaker": "Host", "text": "Hi."}]',
+            )
+        modal = KeptBriefingsModal(chacha_db)
+
+        app = _ModalHost()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            assert await _wait_until(pilot, lambda: bool(modal.query(".kbm-script")))
+            assert len(modal.query(".kbm-script")) == 2
+            assert modal.query("#kbm-scripts-overflow")
     finally:
         chacha_db.close_connection()
 

@@ -33,6 +33,7 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import briefing_keep
 from tldw_chatbook.Subscriptions.briefing_keep import (
     DELETED_WATCHLIST_NAME,
     KeepRefused,
@@ -391,6 +392,43 @@ def test_rekeeping_is_byte_identical_when_nothing_new(tmp_path: Path) -> None:
         }
         assert chacha_db.get_kept_briefing(first["kept_id"]) == kept_before
         assert chacha_db.list_kept_scripts(first["kept_id"]) == scripts_before
+    finally:
+        chacha_db.close_connection()
+
+
+def test_all_briefing_scripts_walks_every_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pins `_all_briefing_scripts`'s own pagination loop (task-1780
+    whole-branch review, FIX 4) -- previously untested. Shrinking the
+    module's own `_SCRIPT_PAGE_SIZE` (rather than seeding hundreds of real
+    rows to exceed its real 200-row default) is the established idiom for
+    this class of test.
+
+    Mutation target: break the loop so it stops after the first page and
+    this REDs (too few scripts get copied -- `scripts_added == 2`, not
+    `5`). A second mutation -- `offset` never advancing -- is a genuine
+    infinite loop (every page keeps re-reading the same first
+    `_SCRIPT_PAGE_SIZE` rows forever) that this synchronous function has
+    no `asyncio` hook to bound from inside the test; verify that one with
+    an external process timeout, never by running it unbounded.
+    """
+    subs_db = _subs_db(tmp_path)
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        monkeypatch.setattr(briefing_keep, "_SCRIPT_PAGE_SIZE", 2)
+        watchlist_id = _watchlist(subs_db)
+        briefing_id = _complete_briefing(subs_db, watchlist_id)
+        script_ids = [
+            _script(subs_db, briefing_id, preset_name=f"Preset {i}")
+            for i in range(5)
+        ]
+
+        result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
+
+        assert result["scripts_added"] == 5
+        kept_scripts = chacha_db.list_kept_scripts(result["kept_id"])
+        assert {row["source_script_id"] for row in kept_scripts} == set(script_ids)
     finally:
         chacha_db.close_connection()
 

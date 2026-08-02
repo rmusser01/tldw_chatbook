@@ -121,6 +121,23 @@ _NO_KEPT_SCRIPTS = "No scripts cast from this kept briefing yet."
 #: Same overflow-honesty cap as `ArtifactsPane._TURN_RENDER_CAP`.
 _TURN_RENDER_CAP = 200
 
+#: Task-1780 whole-branch review, FIX 4: this modal's kept-briefings list
+#: had no paging and no overflow signal at all -- `list_kept_briefings`'s
+#: own default `limit=200` would silently drop the 201st-oldest-kept row
+#: with nothing on screen to say so. Full pagination is not required here
+#: (there is no "load more" affordance, and the spec never asked for one);
+#: the cheapest honest fix is to fetch one row past this cap -- enough to
+#: know whether more exist -- and say so plainly when they do. A bare
+#: module global (not a class attribute) so a test can shrink it via
+#: `monkeypatch.setattr(kbm_module, "_KEPT_LIST_DISPLAY_CAP", ...)` without
+#: seeding hundreds of rows.
+_KEPT_LIST_DISPLAY_CAP = 200
+_KEPT_LIST_OVERFLOW_TEXT = "…and more kept briefings not shown."
+
+#: Same bound, same reasoning, for one kept briefing's own kept-scripts list.
+_KEPT_SCRIPTS_DISPLAY_CAP = 200
+_KEPT_SCRIPTS_OVERFLOW_TEXT = "…and more kept scripts not shown."
+
 
 def _kept_list_label(row: Mapping[str, Any]) -> Text:
     """One kept-briefing list button's label.
@@ -264,8 +281,10 @@ class KeptBriefingsModal(ModalScreen[None]):
         self.subs_db = subs_db
         self._load_character = load_character
         self._kept: list[dict[str, Any]] = []
+        self._kept_overflow = False
         self._selected_kept_id: int | None = None
         self._scripts: list[dict[str, Any]] = []
+        self._scripts_overflow = False
         self._presets: list[dict[str, Any]] = []
         self._cast_preset_id: int | None = None
         self._cast_in_flight = False
@@ -329,6 +348,11 @@ class KeptBriefingsModal(ModalScreen[None]):
                                     id=f"kbm-kept-btn-{kept_id}",
                                     compact=True,
                                     variant="primary" if selected else "default",
+                                )
+                            if self._kept_overflow:
+                                yield Static(
+                                    Text(_KEPT_LIST_OVERFLOW_TEXT, style="dim"),
+                                    id="kbm-kept-list-overflow",
                                 )
                         else:
                             yield Static(
@@ -397,6 +421,11 @@ class KeptBriefingsModal(ModalScreen[None]):
                                     _kept_script_renderable(script),
                                     classes="kbm-script",
                                 )
+                            if self._scripts_overflow:
+                                yield Static(
+                                    Text(_KEPT_SCRIPTS_OVERFLOW_TEXT, style="dim"),
+                                    id="kbm-scripts-overflow",
+                                )
                         else:
                             yield Static(
                                 _NO_KEPT_SCRIPTS, id="kbm-scripts-empty"
@@ -418,13 +447,22 @@ class KeptBriefingsModal(ModalScreen[None]):
         Guarded on `is_attached`, not `is_mounted` -- see `BriefingPreset
         Modal._load_presets`'s docstring for why: awaited directly from
         `on_mount`, before `is_mounted` itself has flipped `True`.
+
+        Fetches one row past `_KEPT_LIST_DISPLAY_CAP` -- not the whole
+        table -- purely to know honestly whether more rows exist than are
+        shown; see that constant's own comment (task-1780 whole-branch
+        review, FIX 4).
         """
         try:
-            rows = await asyncio.to_thread(self.chacha_db.list_kept_briefings)
+            rows = await asyncio.to_thread(
+                self.chacha_db.list_kept_briefings,
+                limit=_KEPT_LIST_DISPLAY_CAP + 1,
+            )
         except Exception as exc:  # noqa: BLE001 - degrade the list, not the modal
             logger.warning(f"Failed to list kept briefings: {type(exc).__name__}")
             rows = []
-        self._kept = [dict(row) for row in rows]
+        self._kept_overflow = len(rows) > _KEPT_LIST_DISPLAY_CAP
+        self._kept = [dict(row) for row in rows[:_KEPT_LIST_DISPLAY_CAP]]
 
     async def _load_presets(self) -> None:
         """Re-read every stored `briefing_presets` row for the cast picker.
@@ -457,7 +495,11 @@ class KeptBriefingsModal(ModalScreen[None]):
         by this older fetch landing after it.
         """
         try:
-            rows = await asyncio.to_thread(self.chacha_db.list_kept_scripts, kept_id)
+            rows = await asyncio.to_thread(
+                self.chacha_db.list_kept_scripts,
+                kept_id,
+                limit=_KEPT_SCRIPTS_DISPLAY_CAP + 1,
+            )
         except Exception as exc:  # noqa: BLE001 - degrade the list, not the modal
             logger.warning(
                 f"Failed to list kept scripts for {kept_id}: {type(exc).__name__}"
@@ -465,7 +507,8 @@ class KeptBriefingsModal(ModalScreen[None]):
             rows = []
         if self._selected_kept_id != kept_id:
             return
-        self._scripts = [dict(row) for row in rows]
+        self._scripts_overflow = len(rows) > _KEPT_SCRIPTS_DISPLAY_CAP
+        self._scripts = [dict(row) for row in rows[:_KEPT_SCRIPTS_DISPLAY_CAP]]
         if self.is_attached:
             self.refresh(recompose=True)
 
@@ -519,15 +562,69 @@ class KeptBriefingsModal(ModalScreen[None]):
         claimed at dispatch time rather than inside the worker body (see
         `WatchlistsCollectionsScreen.handle_generate_briefing_requested`'s
         docstring for the canonical statement of why).
+
+        A second press while either guard already holds is now refused
+        WITH a toast -- task-1780 whole-branch review (FIX 2) found this
+        branch silently did nothing at all, unlike the screen's own Keep
+        (`_keep_briefing`'s "A keep is already in progress." toast). No
+        selection (`_selected_kept_id is None`) stays silent on purpose:
+        the Delete button is `disabled` whenever nothing is selected (see
+        `compose`), so that branch is unreachable through the UI -- there
+        is nothing a toast could usefully explain there.
         """
-        if self._selected_kept_id is None or self._delete_in_flight or self._cast_in_flight:
+        if self._selected_kept_id is None:
+            return
+        if self._delete_in_flight or self._cast_in_flight:
+            self.notify(
+                "A delete is already in progress. Nothing else was started."
+                if self._delete_in_flight
+                else "A cast is in progress. Nothing else was started.",
+                severity="warning",
+                markup=False,
+            )
             return
         self._delete_in_flight = True
         self.run_worker(self._run_delete(), exclusive=True, group="kbm-delete")
 
     async def _run_delete(self) -> None:
+        """Dispatch worker body: delete, then always clear the guard and repaint.
+
+        Task-1780 whole-branch review (FIX 1, Important): this coroutine
+        used to be a bare `try/finally` with no `except` at all, but
+        `_handle_delete` has two `await`s that can each raise -- the
+        confirmation dialog itself (`push_screen_wait`) and the hard
+        delete (`asyncio.to_thread(self.chacha_db.delete_kept_briefing,
+        ...)`, a real `SQLITE_BUSY`/`CharactersRAGDBError` mid-delete is no
+        longer a theoretical concern once auto-keep (Task 3) is writing
+        ChaChaNotes concurrently from the scheduler). A Textual worker's
+        default `exit_on_error=True` means ANY exception escaping this
+        coroutine took the WHOLE APPLICATION down, not just this modal.
+
+        `asyncio.CancelledError` is re-raised rather than caught -- mirrors
+        `_write_briefing_export_file`/`_export_feed_to_directory`
+        (`watchlists_collections_screen.py`) exactly: a cancelled worker
+        must never be reported as a failed delete. Every other exception
+        gets a toast (`markup=False` -- the kept briefing's own name is
+        not this app's text to interpret as markup; the message itself is
+        only a bare exception type name, never exception content) instead
+        of exiting the app. The guard clears in `finally` on every path,
+        so a failed delete never wedges Delete shut for the rest of this
+        modal's life; the kept list itself is left unrefreshed (not
+        reloaded past the failed `to_thread` call) but stays consistent --
+        it still shows exactly what ChaChaNotes still has, since the
+        delete never actually completed.
+        """
         try:
             await self._handle_delete()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(f"Kept-briefing delete failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not delete this kept briefing: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
         finally:
             self._delete_in_flight = False
             if self.is_attached:
@@ -566,11 +663,12 @@ class KeptBriefingsModal(ModalScreen[None]):
     # --- Cast ------------------------------------------------------------
 
     def _dispatch_cast(self) -> None:
-        if (
-            self._selected_kept_id is None
-            or self._cast_in_flight
-            or self._delete_in_flight
-        ):
+        if self._selected_kept_id is None:
+            # The Cast toolbar only composes when a kept briefing is
+            # selected (see `compose`) -- unreachable through the UI, so
+            # this stays silent rather than toasting about nothing.
+            return
+        if self._cast_in_flight or self._delete_in_flight:
             # `_delete_in_flight` closes a narrow race: a delete's own
             # confirmation dialog blocks other clicks while it is up, but
             # the delete ITSELF (`delete_kept_briefing`) has one `await`
@@ -581,6 +679,17 @@ class KeptBriefingsModal(ModalScreen[None]):
             # foreign key no longer has -- `_dispatch_delete`'s own mirror
             # check (`_cast_in_flight`) closes the identical window in the
             # other direction.
+            #
+            # Task-1780 whole-branch review (FIX 2): both refusals now
+            # toast -- this branch used to be a silent no-op, unlike the
+            # screen's own Keep ("A keep is already in progress.").
+            self.notify(
+                "A cast is already in progress. Nothing else was started."
+                if self._cast_in_flight
+                else "A delete is in progress. Nothing else was started.",
+                severity="warning",
+                markup=False,
+            )
             return
         self._cast_in_flight = True
         target_kept_id = self._selected_kept_id
