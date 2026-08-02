@@ -82,12 +82,21 @@ _MAX_WAV_SINK_UPGRADE_BYTES = 16 * 1024 * 1024
 # real audio duration available to bound the poll against --
 # `AudioPlayerInfo.duration` (`TTS/audio_player.py`) is declared but never
 # populated by `play()` -- so the bound is estimated from the SYNTHESIZED
-# TEXT's own length, at a deliberately slow (over-estimating) rate, plus a
+# TEXT's own length, at a deliberately slow (over-estimating) rate, divided
+# by the resolved provider speed (task-4 review N3 -- `default_speed` is
+# user-configurable and only validated as "finite positive", so a bound
+# that ignores it can under-estimate at a slower-than-1x setting), plus a
 # fixed startup/latency margin, capped at an absolute ceiling so a
 # pathological input can never poll indefinitely.
 _LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND = 8.0
 _LEGACY_PLAYBACK_POLL_MARGIN_SECONDS = 3.0
-_LEGACY_PLAYBACK_POLL_MAX_SECONDS = 120.0
+# Task-4 review N3: raised from 120s -- a 5000-char utterance (the max
+# `_prepare_tts_text` allows) at the conservative assumed rate needs ~625s;
+# no fixed ceiling can cover an arbitrarily slow real reading of arbitrarily
+# long text, but this is far more generous while staying bounded (and an
+# operator/system can still cancel a stuck utterance -- task-4 review F4's
+# `_active_tasks` registration, N4's prompt cancel-stop).
+_LEGACY_PLAYBACK_POLL_MAX_SECONDS = 300.0
 _LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS = 0.05
 
 
@@ -357,6 +366,15 @@ class TTSEventHandler:
         self._artifact_cleanup_retry: set[Path] = set()
         self._retained_tts_io_tasks: set[asyncio.Task] = set()
         self._retained_tts_cleanup_tasks: set[asyncio.Task] = set()
+        # Task-4 review N5: kept SEPARATE from `_retained_tts_cleanup_
+        # tasks` above -- that set's tasks are genuinely in-flight I/O
+        # `cleanup_tts_resources()` gives a bounded chance to finish
+        # naturally. `_schedule_legacy_playback_cleanup`'s tasks are pure
+        # `asyncio.sleep(5)`-then-delete timers; `cleanup_tts_resources()`
+        # deletes the same artifact directly moments later regardless, so
+        # AWAITING one (even boundedly) only wastes shutdown time for zero
+        # benefit -- it is CANCELLED there instead, never drained.
+        self._pending_legacy_cleanup_timers: set[asyncio.Task] = set()
         self._retained_tts_cleanup_paths: set[Path] = set()
         self._retained_tts_cleanup_requeue: dict[Path, str] = {}
         # task-559 fix round 1: which file the player last loaded, tracked
@@ -377,6 +395,18 @@ class TTSEventHandler:
         # by the same lock as `_audio_files` (related bookkeeping, always
         # touched together).
         self._last_played: Optional[tuple[str, Path]] = None
+        # Task-4 review round 2 (F3+N2): set for the FULL duration of
+        # `_play_utterance_legacy_artifact`'s play-and-poll call (from just
+        # before `player.play()` runs to just after the poll returns), not
+        # merely the initial handoff -- registering `_last_played` early
+        # (round 1's F3 fix) made a concurrent bare stop take the TRACKED
+        # branch, whose identity check (`stop_audio_playback_if_current`)
+        # fails until the player actually owns the file, silently no-oping
+        # for the player's whole `play()` pre-`Popen` delay AND the
+        # `_run_blocking_tts_io` executor hop -- the exact window this flag
+        # closes. Read/written only from the event loop (plain bool, no
+        # lock needed -- asyncio coroutines never truly run concurrently).
+        self._legacy_handoff_in_flight: bool = False
         self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
@@ -929,6 +959,11 @@ class TTSEventHandler:
         start_time = asyncio.get_event_loop().time()
         outcome_code = "generation_failed"
         provider_id: str | None = None
+        # Task-4 review N3: the resolved provider speed, when available --
+        # folded into the legacy completion poll's timeout estimate
+        # (`_legacy_playback_timeout_seconds`) so a slower-than-1x
+        # configuration does not silently under-estimate playback duration.
+        effective_speed: float = 1.0
         response = None
         artifact_path: Path | None = None
 
@@ -954,6 +989,13 @@ class TTSEventHandler:
                     )
                     if isinstance(candidate_provider_id, str) and candidate_provider_id:
                         provider_id = candidate_provider_id
+                    candidate_speed = getattr(preferences, "speed", None)
+                    if (
+                        isinstance(candidate_speed, (int, float))
+                        and not isinstance(candidate_speed, bool)
+                        and candidate_speed > 0
+                    ):
+                        effective_speed = float(candidate_speed)
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")
 
@@ -1317,6 +1359,7 @@ class TTSEventHandler:
                     artifact_path,
                     text,
                     on_finished,
+                    speed=effective_speed,
                 )
             outcome_code = "success"
         except asyncio.CancelledError as cancellation:
@@ -1573,7 +1616,7 @@ class TTSEventHandler:
             on_finished(False)
         return "streaming_failed"
 
-    async def _stop_prior_legacy_clip(self) -> None:
+    async def _stop_prior_legacy_clip(self, *, bare_stop: bool = False) -> None:
         """Silence any currently-playing legacy file clip before streaming.
 
         The streaming sink plays through its own `sounddevice.OutputStream`,
@@ -1586,29 +1629,44 @@ class TTSEventHandler:
         directly here rather than round-tripping through a posted
         `TTSPlaybackEvent` since generation already runs on its own worker.
 
-        Task-4 review F3: when nothing is tracked (`_last_played is None`),
-        this ALSO now falls back to an unconditional stop of the shared
-        player. `_play_utterance_legacy_artifact` registers `_last_played`
-        before handing the file to the player, but a bare/global stop
-        landing in the narrower window before even THAT registration runs
-        (between `stop_live_sink()` and the lock acquisition) would
-        otherwise see `_last_played is None` and silence nothing, even
-        though the player itself may already be mid-handoff -- exactly the
-        mic/speaker mutual-exclusion invariant this whole feature depends
-        on. `SimpleAudioPlayer.stop()` is a cheap, safe no-op when nothing
-        is actually loaded/playing (`audio_player.py`'s own `stop()`
-        docstring), so this costs nothing on the far more common case where
-        there truly is nothing to stop.
+        Task-4 review round 2 (F3+N2), replacing round 1's fix (which did
+        not close the window it targeted -- see git history for the
+        analysis): `bare_stop` is `True` for exactly one caller,
+        `handle_tts_playback`'s bare/global-stop branch. When it is true
+        AND `_legacy_handoff_in_flight` is set (`_play_utterance_legacy_
+        artifact`'s play-and-poll is in progress), this stops the shared
+        player UNCONDITIONALLY -- the identity check
+        `stop_audio_playback_if_current` normally uses cannot succeed yet
+        (the player does not own the file until `play()` returns), so the
+        tracked branch below would silently no-op for the whole handoff
+        window otherwise. `SimpleAudioPlayer.stop()` is a cheap, safe no-op
+        when nothing is actually loaded/playing.
+
+        Deliberately NOT applied when `bare_stop` is false (the OTHER
+        caller, `_stream_response_via_sink`, on the shared path EVERY TTS
+        caller uses to silence a legacy clip before opening a new sink) --
+        an ordinary, non-hands-free utterance silencing unrelated audio
+        elsewhere in the app (watchlists, the STTS playground, ...) via the
+        SAME process-global player singleton is a real scope regression
+        (task-4 review N2), not a fix. That call site keeps the original,
+        purely-tracked behavior: a deliberate no-op when nothing is
+        tracked, exactly like `stop_audio_playback_if_current`'s own
+        message-scoped-stop sibling documents ("stopping message A must
+        never silence a different, still-playing message B").
         """
+        if bare_stop and self._legacy_handoff_in_flight:
+            from tldw_chatbook.TTS.audio_player import get_audio_player
+
+            get_audio_player().stop()
+            async with self._audio_files_lock:
+                self._last_played = None
+            return
+
         async with self._audio_files_lock:
             last_played = self._last_played
             self._last_played = None
         if last_played is not None:
             stop_audio_playback_if_current(last_played[1])
-            return
-        from tldw_chatbook.TTS.audio_player import get_audio_player
-
-        get_audio_player().stop()
 
     async def _play_utterance_legacy_artifact(
         self,
@@ -1616,6 +1674,8 @@ class TTSEventHandler:
         audio_file: Path,
         text: str,
         on_finished: Callable[[bool], None],
+        *,
+        speed: float = 1.0,
     ) -> None:
         """Play one just-written legacy artifact for a cooldown-free utterance.
 
@@ -1637,67 +1697,109 @@ class TTSEventHandler:
         at handoff instead of completion truncated every sentence but the
         last).
 
-        Task-4 review F3: `_last_played` is registered BEFORE the file is
-        handed to the player (not after) -- a bare/global stop landing in
-        the handoff window (`play()`'s own pre-`Popen` delay on macOS, plus
-        the `_run_blocking_tts_io` executor round trip) must be able to
-        find and interrupt this clip via `_stop_prior_legacy_clip`, not
-        silently no-op and then have this method resurrect the slot for
-        audio the barge-in already tried to kill. `_stop_prior_legacy_clip`
-        also gained its own unconditional fallback for the narrower
-        residual window before even this registration runs.
+        Task-4 review round 2 (F3+N2): `_legacy_handoff_in_flight` is set
+        for the full duration of the play-and-poll call below (see its own
+        docstring in `__init__`) so a concurrent bare/global stop can
+        silence this clip unconditionally through `_stop_prior_legacy_clip`
+        even before the player actually owns the file -- round 1's fix
+        (registering `_last_played` early) did not close this window; it
+        just moved the no-op from one guard to another (see git history).
+
+        Task-4 review N4: the play-and-poll call is offloaded via a bare
+        `asyncio.create_task(asyncio.to_thread(...))` + `asyncio.shield`
+        here, NOT the shared `_run_blocking_tts_io` seam every other
+        blocking call in this class uses. That seam's cancellation
+        handling does a BOUNDED JOIN (`_TTS_IO_CANCELLATION_JOIN_TIMEOUT_
+        SECONDS`, up to 1s) before its own `on_cancelled_result` hook ever
+        fires -- fine for a quick artifact write, but it means cancelling
+        this coroutine would NOT promptly silence a clip that could still
+        be playing for many more seconds. Reimplemented narrowly here so
+        the `except asyncio.CancelledError` below runs IMMEDIATELY when
+        this coroutine is cancelled (e.g. via `cleanup_tts_resources()`
+        cancelling the `_active_tasks`-registered generation task, task-4
+        review F4), stopping the player without waiting out any of the
+        poll's own bound. The abandoned worker is retained in this file's
+        existing `_retained_tts_io_tasks` set so it is never garbage-
+        collected mid-flight even though nothing awaits it once this
+        coroutine unwinds -- it settles on its own once the prompt
+        `player.stop()` below makes the poll observe the state change on
+        its very next iteration.
+
+        Args:
+            speed: Task-4 review N3 -- the resolved provider speed, folded
+                into the completion poll's timeout estimate (see
+                `_legacy_playback_timeout_seconds`) so a slower-than-1x
+                configuration does not silently under-estimate how long
+                the clip could still be playing. `1.0` (unchanged bound)
+                when the caller could not determine it.
         """
         from tldw_chatbook.TTS.audio_player import get_audio_player
 
         stop_live_sink()
-        async with self._audio_files_lock:
-            self._last_played = (message_id, audio_file)
-
-        player = get_audio_player()
-        timeout_seconds = _legacy_playback_timeout_seconds(len(text))
-        ok = False
+        self._legacy_handoff_in_flight = True
         try:
-            ok = await self._run_blocking_tts_io(
-                lambda: _play_legacy_clip_and_await_completion(
+            async with self._audio_files_lock:
+                self._last_played = (message_id, audio_file)
+
+            player = get_audio_player()
+            timeout_seconds = _legacy_playback_timeout_seconds(len(text), speed)
+            worker: asyncio.Task[bool] = asyncio.create_task(
+                asyncio.to_thread(
+                    _play_legacy_clip_and_await_completion,
                     player,
                     audio_file,
                     timeout_seconds=timeout_seconds,
-                ),
-                # Mirrors sink.open()'s own cancellation handling
-                # (`_stream_response_via_sink`): if `speak_utterance`'s
-                # generation task is cancelled (task-4 review F4) while
-                # this is still polling, stop the player so cancelling the
-                # BOOKKEEPING also silences the actual audio, rather than
-                # abandoning a worker that keeps a clip playing regardless.
-                on_cancelled_result=lambda _: player.stop(),
-                on_late_cancelled_result=lambda _: player.stop(),
+                )
             )
-        except Exception:
-            logger.warning("Legacy TTS playback failed for one utterance")
             ok = False
+            try:
+                ok = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Task-4 review N4: stop the player IMMEDIATELY, off the
+                # event loop -- no bounded join first. The poll running on
+                # `worker`'s own thread notices the state change on its
+                # next iteration (bounded by `_LEGACY_PLAYBACK_POLL_
+                # INTERVAL_SECONDS`) and returns on its own.
+                self._retained_tts_io_tasks.add(worker)
+                worker.add_done_callback(self._retained_tts_io_tasks.discard)
+                await asyncio.to_thread(player.stop)
+                raise
+            except Exception:
+                logger.warning("Legacy TTS playback failed for one utterance")
+                ok = False
+        finally:
+            self._legacy_handoff_in_flight = False
 
         self._schedule_legacy_playback_cleanup(message_id)
         on_finished(bool(ok))
 
     def _schedule_legacy_playback_cleanup(self, message_id: str) -> None:
         """Schedule the delayed artifact cleanup `_play_utterance_legacy_
-        artifact` needs, using this file's existing retention idiom
-        (task-4 review F7) rather than an untracked `asyncio.create_task`
-        -- the event loop only weak-refs tasks with no other strong
-        reference. Consistent with the pattern already used for
-        late-cancellation cleanup elsewhere in this class
-        (`_schedule_audio_file_release_if_current`); deliberately NOT
-        applied to the pre-existing, untouched sibling call site in
-        `handle_tts_playback`'s own "play" action (out of this fix's
-        scope).
+        artifact` needs, holding a strong reference (task-4 review F7 --
+        the event loop only weak-refs tasks with no other strong
+        reference) in `_pending_legacy_cleanup_timers`, NOT the file's
+        older `_retained_tts_cleanup_tasks` retention idiom (task-4 review
+        N5: that set's tasks are AWAITED, boundedly, at shutdown -- correct
+        for genuinely in-flight I/O, but this is a pure `asyncio.sleep(5)`
+        timer that `cleanup_tts_resources()` has no reason to wait out,
+        since it deletes the same artifact directly moments later
+        regardless; see `cleanup_tts_resources`'s own cancel-not-await
+        handling of this set). Deliberately NOT applied to the
+        pre-existing, untouched sibling call site in `handle_tts_
+        playback`'s own "play" action (out of this fix's scope).
         """
         cleanup = asyncio.create_task(self._cleanup_audio_file(message_id, delay=5.0))
-        self._retained_tts_cleanup_tasks.add(cleanup)
+        self._pending_legacy_cleanup_timers.add(cleanup)
 
         def observe(completed: asyncio.Task) -> None:
-            self._retained_tts_cleanup_tasks.discard(completed)
+            self._pending_legacy_cleanup_timers.discard(completed)
             try:
                 completed.result()
+            except asyncio.CancelledError:
+                # Expected at shutdown: cleanup_tts_resources() cancels
+                # this timer outright rather than waiting it out, then
+                # deletes the same artifact itself moments later.
+                pass
             except BaseException:
                 logger.warning("Retained TTS audio cleanup did not complete")
 
@@ -2119,7 +2221,7 @@ class TTSEventHandler:
                 # `is None` check here left an empty string falling
                 # between both branches, silencing neither the sink's
                 # OWN legacy-clip guard nor anything else.
-                await self._stop_prior_legacy_clip()
+                await self._stop_prior_legacy_clip(bare_stop=True)
 
         if event.action == "play" and event.message_id:
             # Get audio file with lock
@@ -2313,6 +2415,22 @@ class TTSEventHandler:
         """Clean up all TTS resources"""
         self._pending_global_overrides.clear()
 
+        # Task-4 review N5: cancel outright, never drain/await -- these are
+        # pure `asyncio.sleep(5)`-then-delete timers (`_schedule_legacy_
+        # playback_cleanup`), and this method's own artifact-deletion pass
+        # below deletes the same files directly moments later regardless.
+        # Measured cost of the old behavior (implicitly draining them via
+        # `_retained_tts_cleanup_tasks`): ~2s added to shutdown for zero
+        # benefit, since a 5s timer can never finish within `_drain_
+        # retained_tts_artifact_work`'s two 1s bounds anyway. `asyncio.
+        # sleep` responds to cancellation immediately, so this is fast.
+        pending_legacy_timers = list(self._pending_legacy_cleanup_timers)
+        for timer in pending_legacy_timers:
+            if not timer.done():
+                timer.cancel()
+        if pending_legacy_timers:
+            await asyncio.gather(*pending_legacy_timers, return_exceptions=True)
+
         # Cancel all active tasks with lock
         async with self._active_tasks_lock:
             tasks_to_cancel = list(self._active_tasks)
@@ -2392,23 +2510,39 @@ async def _replay_drained_bytes(data: bytes) -> AsyncIterator[bytes]:
     yield data
 
 
-def _legacy_playback_timeout_seconds(text_length: int) -> float:
-    """A generous, text-length-derived bound on how long one legacy-path
-    utterance could plausibly still be playing (task-4 review F2).
+def _legacy_playback_timeout_seconds(text_length: int, speed: float = 1.0) -> float:
+    """A generous, text-length-and-speed-derived bound on how long one
+    legacy-path utterance could plausibly still be playing (task-4 review
+    F2, refined by N3).
 
     There is no real audio duration available to bound
     `_play_legacy_clip_and_await_completion`'s poll loop against --
     `AudioPlayerInfo.duration` (`TTS/audio_player.py`) is declared but never
     populated by `SimpleAudioPlayer.play()`. This estimates instead from the
     SYNTHESIZED TEXT's own character count, at a deliberately slow
-    (over-estimating) assumed speech rate, plus a fixed margin for playback
-    startup/executor-hop latency, capped at an absolute ceiling so a
-    pathological input can never poll indefinitely (`speak_utterance`'s
-    generation task is cancellable via `_active_tasks` regardless -- see
-    task-4 review F4 -- but a sane ceiling is still worth keeping on its
-    own merits).
+    (over-estimating) assumed speech rate, divided by `speed` (task-4
+    review N3: `default_speed` is user-configurable and `TTS/preferences.
+    py`'s `_require_speed` only enforces "finite positive" -- a bound that
+    ignores it can under-estimate, and silently, since a timeout is
+    indistinguishable from a natural finish to the caller: see
+    `_play_legacy_clip_and_await_completion`'s own `True`-on-timeout
+    return), plus a fixed margin for playback startup/executor-hop
+    latency, capped at an absolute ceiling so a pathological input can
+    never poll indefinitely (`speak_utterance`'s generation task is
+    cancellable via `_active_tasks` regardless -- see task-4 review F4,
+    and N4's prompt cancel-stop -- but a sane ceiling is still worth
+    keeping on its own merits).
+
+    Args:
+        text_length: Length of the synthesized text.
+        speed: The resolved provider speed (1.0 = normal pace). Defensively
+            floored to a small positive value -- `_require_speed` already
+            guarantees "finite positive" upstream, but this function must
+            never divide by zero or a negative number regardless of what a
+            caller passes.
     """
-    estimated = text_length / _LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND
+    effective_speed = speed if speed > 0 else 1.0
+    estimated = text_length / (_LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND * effective_speed)
     return min(
         _LEGACY_PLAYBACK_POLL_MAX_SECONDS,
         estimated + _LEGACY_PLAYBACK_POLL_MARGIN_SECONDS,
@@ -2475,6 +2609,16 @@ def _play_legacy_clip_and_await_completion(
         if player.get_state() == PlaybackState.FINISHED:
             return True
         time.sleep(poll_interval_seconds)
+    # Task-4 review N3: the estimate under-ran -- make that DISTINGUISHABLE
+    # in the logs rather than silently indistinguishable from a natural
+    # finish (both return `True`). `logger` (loguru) is documented
+    # thread-safe; this runs off the event loop, on the same worker thread
+    # as the poll above.
+    logger.warning(
+        "Legacy TTS playback poll timed out before observing FINISHED "
+        "(bound={:.1f}s); assuming it played through",
+        timeout_seconds,
+    )
     return True
 
 

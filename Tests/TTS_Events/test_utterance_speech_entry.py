@@ -42,6 +42,7 @@ exercising the actual poll loop.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -515,20 +516,36 @@ async def test_completion_reports_false_when_the_clip_is_displaced_before_finish
 
 
 # ---------------------------------------------------------------------------
-# F3 (Important, task-4-review.md) -- a barge-in landing in the legacy
-# handoff window was a no-op: `_last_played` was assigned only AFTER
-# `play()` returned, so a bare stop arriving in between read `_last_played
-# is None`, silenced nothing, and the helper then resurrected the slot for
-# audio the barge-in already tried to kill. Fixed: register the slot BEFORE
-# handing the file to the player, and give `_stop_prior_legacy_clip` an
-# unconditional fallback for the narrower window before even that.
+# F3+N2 (re-review round 2, task-4-review.md) -- round 1's fix (registering
+# `_last_played` before the handoff, plus an unconditional fallback gated
+# on `_last_played is None`) did NOT close the barge-in window: moving the
+# registration earlier made `_stop_prior_legacy_clip` take its TRACKED
+# branch during the handoff, whose `stop_audio_playback_if_current`
+# identity check fails until the player actually owns the file (it does
+# not yet, mid-handoff) -- a silent no-op, and the fallback (gated on
+# NOTHING tracked) was now unreachable in exactly the window it targeted.
+# Worse, that same blanket fallback reached from `_stream_response_via_
+# sink` (the shared path EVERY TTS caller uses) could stop a completely
+# UNRELATED clip playing on the process-global player singleton (N2).
+#
+# Redesigned: `_legacy_handoff_in_flight`, a handler-level flag set for the
+# full duration of the play-and-poll call, gates an unconditional stop --
+# but ONLY for the bare/global-stop call site (`bare_stop=True`, passed
+# only by `handle_tts_playback`'s bare-stop branch); `_stream_response_via_
+# sink`'s call keeps the ORIGINAL tracked-only, deliberate-no-op-when-
+# nothing-tracked behavior unchanged (N2's fix), while the bare-stop path
+# now genuinely interrupts a handoff-in-progress clip (F3's fix).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_last_played_is_registered_before_the_file_reaches_the_player(
+async def test_last_played_is_still_registered_before_the_file_reaches_the_player(
     handler, monkeypatch, tmp_path,
 ):
+    """Not the fix itself (see below) -- but this ordering is still worth
+    keeping: `_last_played` reflects the truth as early as possible for
+    anything else that reads it directly (the message-scoped stop branch,
+    the 5s cleanup)."""
     audio_file = tmp_path / "clip.mp3"
     audio_file.write_bytes(b"fake audio data")
     fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
@@ -544,49 +561,137 @@ async def test_last_played_is_registered_before_the_file_reaches_the_player(
     )
     # Let the task run up to its own first real suspension point
     # (`_run_blocking_tts_io`'s executor hop) -- everything before that,
-    # including the `_last_played` assignment, runs synchronously with no
-    # other await in between, so a handful of no-op yields reliably lands
-    # here without any wall-clock dependency.
+    # including the `_last_played` assignment and setting the handoff
+    # flag, runs synchronously with no other await in between, so a
+    # handful of no-op yields reliably lands here without any wall-clock
+    # dependency.
     for _ in range(5):
         await asyncio.sleep(0)
 
     async with handler._audio_files_lock:
-        assert handler._last_played == ("msg-1", audio_file), (
-            "the slot must be registered before play() is even called, so "
-            "a concurrent stop can find and interrupt it (task-4 review F3)"
-        )
+        assert handler._last_played == ("msg-1", audio_file)
+    assert handler._legacy_handoff_in_flight is True, (
+        "the handoff flag must be set for the duration of the play-and-"
+        "poll call -- this is what F3's actual fix gates on"
+    )
 
     await task
     assert results == [True]
 
 
 @pytest.mark.asyncio
-async def test_stop_prior_legacy_clip_falls_back_to_an_unconditional_stop_when_nothing_tracked(
+async def test_bare_stop_during_an_in_flight_handoff_stops_even_when_the_tracked_identity_check_would_fail(
+    handler, monkeypatch, tmp_path,
+):
+    """The core F3 fix, isolated deterministically. A real end-to-end
+    version of this probe (drive `_play_utterance_legacy_artifact` as a
+    background task, then race a real `handle_tts_playback` stop against
+    it) turned out NOT to be reliably mutation-sensitive: with only a
+    handful of `asyncio.sleep(0)` yields, the real background thread
+    (dispatched via `asyncio.to_thread`) frequently already called
+    `player.play()` by the time the stop landed, so the PRE-EXISTING
+    tracked branch's identity check (`stop_audio_playback_if_current`)
+    would ALSO have stopped it -- masking a reverted flag-gate mutation
+    (confirmed: that mutation survived the end-to-end version, 45/45).
+    OS-thread scheduling cannot be pinned deterministically from the event
+    loop side without real synchronization primitives, which would
+    reintroduce exactly the wall-clock-flakiness this whole review round
+    has been eliminating.
+
+    Modeled directly instead: `_last_played` is set (round 1's fix, still
+    in place) but the fake player's `get_current_file()` returns something
+    else -- EXACTLY what the real `SimpleAudioPlayer` reports before
+    `play()` has actually run (`get_current_file()` only ever reflects
+    the LAST clip `play()`/`stop()` touched). This reproduces the failure
+    mode of the tracked branch precisely, without needing real thread
+    timing at all.
+    """
+    audio_file = tmp_path / "clip.mp3"
+    stop_calls: list = []
+
+    class _FakePlayerNotYetOwningTheFile:
+        def get_current_file(self):
+            return None  # what the real player reports before play() runs
+
+        def stop(self):
+            stop_calls.append("stop")
+            return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player",
+        lambda: _FakePlayerNotYetOwningTheFile(),
+    )
+    async with handler._audio_files_lock:
+        handler._last_played = ("msg-1", audio_file)  # round 1's early registration
+    handler._legacy_handoff_in_flight = True  # round 2's flag
+
+    await handler._stop_prior_legacy_clip(bare_stop=True)
+
+    assert stop_calls == ["stop"], (
+        "a bare stop during an in-flight handoff must silence the player "
+        "unconditionally, even though the tracked branch's identity "
+        "check would fail here (task-4 review F3)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_bare_stop_never_touches_unrelated_audio_when_nothing_tracked(
     handler, monkeypatch,
 ):
-    """The narrower residual window F3 leaves (before even the earlier
-    `_last_played` registration runs): `_stop_prior_legacy_clip` must not
-    simply no-op when nothing is tracked -- it must still reach for
-    whatever the shared player actually has loaded."""
+    """N2: `_stream_response_via_sink`'s own call shape (`bare_stop`
+    defaults False) must remain a deliberate no-op when `_last_played is
+    None` -- exactly the pre-task-4 behavior. Round 1's blanket fallback
+    broke this: the reviewer's probe showed an ordinary streaming
+    utterance (Console spoken feedback, `on_finished=None`) stopping a
+    completely UNRELATED clip on the shared process-global player
+    singleton (started by, e.g., watchlists or the STTS playground calling
+    `TTS.audio_player.play_audio_file` directly).
+    """
     fake_player = _FakeLegacyPlayer()
+    fake_player.play(Path("unrelated-clip-started-elsewhere.mp3"))
     monkeypatch.setattr(
         "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
     )
     async with handler._audio_files_lock:
         handler._last_played = None
 
-    await handler._stop_prior_legacy_clip()
+    await handler._stop_prior_legacy_clip()  # bare_stop=False, the sink call's own shape
 
-    assert fake_player.stop_calls == 1
+    assert fake_player.stop_calls == 0, (
+        "must never stop an unrelated clip when nothing is tracked "
+        "(task-4 review N2)"
+    )
 
 
 @pytest.mark.asyncio
-async def test_stop_prior_legacy_clip_does_not_double_stop_when_something_is_tracked(
+async def test_bare_stop_without_an_in_flight_handoff_keeps_the_tracked_only_behavior(
+    handler, monkeypatch,
+):
+    """Regression guard: the unconditional branch must be gated on BOTH
+    `bare_stop=True` AND `_legacy_handoff_in_flight` -- a bare stop with
+    nothing tracked and no handoff in progress (the ordinary idle case)
+    must stay a no-op, not reach for the player unconditionally."""
+    fake_player = _FakeLegacyPlayer()
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+    async with handler._audio_files_lock:
+        handler._last_played = None
+    assert handler._legacy_handoff_in_flight is False
+
+    await handler._stop_prior_legacy_clip(bare_stop=True)
+
+    assert fake_player.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_bare_stop_still_uses_the_tracked_branch_when_something_is_tracked(
     handler, monkeypatch, tmp_path,
 ):
-    """Regression guard: the F3 fallback must be reached ONLY when nothing
-    is tracked -- the pre-existing tracked-clip path (`stop_audio_playback_
-    if_current`) must not also trigger the new unconditional fallback."""
+    """Regression guard: a bare stop for an ORDINARY (non-hands-free,
+    no in-flight handoff) tracked clip must still go through the
+    identity-checked tracked branch, exactly as before -- the new
+    unconditional branch must not shadow it."""
     stop_calls: list = []
     clip = tmp_path / "clip.mp3"
 
@@ -603,10 +708,205 @@ async def test_stop_prior_legacy_clip_does_not_double_stop_when_something_is_tra
     )
     async with handler._audio_files_lock:
         handler._last_played = ("msg-1", clip)
+    assert handler._legacy_handoff_in_flight is False
 
-    await handler._stop_prior_legacy_clip()
+    await handler._stop_prior_legacy_clip(bare_stop=True)
 
     assert stop_calls == ["stop"], "exactly one stop call, via the tracked-clip path"
+
+
+# ---------------------------------------------------------------------------
+# N3 (Minor, task-4-review.md) -- the completion bound was rate-blind:
+# `default_speed` is user-configurable and only validated as "finite
+# positive". Fixed: fold the resolved speed into the estimate (a slower
+# speed widens the bound), raise the absolute ceiling, and log distinctly
+# when the bound is what ended the poll (not a natural finish) rather than
+# leave both cases returning the same `True`.
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_playback_timeout_seconds_widens_for_a_slower_configured_speed():
+    text_length = 200
+    normal = tts_events_module._legacy_playback_timeout_seconds(text_length, speed=1.0)
+    half_speed = tts_events_module._legacy_playback_timeout_seconds(text_length, speed=0.5)
+
+    expected_half = (
+        text_length
+        / (tts_events_module._LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND * 0.5)
+        + tts_events_module._LEGACY_PLAYBACK_POLL_MARGIN_SECONDS
+    )
+    assert half_speed == pytest.approx(expected_half)
+    assert half_speed > normal, (
+        "a slower configured speed must widen the bound, not leave it "
+        "unchanged (task-4 review N3)"
+    )
+
+
+def test_legacy_playback_timeout_seconds_floors_non_positive_speed_to_normal():
+    """Defensive only -- `TTS/preferences.py`'s `_require_speed` already
+    guarantees "finite positive" upstream, but this function must never
+    divide by zero or go negative regardless of what a caller passes."""
+    baseline = tts_events_module._legacy_playback_timeout_seconds(100, speed=1.0)
+    assert tts_events_module._legacy_playback_timeout_seconds(100, speed=0.0) == baseline
+    assert tts_events_module._legacy_playback_timeout_seconds(100, speed=-2.0) == baseline
+
+
+@pytest.mark.asyncio
+async def test_generate_tts_extracts_speed_from_preferences_and_threads_it_through(
+    handler, monkeypatch,
+):
+    chunks = [b"ID3", b"restofmp3bytes"]
+    response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
+
+    class _SlowSpeedService:
+        def preferences_snapshot(self):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(provider_id="openai", speed=0.5)
+
+        async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+            return response
+
+    handler._tts_service = _SlowSpeedService()
+
+    fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+
+    captured_speeds: list[float] = []
+    original = tts_events_module._legacy_playback_timeout_seconds
+
+    def _spy(text_length, speed=1.0):
+        captured_speeds.append(speed)
+        return original(text_length, speed)
+
+    monkeypatch.setattr(tts_events_module, "_legacy_playback_timeout_seconds", _spy)
+
+    on_finished, results = _counting_on_finished()
+    await handler.speak_utterance("Discarded.", on_finished=on_finished)
+
+    assert captured_speeds == [0.5], (
+        "the preferences snapshot's speed must reach the timeout estimate "
+        "(task-4 review N3)"
+    )
+    assert results == [True]
+
+
+def test_a_timed_out_poll_logs_a_distinguishing_warning(monkeypatch):
+    """N3: a timeout must be OBSERVABLE, not silently indistinguishable
+    from a natural finish (both currently still return True -- narrowing
+    that gap further is future work; this pins what shipped)."""
+    fake_player = _FakeLegacyPlayer(finishes_after_polls=1_000_000)
+    audio_file = Path("clip.mp3")
+
+    captured_logs: list[str] = []
+    from loguru import logger as loguru_logger
+
+    handler_id = loguru_logger.add(
+        lambda message: captured_logs.append(message.record["message"]),
+        level="WARNING",
+    )
+    try:
+        result = tts_events_module._play_legacy_clip_and_await_completion(
+            fake_player,
+            audio_file,
+            timeout_seconds=0.05,
+            poll_interval_seconds=0.01,
+        )
+    finally:
+        loguru_logger.remove(handler_id)
+
+    assert result is True
+    assert any("timed out" in line.lower() for line in captured_logs), captured_logs
+
+
+# ---------------------------------------------------------------------------
+# N4 (Minor, task-4-review.md) -- `_run_blocking_tts_io`'s `asyncio.shield`
+# meant cancellation only stopped the player once the shielded worker
+# actually RETURNED (bounded by a separate ~1s internal join), not
+# promptly. Fixed: a bespoke offload (bare `asyncio.to_thread` + shield)
+# for THIS call specifically, so cancellation stops the player immediately.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancelling_mid_poll_promptly_stops_the_player(handler, monkeypatch):
+    chunks = [b"ID3", b"restofmp3bytes"]
+    response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    # Never finishes on its own within any realistic test timeframe --
+    # isolates the assertion to "did cancellation itself stop it".
+    fake_player = _FakeLegacyPlayer(finishes_after_polls=1_000_000)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+
+    on_finished, results = _counting_on_finished()
+    task = asyncio.create_task(
+        handler.speak_utterance("Discarded.", on_finished=on_finished)
+    )
+    # `speak_utterance` crosses several real await points (text prep,
+    # artifact write, THEN the legacy play-and-poll) before reaching the
+    # handoff -- loop rather than a fixed count, bounded so a genuine
+    # regression fails fast instead of hanging.
+    for _ in range(500):
+        if handler._legacy_handoff_in_flight:
+            break
+        await asyncio.sleep(0)
+    assert handler._legacy_handoff_in_flight is True
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fake_player.stop_calls >= 1, (
+        "cancellation must promptly stop the player, not wait out the "
+        "poll's own bound (task-4 review N4)"
+    )
+    assert results == [False], "on_finished must still fire exactly once via the finally net"
+
+
+# ---------------------------------------------------------------------------
+# N5 (Minor, task-4-review.md) -- `cleanup_tts_resources()` used to AWAIT
+# (boundedly) the legacy cleanup timer, buying nothing since the same
+# method deletes the artifact directly moments later regardless -- a
+# measured ~2s shutdown cost for zero benefit. Fixed: cancel it outright.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cleanup_tts_resources_cancels_the_legacy_timer_instead_of_awaiting_it(
+    handler, monkeypatch,
+):
+    chunks = [b"ID3", b"restofmp3bytes"]
+    response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+    )
+
+    on_finished, results = _counting_on_finished()
+    await handler.speak_utterance("Discarded.", on_finished=on_finished)
+    assert len(handler._pending_legacy_cleanup_timers) == 1, (
+        "the delayed cleanup timer must be tracked in its own set, not "
+        "the awaited/drained _retained_tts_cleanup_tasks"
+    )
+
+    started = asyncio.get_event_loop().time()
+    await handler.cleanup_tts_resources()
+    elapsed = asyncio.get_event_loop().time() - started
+
+    assert elapsed < 0.5, (
+        f"cleanup_tts_resources() must not wait out the 5s timer "
+        f"(task-4 review N5); took {elapsed:.2f}s"
+    )
+    assert handler._pending_legacy_cleanup_timers == set()
 
 
 # ---------------------------------------------------------------------------
