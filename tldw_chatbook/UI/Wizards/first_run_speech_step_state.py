@@ -234,7 +234,12 @@ def read_speech_prefill(app_config: Mapping[str, object]) -> SpeechPrefill:
     )
 
 
-def speech_prefill_status(prefill: SpeechPrefill) -> str:
+def speech_prefill_status(
+    prefill: SpeechPrefill,
+    *,
+    installed_active: bool = False,
+    acted_this_run: bool = False,
+) -> str:
     """Human copy describing what is currently persisted, or "" for nothing.
 
     TASK-1301 review (Important 3 / AC#5's "re-run prefills" clause): the
@@ -248,18 +253,43 @@ def speech_prefill_status(prefill: SpeechPrefill) -> str:
     a DIFFERENT question ("did the wizard configure this") that
     legitimately excludes the template default.
 
+    Review NEW-2: the original "installing or activating here will switch
+    your default" sentence is FALSE in the installed+active state --
+    neither is a real action (Activate is disabled once already active).
+    ``installed_active`` and ``acted_this_run`` make this state-aware so
+    the copy never promises an outcome no control on screen can deliver.
+
     Args:
         prefill: The currently persisted transcription defaults.
+        installed_active: Whether the managed Parakeet v2 artifact is
+            currently installed AND active (so neither installing nor
+            activating is an available action -- only the explicit
+            "use as default" affordance is, see ``SpeechSetupStep``).
+        acted_this_run: Whether the user already opted in this run
+            (installed, activated, or used "use as default") -- the
+            pending change has not been written to disk yet (that happens
+            in ``commit()`` on Next), but is no longer merely "possible".
 
     Returns:
         Empty when nothing is persisted at all; otherwise a sentence
         describing the current default and, when it differs from the
-        Parakeet ONNX provider, the consequence of acting on this step.
+        Parakeet ONNX provider, the real, state-accurate consequence of
+        acting on this step.
     """
     if not prefill.provider_id:
         return ""
     if prefill.provider_id == _ROUTING_POLICY.parakeet_provider_id:
         return f"Already your default: {prefill.model_id} ({prefill.language})."
+    if acted_this_run:
+        return (
+            "Parakeet v2 will become your default when you continue "
+            f"(currently: {prefill.provider_id})."
+        )
+    if installed_active:
+        return (
+            f"Currently configured: {prefill.provider_id} — choose "
+            '"Use Parakeet v2 as my default" below to switch.'
+        )
     return (
         f"Currently configured: {prefill.provider_id} — installing or "
         "activating here will switch your default to Parakeet v2."
