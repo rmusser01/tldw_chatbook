@@ -18,6 +18,11 @@ NOTES_SORT_MODES = ("newest", "oldest", "title")
 _UPDATED_KEYS = ("last_modified", "updated_at", "created_at")
 _EMPTY_NOTES_COPY = "No notes yet. Create your first note."
 
+LibraryNotesStage = Literal["rail", "notes"]
+LibraryNotesRegion = Literal[
+    "", "navigator", "editor", "preview", "context", "create", "sync"
+]
+
 DATABASE_NOTE_TITLE_MAX_CHARS = 300
 DATABASE_NOTE_BODY_MAX_CHARS = 2_000_000
 DATABASE_NOTE_KEYWORD_MAX_CHARS = 100
@@ -138,8 +143,8 @@ class LibraryNoteSessionSnapshot:
 class LibraryNotesFocusIdentity:
     """Textual-free semantic focus, selection, and scroll restoration tuple."""
 
-    stage: str
-    region: str
+    stage: LibraryNotesStage
+    region: LibraryNotesRegion
     note_id: str | None
     semantic_role: str
     body_selection_start: tuple[int, int] | None = None
