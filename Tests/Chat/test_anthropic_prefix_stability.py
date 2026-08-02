@@ -37,6 +37,10 @@ def _sent_body(mock_post, messages):
         model="claude-sonnet-4-6",
         system_message="You are terse.\n\nAlways answer in one line.",
         streaming=False,
+        # Console shape: the per-turn breakpoint is opt-in, and prefix
+        # stability only matters for the multi-turn (Console) path that
+        # actually sets it.
+        prompt_caching=True,
     )
     return mock_post.call_args[1]["json"]
 

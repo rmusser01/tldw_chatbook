@@ -197,15 +197,7 @@ def test_openai_tool_history_converts_to_anthropic_blocks(mock_post):
     assert sent[2]["role"] == "user"
     assert sent[2]["content"] == [
         {"type": "tool_result", "tool_use_id": "toolu_A", "content": "4"},
-        {
-            "type": "tool_result",
-            "tool_use_id": "toolu_B",
-            "content": "6",
-            # claude-3-opus (the fixture's default model) supports caching, so
-            # the last content block of the FINAL message picks up the
-            # per-turn breakpoint (task-323 PR2).
-            "cache_control": {"type": "ephemeral"},
-        },
+        {"type": "tool_result", "tool_use_id": "toolu_B", "content": "6"},
     ]
     assert len(sent) == 3
 
@@ -239,8 +231,6 @@ def test_assistant_text_plus_tool_calls_keeps_text_block_first(mock_post):
             "id": "toolu_1",
             "name": "calculator",
             "input": {"expression": "2+2"},
-            # last block of the FINAL message: per-turn breakpoint (PR2).
-            "cache_control": {"type": "ephemeral"},
         },
     ]
 
@@ -264,14 +254,7 @@ def test_malformed_tool_call_arguments_become_empty_input(mock_post):
     sent = _call_anthropic(mock_post, messages)["messages"]
 
     assert sent[1]["content"] == [
-        {
-            "type": "tool_use",
-            "id": "toolu_1",
-            "name": "calculator",
-            "input": {},
-            # last block of the FINAL message: per-turn breakpoint (PR2).
-            "cache_control": {"type": "ephemeral"},
-        }
+        {"type": "tool_use", "id": "toolu_1", "name": "calculator", "input": {}}
     ]
 
 
@@ -286,17 +269,7 @@ def test_plain_chat_payload_unchanged(mock_post):
     assert "tools" not in sent
     assert sent["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "there",
-                    # last block of the FINAL message: per-turn breakpoint (PR2).
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-        },
+        {"role": "assistant", "content": [{"type": "text", "text": "there"}]},
     ]
 
 
@@ -318,14 +291,7 @@ def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     sent = _call_anthropic(mock_post, messages)["messages"]
 
     assert sent[1]["role"] == "assistant"
-    assert sent[1]["content"] == [
-        {
-            "type": "text",
-            "text": "hello",
-            # last block of the FINAL message: per-turn breakpoint (PR2).
-            "cache_control": {"type": "ephemeral"},
-        }
-    ]
+    assert sent[1]["content"] == [{"type": "text", "text": "hello"}]
 
 
 @patch("requests.Session.post")
@@ -357,8 +323,6 @@ def test_junk_tool_call_skipped_among_valid_entries(mock_post):
             "id": "toolu_1",
             "name": "calculator",
             "input": {"expression": "2+2"},
-            # last block of the FINAL message: per-turn breakpoint (PR2).
-            "cache_control": {"type": "ephemeral"},
         }
     ]
 
@@ -918,7 +882,12 @@ def test_caching_disabled_via_config_strips_all_breakpoints(mock_post):
         ),
     ):
         sent = _sent_anthropic(
-            mock_post, "claude-sonnet-4-6", system_message="be terse", tools=OPENAI_TOOLS
+            mock_post,
+            "claude-sonnet-4-6",
+            system_message="be terse",
+            tools=OPENAI_TOOLS,
+            # even an explicit Console opt-in loses to the kill-switch
+            prompt_caching=True,
         )
     assert isinstance(sent["system"], str)  # string form, no block array
     assert "cache_control" not in json.dumps(sent)
@@ -950,6 +919,7 @@ def test_caching_model_marks_last_message_block(mock_post):
     sent = _sent_anthropic(
         mock_post,
         "claude-sonnet-4-6",
+        prompt_caching=True,
         messages_payload=[
             {"role": "user", "content": "first question"},
             {"role": "assistant", "content": "first answer"},
@@ -970,6 +940,7 @@ def test_breakpoint_budget_never_exceeds_four(mock_post):
         "claude-sonnet-4-6",
         system_message="be terse",
         tools=OPENAI_TOOLS,
+        prompt_caching=True,
         messages_payload=[{"role": "user", "content": "hi"}],
     )
     assert _count_cache_controls(sent) == 3
@@ -978,7 +949,10 @@ def test_breakpoint_budget_never_exceeds_four(mock_post):
 @patch("requests.Session.post")
 def test_non_caching_model_gets_no_message_breakpoint(mock_post):
     sent = _sent_anthropic(
-        mock_post, "claude-2.1", messages_payload=[{"role": "user", "content": "hi"}]
+        mock_post,
+        "claude-2.1",
+        prompt_caching=True,
+        messages_payload=[{"role": "user", "content": "hi"}],
     )
     assert _count_cache_controls(sent) == 0
 
@@ -989,7 +963,60 @@ def test_message_breakpoint_never_emits_ttl_key(mock_post):
     sent = _sent_anthropic(
         mock_post,
         "claude-sonnet-4-6",
+        prompt_caching=True,
         messages_payload=[{"role": "user", "content": "hi"}],
     )
     assert sent["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     assert "ttl" not in json.dumps(sent)
+
+
+# ---- per-turn breakpoint is CONSOLE-ONLY (spec's pass-through guarantee) ----
+#
+# The per-turn breakpoint bills the whole conversation prefix at the 1.25x
+# cache-write premium. A one-shot caller (media summarization loops,
+# websearch, evals, prompt engineering, the document generator) never sends
+# a second turn, so it can never read that entry back -- it would just pay
+# ~25% more input forever. These tests pin that only an explicit
+# `prompt_caching=True` (stamped by the Console gateway) turns it on.
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_without_opt_in(mock_post):
+    """Default (no `prompt_caching` kwarg): NO per-turn message breakpoint,
+    while the provider-wide task-323 system/tool breakpoints stay."""
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        system_message="be terse",
+        tools=OPENAI_TOOLS,
+        messages_payload=[
+            {"role": "user", "content": "summarize this"},
+        ],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0
+    # task-323 breakpoints are untouched by the opt-in gate:
+    assert sent["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert sent["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert _count_cache_controls(sent) == 2
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_when_opt_in_is_none(mock_post):
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=None,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0
+
+
+@patch("requests.Session.post")
+def test_message_breakpoint_absent_when_opt_in_is_false(mock_post):
+    sent = _sent_anthropic(
+        mock_post,
+        "claude-sonnet-4-6",
+        prompt_caching=False,
+        messages_payload=[{"role": "user", "content": "hi"}],
+    )
+    assert _count_cache_controls(sent["messages"]) == 0

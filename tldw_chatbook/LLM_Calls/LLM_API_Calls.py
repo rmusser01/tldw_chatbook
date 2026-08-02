@@ -1082,11 +1082,26 @@ def chat_with_anthropic(
     tools: Optional[List[Dict[str, Any]]] = None,  # New: Anthropic tool format
     thinking_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    prompt_caching: Optional[bool] = None,
     # Anthropic doesn't typically use seed, response_format (for JSON object mode directly), n, user identifier, logit_bias,
     # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
 ):
+    """Call the Anthropic Messages API (streaming or non-streaming).
+
+    Args:
+        prompt_caching: Opt-in for the PER-TURN message ``cache_control``
+            breakpoint. Only multi-turn callers (the Console gateway) should
+            pass True: the breakpoint bills the whole conversation prefix at
+            the 1.25x cache-write premium, which a one-shot call (media
+            summarization, websearch, evals, document generation) can never
+            earn back because it never sends a second turn. The system and
+            last-tool breakpoints are NOT gated on this flag — those shipped
+            provider-wide in task-323 and are harmless for one-shots, whose
+            short system prefix falls below the cacheable minimum and is
+            simply not cached.
+    """
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
@@ -1323,6 +1338,7 @@ def chat_with_anthropic(
 
     if (
         caching_active
+        and prompt_caching
         and anthropic_messages
         and isinstance(anthropic_messages[-1].get("content"), list)
         and anthropic_messages[-1]["content"]
@@ -1332,6 +1348,14 @@ def chat_with_anthropic(
         # reusable cache entry next turn -- the task-323 system/tools
         # breakpoints alone never cache message history. Budget:
         # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        #
+        # OPT-IN (`prompt_caching`), unlike the two breakpoints above: this
+        # one bills the entire conversation prefix at the 1.25x write
+        # premium, so a one-shot caller pays ~25% extra input and can never
+        # read the entry back. Only the Console gateway (multi-turn by
+        # construction) sets the flag; every other caller of
+        # `chat_with_anthropic` leaves it None and is unaffected.
+        #
         # Fresh dict so no caller-held block is mutated (same rule as the
         # tools breakpoint above).
         last_content = anthropic_messages[-1]["content"]
@@ -1385,6 +1409,10 @@ def chat_with_anthropic(
                 # body, not a stream.
                 logger.warning(
                     "Anthropic: endpoint rejected cache_control; retrying without prompt caching."
+                )
+                log_counter(
+                    "anthropic_cache_control_degrade",
+                    labels={"model": current_model},
                 )
                 response = session.post(
                     api_url,

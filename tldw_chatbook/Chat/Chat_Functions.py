@@ -179,6 +179,10 @@ PROVIDER_PARAM_MAP = {
         "stop": "stop_sequences",  # Anthropic uses stop_sequences
         "thinking_effort": "thinking_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        # Console-only opt-in for the per-turn cache_control breakpoint.
+        # Deliberately absent from every other provider's map: the loop below
+        # only forwards mapped keys, so non-Anthropic calls drop it silently.
+        "prompt_caching": "prompt_caching",
     },
     "cohere": {
         "api_key": "api_key",
@@ -731,6 +735,7 @@ def chat_api_call(
     verbosity: Optional[str] = None,
     thinking_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    prompt_caching: Optional[bool] = None,
     llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
 ):
     """
@@ -774,6 +779,10 @@ def chat_api_call(
         verbosity: Provider-specific response verbosity setting for OpenAI-compatible reasoning models.
         thinking_effort: Provider-specific thinking level for Anthropic-style thinking models.
         thinking_budget_tokens: Optional thinking token budget for Anthropic-style thinking models.
+        prompt_caching: Anthropic-only opt-in for the per-turn `cache_control`
+            breakpoint (multi-turn callers such as the Console gateway). Only
+            `PROVIDER_PARAM_MAP["anthropic"]` maps it, so it is silently
+            dropped for every other provider.
 
     Returns:
         The LLM's response. This can be a string for non-streaming responses or

@@ -272,6 +272,10 @@ class ConsoleProviderResolution:
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
         streaming: Whether streaming responses are requested.
+        prompt_caching: Opt-in for the Anthropic per-turn ``cache_control``
+            breakpoint. Set only for Anthropic resolutions (and only when
+            ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
+            which drops the kwarg entirely in ``_chat_api_kwargs``.
     """
 
     provider: str
@@ -297,6 +301,7 @@ class ConsoleProviderResolution:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
+    prompt_caching: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -986,6 +991,18 @@ class ConsoleProviderGateway:
                 api_key_source=readiness.api_key_source,
             )
 
+        # Console sends are multi-turn by construction, so they -- and ONLY
+        # they -- opt into the Anthropic per-turn cache_control breakpoint.
+        # A one-shot caller of `chat_with_anthropic` (summarization, evals,
+        # websearch) would pay the 1.25x cache-write premium on its whole
+        # prefix and never read it back, so the flag is stamped here rather
+        # than defaulted on inside the provider.
+        prompt_caching: bool | None = None
+        if identity.execution_key == "anthropic":
+            prompt_caching = bool(
+                _mapping_value(app_config, "caching").get("anthropic_enabled", True)
+            )
+
         return ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "",
@@ -995,6 +1012,7 @@ class ConsoleProviderGateway:
             execution_key=identity.execution_key,
             api_key=readiness.api_key,
             api_key_source=readiness.api_key_source,
+            prompt_caching=prompt_caching,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -1387,6 +1405,14 @@ class ConsoleProviderGateway:
         # themselves when the payload has none, so the extraction is
         # provider-neutral. Mid-array system rows never occur on this path
         # (`_provider_message_payloads` emits user/assistant only).
+        #
+        # The join deliberately normalizes: each row is `.strip()`ed and the
+        # rows are joined with "\n\n". The result is therefore NOT byte-verbatim
+        # with respect to the source rows -- but it IS a pure function of them,
+        # so the same rows always produce the same bytes. That determinism is
+        # what Anthropic prefix caching needs (a stable system block across
+        # consecutive turns); see the cache-stability test in
+        # Tests/Chat/test_console_provider_gateway.py.
         payload = list(messages)
         system_parts: list[str] = []
         while payload and payload[0].get("role") == "system":
@@ -1416,6 +1442,10 @@ class ConsoleProviderGateway:
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
             "tools": tools,
+            # None for every non-Anthropic resolution, so the strip below
+            # removes the key entirely and other providers' kwargs are byte
+            # for byte what they were before prompt caching existed.
+            "prompt_caching": resolution.prompt_caching,
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 

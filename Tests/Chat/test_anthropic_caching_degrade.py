@@ -55,11 +55,40 @@ def test_400_naming_cache_control_retries_stripped(mock_post):
     )
 
     assert mock_post.call_count == 2
+    # The retry is the SAME payload with every cache_control key stripped --
+    # the system block array survives as a block array, it just loses its
+    # cache key (`_without_cache_control` removes only that one key).
     retry_body = mock_post.call_args_list[1][1]["json"]
     assert "cache_control" not in json.dumps(retry_body)
-    # system degrades from block-array back to plain blocks sans cache keys
+    assert retry_body["system"] == [{"type": "text", "text": "be terse"}]
+    # ...and the FIRST attempt did carry a breakpoint, so the retry is a real
+    # degrade rather than a payload that never had one.
     first_body = mock_post.call_args_list[0][1]["json"]
     assert "cache_control" in json.dumps(first_body)
+    assert retry_body["messages"] == _without_cache_control(first_body["messages"])
+
+
+@patch("requests.Session.post")
+def test_degrade_is_visible_to_metrics(mock_post):
+    """A silent degrade is a silent cost regression: every send would pay the
+    cache-write premium and never read. Emit a counter so it is observable."""
+    bad = _bad_response('{"error": {"message": "cache_control is not supported"}}')
+    mock_post.side_effect = [bad, _ok_response()]
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.log_counter"
+    ) as mock_log_counter:
+        chat_api_call(
+            "anthropic",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test-key",
+            model="claude-sonnet-4-6",
+            system_message="be terse",
+            streaming=False,
+        )
+
+    counters = [call.args[0] for call in mock_log_counter.call_args_list if call.args]
+    assert "anthropic_cache_control_degrade" in counters
 
 
 @patch("requests.Session.post")

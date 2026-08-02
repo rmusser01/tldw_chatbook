@@ -2694,6 +2694,154 @@ def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
     assert kwargs["messages_payload"] == messages
 
 
+def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:
+    """The extracted system_message must be BYTE-identical turn over turn.
+
+    Anthropic prompt caching matches on an exact byte prefix (tools ->
+    system -> messages), so any drift in the extracted system string -- a
+    changed join, an interpolated timestamp, a re-ordered row -- silently
+    invalidates the cache and re-pays the 1.25x write premium on every send.
+    This is the seam the cost-ticker spec names: the gateway's
+    leading-system-row extraction, not the controller's verbatim prompt.
+
+    Note the extraction is normalizing, not verbatim: rows are stripped and
+    joined with "\\n\\n". That is fine for caching precisely because it is
+    deterministic -- the same rows always produce the same bytes.
+    """
+    system_rows = [
+        {"role": "system", "content": "You are terse.\n\nAnswer in one line."},
+        {"role": "system", "content": "Never use emoji."},
+    ]
+    turn_1 = system_rows + [{"role": "user", "content": "first question"}]
+    turn_2 = turn_1 + [
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+    ]
+
+    kwargs_1 = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), turn_1)
+    kwargs_2 = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), turn_2)
+
+    assert kwargs_1["system_message"] == kwargs_2["system_message"]
+    assert (
+        kwargs_1["system_message"].encode() == kwargs_2["system_message"].encode()
+    )
+    # and the history prefix itself is untouched by the extraction
+    assert kwargs_2["messages_payload"][: len(kwargs_1["messages_payload"])] == (
+        kwargs_1["messages_payload"]
+    )
+
+
+# ---- per-turn cache_control opt-in (Console-only) ----
+
+
+def test_chat_api_kwargs_omits_prompt_caching_for_non_anthropic() -> None:
+    """`prompt_caching=None` is stripped, so non-Anthropic kwargs are
+    unchanged from before prompt caching existed."""
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert "prompt_caching" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_resolution_forwards_prompt_caching_opt_in() -> None:
+    """Console sends are multi-turn, so they opt into the per-turn
+    breakpoint; one-shot callers of `chat_with_anthropic` never do."""
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "done"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is True
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert calls[0]["api_endpoint"] == "anthropic"
+    assert calls[0]["prompt_caching"] is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_resolution_respects_caching_kill_switch() -> None:
+    """`[caching] anthropic_enabled = false` turns the opt-in off at the
+    gateway too (the provider's own kill-switch is the second line)."""
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "done"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "k"}},
+            "caching": {"anthropic_enabled": False},
+        },
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is False
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    # falsy either way: the per-turn marker is off
+    assert not calls[0].get("prompt_caching")
+
+
+@pytest.mark.asyncio
+async def test_non_anthropic_resolution_has_no_prompt_caching_flag() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=lambda **_kwargs: "done",
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai", explicit_model="gpt-4.1", streaming=False
+        )
+    )
+
+    assert resolution.prompt_caching is None
+
+
 @pytest.mark.asyncio
 async def test_stream_chat_records_usage_payload_from_sse_chunk() -> None:
     usage_line = (
