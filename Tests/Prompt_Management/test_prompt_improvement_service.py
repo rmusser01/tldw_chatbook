@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import FrozenInstanceError, replace
+from io import StringIO
 import inspect
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -36,6 +38,7 @@ from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
 from tldw_chatbook.Prompt_Management.prompt_improvement_service import (
     UNKNOWN_MODEL_CONTEXT_CAP_TOKENS,
     PromptImprovementService,
+    _merge_recipe,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -135,6 +138,23 @@ def _recipe_definition() -> BlockArtifactDefinition:
                         mapping_hint="Hard limits",
                     ),
                 ),
+            ),
+        ),
+    )
+
+
+def _recipe_with_invalid_xml_name() -> BlockArtifactDefinition:
+    recipe = _recipe_definition()
+    system_lane, user_lane = recipe.lanes
+    constraints = user_lane.blocks[-1]
+    return replace(
+        recipe,
+        lanes=(
+            system_lane,
+            replace(
+                user_lane,
+                blocks=user_lane.blocks[:-1]
+                + (replace(constraints, xml_tag="bad tag"),),
             ),
         ),
     )
@@ -586,17 +606,29 @@ async def test_response_schema_routes_only_through_task10_compatibility(
 
 
 @pytest.mark.asyncio
-async def test_preservation_veto_never_returns_changed_protected_content() -> None:
+async def test_preservation_veto_retains_exact_candidate_without_raw_copy_or_logs() -> (
+    None
+):
     source = "Keep https://example.test/private and {{user}}."
-    result = "Keep the private page and {{user}}."
+    result = "  Keep the private page and {{user}}.\n"
     gateway = FakeAuxiliaryGateway([_rewrite_response(result)])
+    logs = StringIO()
+    sink_id = logger.add(logs, format="{message}|{extra}", level="INFO")
 
-    outcome = await _service(gateway).improve(_snapshot(source))
+    try:
+        outcome = await _service(gateway).improve(_snapshot(source))
+    finally:
+        logger.remove(sink_id)
 
     assert outcome.kind == "preservation_veto"
-    assert outcome.rewritten_prompt is None
+    assert outcome.rewritten_prompt == result
+    assert outcome.user_message == "The result changed protected prompt material."
     assert source not in outcome.user_message
     assert result not in outcome.user_message
+    assert source not in logs.getvalue()
+    assert result not in logs.getvalue()
+    assert source not in repr(outcome)
+    assert result not in repr(outcome)
 
 
 def _inline_file_snapshot() -> PromptImprovementRequestSnapshot:
@@ -891,6 +923,33 @@ async def test_recipe_xml_wrapper_collision_is_malformed_after_local_validation(
 
     assert outcome.kind == "malformed"
     assert outcome.filled_definition is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_empty_recipe_xml_name_is_stale_before_provider_call() -> None:
+    snapshot = _snapshot(
+        mode="recipe", recipe_definition=_recipe_with_invalid_xml_name()
+    )
+    gateway = FakeAuxiliaryGateway(["unused"])
+
+    outcome = await _service(gateway).improve(snapshot)
+
+    assert outcome.kind == "stale"
+    assert gateway.call_count == 0
+
+
+@pytest.mark.parametrize("filled_content", ["", "filled constraint"])
+def test_local_recipe_merge_validates_xml_name_independently_of_content(
+    filled_content: str,
+) -> None:
+    recipe = _recipe_with_invalid_xml_name()
+
+    with pytest.raises(ValueError, match="Invalid XML wrapper name"):
+        _merge_recipe(
+            recipe,
+            {"role": "", "goal": "", "constraints": filled_content},
+            "",
+        )
 
 
 @pytest.mark.asyncio

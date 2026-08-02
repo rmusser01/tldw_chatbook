@@ -25,6 +25,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 )
 from tldw_chatbook.Prompt_Management.prompt_block_compiler import (
     compile_block_artifact,
+    validate_xml_wrapper,
 )
 from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
     PromptImprovementOutcome,
@@ -162,6 +163,25 @@ def _projection_matches_snapshot(snapshot: PromptImprovementRequestSnapshot) -> 
     )
 
 
+def _validate_block_definition(
+    definition: BlockArtifactDefinition,
+    *,
+    expected_kind: str,
+) -> None:
+    """Apply canonical structural and rendering validation to every block."""
+    if (
+        not isinstance(definition, BlockArtifactDefinition)
+        or definition.kind != expected_kind
+        or definition.schema_version != 2
+    ):
+        raise ValueError("Unexpected block artifact definition")
+    for lane in definition.lanes:
+        for block in lane.blocks:
+            if block.syntax == "xml":
+                validate_xml_wrapper(block.xml_tag, block.content)
+    compile_block_artifact(definition)
+
+
 def _captured_state_is_consistent(snapshot: PromptImprovementRequestSnapshot) -> bool:
     try:
         model = str(snapshot.resolution.model)
@@ -188,6 +208,11 @@ def _captured_state_is_consistent(snapshot: PromptImprovementRequestSnapshot) ->
             str(snapshot.system_fingerprint), fingerprint_text(snapshot.system_prompt)
         ):
             return False
+        if snapshot.recipe_definition is not None:
+            _validate_block_definition(
+                snapshot.recipe_definition,
+                expected_kind="block_recipe",
+            )
         return not (
             snapshot.recipe_definition is not None
             and not hmac.compare_digest(
@@ -260,7 +285,7 @@ def _merge_recipe(
         )
         lanes = (system_lane, user_lane)
     merged = BlockArtifactDefinition(kind="block_prompt", schema_version=2, lanes=lanes)
-    compile_block_artifact(merged)
+    _validate_block_definition(merged, expected_kind="block_prompt")
     return merged
 
 
@@ -470,7 +495,11 @@ class PromptImprovementService:
                 if rewritten == snapshot.projection.text:
                     return self._outcome(snapshot, "no_change")
                 if preservation_violations(snapshot.projection.text, rewritten):
-                    return self._outcome(snapshot, "preservation_veto")
+                    return self._outcome(
+                        snapshot,
+                        "preservation_veto",
+                        rewritten_prompt=rewritten,
+                    )
                 return self._outcome(snapshot, "success", rewritten_prompt=rewritten)
 
             definition = snapshot.recipe_definition

@@ -91,3 +91,34 @@ def test_unbalanced_or_prose_angle_brackets_are_not_xml_wrappers() -> None:
     result = "Compare 2 < 4 > 1 and use <another draft."
 
     assert preservation_violations(source, result) == ()
+
+
+@pytest.mark.parametrize(
+    ("source", "result"),
+    [
+        (
+            "Keep HTTPS://example.test/Required exactly.",
+            "Remove the required link.",
+        ),
+        (
+            "Use https://example.test/路径 for the source.",
+            "Use https://example.test/路徑 for the source.",
+        ),
+        (
+            "Use HTTPS://example.test/路径 twice: HTTPS://example.test/路径.",
+            "Use HTTPS://example.test/路径 once.",
+        ),
+    ],
+)
+def test_url_preservation_covers_case_unicode_suffixes_and_multisets(
+    source: str,
+    result: str,
+) -> None:
+    assert "url" in preservation_violations(source, result)
+
+
+def test_url_scanner_ignores_sentence_punctuation_email_and_ordinary_unicode() -> None:
+    source = "Visit https://example.test/路径. Email first@example.test; snow 雪."
+    result = "Visit https://example.test/路径! Email second@example.test; snow 雪花."
+
+    assert preservation_violations(source, result) == ()

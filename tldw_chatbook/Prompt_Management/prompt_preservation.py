@@ -14,7 +14,8 @@ _TEMPLATE_PLACEHOLDER = re.compile(
 _FENCE_OPEN = re.compile(
     r"(?m)^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)\r?\n"
 )
-_URL = re.compile(r"https?://[^\s<>\"'`]*[A-Za-z0-9/#=_~-]")
+_URL = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
+_URL_SENTENCE_PUNCTUATION = ".,;:!?"
 _UUID = re.compile(
     r"(?<![0-9A-Fa-f])"
     r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
@@ -70,6 +71,20 @@ def _xml_wrappers(text: str) -> tuple[tuple[str, str], ...]:
     )
 
 
+def _urls(text: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for match in _URL.finditer(text):
+        value = match.group(0).rstrip(_URL_SENTENCE_PUNCTUATION)
+        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+            while value.endswith(closing) and value.count(closing) > value.count(
+                opening
+            ):
+                value = value[:-1]
+        if value:
+            values.append(value)
+    return tuple(values)
+
+
 def preservation_violations(source: str, result: str) -> tuple[str, ...]:
     """Return deterministic protected categories whose exact contract changed."""
     if not isinstance(source, str) or not isinstance(result, str):
@@ -81,7 +96,7 @@ def preservation_violations(source: str, result: str) -> tuple[str, ...]:
         violations.append("template_placeholder")
     if _fenced_code(source) != _fenced_code(result):
         violations.append("fenced_code")
-    if Counter(_URL.findall(source)) != Counter(_URL.findall(result)):
+    if Counter(_urls(source)) != Counter(_urls(result)):
         violations.append("url")
     if Counter(_UUID.findall(source)) != Counter(_UUID.findall(result)):
         violations.append("uuid")
