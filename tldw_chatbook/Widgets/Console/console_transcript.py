@@ -6,7 +6,6 @@ import asyncio
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
-
 from typing import Iterable, Literal, Mapping
 
 from loguru import logger
@@ -20,7 +19,6 @@ from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
-from textual.widgets import Button
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -800,6 +798,11 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        # Expansion is per message id, so ids that left the transcript (a
+        # session switch, a deleted branch) must go with them -- otherwise the
+        # set grows for the life of the widget and a recycled id would come
+        # back already expanded.
+        self._expanded_tool_output_ids &= message_ids
         new_user_send = any(
             message.id not in self._seen_message_ids
             and message.role == ConsoleMessageRole.USER
@@ -1613,6 +1616,13 @@ class ConsoleTranscript(VerticalScroll):
         renderable, its cached signature and its action row all see the same
         message -- a row that renders expanded while its signature says
         collapsed would never repaint.
+
+        Args:
+            message: The transcript message about to be rendered.
+
+        Returns:
+            ``message`` unchanged, or a copy whose ``content`` carries the
+            full tool result when this row is currently expanded.
         """
         full = message.tool_output_full
         if not full or message.id not in self._expanded_tool_output_ids:
@@ -1639,7 +1649,13 @@ class ConsoleTranscript(VerticalScroll):
         self.toggle_tool_output(button_id.removeprefix(prefix))
 
     def toggle_tool_output(self, message_id: str) -> None:
-        """Expand or collapse one TOOL marker's full result."""
+        """Expand or collapse one TOOL marker's full result.
+
+        Args:
+            message_id: Id of the marker row to toggle. Unknown ids are
+                harmless -- the row simply renders collapsed, and
+                ``set_messages`` prunes ids that leave the transcript.
+        """
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)
         else:

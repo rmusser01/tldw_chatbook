@@ -221,3 +221,32 @@ async def test_two_calls_in_one_turn_expand_independently():
         assert "UNIQUE-B" not in str(app.query_one("#console-message-t-b").render()), (
             "expanding one call revealed another -- the toggle is not per row"
         )
+
+
+@pytest.mark.unit
+def test_expanded_state_is_pruned_when_messages_leave_the_transcript():
+    """Expansion is per message id, so it must not outlive the message.
+
+    The state comment claimed it was "dropped when the transcript is rebuilt"
+    -- it was not; `set_messages` pruned the signature cache and left this
+    set growing for the life of the widget. A recycled id would also come
+    back already expanded.
+    """
+    transcript = ConsoleTranscript()
+    kept = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL, id="keep", content="⚙ a → x…",
+        tool_output_full="xxxx",
+    )
+    gone = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL, id="gone", content="⚙ b → y…",
+        tool_output_full="yyyy",
+    )
+    transcript.set_messages([kept, gone])
+    transcript._expanded_tool_output_ids.update({"keep", "gone"})
+
+    transcript.set_messages([kept])
+
+    assert transcript._expanded_tool_output_ids == {"keep"}, (
+        "expansion state outlived the message it belonged to: "
+        f"{transcript._expanded_tool_output_ids}"
+    )

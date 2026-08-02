@@ -88,7 +88,6 @@ class ConsoleMessageActionService:
     )
 
     @staticmethod
-    @staticmethod
     def _has_tool_output(message: ConsoleChatMessage) -> bool:
         """Whether this row hides tool output its `content` does not show."""
         if message.role is not ConsoleMessageRole.TOOL:

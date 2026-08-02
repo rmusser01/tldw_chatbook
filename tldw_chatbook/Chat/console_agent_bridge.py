@@ -328,7 +328,7 @@ def _truncate_step_text(text: str, *, limit: int) -> str:
 def full_step_output(
     kind: str,
     *,
-    result=None,
+    result: Any = None,
     summary: str | None = None,
     marker_text: str | None = None,
 ) -> str | None:
@@ -343,6 +343,18 @@ def full_step_output(
     A FAILED or errored step returns its summary: "whatever output it did
     produce" is exactly what the user asks for when a call fails, and for an
     error step the summary IS the produced text.
+
+    Args:
+        kind: The ``AgentStep`` kind this marker was built from.
+        result: The step's raw tool result, for ``STEP_TOOL_RESULT``.
+        summary: The step's summary text, for ``STEP_ERROR``.
+        marker_text: The marker as it will be displayed. When the full text
+            already appears there, ``None`` is returned -- an expand control
+            that opens an identical view is a dead affordance.
+
+    Returns:
+        The untruncated text behind the marker, or ``None`` when the marker
+        already shows everything (or the kind carries no output at all).
     """
     if kind == STEP_TOOL_RESULT:
         text = str(result if result is not None else "")
