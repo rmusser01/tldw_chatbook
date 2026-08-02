@@ -22,8 +22,10 @@ playback in tens of milliseconds. V4 (realtime API) cannot exist without the sam
   mono int16 LE.
 - `TTS/backends/kokoro.py` already yields int16 PCM chunks with an explicit sample rate
   (:551-582, `np.int16(samples * 32767).tobytes()`).
-- audio.cpp returns one complete WAV response per request (established in the Speech
-  Playground work); its PCM payload is a single chunk after header strip.
+- audio.cpp is NOT a `TTS/backends/` backend: it lives in the newer adapter layer
+  (`TTS/adapters/audio_cpp.py` via `adapter_bootstrap.py`) and is absent from the backend
+  registry the shared TTS generation path uses -- so the proving consumer cannot reach it
+  today. It is therefore OUT of this phase's seam (see Out of scope).
 - Console spoken feedback (`ChatScreen._speak_status`, chat_screen.py :5219) posts
   `TTSRequestEvent(text)`; capture-start silencing posts `TTSPlaybackEvent(action="stop")`
   (:6395). The conversion point is therefore the `TTSRequestEvent` consumer and the existing
@@ -98,20 +100,25 @@ info = pcm_stream_info(provider)     # PcmStreamInfo(sample_rate, channels) | No
 aiter = pcm_reply_stream(text=..., provider=..., voice=..., ...)  # async chunks
 ```
 
-- Implements exactly three providers this phase: **openai** (`response_format="pcm"`,
-  24 kHz), **kokoro** (native int16 chunks, rate from the backend), **audio.cpp** (single
-  WAV → header stripped, rate read from the header). Every other provider returns `None`
-  from `pcm_stream_info` and the caller takes the legacy path. The future decode adapter
-  (mp3/opus providers) slots in behind this seam; the sink never changes for it.
+- Implements exactly two providers this phase: **openai** (`response_format="pcm"`,
+  24 kHz) and **kokoro** (native int16 chunks, rate from the backend). Every other
+  provider returns `None` from `pcm_stream_info` and the caller takes the legacy path.
+  The future decode adapter (mp3/opus providers) and the audio.cpp adapter-layer bridge
+  both slot in behind this seam; the sink never changes for either.
 - The seam owns any format normalization (e.g. float32→int16 stays inside the kokoro
   backend where it already lives; the seam only asserts int16 out).
 
 ## Proving consumer: Console spoken feedback
 
-The `TTSRequestEvent` consumer gains a streaming branch: if `sink_available()` and
-`pcm_stream_info(configured_provider)` is not `None`, it opens a sink and `pump`s the reply
-stream through it from the existing worker context; otherwise the current whole-file path
-runs byte-identically. The existing `TTSPlaybackEvent("stop")` handler additionally calls
+The `TTSRequestEvent` consumer (`handle_tts_request`, an async `@on` handler on the App
+-- tts_events.py :392/:1477, app.py :6490) gains a streaming branch: if `sink_available()`
+and `pcm_stream_info(configured_provider)` is not `None`, the branch first silences any
+legacy file playback through the existing stop routine (closing one-voice's opening-side
+hole), then opens a sink and `pump`s the reply stream through it. The whole branch --
+`open()` included (device init costs tens of ms) -- runs INSIDE the same shared
+TTS-generation worker the legacy path already uses, never inline in the handler: this
+repo has already been burned by App-handler work holding the message pump. Otherwise the
+current whole-file path runs byte-identically. The existing `TTSPlaybackEvent("stop")` handler additionally calls
 `stop()` on the live sink, making capture-start silencing immediate (V2 checklist item 7's
 "no self-transcription" window shrinks from file-player kill latency to ≤2 blocks).
 No new config keys. `dictation.spoken_feedback` semantics unchanged.
@@ -147,6 +154,8 @@ No new config keys. `dictation.spoken_feedback` semantics unchanged.
 
 ## Out of scope (this phase)
 
-Streaming decode for compressed-format providers; the hands-free loop itself (VAD
+Streaming decode for compressed-format providers; the audio.cpp adapter-layer bridge
+(unreachable from the proving consumer today, and its single-WAV response is one chunk --
+no streaming benefit until the loop needs it); the hands-free loop itself (VAD
 turn-taking, auto-send, barge-in — next spec, builds on this sink); briefings/other
 playback adoption; pause/duck; resampling; any settings UI.
