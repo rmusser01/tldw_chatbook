@@ -209,4 +209,49 @@ the_service`, then `test_citations_do_not_shrink_the_briefings_table_below_its_p
 at once) -- every one of them passed standalone and touches no code this fix wave changed, consistent with this
 suite's known pre-existing full-run flakiness rather than a regression. Targeted `test_config_*` sweep (71
 tests, covering the new config-template comment) also green.
+
+**Fix wave (Qodo review).** Three findings remediated, no blockers found. **F1**: neither `start()` nor
+`configured_bind_and_port()` range-checked `port` -- `int(...)` accepted any integer, so an out-of-range-but-
+parseable value (e.g. `99999`, or a negative value) reached `ThreadingHTTPServer.__init__` -> `socket.bind` as a
+bare `OverflowError`, a type the UI's Serve handler (`watchlists_collections_screen.py`, only catches
+`FeedServerError`/`OSError`) does not catch -- it escaped as an unhandled exception instead of the toast every
+other rejection produces. The two entry points now degrade differently on purpose: `configured_bind_and_port()`
+(a config value, expected to sometimes be hand-edited wrong) falls back to ephemeral `0` with a type-only
+`logger.warning`, mirroring its existing bad-bind precedent; `FeedDirectoryServer.start()` (the actual socket
+boundary, and the one a direct caller -- script, test, future code -- can reach without going through config at
+all) instead raises `FeedServerError` for a non-`int`/out-of-range `port`, the same type its neighboring
+directory-validation checks already raise, which the UI already catches. **F2**: `start()` built
+`self._url = f"http://{bind}:{port}/"` unconditionally, which is not a URL any client can parse for an IPv6
+literal (`http://::1:8080/` is ambiguous) despite `is_loopback_bind` explicitly supporting `::1`. Added
+`_format_host_for_url` (bracket an IPv6 literal, leave IPv4/hostname forms unchanged) and wired it into the URL
+build. Verifying this end-to-end surfaced a second, deeper pre-existing defect: `http.server.HTTPServer`/
+`ThreadingHTTPServer` hard-code `address_family = socket.AF_INET` and never infer it from the bind address, so
+`start(bind="::1", ...)` failed with a bare `socket.gaierror` on every platform (not merely IPv6-disabled CI)
+before the URL-formatting code ever ran -- the bracketing fix would otherwise have been unreachable dead code.
+Added `_IPv6ThreadingHTTPServer` (the same class, `address_family` forced to `socket.AF_INET6`) and select it in
+`start()` whenever `bind` is an IPv6 literal (`_is_ipv6_literal`, factored out and shared with
+`_format_host_for_url` so the two can never disagree); IPv4/hostname binds are unaffected. **F3**:
+`is_loopback_bind` gained a Google-style `Args`/`Returns` docstring section; no behavior change.
+
+**Tests.** 21 new tests in `Tests/Subscriptions/test_feed_server.py` (51 total, up from 41): port validation (a
+config port of `99999`/`-1` falls back to ephemeral with a warning; a valid configured port still passes
+through; `start()` raises `FeedServerError` for a negative port, a port above 65535, and a non-`int` port, and
+still accepts a legitimate nonzero port end to end) and IPv6 URL bracketing (`_format_host_for_url` unit tests
+needing no socket at all, plus a live `start(bind="::1", port=0)` round trip via `httpx`, skipped -- not failed
+-- only if the runner cannot bind `::1` at all).
+
+**Mutation verification (Edit-tool revert, `git status --short` clean between each, all restored byte-exact and
+reconfirmed green afterward):** dropping `start()`'s port range/type check REDed all three of its rejection
+tests (each raised `OverflowError`/`TypeError` instead of the expected `FeedServerError`); dropping
+`configured_bind_and_port()`'s range check REDed both its out-of-range fallback tests (`99999`/`-1` passed
+through unchanged instead of falling back to `0`); reverting `_format_host_for_url` to return `bind` unmodified
+REDed both the pure-format test and the live IPv6 round-trip test (`http://::1:PORT/`, unbracketed).
+
+**Verification.** `Tests/Subscriptions/test_feed_server.py`: 51 passed. `Tests/Watchlists/
+test_watchlists_artifacts_pane.py`: 124 passed on this run (the two feed-server UI tests,
+`test_pressing_serve_then_stop_round_trips_through_a_real_server` and
+`test_serve_reads_bind_and_port_from_configured_bind_and_port`, both green) -- no repeat of the known rotating-
+victim flake this run. No regressions found.
+
+**Files modified:** `tldw_chatbook/Subscriptions/feed_server.py`, `Tests/Subscriptions/test_feed_server.py`.
 <!-- SECTION:NOTES:END -->

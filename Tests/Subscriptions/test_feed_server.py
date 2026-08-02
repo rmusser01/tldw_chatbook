@@ -418,6 +418,175 @@ def test_a_loopback_bind_never_warns(
     assert is_loopback_bind(server.bind) is True
 
 
+# --- port validation (task-1760 Qodo fix wave, F1) ----------------------------
+#
+# A port that survives `int(...)` in `configured_bind_and_port` can still be
+# outside the valid 0-65535 TCP range (a config typo like `99999`) or, for a
+# direct `FeedDirectoryServer.start` caller, not an `int` at all. Left
+# unchecked, an out-of-range-but-parseable value reached `ThreadingHTTPServer`
+# as a bare `OverflowError` -- not one of the types the UI's Serve handler
+# (`watchlists_collections_screen.py`) catches, so it escaped as an unhandled
+# exception. The two entry points are deliberately handled differently: a
+# CONFIG-derived bad value degrades safely (falls back to ephemeral `0` with a
+# warning, `configured_bind_and_port`'s existing bad-bind precedent); a bad
+# value handed directly to `start()` is instead refused with `FeedServerError`
+# (the type the UI already catches), the same way the directory-validation
+# checks in that method already are.
+
+
+def test_configured_bind_and_port_falls_back_to_ephemeral_on_an_out_of_range_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured port that parses as an int but is out of the valid
+    0-65535 TCP port range (a typo, e.g. `99999`) degrades the same way a
+    non-integer value already does, rather than being passed through to
+    `start()` where it would reach the socket layer as a raw
+    `OverflowError`."""
+
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "briefings_feed_server" and key == "port":
+            return 99999
+        return default
+
+    monkeypatch.setattr(feed_server_module, "get_cli_setting", _fake_get_cli_setting)
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _bind, port = configured_bind_and_port()
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert port == 0
+    assert any(
+        "outside the valid 0-65535" in message for message in messages
+    ), messages
+
+
+def test_configured_bind_and_port_falls_back_to_ephemeral_on_a_negative_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "briefings_feed_server" and key == "port":
+            return -1
+        return default
+
+    monkeypatch.setattr(feed_server_module, "get_cli_setting", _fake_get_cli_setting)
+    _bind, port = configured_bind_and_port()
+    assert port == 0
+
+
+def test_configured_bind_and_port_still_uses_a_valid_configured_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new range check must not reject an ordinary, in-range value --
+    only out-of-range/non-integer ones (regression guard alongside the
+    pre-existing `test_configured_bind_and_port_reads_a_stored_section`)."""
+
+    def _fake_get_cli_setting(section, key, default=None):
+        if section == "briefings_feed_server" and key == "port":
+            return 8123
+        return default
+
+    monkeypatch.setattr(feed_server_module, "get_cli_setting", _fake_get_cli_setting)
+    _bind, port = configured_bind_and_port()
+    assert port == 8123
+
+
+def test_start_rejects_a_negative_port(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    with pytest.raises(FeedServerError):
+        server.start(served_dir, port=-1)
+    assert server.is_running is False
+    assert server.url is None
+
+
+def test_start_rejects_a_port_above_65535(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    with pytest.raises(FeedServerError):
+        server.start(served_dir, port=70000)
+    assert server.is_running is False
+    assert server.url is None
+
+
+def test_start_rejects_a_non_integer_port(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    with pytest.raises(FeedServerError):
+        server.start(served_dir, port="443")  # type: ignore[arg-type]
+    assert server.is_running is False
+    assert server.url is None
+
+
+def test_start_accepts_a_valid_nonzero_configured_port(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """A legitimate, in-range, nonzero port (not just `0` for ephemeral)
+    must still work end to end -- the new range check must reject only
+    genuinely invalid values, not ordinary ones a real config could set."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+
+    url = server.start(served_dir, port=free_port)
+    assert url == f"http://127.0.0.1:{free_port}/"
+    response = httpx.get(url + "feed.xml", timeout=5.0)
+    assert response.status_code == 200
+
+
+# --- IPv6 URL bracketing (task-1760 Qodo fix wave, F2) ------------------------
+#
+# `is_loopback_bind` explicitly supports `::1` as a loopback bind target, but
+# `start()` used to build its URL as `f"http://{bind}:{port}/"` unconditionally
+# -- `http://::1:8080/` is not a URL any client can parse (an IPv6 literal in
+# a URL authority component must be bracketed per RFC 3986 section 3.2.2).
+
+
+def test_format_host_for_url_brackets_ipv6_literals() -> None:
+    assert feed_server_module._format_host_for_url("::1") == "[::1]"
+    assert feed_server_module._format_host_for_url("2001:db8::1") == "[2001:db8::1]"
+
+
+def test_format_host_for_url_leaves_ipv4_and_hostnames_unbracketed() -> None:
+    assert feed_server_module._format_host_for_url("127.0.0.1") == "127.0.0.1"
+    assert feed_server_module._format_host_for_url("0.0.0.0") == "0.0.0.0"
+    assert feed_server_module._format_host_for_url("localhost") == "localhost"
+
+
+def _ipv6_loopback_bindable() -> bool:
+    """True if this platform/runner can actually bind `::1` -- some CI
+    sandboxes disable IPv6 entirely, which is a runner-environment fact,
+    not a defect in the fix under test; the one test below that needs a
+    real IPv6 socket is skipped (not failed) when this is False."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(
+    not _ipv6_loopback_bindable(), reason="platform/runner cannot bind ::1"
+)
+def test_start_with_ipv6_loopback_bind_produces_a_bracketed_url_and_round_trips(
+    server: FeedDirectoryServer, served_dir: Path
+) -> None:
+    """The end-to-end case: binding `::1` must produce a URL a real client
+    can parse and connect to, not just a correctly-formatted string in
+    isolation (that half is covered by the two tests above, which do not
+    need a live IPv6 socket at all)."""
+    url = server.start(served_dir, bind="::1", port=0)
+    assert url.startswith("http://[::1]:")
+    assert url.endswith("/")
+
+    response = httpx.get(url + "feed.xml", timeout=5.0)
+    assert response.status_code == 200
+    assert response.text == (served_dir / "feed.xml").read_text(encoding="utf-8")
+
+
 # --- directory listings disabled, recursive FILE serving intact (M4) ---------
 
 

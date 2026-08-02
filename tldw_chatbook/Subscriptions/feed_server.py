@@ -75,6 +75,7 @@ from __future__ import annotations
 import functools
 import http.server
 import ipaddress
+import socket
 import threading
 from pathlib import Path
 
@@ -128,6 +129,20 @@ def is_loopback_bind(bind: str) -> bool:
     (not `_`-prefixed) so the UI layer can word its own toast/warning
     around the same test `FeedDirectoryServer.start` uses (task-1760
     review, M3) rather than re-implementing it.
+
+    Args:
+        bind: The bind address to classify, e.g. `"127.0.0.1"`, `"::1"`,
+            `"localhost"`, `"0.0.0.0"`, or a LAN hostname/address. Not
+            normalized by the caller first -- this function does its own
+            `.strip().lower()` -- so the raw, already-`_normalize_bind`-d
+            value `FeedDirectoryServer.start`/`configured_bind_and_port`
+            use is safe to pass in directly.
+
+    Returns:
+        `True` for `localhost` or any address `ipaddress.ip_address`
+        reports as loopback (`127.0.0.0/8`, `::1`); `False` for every other
+        value, including one `ipaddress` cannot parse at all (a LAN
+        hostname is not an error here -- it is simply not loopback).
     """
     normalized = bind.strip().lower()
     if normalized == "localhost":
@@ -136,6 +151,70 @@ def is_loopback_bind(bind: str) -> bool:
         return ipaddress.ip_address(normalized).is_loopback
     except ValueError:
         return False
+
+
+def _is_ipv6_literal(bind: str) -> bool:
+    """True if `bind` parses as an IPv6 address literal (e.g. `"::1"`).
+
+    Shared by `_format_host_for_url` (URL bracketing) and
+    `FeedDirectoryServer.start` (socket address-family selection --
+    see `_IPv6ThreadingHTTPServer`) so the two never disagree about what
+    counts as IPv6. A hostname such as `"localhost"` or an IPv4 address
+    makes `ipaddress.ip_address` raise `ValueError`, which is treated as
+    "not IPv6" here -- the same guard `is_loopback_bind` uses.
+    """
+    try:
+        return ipaddress.ip_address(bind).version == 6
+    except ValueError:
+        return False
+
+
+def _format_host_for_url(bind: str) -> str:
+    """Render `bind` as it belongs in a URL authority component.
+
+    Fix wave (task-1760 Qodo fix wave, F2): `FeedDirectoryServer.start`
+    used to build `self._url` as `f"http://{bind}:{port}/"` unconditionally
+    -- correct for an IPv4 address or a hostname, but not for an IPv6
+    literal: `http://::1:8080/` is ambiguous (is `8080` another address
+    group, or the port?) and no URL parser accepts it. A URL's authority
+    component requires an IPv6 literal to be bracketed --
+    `http://[::1]:8080/` -- per RFC 3986 section 3.2.2, which
+    `is_loopback_bind` already implicitly relies on `::1` being a valid
+    bind target for (its own docstring names `::1` as a loopback address
+    this module supports).
+
+    Args:
+        bind: The bind address to format, already `_normalize_bind`-d --
+            an IPv4 address, an IPv6 address, or a hostname such as
+            `"localhost"`.
+
+    Returns:
+        `bind` unchanged for an IPv4 address or a hostname. Bracketed
+        (`f"[{bind}]"`) when `bind` is an IPv6 literal (`_is_ipv6_literal`).
+    """
+    if _is_ipv6_literal(bind):
+        return f"[{bind}]"
+    return bind
+
+
+class _IPv6ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """`ThreadingHTTPServer` with `address_family` forced to IPv6.
+
+    Fix wave (task-1760 Qodo fix wave, F2, discovered while verifying the
+    URL-bracketing fix): `http.server.HTTPServer` -- `ThreadingHTTPServer`'s
+    own base class -- hard-codes `address_family = socket.AF_INET` as a
+    class attribute; `socketserver.TCPServer.__init__` never inspects the
+    bind *address* itself to pick a family. Binding an IPv6 literal (e.g.
+    `"::1"`) through the base class therefore fails immediately with
+    `socket.gaierror` (`getaddrinfo` cannot resolve an IPv6 literal for an
+    `AF_INET` socket) on every platform -- independent of, and before,
+    whatever `is_loopback_bind`/`_format_host_for_url` support for IPv6
+    would otherwise mean in practice. `FeedDirectoryServer.start` selects
+    this subclass instead of the base one whenever `bind` is an IPv6
+    literal (`_is_ipv6_literal`); IPv4/hostname binds are unaffected.
+    """
+
+    address_family = socket.AF_INET6
 
 
 #: What `_ContainedRequestHandler.translate_path` hands back for a request
@@ -176,7 +255,10 @@ def configured_bind_and_port() -> tuple[str, int]:
         `port` defaults to `0` (ephemeral: the OS picks any free port,
         reported back by `FeedDirectoryServer.start`'s return value) and
         falls back to `0` if the configured value is not a valid integer,
-        rather than raising on a hand-edited config.
+        rather than raising on a hand-edited config. A value that DOES
+        parse as an integer but falls outside the valid `0..65535` range
+        (e.g. a typo like `99999`) falls back to `0` the same way -- see
+        the Qodo fix-wave note below.
     """
     bind = _normalize_bind(get_cli_setting(_CONFIG_SECTION, "bind", _SAFE_DEFAULT_BIND))
     raw_port = get_cli_setting(_CONFIG_SECTION, "port", 0)
@@ -189,6 +271,30 @@ def configured_bind_and_port() -> tuple[str, int]:
             type(raw_port).__name__,
         )
         port = 0
+    else:
+        # task-1760 Qodo fix wave, F1: a value that DOES coerce to `int`
+        # can still be out of the valid TCP port range (a typo like
+        # `99999`, or a negative value) -- `int(...)` alone does not catch
+        # that, and passing it straight through to `FeedDirectoryServer.
+        # start` would reach `ThreadingHTTPServer`'s underlying
+        # `socket.bind` as a bare `OverflowError`, which nothing in the UI
+        # layer catches (`watchlists_collections_screen.py`'s Serve
+        # handler only catches `FeedServerError`/`OSError`). A CONFIG-
+        # derived bad value degrades safely here, the same way a blank/
+        # typo'd `bind` already does above -- only a bad value handed
+        # directly to `start()` by a caller that bypasses this function
+        # is instead treated as a programming error and refused there
+        # (see that method's own comment). The warning is type-only, not
+        # value-only, matching this module's established convention for
+        # logging a config value that turned out not to be trustworthy.
+        if not (0 <= port <= 65535):
+            logger.warning(
+                "briefings_feed_server.port is outside the valid 0-65535 "
+                "range (configured value was a {}); using an ephemeral "
+                "port instead.",
+                type(raw_port).__name__,
+            )
+            port = 0
     return bind, port
 
 
@@ -382,16 +488,31 @@ class FeedDirectoryServer:
                 review, M3): a caller does not have to pre-validate this
                 itself, and cannot silently widen exposure by accident.
             port: The port to bind, or `0` for an ephemeral port (the OS
-                picks any free one). The actual bound port is always
-                reported back in the returned URL, regardless of which was
-                requested.
+                picks any free one). Must be an `int` in `0..65535` --
+                anything else (a negative value, a value above 65535, or a
+                non-`int`) is refused with `FeedServerError` rather than
+                reaching the socket layer (task-1760 Qodo fix wave, F1): an
+                out-of-range-but-parseable port previously reached
+                `ThreadingHTTPServer` as a bare `OverflowError`, which is
+                not one of the types the UI's Serve handler catches. This
+                is the boundary for a bad value handed directly to this
+                method (a script, a test, a future caller); a bad value
+                that came from *config* is instead normalized to a safe
+                ephemeral fallback one layer up, in
+                `configured_bind_and_port()` -- a hand-edited config
+                degrading safely is a UX nicety, not the last line of
+                defence, so the two paths are handled differently on
+                purpose. The actual bound port is always reported back in
+                the returned URL, regardless of which was requested.
 
         Returns:
-            The bound URL, e.g. `"http://127.0.0.1:54231/"`.
+            The bound URL, e.g. `"http://127.0.0.1:54231/"` -- or, for an
+            IPv6 `bind` (e.g. `"::1"`), the bracketed form a URL requires,
+            e.g. `"http://[::1]:54231/"` (task-1760 Qodo fix wave, F2).
 
         Raises:
-            FeedServerError: Already running, or `directory` fails
-                validation.
+            FeedServerError: Already running, `directory` fails
+                validation, or `port` is not an `int` in `0..65535`.
             OSError: The bind itself fails (e.g. a fixed `port` already in
                 use).
         """
@@ -415,10 +536,40 @@ class FeedDirectoryServer:
         # the same safe-by-default behaviour as the UI's Serve action.
         bind = _normalize_bind(bind)
 
+        # task-1760 Qodo fix wave, F1: validate `port` here too, not only
+        # in `configured_bind_and_port` -- this is the actual socket
+        # boundary (the comment above, applied to `port` as well as
+        # `bind`). `configured_bind_and_port` degrades a bad CONFIG value
+        # safely (falls back to ephemeral `0` + a warning) because a
+        # hand-edited config file is expected to sometimes be wrong; a bad
+        # value reaching this method directly -- bypassing that
+        # normalization entirely -- is instead a programming error and is
+        # refused outright, the same way the directory-validation checks
+        # above it already are. Left unchecked, an out-of-range-but-
+        # parseable `int` (e.g. `99999`) would reach
+        # `ThreadingHTTPServer.__init__` -> `socket.bind` as a bare
+        # `OverflowError`, which is not one of the types the UI's Serve
+        # handler (`watchlists_collections_screen.py`) catches -- it would
+        # escape as an unhandled exception instead of the toast every
+        # other rejection here produces.
+        if not isinstance(port, int) or isinstance(port, bool) or not (0 <= port <= 65535):
+            raise FeedServerError(
+                f"Port {port!r} is not valid: it must be an integer between "
+                "0 and 65535 (0 requests an OS-assigned ephemeral port)."
+            )
+
         handler_cls = functools.partial(
             _ContainedRequestHandler, directory=str(resolved_directory)
         )
-        httpd = http.server.ThreadingHTTPServer((bind, port), handler_cls)
+        # task-1760 Qodo fix wave, F2: `_IPv6ThreadingHTTPServer` for an
+        # IPv6 `bind` -- see that class's own docstring for why the base
+        # `ThreadingHTTPServer` cannot bind one at all (a hard-coded
+        # `AF_INET` `address_family`, not a platform limitation). IPv4 and
+        # hostname binds are unaffected -- same base class as before.
+        server_cls = (
+            _IPv6ThreadingHTTPServer if _is_ipv6_literal(bind) else http.server.ThreadingHTTPServer
+        )
+        httpd = server_cls((bind, port), handler_cls)
         # daemon_threads: a request handled by ThreadingHTTPServer's own
         # per-connection thread pool must never block interpreter exit --
         # the OUTER thread `serve_forever` runs on (below) is daemon=True
@@ -452,7 +603,12 @@ class FeedDirectoryServer:
 
         self._httpd = httpd
         self._thread = thread
-        self._url = f"http://{bind}:{actual_port}/"
+        # task-1760 Qodo fix wave, F2: bracket an IPv6 `bind` literal here
+        # -- `_format_host_for_url` -- since `is_loopback_bind` explicitly
+        # supports `::1` as a bind target and an unbracketed IPv6 URL is
+        # not merely stylistically off, it is not a URL a client can parse
+        # at all.
+        self._url = f"http://{_format_host_for_url(bind)}:{actual_port}/"
         self._bind = bind
         self._directory = resolved_directory
         logger.debug(
