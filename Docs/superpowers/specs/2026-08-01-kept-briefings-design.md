@@ -1,7 +1,7 @@
 # Kept Briefings — persistence into ChaChaNotes (task-1780)
 
 **Date:** 2026-08-01
-**Status:** proposed
+**Status:** implemented
 **Task:** `backlog/tasks/task-1780` (owner-directed, 2026-08-01). Successor to spec #2
 (`2026-07-30-watchlists-briefings-design.md`, all four phases shipped: PRs #1115/#1145/#1164/#1177/#1187).
 
@@ -93,3 +93,36 @@ fails-generation. Real ChaChaNotes DB on tmp_path; migration collision re-check 
 
 Audio pointers/copies; sync/chatbook-export coverage of kept tables (follow-up task filed at
 close-out); any browsing surface beyond the modal; editing kept content.
+
+## Delivery notes (2026-08-02, close-out)
+
+All 6 tasks shipped on `feat/task-1780-persist-briefings`; `backlog/tasks/task-1780` ACs #1-#6
+all checked. Four things worth recording for anyone re-reading this design later:
+
+- **The Narrator design fill.** The spec's "whatever preset exists at that time" (AC #4) leaves
+  a gap when NO preset exists at all. Task 4 (`briefing_cast.generate_script_from_text`) fills it
+  with `preset_id=None` casting a single-speaker "Narrator" narration on the app's default
+  provider, no style notes, `preset_name = "(app default)"`. Task 5's kept-briefings modal picker
+  mirrors the exact copy (`"App default (single narrator)"` label for the same `None` choice) so
+  the two surfaces never drift into different wording for the same behavior.
+- **The lazy-getter liveness fix.** Task 3's first pass wired `BriefingJobHandler` with a frozen
+  `self.chachanotes_db` instance param — but `app.py.__init__` constructs the handler before
+  `self.chachanotes_db` is itself assigned, so auto-keep was wired end-to-end yet permanently
+  inert in production regardless of what the attribute later became. Fixed by a zero-arg
+  `chachanotes_db_getter` resolved fresh inside `_auto_keep` on every completion, closing over the
+  live app instance instead of a construction-time snapshot. A construction-order bug, not a logic
+  bug — the kind this program has hit before and will likely hit again wherever a handler is built
+  ahead of the attribute it needs.
+- **The raced-keep-lands-friendly hardening.** Task 2 review found that two concurrent
+  `keep_briefing` callers (a scheduled auto-keep and a manual Keep press landing near-simultaneously
+  is the realistic case) can both pass the "already kept?" check before either inserts. The loser's
+  `create_kept_briefing` call now has its `ConflictError` (unambiguous given the table's only
+  unique constraint is `source_briefing_id`) caught and folded into the ordinary additive re-keep
+  path, rather than surfacing a raw exception to whichever caller lost the race.
+- **The recompose-wiped-error bug class, another instance.** Task 5 found `KeptBriefingsModal`'s
+  `_run_cast` always-recompose `finally` clause was silently erasing `_show_error`'s own message,
+  because `compose()` hard-coded the error `Static` back to blank on every rebuild. Fixed by
+  holding the error text as instance state that `compose()` itself reads on rebuild. This is the
+  same bug shape the wider program has caught more than once: a `finally`/recompose path that
+  rebuilds the UI from scratch will silently discard any state set moments earlier unless that
+  state is threaded through `compose()` rather than assumed to survive it.
