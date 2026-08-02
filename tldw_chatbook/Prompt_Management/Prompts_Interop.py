@@ -207,6 +207,7 @@ def add_prompt(
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[Any] = None,
     artifact_type: Optional[str] = None,
+    serialize_create: bool = False,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """Adds or updates a prompt. See PromptsDatabase.add_prompt for details."""
     db = get_db_instance()
@@ -222,6 +223,7 @@ def add_prompt(
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
         artifact_type=artifact_type,
+        serialize_create=serialize_create,
     )
 
 
@@ -845,6 +847,7 @@ def _create_markdown_fallback_prompt(
                 prompt_schema_version=None,
                 prompt_definition=None,
                 artifact_type="prompt",
+                serialize_create=True,
             )
         except ConflictError:
             continue

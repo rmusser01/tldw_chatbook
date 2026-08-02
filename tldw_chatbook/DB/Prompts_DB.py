@@ -550,12 +550,13 @@ class PromptsDatabase:
 
     # --- Transaction Context ---
     @contextmanager
-    def transaction(self):
+    def transaction(self, immediate: bool = False):
+        """Run database work in a transaction, optionally reserving the writer slot."""
         conn = self.get_connection()
         in_outer = conn.in_transaction
         try:
             if not in_outer:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                 logging.debug("Started transaction.")
             yield conn  # yield connection
             if not in_outer:
@@ -1187,6 +1188,7 @@ class PromptsDatabase:
         prompt_schema_version: Optional[int] = None,
         prompt_definition: Optional[Any] = None,
         artifact_type: Optional[str] = None,
+        serialize_create: bool = False,
     ) -> Tuple[Optional[int], Optional[str], str]:
         start_time = time.time()
 
@@ -1209,7 +1211,7 @@ class PromptsDatabase:
         normalized_artifact_type = self._normalize_artifact_type(artifact_type)
 
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=serialize_create) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -1461,6 +1463,10 @@ class PromptsDatabase:
                 return prompt_id, prompt_uuid, msg
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            if self._is_busy_snapshot_error(e):
+                e = ConflictError(
+                    "Prompt creation lost a WAL snapshot race.", "Prompts", name
+                )
             # Log error metrics
             duration = time.time() - start_time
             error_type = (

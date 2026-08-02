@@ -336,6 +336,51 @@ class TestPromptOperations:
             first.close_connection()
             second.close_connection()
 
+    def test_busy_snapshot_during_create_is_reported_as_conflict(self, temp_db_path):
+        """A WAL snapshot race during create must not escape as a database error."""
+        first = PromptsDatabase(temp_db_path, client_id="writer-one")
+        second = PromptsDatabase(temp_db_path, client_id="writer-two")
+        try:
+            raced = False
+
+            def commit_second_writer_before_first_insert(statement):
+                nonlocal raced
+                if raced or not statement.startswith("INSERT INTO Prompts"):
+                    return
+                raced = True
+                second.add_prompt(
+                    name="WAL Create Race Prompt",
+                    author="Second writer",
+                    details="winning create",
+                    system_prompt="winner system",
+                    user_prompt="winner user",
+                )
+
+            first.get_connection().set_trace_callback(
+                commit_second_writer_before_first_insert
+            )
+            try:
+                with pytest.raises(ConflictError, match="snapshot race"):
+                    first.add_prompt(
+                        name="WAL Create Race Prompt",
+                        author="First writer",
+                        details="stale create",
+                        system_prompt="stale system",
+                        user_prompt="stale user",
+                    )
+            finally:
+                first.get_connection().set_trace_callback(None)
+
+            assert raced
+            stored = second.get_prompt_by_name("WAL Create Race Prompt")
+            assert stored["author"] == "Second writer"
+            assert stored["details"] == "winning create"
+            assert stored["system_prompt"] == "winner system"
+            assert stored["user_prompt"] == "winner user"
+        finally:
+            first.close_connection()
+            second.close_connection()
+
 
 class TestKeywordOperations:
     """Test keyword management."""

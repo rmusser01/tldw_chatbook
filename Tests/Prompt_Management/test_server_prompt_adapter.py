@@ -1,4 +1,6 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -15,6 +17,7 @@ from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     parse_yaml_prompts_from_content,
     shutdown_interop,
 )
+import tldw_chatbook.Prompt_Management.Prompts_Interop as prompts_interop
 from tldw_chatbook.DB.Prompts_DB import InputError
 from tldw_chatbook.Prompt_Management.server_prompt_adapter import (
     local_prompt_to_preview_payload,
@@ -325,3 +328,64 @@ def test_repeated_markdown_fallback_collisions_allocate_distinct_legacy_names(tm
     assert fetch_prompt_details(second["prompt_uuid"], include_deleted=True)["name"] == (
         "Repeated Collision (3)"
     )
+
+
+def test_concurrent_markdown_fallback_collisions_allocate_distinct_legacy_names(
+    tmp_path, monkeypatch
+):
+    """Concurrent structured fallbacks allocate separate legacy names."""
+    shutdown_interop()
+    initialize_interop(tmp_path / "concurrent-prompts.db", client_id="test-client")
+    _, existing_uuid, _ = add_prompt(
+        name="Concurrent Collision",
+        author=None,
+        details=None,
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {"id": "user", "blocks": []},
+            ],
+        },
+        artifact_type="prompt",
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "concurrent-collision.md"
+    import_path.write_text(
+        "### TITLE ###\nConcurrent Collision\n### SYSTEM ###\ncompiled system\n"
+        "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
+        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        encoding="utf-8",
+    )
+
+    same_candidate_started = threading.Barrier(2)
+    original_add_prompt = prompts_interop.add_prompt
+
+    def synchronize_same_candidate(*args, **kwargs):
+        if kwargs["name"] == "Concurrent Collision (2)":
+            same_candidate_started.wait(timeout=5)
+        return original_add_prompt(*args, **kwargs)
+
+    monkeypatch.setattr(prompts_interop, "add_prompt", synchronize_same_candidate)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda _: import_prompts_from_files(
+                    import_path, base_directory=str(tmp_path)
+                )[0],
+                range(2),
+            )
+        )
+
+    assert [result["status"] for result in results] == ["success", "success"]
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    imported_names = {
+        fetch_prompt_details(result["prompt_uuid"], include_deleted=True)["name"]
+        for result in results
+    }
+    assert imported_names == {"Concurrent Collision (2)", "Concurrent Collision (3)"}
