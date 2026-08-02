@@ -2479,3 +2479,62 @@ def test_persist_session_if_needed_no_warning_when_nothing_held_and_no_db_seam()
         loguru_logger.remove(sink_id)
 
     assert not any("scope" in message.lower() for message in messages), messages
+
+
+@pytest.mark.unit
+def test_tool_markers_survive_the_next_message():
+    """TASK-1842: a follow-up message must not erase the agent's tool trace.
+
+    TOOL markers are deliberately NOT tree nodes -- a marker becoming a
+    parent would corrupt the chain for the next real message (see the
+    invariant comment in `append_message`). But they were only ever appended
+    to `_messages_by_session`, and `_recompute_active_path` is the SINGLE
+    writer of that view and rebuilds it from tree nodes alone. So every
+    marker was erased by the next ordinary message.
+
+    A user reported tool output appearing then vanishing, replaced by
+    `[failed]`. The two are independent: the trace is lost whether or not the
+    run fails. Tools are how an agent reaches the outside world, so the
+    transcript is the user's only in-context record of what left the machine.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(title="tool trace")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ read_file → data"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.TOOL, content="⚙ search → 3 hits"
+    )
+
+    def markers():
+        return [
+            m.content
+            for m in store.messages_for_session(session.id)
+            if m.role is ConsoleMessageRole.TOOL
+        ]
+
+    assert len(markers()) == 2, "precondition: both markers present during the run"
+
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="follow-up"
+    )
+    assert markers() == ["⚙ read_file → data", "⚙ search → 3 hits"], (
+        "the follow-up message erased the tool trace"
+    )
+
+    # They must sit AFTER the assistant turn they belong to, not float to the
+    # end -- otherwise the transcript reads as though the tools ran later.
+    contents = [m.content for m in store.messages_for_session(session.id)]
+    assert contents.index("⚙ read_file → data") > contents.index("a")
+    assert contents.index("⚙ read_file → data") < contents.index("follow-up")
+
+    # And the invariant they exist to protect must still hold: a marker must
+    # never become a tree node or the active leaf.
+    assert store._active_leaf_by_session[session.id] is not None
+    leaf = store._nodes_by_session[session.id][
+        store._active_leaf_by_session[session.id]
+    ]
+    assert leaf.role is not ConsoleMessageRole.TOOL

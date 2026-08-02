@@ -376,6 +376,16 @@ class ConsoleChatStore:
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
         #: every other reader/writer of the tree goes through the maps below.
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
+        #: TASK-1842: display-only TOOL markers, each paired with the id of the
+        #: node it followed. Kept OUTSIDE the tree on purpose -- a marker that
+        #: became a node would corrupt the parent chain (see the invariant in
+        #: `append_message`) -- but kept somewhere durable so
+        #: `_recompute_active_path`, the single writer of the view above, can
+        #: splice them back instead of erasing an agent's whole tool trace on
+        #: the user's next message.
+        self._tool_markers_by_session: dict[
+            str, list[tuple[str | None, ConsoleChatMessage]]
+        ] = {}
         self._message_session_index: dict[str, str] = {}
         #: Full conversation tree -- ALL branches, on- and off-path. ``_nodes``
         #: maps a native id to the LIVE ``ConsoleChatMessage`` (never a copy --
@@ -611,12 +621,26 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         nodes = self._nodes_by_session.get(session_id, {})
         overlay: list[ConsoleChatMessage] = []
+        # TASK-1842: re-register resumed markers against the node they follow.
+        # Resume re-derives them from AgentRunsDB (`inject_resume_agent_markers`)
+        # and lands here, which writes the view DIRECTLY -- bypassing
+        # `append_message`. Without this, a resumed session's trace survived
+        # exactly until the first `_recompute_active_path`, which is the same
+        # data loss by a different door. Reset first so a re-resume cannot
+        # stack a second copy of the same DB-derived markers.
+        self._tool_markers_by_session[session_id] = []
+        last_node_id: str | None = None
         for message in messages:
             if message.role is ConsoleMessageRole.TOOL:
                 self._message_session_index.setdefault(message.id, session_id)
+                self._tool_markers_by_session[session_id].append(
+                    (last_node_id, message)
+                )
                 overlay.append(message)
             else:
-                overlay.append(nodes.get(message.id, message))
+                resolved = nodes.get(message.id, message)
+                last_node_id = resolved.id
+                overlay.append(resolved)
         self._messages_by_session[session_id] = overlay
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
@@ -1055,7 +1079,18 @@ class ConsoleChatStore:
             # NEVER become a tree node, the active leaf, or a parent -- otherwise
             # the next real message would parent at a marker and corrupt the
             # chain even in linear agent chats. Returns without persisting.
+            #
+            # TASK-1842: the view alone is not enough. `_recompute_active_path`
+            # is the SINGLE writer of `_messages_by_session` and rebuilds it
+            # from tree nodes only, so a marker appended here was erased by the
+            # very next ordinary message -- the user watched an agent's tool
+            # trace vanish. Anchor it to the node it followed so the rebuild can
+            # splice it back at the right place, WITHOUT it ever becoming a node.
             self._message_session_index[message.id] = session_id
+            anchor = self._active_leaf_by_session.get(session_id)
+            self._tool_markers_by_session.setdefault(session_id, []).append(
+                (anchor, message)
+            )
             self._messages_by_session[session_id].append(message)
             return self._snapshot(message)
         old_leaf = self._active_leaf_by_session[session_id]
@@ -3473,7 +3508,45 @@ class ConsoleChatStore:
                 siblings.index(native_id) if native_id in siblings else 0
             )
             path.append(node)
-        self._messages_by_session[session_id] = path
+        self._messages_by_session[session_id] = self._with_tool_markers(
+            session_id, path
+        )
+
+    def _with_tool_markers(
+        self, session_id: str, path: list[ConsoleChatMessage]
+    ) -> list[ConsoleChatMessage]:
+        """Splice this session's TOOL markers back into a rebuilt path view.
+
+        TASK-1842. Markers are display-only and never tree nodes, so the
+        node walk in `_recompute_active_path` cannot see them. Each marker
+        remembers the node it followed; it is re-inserted directly after that
+        node so the trace reads in the order the agent produced it.
+
+        A marker whose anchor is NOT on the current path is dropped, which is
+        the correct behavior rather than a gap: the anchor is off-path
+        because the user switched branches (regenerate / edit-and-resend), and
+        those tool calls belong to the branch they were made on.
+
+        Args:
+            session_id: Session whose view is being rebuilt.
+            path: The freshly walked node path, root -> leaf.
+
+        Returns:
+            The path with markers interleaved.
+        """
+        markers = self._tool_markers_by_session.get(session_id)
+        if not markers:
+            return path
+        by_anchor: dict[str | None, list[ConsoleChatMessage]] = {}
+        for anchor, marker in markers:
+            by_anchor.setdefault(anchor, []).append(marker)
+        merged: list[ConsoleChatMessage] = []
+        # Markers recorded before any node existed (anchor None) lead the view.
+        merged.extend(by_anchor.get(None, ()))
+        for node in path:
+            merged.append(node)
+            merged.extend(by_anchor.get(node.id, ()))
+        return merged
 
     def _subtree_ids(self, session_id: str, root_id: str) -> list[str]:
         """Return ``root_id`` plus all its descendant native ids (pre-order)."""

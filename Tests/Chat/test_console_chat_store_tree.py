@@ -68,11 +68,21 @@ def test_tool_marker_is_display_only():
     nxt = store.append_message(sid, role=ConsoleMessageRole.USER, content="q2")
     assert store._native_parent_by_message[nxt.id] == a.id
     assert store.active_path_message_ids(sid) == [u.id, a.id, nxt.id]
-    # recompute rebuilds the view from real tree nodes only -> marker dropped
-    # (accepted Phase A limitation)
-    assert "⚙ tool → ok" not in [
-        m.content for m in store.messages_for_session(sid)
-    ]
+    # TASK-1842: the marker SURVIVES the recompute now. It is still not a tree
+    # node (asserted above) -- it is anchored to the node it followed and
+    # spliced back by `_with_tool_markers`. This assertion previously pinned
+    # the opposite ("marker dropped -- accepted Phase A limitation"); that
+    # limitation was the data loss a user reported as tool output appearing
+    # and then vanishing, so the contract is deliberately inverted here.
+    view_after = [m.content for m in store.messages_for_session(sid)]
+    assert view_after == ["q", "a", "⚙ tool → ok", "q2"], (
+        "the tool trace must survive the next message, in its original position"
+    )
+    # ...and the invariant it was protecting still holds: the marker never
+    # became a node, a parent, or the leaf.
+    assert marker.id not in store._nodes_by_session[sid]
+    assert marker.id not in store._native_parent_by_message
+    assert store.active_leaf(sid) == nxt.id
 
 
 def test_siblings_tracked_after_fork_via_active_leaf_rewind():
