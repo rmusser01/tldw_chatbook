@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import io
+import os
 import struct
 import unicodedata
 from pathlib import Path
@@ -244,6 +245,11 @@ def _gguf_header(*, tensors: int = 0, metadata: int = 0) -> bytes:
 
 def _architecture_metadata() -> MetadataFixture:
     return MetadataFixture("general.architecture", STRING, "whisper")
+
+
+def _supported_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gguf.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(gguf.platform, "machine", lambda: "arm64")
 
 
 class _GuardedReadHandle(io.BytesIO):
@@ -1070,6 +1076,311 @@ def test_normalize_platform_target_rejects_unsupported_pair(
 ):
     with pytest.raises(gguf.GGUFPlatformError, match="unavailable"):
         gguf.normalize_platform_target(system, machine)
+
+
+def test_validate_local_gguf_returns_path_private_admission_with_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    model_path = tmp_path / "chosen.gguf"
+    payload = make_gguf(architecture="whisper", name="Whisper Small")
+    model_path.write_bytes(payload)
+    expected = os.lstat(model_path)
+
+    result = gguf.validate_local_gguf(model_path)
+
+    assert result.path == model_path.absolute()
+    assert result.metadata.architecture == "whisper"
+    assert result.source_identity.device == expected.st_dev
+    assert result.source_identity.inode == expected.st_ino
+    assert result.source_identity.mode == expected.st_mode
+    assert result.source_identity.size_bytes == len(payload)
+    assert result.source_identity.modified_ns == expected.st_mtime_ns
+    assert result.source_identity.changed_ns == expected.st_ctime_ns
+    assert result.platform_target == ("darwin", "arm64")
+    assert str(model_path) not in repr(result)
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "symlink"])
+def test_validate_local_gguf_rejects_non_regular_sources_without_path_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+):
+    _supported_runtime(monkeypatch)
+    secret_path = tmp_path / "private-model.gguf"
+    if kind == "directory":
+        secret_path.mkdir()
+    elif kind == "symlink":
+        target = tmp_path / "target.gguf"
+        target.write_bytes(make_gguf())
+        try:
+            secret_path.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+
+    with pytest.raises(gguf.GGUFPathError) as raised:
+        gguf.validate_local_gguf(secret_path)
+
+    assert str(secret_path) not in str(raised.value)
+    assert str(secret_path) not in repr(raised.value)
+
+
+def test_validate_local_gguf_uses_project_validator_without_resolving_final_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    model_path = tmp_path / "chosen.gguf"
+    model_path.write_bytes(make_gguf())
+    observed: dict[str, object] = {}
+
+    def validate(
+        value: str | Path,
+        require_exists: bool | None = None,
+        *,
+        probe_existing: bool | None = None,
+    ) -> Path:
+        observed.update(
+            value=value,
+            require_exists=require_exists,
+            probe_existing=probe_existing,
+        )
+        return Path(value)
+
+    monkeypatch.setattr(gguf, "validate_path_simple", validate, raising=False)
+
+    gguf.validate_local_gguf(model_path)
+
+    assert observed == {
+        "value": model_path,
+        "require_exists": False,
+        "probe_existing": False,
+    }
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO creation is unavailable")
+def test_validate_local_gguf_rejects_fifo_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "private-model.gguf"
+    os.mkfifo(selected)
+
+    def unexpected_open(path: str | Path, flags: int) -> int:
+        raise AssertionError("os.open must not be called for an irregular source")
+
+    monkeypatch.setattr(gguf.os, "open", unexpected_open)
+
+    with pytest.raises(gguf.GGUFPathError):
+        gguf.validate_local_gguf(selected)
+
+
+def test_validate_local_gguf_accepts_case_insensitive_extension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.GGUF"
+    selected.write_bytes(make_gguf())
+
+    result = gguf.validate_local_gguf(selected)
+
+    assert result.path == selected.absolute()
+
+
+def test_validate_local_gguf_rejects_nonterminal_extension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf.tmp"
+    selected.write_bytes(make_gguf())
+
+    with pytest.raises(gguf.GGUFPathError):
+        gguf.validate_local_gguf(selected)
+
+
+def test_validate_local_gguf_redacts_project_validator_value_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "private-model.gguf"
+    raw_message = f"validator exposed {selected}"
+
+    def reject(*args: object, **kwargs: object) -> Path:
+        raise ValueError(raw_message)
+
+    monkeypatch.setattr(gguf, "validate_path_simple", reject, raising=False)
+
+    with pytest.raises(gguf.GGUFPathError) as raised:
+        gguf.validate_local_gguf(selected)
+
+    assert str(selected) not in str(raised.value)
+    assert str(selected) not in repr(raised.value)
+    assert raw_message not in str(raised.value)
+    assert raised.value.__suppress_context__
+
+
+def test_validate_local_gguf_rejects_replacement_between_lstat_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    replacement = tmp_path / "replacement.gguf"
+    selected.write_bytes(make_gguf(architecture="whisper"))
+    replacement.write_bytes(make_gguf(architecture="parakeet"))
+    real_open = gguf.os.open
+    opened: list[int] = []
+
+    def replace_then_open(path: str | Path, flags: int) -> int:
+        replacement.replace(selected)
+        descriptor = real_open(path, flags)
+        opened.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(gguf.os, "open", replace_then_open)
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        gguf.validate_local_gguf(selected)
+
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+
+
+def test_validate_local_gguf_inspects_same_open_descriptor_and_closes_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    selected.write_bytes(make_gguf())
+    real_open = gguf.os.open
+    real_inspect = gguf.inspect_gguf
+    opened: list[int] = []
+    inspected: list[int] = []
+
+    def capture_open(path: str | Path, flags: int) -> int:
+        descriptor = real_open(path, flags)
+        opened.append(descriptor)
+        return descriptor
+
+    def inspect(handle: object, *, file_size: int) -> gguf.GGUFMetadata:
+        descriptor = handle.fileno()
+        inspected.append(descriptor)
+        assert os.fstat(descriptor).st_size == file_size
+        return real_inspect(handle, file_size=file_size)
+
+    monkeypatch.setattr(gguf.os, "open", capture_open)
+    monkeypatch.setattr(gguf, "inspect_gguf", inspect)
+
+    gguf.validate_local_gguf(selected)
+
+    assert inspected == opened
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+
+
+def test_validate_local_gguf_rechecks_name_when_nofollow_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    backing = tmp_path / "backing.gguf"
+    selected.write_bytes(make_gguf())
+    real_open = gguf.os.open
+    real_flags = gguf._read_only_no_follow_flags()
+    opened: list[int] = []
+
+    def flags_without_nofollow() -> int:
+        return real_flags & ~getattr(os, "O_NOFOLLOW", 0)
+
+    def replace_with_same_inode_symlink(path: str | Path, flags: int) -> int:
+        selected.replace(backing)
+        try:
+            selected.symlink_to(backing)
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+        descriptor = real_open(path, flags)
+        opened.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(gguf, "_read_only_no_follow_flags", flags_without_nofollow)
+    monkeypatch.setattr(gguf.os, "open", replace_with_same_inode_symlink)
+
+    with pytest.raises(gguf.GGUFPathError):
+        gguf.validate_local_gguf(selected)
+
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+
+
+def test_validate_local_gguf_source_change_wins_when_inspection_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    selected.write_bytes(make_gguf())
+    real_fstat = gguf.os.fstat
+    calls = 0
+    inspected: list[int] = []
+
+    def changing_fstat(descriptor: int):
+        nonlocal calls
+        calls += 1
+        info = real_fstat(descriptor)
+        if calls < 2:
+            return info
+        values = list(info)
+        values[6] = info.st_size + 1
+        return os.stat_result(values)
+
+    def malformed(handle: object, *, file_size: int) -> gguf.GGUFMetadata:
+        inspected.append(handle.fileno())
+        raise gguf.GGUFParseError("malformed test fixture")
+
+    monkeypatch.setattr(gguf.os, "fstat", changing_fstat)
+    monkeypatch.setattr(gguf, "inspect_gguf", malformed)
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        gguf.validate_local_gguf(selected)
+
+    assert len(inspected) == 1
+    with pytest.raises(OSError):
+        real_fstat(inspected[0])
+
+
+def test_validate_local_gguf_preserves_parser_error_and_closes_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _supported_runtime(monkeypatch)
+    selected = tmp_path / "chosen.gguf"
+    selected.write_bytes(make_gguf())
+    parser_error = gguf.GGUFParseError("malformed test fixture")
+    inspected: list[int] = []
+
+    def malformed(handle: object, *, file_size: int) -> gguf.GGUFMetadata:
+        inspected.append(handle.fileno())
+        raise parser_error
+
+    monkeypatch.setattr(gguf, "inspect_gguf", malformed)
+
+    with pytest.raises(gguf.GGUFParseError) as raised:
+        gguf.validate_local_gguf(selected)
+
+    assert raised.value is parser_error
+    assert len(inspected) == 1
+    with pytest.raises(OSError):
+        os.fstat(inspected[0])
 
 
 def test_admission_import_boundary_allows_only_parser_dependencies():

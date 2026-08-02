@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import platform
+import stat
 import struct
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, BinaryIO
+
+from ..Utils.path_validation import validate_path_simple
 
 
 GGUF_VERSION = 3
@@ -126,6 +132,26 @@ class GGUFPlatformError(GGUFCompatibilityError):
     """Raised when the pinned runtime has no wheel for a platform target."""
 
 
+class GGUFPathError(GGUFError):
+    """Raised when the selected local GGUF cannot be opened safely."""
+
+
+class GGUFSourceChangedError(GGUFPathError):
+    """Raised when the selected source changes during one admission."""
+
+
+@dataclass(frozen=True)
+class GGUFSourceIdentity:
+    """Filesystem identity observed from the admitted open descriptor."""
+
+    device: int
+    inode: int
+    mode: int
+    size_bytes: int
+    modified_ns: int
+    changed_ns: int
+
+
 @dataclass(frozen=True)
 class GGUFMetadata:
     """Bounded metadata retained from a GGUF header."""
@@ -135,6 +161,16 @@ class GGUFMetadata:
     model_name: str | None
     file_type: int | None
     data_offset: int
+
+
+@dataclass(frozen=True)
+class LocalGGUFAdmission:
+    """Bounded result for one explicitly selected local GGUF."""
+
+    path: Path = field(repr=False)
+    metadata: GGUFMetadata
+    source_identity: GGUFSourceIdentity
+    platform_target: tuple[str, str]
 
 
 @dataclass
@@ -476,4 +512,135 @@ def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:
         model_name=_optional_display(retained, "general.name"),
         file_type=file_type,
         data_offset=data_offset,
+    )
+
+
+def _source_identity(info: os.stat_result) -> GGUFSourceIdentity:
+    return GGUFSourceIdentity(
+        device=info.st_dev,
+        inode=info.st_ino,
+        mode=info.st_mode,
+        size_bytes=info.st_size,
+        modified_ns=info.st_mtime_ns,
+        changed_ns=info.st_ctime_ns,
+    )
+
+
+def _read_only_no_follow_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
+
+def validate_local_gguf(path: str | Path) -> LocalGGUFAdmission:
+    """Safely inspect one explicit local GGUF through a single descriptor."""
+    try:
+        validated_path = validate_path_simple(
+            path,
+            require_exists=False,
+            probe_existing=False,
+        )
+    except ValueError:
+        raise GGUFPathError("Selected local GGUF path is invalid") from None
+
+    try:
+        selected_path = Path(validated_path).absolute()
+    except OSError:
+        raise GGUFPathError("Selected local GGUF path is invalid") from None
+
+    if selected_path.suffix.casefold() != ".gguf":
+        raise GGUFPathError("Selected local file must have a .gguf extension")
+
+    try:
+        initial_info = os.lstat(selected_path)
+    except OSError:
+        raise GGUFPathError("Selected local GGUF is unavailable") from None
+    initial_identity = _source_identity(initial_info)
+    if stat.S_ISLNK(initial_identity.mode) or not stat.S_ISREG(initial_identity.mode):
+        raise GGUFPathError("Selected local GGUF is not a regular file")
+
+    try:
+        descriptor = os.open(selected_path, _read_only_no_follow_flags())
+    except OSError:
+        raise GGUFPathError("Selected local GGUF could not be opened safely") from None
+
+    try:
+        try:
+            handle = os.fdopen(descriptor, "rb", closefd=False)
+        except OSError:
+            raise GGUFPathError(
+                "Selected local GGUF could not be opened safely"
+            ) from None
+
+        with handle:
+            try:
+                opened_info = os.fstat(descriptor)
+            except OSError:
+                raise GGUFPathError(
+                    "Selected local GGUF identity could not be verified"
+                ) from None
+            opened_identity = _source_identity(opened_info)
+            if not stat.S_ISREG(opened_identity.mode):
+                raise GGUFPathError("Selected local GGUF is not a regular file")
+            if initial_identity != opened_identity:
+                raise GGUFSourceChangedError(
+                    "Selected local GGUF changed during validation"
+                )
+
+            try:
+                named_info = os.lstat(selected_path)
+            except OSError:
+                raise GGUFPathError(
+                    "Selected local GGUF identity could not be verified"
+                ) from None
+            named_identity = _source_identity(named_info)
+            if stat.S_ISLNK(named_identity.mode) or not stat.S_ISREG(
+                named_identity.mode
+            ):
+                raise GGUFPathError("Selected local GGUF is not a regular file")
+            if named_identity != opened_identity:
+                raise GGUFSourceChangedError(
+                    "Selected local GGUF changed during validation"
+                )
+
+            try:
+                try:
+                    metadata = inspect_gguf(
+                        handle,
+                        file_size=opened_identity.size_bytes,
+                    )
+                finally:
+                    try:
+                        final_identity = _source_identity(os.fstat(descriptor))
+                    except OSError:
+                        raise GGUFPathError(
+                            "Selected local GGUF identity could not be verified"
+                        ) from None
+                    if final_identity != opened_identity:
+                        raise GGUFSourceChangedError(
+                            "Selected local GGUF changed during validation"
+                        )
+            except OSError:
+                raise GGUFPathError(
+                    "Selected local GGUF could not be inspected safely"
+                ) from None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+    platform_target = normalize_platform_target(
+        platform.system(),
+        platform.machine(),
+    )
+    return LocalGGUFAdmission(
+        path=selected_path,
+        metadata=metadata,
+        source_identity=opened_identity,
+        platform_target=platform_target,
     )
