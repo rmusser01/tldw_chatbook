@@ -586,11 +586,13 @@ class SpeechCatalogMixin:
                 "TTS voice discovery failed ({})",
                 type(error).__name__,
             )
-            self._discovered_voices[(provider_id, model_id)] = ()
-            self._pending_voice_selections.pop(provider_id, None)
-            self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
-                SERVER_DEFAULT_VOICE_ID
-            )
+            failed_snapshot = self._control_snapshot_for(provider_id)
+            failed_voice = failed_snapshot.get("voice_id")
+            self._discovered_voices.pop((provider_id, model_id), None)
+            if isinstance(failed_voice, str):
+                self._pending_voice_selections[provider_id] = failed_voice
+            else:
+                self._pending_voice_selections.pop(provider_id, None)
             catalog = self._catalogs.get(provider_id)
             preset = self._profile_preset
             if (
@@ -609,7 +611,11 @@ class SpeechCatalogMixin:
                     )
             else:
                 self._set_provider_status(
-                    "Voices are unavailable; the provider default remains available"
+                    "Voices are unavailable; the exact selection remains unverified"
+                    if isinstance(failed_voice, str)
+                    else (
+                        "Voices are unavailable; the provider default remains available"
+                    )
                 )
             return
 
@@ -617,7 +623,13 @@ class SpeechCatalogMixin:
             self._finish_voice_status(request_token, unavailable=False)
             self._clear_profile_voice_validation(request_token)
             return
-        self._discovered_voices[(provider_id, model_id)] = tuple(voices)
+        voice_unverified = bool(
+            observation is not None and observation.state != "complete"
+        )
+        if voice_unverified:
+            self._discovered_voices.pop((provider_id, model_id), None)
+        else:
+            self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
         preset = self._profile_preset
         if preset is not None and preset.provider_id == provider_id:
@@ -644,8 +656,15 @@ class SpeechCatalogMixin:
             self._apply_catalog(provider_id, catalog)
         self._finish_voice_status(
             request_token,
-            unavailable=(observation is not None and observation.state != "complete"),
+            unavailable=voice_unverified,
         )
+        if voice_unverified and preset is None:
+            selected_voice = self._current_select_value("#tts-voice-select")
+            self._set_provider_status(
+                "Voices are unavailable; the exact selection remains unverified"
+                if isinstance(selected_voice, str)
+                else "Voices are unavailable; the provider default remains available"
+            )
         self._clear_profile_voice_validation(request_token)
 
     def _finish_voice_status(
@@ -1034,11 +1053,19 @@ class SpeechCatalogMixin:
         if not options:
             select.set_options([(empty_label, UNAVAILABLE_SELECT_VALUE)])
             select.value = UNAVAILABLE_SELECT_VALUE
+            # ``set_options`` may keep the same value, in which case Textual
+            # does not rerun Select's watcher and its closed prompt keeps the
+            # previous label. Force that repaint without emitting a synthetic
+            # user selection event.
+            with select.prevent(Select.Changed):
+                select.mutate_reactive(Select.value)
             select.disabled = True
             return
         select.set_options(self._safe_select_options(options))
         select.disabled = False
         select.value = selected or options[0][1]
+        with select.prevent(Select.Changed):
+            select.mutate_reactive(Select.value)
 
     def _control_snapshot_for(self, provider_id: str) -> dict[str, Any]:
         if getattr(self, "_displayed_provider_id", None) == provider_id:
@@ -1354,13 +1381,24 @@ class SpeechCatalogMixin:
                     if isinstance(event.value, (str, SelectSentinel))
                     else None
                 )
+                if (
+                    event.value is SERVER_DEFAULT_VOICE_ID
+                    and self._selected_provider_id is not None
+                ):
+                    self._pending_voice_selections.pop(
+                        self._selected_provider_id,
+                        None,
+                    )
             else:
                 self._applied_format = (
                     event.value if isinstance(event.value, str) else None
                 )
             if self._selected_provider_id is not None:
                 self._remember_current_controls(self._selected_provider_id)
-            if preset_ended:
+            if preset_ended or (
+                event.select.id == "tts-voice-select"
+                and self._selected_provider_id == AUDIO_CPP_PROVIDER_ID
+            ):
                 self._reproject_current_catalog()
             else:
                 self._sync_generate_enabled()

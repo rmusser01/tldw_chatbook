@@ -191,8 +191,9 @@ async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> Non
         assert playground.current_audio_file == artifact.path
         assert playground.query_one("#audio-play-btn", Button).disabled is False
         assert playground.query_one("#audio-export-btn", Button).disabled is False
-        assert "ready to play" in str(
-            playground.query_one("#audio-player-status", Static).renderable
+        assert (
+            str(playground.query_one("#audio-player-status", Static).renderable)
+            == "Ready · WAV"
         )
 
 

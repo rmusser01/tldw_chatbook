@@ -31,7 +31,7 @@ _SELECTION_FIELDS = (
     "speed",
 )
 _TOP_LEVEL_FIELDS = frozenset(
-    {"schema_version", "revision", "selection", "provider_options"}
+    {"schema_version", "revision", "auto_play", "selection", "provider_options"}
 )
 
 STUDIO_TTS_PROVIDER_OPTION_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
@@ -237,6 +237,7 @@ class StudioTTSPreferencesSnapshot:
 
     schema_version: int = STUDIO_TTS_SCHEMA_VERSION
     revision: int = 0
+    auto_play: bool = False
     selection: StudioTTSSelectionOverrides = field(
         default_factory=StudioTTSSelectionOverrides
     )
@@ -249,6 +250,8 @@ class StudioTTSPreferencesSnapshot:
             raise ValueError("Studio TTS schema version is unsupported")
         if type(self.revision) is not int or self.revision < 0:
             raise ValueError("Studio TTS revision must be nonnegative")
+        if type(self.auto_play) is not bool:
+            raise TypeError("Studio TTS auto-play must be a boolean")
         if type(self.selection) is not StudioTTSSelectionOverrides:
             raise TypeError("Studio TTS selection is invalid")
         frozen = _freeze_provider_options(self.provider_options)
@@ -265,6 +268,8 @@ class StudioTTSPreferencesSnapshot:
             "schema_version": STUDIO_TTS_SCHEMA_VERSION,
             "revision": revision,
         }
+        if self.auto_play:
+            section["auto_play"] = True
         selection = self.selection.to_mapping()
         if selection:
             section["selection"] = selection
@@ -417,8 +422,15 @@ def _parse_studio_section(raw: object) -> StudioTTSLoadResult:
             _record_issue(issues, "speech_studio.unknown_field")
     selection = _parse_selection(raw.get("selection"), issues)
     provider_options = _parse_provider_options(raw.get("provider_options"), issues)
+    raw_auto_play = raw.get("auto_play", False)
+    if type(raw_auto_play) is bool:
+        auto_play = raw_auto_play
+    else:
+        _record_issue(issues, "speech_studio.auto_play")
+        auto_play = False
     snapshot = StudioTTSPreferencesSnapshot(
         revision=revision,
+        auto_play=auto_play,
         selection=selection,
         provider_options=provider_options,
     )

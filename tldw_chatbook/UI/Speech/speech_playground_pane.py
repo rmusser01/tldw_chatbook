@@ -69,7 +69,6 @@ from .speech_profile_mixin import (
 )
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
-from .speech_result_history import SpeechResultHistory, SpeechTake
 from .speech_runtime_status import (
     SpeechTTSRuntimeStatusStore,
     newest_speech_tts_status,
@@ -120,13 +119,18 @@ PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
         id="tts-generate-btn",
         label="Generate",
-        tooltip="Synthesize the text",
         primary=True,
     ),
     WorkbenchAction(
-        id="tts-random-text-btn", label="Random", tooltip="Insert sample text"
+        id="tts-random-text-btn",
+        label="Sample text",
+        tooltip="Insert sample text (Ctrl+R)",
     ),
-    WorkbenchAction(id="tts-clear-text-btn", label="Clear", tooltip="Clear the text"),
+    WorkbenchAction(
+        id="tts-clear-text-btn",
+        label="Clear text",
+        tooltip="Clear the text (Ctrl+L)",
+    ),
     WorkbenchAction(
         id="tts-test-connection-btn",
         label="Test",
@@ -147,10 +151,31 @@ PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
 #: Playback actions, kept beside the result rather than mixed into the strip
 #: that acts on the text.
 PLAYER_ACTIONS: tuple[WorkbenchAction, ...] = (
-    WorkbenchAction(id="audio-play-btn", label="Play", tooltip="Play"),
-    WorkbenchAction(id="pause-audio-btn", label="Pause", tooltip="Pause"),
-    WorkbenchAction(id="stop-audio-btn", label="Stop", tooltip="Stop"),
-    WorkbenchAction(id="audio-export-btn", label="Export", tooltip="Save the audio"),
+    WorkbenchAction(
+        id="audio-play-btn",
+        label="Play",
+        tooltip="Play the current result (Ctrl+P)",
+        disabled=True,
+        primary=True,
+    ),
+    WorkbenchAction(
+        id="pause-audio-btn",
+        label="Pause",
+        tooltip="Pause or resume playback",
+        disabled=True,
+    ),
+    WorkbenchAction(
+        id="stop-audio-btn",
+        label="Stop",
+        tooltip="Stop playback (Ctrl+S)",
+        disabled=True,
+    ),
+    WorkbenchAction(
+        id="audio-export-btn",
+        label="Export",
+        tooltip="Keep a copy of the current result",
+        disabled=True,
+    ),
 )
 
 
@@ -202,7 +227,7 @@ class SpeechPlaygroundPane(
     #: have noticed: the methods were all still there and still callable.
     BINDINGS = [
         Binding("ctrl+g", "generate_tts", "Generate Speech"),
-        Binding("ctrl+r", "random_text", "Random Text"),
+        Binding("ctrl+r", "random_text", "Sample Text"),
         Binding("ctrl+l", "clear_text", "Clear Text"),
         Binding("ctrl+p", "play_audio", "Play Audio"),
         Binding("ctrl+s", "stop_audio", "Stop Audio"),
@@ -215,7 +240,6 @@ class SpeechPlaygroundPane(
         profile_preset: Any = None,
         axis_values: dict[str, str] | None = None,
         axis_defaults: dict[str, str] | None = None,
-        takes: Any = None,
         capability_line: str = "",
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
         global_preferences: TTSPreferencesSnapshot | None = None,
@@ -231,7 +255,6 @@ class SpeechPlaygroundPane(
             provider: Selected provider; decides the parameter group.
             axis_values: Effective value per comparison axis.
             axis_defaults: Persisted default per axis, for override marking.
-            takes: Takes generated this session.
             capability_line: One-line local-speech status.
             kwargs: Forwarded to ``Vertical``.
         """
@@ -247,8 +270,6 @@ class SpeechPlaygroundPane(
         self.axis_defaults: dict[str, str] = dict(axis_defaults or {})
         #: Selected provider, which decides the parameter group's contents.
         self.provider = provider
-        #: Takes generated this session.
-        self.takes: list[SpeechTake] = list(takes or ())
         #: One-line capability status, sourced from lab_speech_status by the
         #: screen rather than re-derived here.
         self.capability_line = capability_line
@@ -669,7 +690,7 @@ class SpeechPlaygroundPane(
         if not self.is_mounted:
             return
         try:
-            anchor = self.query_one("#speech-log-group")
+            anchor = self.query_one("#speech-connection-details")
             text_pane = self.query_one("#speech-text-pane")
         except NoMatches:
             return
@@ -682,7 +703,7 @@ class SpeechPlaygroundPane(
                     values=self._saved_studio_param_values(self.provider),
                     id="speech-param-group",
                 ),
-                after=anchor,
+                before=anchor,
             )
         if not self.query(".speech-source-row"):
             for widget in self._compose_voice_source():
@@ -717,11 +738,16 @@ class SpeechPlaygroundPane(
         Args:
             provider: The provider whose catalog is being applied.
         """
-        if provider == "kokoro":
-            return
         try:
             select = self.query_one("#tts-language-select", Select)
+            cell = self.query_one("#speech-axis-cell-tts-language-select")
         except NoMatches:
+            return
+        applicable = provider == "kokoro"
+        cell.set_class(not applicable, "hidden")
+        cell.display = applicable
+        if applicable:
+            select.disabled = False
             return
         label = AXIS_EMPTY_PROMPTS["tts-language-select"]
         select.set_options([(label, UNAVAILABLE_SELECT_VALUE)])
@@ -1117,6 +1143,7 @@ class SpeechPlaygroundPane(
         """
         self._sync_split_layout()
         self._refresh_provider_ids()
+        self._settle_language_axis(self.provider)
         self._rehydrate_handler_state()
         self._sync_truthful_status_rows()
         # dev's mount sequence for the profile preset, kept in order: a pane
@@ -1186,7 +1213,7 @@ class SpeechPlaygroundPane(
             chips, the Text/Result split, the collapsed provider parameters
             and the capability line.
         """
-        yield Static("🎤 TTS Playground", classes="speech-pane-title")
+        yield Static("TTS Playground", classes="speech-pane-title", markup=False)
         # dev's profile-preview status line and save action. Both start
         # hidden and are revealed by `SpeechProfileMixin`, which queries
         # them by these exact ids -- so the rebuild mounts them unchanged.
@@ -1230,10 +1257,16 @@ class SpeechPlaygroundPane(
                 yield from self._compose_voice_source()
 
             with Vertical(id="speech-result-pane", classes="speech-split-pane"):
-                yield SpeechResultHistory(takes=self.takes, id="speech-result-history")
                 yield from self._compose_player()
 
         yield from self._compose_generation_status()
+
+        yield Static(
+            "Loading TTS providers…",
+            id="tts-provider-status",
+            classes="speech-readiness-line",
+            markup=False,
+        )
 
         yield SpeechParamGroup(
             provider=self.provider,
@@ -1241,35 +1274,8 @@ class SpeechPlaygroundPane(
             id="speech-param-group",
         )
 
-        yield Static(
-            self.capability_line,
-            id="speech-capability-line",
-            classes="speech-status-line",
-            markup=False,
-        )
-        # Both carry their legacy copy. The shared catalog code only toggles
-        # these lines' visibility -- the text itself lived in the legacy
-        # compose(), so mounting them empty left a blank status line and a
-        # restriction notice that never said anything.
-        yield Static(
-            "Loading TTS providers…",
-            id="tts-provider-status",
-            classes="speech-status-line",
-            markup=False,
-        )
-        for row in self._truthful_status_rows():
-            yield Static(
-                row.copy,
-                id=f"speech-status-{row.row_id}",
-                classes="speech-status-line",
-                markup=False,
-            )
-        yield Static(
-            "audio.cpp returns one complete WAV and currently uses speed 1.0.",
-            id="tts-audio-cpp-restrictions",
-            classes="speech-status-line hidden",
-            markup=False,
-        )
+        yield self._compose_connection_details()
+        yield self._compose_generation_log()
 
     def _compose_voice_source(self) -> ComposeResult:
         """Yield the clip picker for providers that synthesize from one.
@@ -1351,13 +1357,23 @@ class SpeechPlaygroundPane(
             transport actions.
         """
         with Vertical(id="audio-player-container", classes="speech-player"):
+            yield Static("Current result", classes="speech-section-head", markup=False)
             yield Static(
-                "Nothing loaded",
+                "No audio generated yet",
                 id="audio-player-status",
                 classes="speech-player-status",
                 markup=False,
             )
-            with Horizontal(classes="speech-player-transport"):
+            yield Static(
+                "Generate speech to create a temporary result.",
+                id="audio-result-lifecycle",
+                classes="speech-result-lifecycle",
+                markup=False,
+            )
+            with Horizontal(
+                id="audio-player-transport",
+                classes="speech-player-transport hidden",
+            ):
                 # `total` and `hidden` both matter. Without `total` a
                 # ProgressBar renders its indeterminate pulse, so an idle
                 # screen animates two bars forever; without `hidden` it is
@@ -1371,9 +1387,9 @@ class SpeechPlaygroundPane(
                     classes="audio-progress hidden",
                 )
                 yield Static(
-                    "0:00 / 0:00",
+                    "",
                     id="audio-time-display",
-                    classes="speech-player-time",
+                    classes="speech-player-time hidden",
                     markup=False,
                 )
             yield SpeechActionStrip(PLAYER_ACTIONS, id="speech-result-actions")
@@ -1386,13 +1402,10 @@ class SpeechPlaygroundPane(
             )
 
     def _compose_generation_status(self) -> ComposeResult:
-        """Yield the generation status line, progress, and the log.
-
-        The log is collapsed: it is diagnostic, and the defect this rebuild
-        exists to fix was rows spent on things nobody reads by default.
+        """Yield the generation status line and progress.
 
         Returns:
-            A ``ComposeResult`` yielding the status container and the log.
+            A ``ComposeResult`` yielding the status container.
         """
         # Hidden until a generation starts, as legacy was: otherwise the
         # placeholder ETA (`--% --:--:--`) sits on an idle screen.
@@ -1413,7 +1426,46 @@ class SpeechPlaygroundPane(
                 show_percentage=True,
             )
 
-        yield Collapsible(
+    def _compose_connection_details(self) -> Collapsible:
+        """Build secondary runtime and dependency facts behind disclosure."""
+
+        details: list[Static] = [
+            Static(
+                self.capability_line,
+                id="speech-capability-line",
+                classes="speech-detail-line",
+                markup=False,
+            )
+        ]
+        details.extend(
+            Static(
+                row.copy,
+                id=f"speech-status-{row.row_id}",
+                classes="speech-detail-line",
+                markup=False,
+            )
+            for row in self._truthful_status_rows()
+        )
+        details.append(
+            Static(
+                "audio.cpp returns one complete WAV and currently uses speed 1.0.",
+                id="tts-audio-cpp-restrictions",
+                classes="speech-detail-line hidden",
+                markup=False,
+            )
+        )
+        return Collapsible(
+            *details,
+            title="Connection details",
+            id="speech-connection-details",
+            collapsed=True,
+        )
+
+    @staticmethod
+    def _compose_generation_log() -> Collapsible:
+        """Build the diagnostic generation log as a collapsed disclosure."""
+
+        return Collapsible(
             RichLog(id="tts-generation-log", classes="speech-log", markup=False),
             title="Generation log",
             id="speech-log-group",

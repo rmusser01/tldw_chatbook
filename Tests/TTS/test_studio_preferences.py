@@ -229,6 +229,51 @@ def test_absent_section_loads_sparse_inheritance_without_writing(
     assert config_path.read_bytes() == original
 
 
+def test_auto_play_defaults_off_and_true_round_trips_sparsely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, config_path = _store(tmp_path, monkeypatch, {"global": {"keep": True}})
+    initial = store.load().snapshot
+
+    assert initial.auto_play is False
+
+    saved = store.save(replace(initial, auto_play=True))
+
+    assert saved.status is StudioTTSWriteStatus.SAVED
+    assert saved.snapshot is not None
+    assert saved.snapshot.auto_play is True
+    assert store.load().snapshot.auto_play is True
+    assert _saved_config(config_path)["speech_studio"] == {
+        "schema_version": STUDIO_TTS_SCHEMA_VERSION,
+        "revision": 1,
+        "auto_play": True,
+    }
+
+
+def test_invalid_auto_play_recovers_to_off_with_bounded_issue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _ = _store(
+        tmp_path,
+        monkeypatch,
+        {
+            "speech_studio": {
+                "schema_version": STUDIO_TTS_SCHEMA_VERSION,
+                "revision": 3,
+                "auto_play": "yes",
+            }
+        },
+    )
+
+    loaded = store.load()
+
+    assert loaded.state is StudioTTSLoadState.RECOVERED
+    assert loaded.snapshot.auto_play is False
+    assert loaded.issues == ("speech_studio.auto_play",)
+
+
 def test_sparse_round_trip_and_provider_isolation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -300,6 +345,7 @@ def test_reset_to_global_deletes_all_overrides_but_keeps_envelope(
         initial,
         selection=_selection(provider_id="alltalk", voice_id="custom.wav"),
         provider_options={"chatterbox": {"exaggeration": 0.8}},
+        auto_play=True,
     )
     saved = store.save(candidate).snapshot
     assert saved is not None
@@ -310,6 +356,7 @@ def test_reset_to_global_deletes_all_overrides_but_keeps_envelope(
     assert reset.snapshot is not None
     assert reset.snapshot.selection == StudioTTSSelectionOverrides()
     assert reset.snapshot.provider_options == {}
+    assert reset.snapshot.auto_play is False
     assert _saved_config(config_path)["speech_studio"] == {
         "schema_version": STUDIO_TTS_SCHEMA_VERSION,
         "revision": 2,

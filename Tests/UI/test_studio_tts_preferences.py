@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSWriteStatus,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.STTS_Window import STTSWindow
 from tldw_chatbook.UI.Speech.speech_settings_pane import (
     SpeechSettingsPane,
     StudioPreferencesSaved,
@@ -96,6 +97,7 @@ class _Host(App[None]):
         self.navigation: list[NavigateToScreen] = []
         self.global_saves: list[STTSSettingsSaveEvent] = []
         self.studio_snapshots: list[StudioTTSPreferencesSnapshot] = []
+        self.studio_messages: list[StudioPreferencesSaved] = []
         self.notices: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -109,6 +111,7 @@ class _Host(App[None]):
             self.global_saves.append(message)
             return True
         if isinstance(message, StudioPreferencesSaved):
+            self.studio_messages.append(message)
             self.studio_snapshots.append(message.snapshot)
             return True
         return super().post_message(message)
@@ -311,6 +314,50 @@ async def test_revert_and_reset_restore_only_the_studio_scope() -> None:
 
     assert store.reset == [saved]
     assert not app.global_saves
+
+
+@pytest.mark.asyncio
+async def test_reset_to_global_discards_the_bounded_playground_draft() -> None:
+    """A reset must not leave stale exact axes ahead of inherited globals."""
+
+    saved = StudioTTSPreferencesSnapshot(
+        revision=7,
+        selection=StudioTTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="supertonic-3",
+            voice_mode="exact",
+            voice_id="F1",
+        ),
+    )
+    store = _Store(saved)
+    pane = _pane(store)
+    app = _Host(pane)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        assert await pane.reset_to_global()
+
+    reset_message = app.studio_messages[-1]
+    assert reset_message.reset_to_global is True
+
+    window = STTSWindow(
+        None,
+        playground_axis_values={
+            "tts-provider-select": "audio_cpp",
+            "tts-model-select": "supertonic-3",
+            "tts-voice-select": "F1",
+            "tts-format-select": "wav",
+            "tts-speed-input": "1.0",
+        },
+    )
+    window.on_studio_preferences_saved(reset_message)
+
+    assert window._playground_axis_values == {}
+    assert window._studio_load_result is not None
+    assert window._studio_load_result.snapshot.selection == (
+        StudioTTSSelectionOverrides()
+    )
 
 
 @pytest.mark.asyncio

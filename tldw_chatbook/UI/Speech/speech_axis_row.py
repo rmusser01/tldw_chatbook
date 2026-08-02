@@ -252,7 +252,10 @@ class SpeechAxisRow(Grid):
         """Yield a labelled, editable control per axis, marking overrides."""
         for axis in AXIS_CONTROLS:
             override = self.is_override(axis)
-            with Horizontal(classes="speech-axis-cell"):
+            with Horizontal(
+                id=f"speech-axis-cell-{axis}",
+                classes="speech-axis-cell",
+            ):
                 label = Static(
                     AXIS_LABELS[axis] + (OVERRIDE_MARKER if override else ""),
                     id=axis_chip_id(axis),

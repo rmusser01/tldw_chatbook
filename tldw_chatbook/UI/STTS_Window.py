@@ -2118,11 +2118,13 @@ class TTSPlaygroundWidget(Widget):
                 "TTS voice discovery failed ({})",
                 type(error).__name__,
             )
-            self._discovered_voices[(provider_id, model_id)] = ()
-            self._pending_voice_selections.pop(provider_id, None)
-            self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
-                SERVER_DEFAULT_VOICE_ID
-            )
+            failed_snapshot = self._control_snapshot_for(provider_id)
+            failed_voice = failed_snapshot.get("voice_id")
+            self._discovered_voices.pop((provider_id, model_id), None)
+            if isinstance(failed_voice, str):
+                self._pending_voice_selections[provider_id] = failed_voice
+            else:
+                self._pending_voice_selections.pop(provider_id, None)
             catalog = self._catalogs.get(provider_id)
             preset = self._profile_preset
             if (
@@ -2141,14 +2143,24 @@ class TTSPlaygroundWidget(Widget):
                     )
             else:
                 self._set_provider_status(
-                    "Voices are unavailable; the provider default remains available"
+                    "Voices are unavailable; the exact selection remains unverified"
+                    if isinstance(failed_voice, str)
+                    else (
+                        "Voices are unavailable; the provider default remains available"
+                    )
                 )
             return
 
         if not self._voice_token_is_current(request_token):
             self._clear_profile_voice_validation(request_token)
             return
-        self._discovered_voices[(provider_id, model_id)] = tuple(voices)
+        voice_unverified = bool(
+            observation is not None and observation.state != "complete"
+        )
+        if voice_unverified:
+            self._discovered_voices.pop((provider_id, model_id), None)
+        else:
+            self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
         preset = self._profile_preset
         if preset is not None and preset.provider_id == provider_id:
@@ -2173,6 +2185,13 @@ class TTSPlaygroundWidget(Widget):
                 )
         if catalog is not None:
             self._apply_catalog(provider_id, catalog)
+        if voice_unverified and preset is None:
+            selected_voice = self._current_select_value("#tts-voice-select")
+            self._set_provider_status(
+                "Voices are unavailable; the exact selection remains unverified"
+                if isinstance(selected_voice, str)
+                else "Voices are unavailable; the provider default remains available"
+            )
         self._clear_profile_voice_validation(request_token)
 
     def _clear_profile_voice_validation(
@@ -2550,11 +2569,19 @@ class TTSPlaygroundWidget(Widget):
         if not options:
             select.set_options([(empty_label, UNAVAILABLE_SELECT_VALUE)])
             select.value = UNAVAILABLE_SELECT_VALUE
+            # ``set_options`` may keep the same value, in which case Textual
+            # does not rerun Select's watcher and its closed prompt keeps the
+            # previous label. Force that repaint without emitting a synthetic
+            # user selection event.
+            with select.prevent(Select.Changed):
+                select.mutate_reactive(Select.value)
             select.disabled = True
             return
         select.set_options(self._safe_select_options(options))
         select.disabled = False
         select.value = selected or options[0][1]
+        with select.prevent(Select.Changed):
+            select.mutate_reactive(Select.value)
 
     def _control_snapshot_for(self, provider_id: str) -> dict[str, Any]:
         if getattr(self, "_displayed_provider_id", None) == provider_id:
@@ -4822,6 +4849,11 @@ class STTSWindow(Container):
             message.snapshot,
             StudioTTSLoadState.LOADED,
         )
+        if message.reset_to_global:
+            # Reset removes the Studio preference layer, so an exact axis that
+            # was merely seeded from that layer must not survive as a bounded
+            # Playground draft and continue outranking the inherited global.
+            self._playground_axis_values.clear()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""

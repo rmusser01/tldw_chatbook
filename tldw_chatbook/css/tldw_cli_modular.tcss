@@ -18357,6 +18357,19 @@ KeptBriefingsModal {
     color: $ds-status-warning;
 }
 
+.speech-readiness-line {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-info;
+}
+
+.speech-detail-line {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
 /* Textual's Button carries a default min-width, so the shared
  * `.workbench-action { width: auto }` alone still spread six actions across
  * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
@@ -18549,29 +18562,6 @@ KeptBriefingsModal {
     border: none;
 }
 
-/* Take rows: summary left, per-row actions right, one row each. Per-row
- * controls are what make comparison possible -- a single player bound to the
- * latest take would force a re-generate to hear an earlier option again. */
-.speech-take-row {
-    height: 1;
-    min-height: 1;
-}
-
-.speech-take-summary {
-    width: 1fr;
-    height: 1;
-}
-
-.speech-take-action {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    border: none;
-    padding: 0 1;
-    margin-left: 1;
-}
-
 /* The axes reflow onto a second line rather than truncating. Six chips need
  * more than the ~81 cells the Lab body gives at 120 columns -- "Format" was
  * being cut to "Format: un" and "Speed" fell off the edge. These are the
@@ -18652,18 +18642,28 @@ Input.speech-axis-control {
 
 /* --- Speech: player, generation status, clip source ------------------- */
 
-/* The player sits under the take list and must not steal its rows: the
-   history is what the user compares, the transport is how they audition
-   one. */
+/* The result is one current artifact. It owns enough intrinsic height for its
+ * summary, lifecycle copy, and always-visible actions. */
 .speech-player {
     height: auto;
     padding: 0 1;
-    border-top: solid #2c313a;
+    border-top: solid $ds-grid-line;
+}
+
+#audio-player-container > .speech-section-head {
+    margin-top: 0;
 }
 
 .speech-player-status {
     height: 1;
-    color: $text-muted;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.speech-result-lifecycle {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
 }
 
 .speech-player-transport {
@@ -18680,6 +18680,35 @@ Input.speech-axis-control {
     min-width: 12;
     content-align: right middle;
     color: $text-muted;
+}
+
+/* Generic Collapsible styling elsewhere is a three-row form header. Speech's
+ * diagnostics and tuning disclosures are compact workbench rows. */
+#speech-param-group,
+#speech-connection-details,
+#speech-log-group {
+    height: auto;
+    min-height: 1;
+    padding: 0;
+    margin-bottom: 0;
+    border: none;
+    background: transparent;
+}
+
+#speech-param-group > CollapsibleTitle,
+#speech-connection-details > CollapsibleTitle,
+#speech-log-group > CollapsibleTitle {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#speech-param-group > Contents,
+#speech-connection-details > Contents,
+#speech-log-group > Contents {
+    height: auto;
 }
 
 /* One row: what is happening, and how far along. */

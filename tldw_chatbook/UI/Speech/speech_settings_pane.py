@@ -20,7 +20,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, Switch
 
 from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
@@ -113,11 +113,19 @@ LeaveChoice = Literal["save", "discard", "cancel"]
 class StudioPreferencesSaved(Message):
     """Report a newly persisted Studio snapshot to the owning Lab window."""
 
-    def __init__(self, snapshot: StudioTTSPreferencesSnapshot) -> None:
+    def __init__(
+        self,
+        snapshot: StudioTTSPreferencesSnapshot,
+        *,
+        reset_to_global: bool = False,
+    ) -> None:
         super().__init__()
         if type(snapshot) is not StudioTTSPreferencesSnapshot:
             raise TypeError("Studio preferences message requires an exact snapshot")
+        if type(reset_to_global) is not bool:
+            raise TypeError("reset_to_global must be a bool")
         self.snapshot = snapshot
+        self.reset_to_global = reset_to_global
 
 
 class StudioTTSLeaveModal(ModalScreen[LeaveChoice]):
@@ -170,7 +178,7 @@ class StudioTTSLeaveModal(ModalScreen[LeaveChoice]):
 
 def _field_row(
     label: str,
-    control: Input | Select,
+    control: Input | Select | Switch,
     *,
     source_id: str,
     error_id: str,
@@ -420,6 +428,17 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 source_id="studio-tts-speed-source",
                 error_id="studio-tts-speed-error",
             )
+            yield Static("Playback", classes="speech-section-head", markup=False)
+            yield _field_row(
+                "Play generated audio automatically",
+                Switch(
+                    id="studio-tts-auto-play",
+                    classes="speech-setting-control",
+                    value=False,
+                ),
+                source_id="studio-tts-auto-play-state",
+                error_id="studio-tts-auto-play-error",
+            )
 
             with Vertical(id="studio-tts-chatterbox-options", classes="hidden"):
                 yield Static("Chatterbox request tuning", classes="speech-section-head")
@@ -561,6 +580,8 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 field = "format"
             elif ".speed" in issue:
                 field = "speed"
+            elif issue.endswith(".auto_play"):
+                field = "auto-play"
             else:
                 field = "provider"
             self._set_error(field, "Ignored unsupported saved Studio value")
@@ -592,8 +613,10 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         self._applying_controls = True
         try:
             self.query_one("#studio-tts-provider", Select).value = provider_value
+            self.query_one("#studio-tts-auto-play", Switch).value = snapshot.auto_play
             self._active_provider_value = provider_value
             self._populate_provider_controls(provider_value, snapshot)
+            self._sync_auto_play_copy()
         finally:
             self._applying_controls = False
         self._adoption_pending = False
@@ -844,6 +867,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             ("voice-id", "studio-tts-voice-id"),
             ("format", "studio-tts-format"),
             ("speed", "studio-tts-speed"),
+            ("auto-play", "studio-tts-auto-play"),
             ("exaggeration", "chatterbox-exaggeration-input"),
             ("cfg-weight", "chatterbox-cfg-weight-input"),
         ):
@@ -962,6 +986,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         try:
             return StudioTTSPreferencesSnapshot(
                 revision=self._saved_snapshot.revision,
+                auto_play=self.query_one("#studio-tts-auto-play", Switch).value,
                 selection=StudioTTSSelectionOverrides(
                     provider_id=provider_id,
                     model_mode=model_mode,
@@ -1016,6 +1041,26 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         }:
             self._sync_source_copy()
             self._sync_dirty_state()
+
+    @on(Switch.Changed, "#studio-tts-auto-play")
+    def _auto_play_changed(self, event: Switch.Changed) -> None:
+        """Update consequence copy and dirty state for the Studio-only toggle."""
+
+        if self._applying_controls:
+            return
+        self._sync_auto_play_copy()
+        self._sync_dirty_state()
+
+    def _sync_auto_play_copy(self) -> None:
+        """State the toggle consequence without implying a global default."""
+
+        enabled = self.query_one("#studio-tts-auto-play", Switch).value
+        copy = (
+            "On — auto-plays completed Studio results (Studio only)"
+            if enabled
+            else "Off — waits for Play after generation (Studio only)"
+        )
+        self.query_one("#studio-tts-auto-play-state", Static).update(copy)
 
     @on(Select.Changed)
     def _select_changed(self, event: Select.Changed) -> None:
@@ -1107,7 +1152,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         ):
             self.query_one(f"#{button_id}", Button).disabled = busy
         for control in self.query(".speech-setting-control"):
-            if isinstance(control, (Input, Select)):
+            if isinstance(control, (Input, Select, Switch)):
                 control.disabled = busy
         if not busy:
             provider_id = self._effective_provider()
@@ -1273,7 +1318,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             "Studio overrides removed; values now inherit Global defaults.",
             severity="information",
         )
-        self.post_message(StudioPreferencesSaved(result.snapshot))
+        self.post_message(StudioPreferencesSaved(result.snapshot, reset_to_global=True))
         return True
 
     async def _ask_leave_choice(self) -> LeaveChoice:

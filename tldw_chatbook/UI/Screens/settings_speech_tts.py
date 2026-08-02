@@ -487,8 +487,14 @@ def _first_local_credential(
     locations: tuple[tuple[str, str], ...],
 ) -> object | None:
     """Return the first configured local credential across canonical/legacy paths."""
-    raw = _raw_settings(settings)
-    for source in (raw, settings):
+    persisted = settings.get("COMPREHENSIVE_CONFIG_RAW")
+    # When the raw persisted mapping is available it is the only authority for
+    # whether a local secret exists. Normalized compatibility projections may
+    # contain an environment-resolved credential and must not turn that value
+    # back into a fictitious saved fallback. Plain mappings without the raw
+    # envelope remain supported for focused callers and tests.
+    sources = (persisted,) if isinstance(persisted, Mapping) else (settings,)
+    for source in sources:
         for section_name, key in locations:
             section = source.get(section_name)
             if not isinstance(section, Mapping):
@@ -503,8 +509,6 @@ def _first_local_credential(
                 value = section.get(key)
                 if isinstance(value, str) and value:
                     return value
-        if source is settings:
-            break
     return None
 
 

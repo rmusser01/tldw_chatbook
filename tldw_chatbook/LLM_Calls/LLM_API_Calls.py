@@ -24,6 +24,7 @@
 # Import necessary libraries
 import json
 import time
+from collections.abc import Mapping
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -542,7 +543,21 @@ def chat_with_openai(
         custom_prompt_arg: Legacy, largely ignored.
     """
     loaded_config_data = load_settings()
-    openai_config = loaded_config_data.get("openai_api", {})
+    legacy_openai_config = loaded_config_data.get("openai_api", {})
+    api_settings = loaded_config_data.get("api_settings", {})
+    canonical_openai_config = (
+        api_settings.get("openai", {}) if isinstance(api_settings, Mapping) else {}
+    )
+    openai_config = (
+        dict(legacy_openai_config) if isinstance(legacy_openai_config, Mapping) else {}
+    )
+    if isinstance(canonical_openai_config, Mapping):
+        openai_config.update(canonical_openai_config)
+    if not openai_config.get("api_key") and isinstance(legacy_openai_config, Mapping):
+        # The legacy projection resolves environment-backed credentials.
+        # Keep that resolved value when the canonical table intentionally
+        # stores only api_key_env_var or an empty local fallback.
+        openai_config["api_key"] = legacy_openai_config.get("api_key")
 
     final_api_key = api_key or openai_config.get("api_key")
     if not final_api_key:

@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select
+from textual.widgets import Button, Select, Static, Switch
 
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
@@ -30,11 +30,18 @@ _BUNDLE = (
 class _Harness(App[None]):
     CSS_PATH = _BUNDLE
 
+    def __init__(
+        self,
+        snapshot: StudioTTSPreferencesSnapshot | None = None,
+    ) -> None:
+        super().__init__()
+        self._snapshot = snapshot or StudioTTSPreferencesSnapshot()
+
     def compose(self) -> ComposeResult:
         yield SpeechSettingsPane(
             global_preferences=TTSPreferencesSnapshot.from_settings({}),
             load_result=StudioTTSLoadResult(
-                StudioTTSPreferencesSnapshot(),
+                self._snapshot,
                 StudioTTSLoadState.LOADED,
             ),
             id="speech-settings-pane",
@@ -92,6 +99,31 @@ async def test_only_selected_request_scoped_provider_tuning_is_shown() -> None:
         assert chatterbox.has_class("hidden")
         assert app.query_one("#studio-tts-format", Select).disabled
         assert app.query_one("#studio-tts-speed").disabled
+
+
+@pytest.mark.asyncio
+async def test_auto_play_is_an_explicit_studio_only_preference() -> None:
+    app = _Harness(StudioTTSPreferencesSnapshot(auto_play=True))
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechSettingsPane)
+        auto_play = app.query_one("#studio-tts-auto-play", Switch)
+        state = app.query_one("#studio-tts-auto-play-state", Static)
+
+        assert auto_play.value is True
+        assert "On" in str(state.renderable)
+        assert "only" in str(state.renderable).casefold()
+        assert pane.is_dirty is False
+
+        auto_play.value = False
+        await pilot.pause()
+
+        assert pane.is_dirty is True
+        assert "Off" in str(state.renderable)
+        candidate = pane._collect_candidate(show_errors=True)
+        assert candidate is not None
+        assert candidate.auto_play is False
 
 
 @pytest.mark.asyncio

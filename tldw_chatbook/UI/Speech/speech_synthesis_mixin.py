@@ -430,6 +430,8 @@ class SpeechSynthesisMixin:
             ),
         )
         self._generation_operation_id = request.operation_id
+        self._profile_save_suppressed = True
+        self._sync_save_profile_action()
         self.app.post_message(STTSPlaygroundGenerateEvent(request))
 
     def action_generate_tts(self) -> None:

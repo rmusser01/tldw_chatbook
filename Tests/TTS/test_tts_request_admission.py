@@ -2638,6 +2638,7 @@ async def test_supported_studio_options_reach_the_legacy_request(
     )
     saved = StudioTTSPreferencesSnapshot(
         revision=2,
+        auto_play=True,
         provider_options={"chatterbox": {"exaggeration": 0.8, "cfg_weight": 0.3}},
     )
     draft = TTSStudioDraftSelection(

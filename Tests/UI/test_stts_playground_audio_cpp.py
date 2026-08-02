@@ -1019,8 +1019,11 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         await service.voice_started.wait()
         await pilot.pause()
 
-        assert _option_values(voice_select) == (SERVER_DEFAULT_VOICE_ID,)
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
+        assert _option_values(voice_select) == (
+            SERVER_DEFAULT_VOICE_ID,
+            "[voice]",
+        )
+        assert voice_select.value == "[voice]"
         assert app.notices == notices_before
         assert app.query_one("#tts-generate-btn", Button).disabled is True
 
@@ -1043,7 +1046,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
 
 
 @pytest.mark.asyncio
-async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed(
+async def test_catalog_revision_preserves_exact_voice_removed_by_refresh(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
     service = audio_cpp_playground
@@ -1070,18 +1073,14 @@ async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed
         service.allow_voices.set()
         await app.workers.wait_for_complete()
 
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
-        assert app.notices == [
-            *notices_before,
-            (
-                "Available models or voices changed; a valid selection was chosen",
-                "warning",
-            ),
-        ]
+        assert voice_select.value == "[voice]"
+        assert "[voice]" in _option_values(voice_select)
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert app.notices == notices_before
 
 
 @pytest.mark.asyncio
-async def test_voice_discovery_failure_releases_pending_explicit_voice(
+async def test_voice_discovery_failure_preserves_pending_explicit_voice(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
     service = audio_cpp_playground
@@ -1102,23 +1101,22 @@ async def test_voice_discovery_failure_releases_pending_explicit_voice(
         )
         await app.workers.wait_for_complete()
 
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
-        assert app.query_one("#tts-generate-btn", Button).disabled is False
+        assert voice_select.value == "[voice]"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
         assert (
             str(app.query_one("#tts-provider-status", Static).render())
-            == "Voices are unavailable; the provider default remains available"
+            == "Voices are unavailable; the exact selection remains unverified"
         )
 
         app.query_one(TTSPlaygroundWidget).action_generate_tts()
         await pilot.pause()
 
-        assert len(app.generation_events) == 1
-        assert app.generation_events[0].request.voice_id is None
+        assert app.generation_events == []
         assert "untrusted upstream detail" not in str(app.notices)
 
 
 @pytest.mark.asyncio
-async def test_voice_discovery_failure_overrides_configured_explicit_default(
+async def test_voice_discovery_failure_preserves_configured_explicit_default(
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1141,17 +1139,17 @@ async def test_voice_discovery_failure_overrides_configured_explicit_default(
         await pilot.pause()
 
         widget = app.query_one(TTSPlaygroundWidget)
-        assert app.query_one("#tts-voice-select", Select).value == (
-            SERVER_DEFAULT_VOICE_ID
+        assert app.query_one("#tts-voice-select", Select).value == "[voice]"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert (
+            str(app.query_one("#tts-provider-status", Static).render())
+            == "Voices are unavailable; the exact selection remains unverified"
         )
-        assert widget._pending_voice_selections == {}
-        assert app.query_one("#tts-generate-btn", Button).disabled is False
 
         widget.action_generate_tts()
         await pilot.pause()
 
-        assert len(app.generation_events) == 1
-        assert app.generation_events[0].request.voice_id is None
+        assert app.generation_events == []
         assert "untrusted upstream detail" not in str(app.notices)
 
 

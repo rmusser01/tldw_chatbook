@@ -22,6 +22,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
 )
+from tldw_chatbook import config as config_module
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -216,6 +217,106 @@ def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     assert summary.title == "Speech & TTS"
     assert "application-wide" in summary.description.lower()
     assert SettingsCategoryId.SPEECH_TTS in dict(screen._category_groups())["Core"]
+
+
+@pytest.mark.asyncio
+async def test_production_settings_actions_cross_the_pushed_screen_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings save and Lab actions must reach the production App."""
+
+    exact_settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "app_tts": {
+                "default_provider": "audio_cpp",
+                "default_model_mode": "exact",
+                "default_model": "supertonic-3",
+                "default_voice_mode": "exact",
+                "default_voice": "F1",
+                "default_format": "wav",
+                "default_speed": 1.0,
+            }
+        }
+    }
+    monkeypatch.setattr(
+        settings_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(0, exact_settings),
+    )
+    persisted: list[tuple[object, object]] = []
+
+    def apply_settings(sets, *, delete_keys):
+        persisted.append((sets, delete_keys))
+        return config_module.ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_settings,
+    )
+    app = _build_test_app(configured_default="settings")
+
+    async with app.run_test(size=(190, 55)) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError("production app did not mount Settings")
+        screen = app.screen
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-category-speech-tts",
+        )
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-tts-panel",
+            timeout=8.0,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        screen.query_one(
+            "#settings-speech-model-policy", Select
+        ).value = "first_available"
+        screen.query_one(
+            "#settings-speech-voice-policy", Select
+        ).value = "server_default"
+        await pilot.pause()
+
+        screen.query_one("#settings-save-category", Button).press()
+        for _ in range(300):
+            if persisted and panel._latest_request_id is None:
+                break
+            await pilot.pause(0.01)
+
+        assert persisted
+        assert panel._latest_request_id is None
+        sets, deletes = persisted[0]
+        assert sets["app_tts"]["default_model_mode"] == "first_available"
+        assert sets["app_tts"]["default_voice_mode"] == "server_default"
+        assert set(deletes["app_tts"]) == {"default_model", "default_voice"}
+
+        screen.query_one("#settings-speech-open-lab-bottom", Button).press()
+        for _ in range(300):
+            if getattr(app.screen, "screen_name", None) == "stts":
+                break
+            await pilot.pause(0.01)
+
+        assert getattr(app.screen, "screen_name", None) == "stts"
+        for _ in range(300):
+            navigating = [
+                worker
+                for worker in app.workers
+                if worker.group == "screen-navigation" and not worker.is_finished
+            ]
+            if not navigating:
+                break
+            await pilot.pause(0.01)
 
 
 @pytest.mark.parametrize(
@@ -1663,6 +1764,30 @@ async def test_environment_credential_is_read_only_and_editor_starts_empty() -> 
         assert editor.value == ""
         assert editor.password is True
         await pilot.press("escape")
+
+
+def test_environment_projected_credential_is_not_a_saved_local_fallback() -> None:
+    """Normalized environment aliases must not be treated as persisted secrets."""
+
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "api_settings": {
+                    "openai": {"api_key_env_var": "OPENAI_API_KEY"},
+                }
+            },
+            # ``config.load_settings`` publishes this compatibility projection
+            # after resolving the environment. It is effective runtime state,
+            # not evidence that a local credential exists on disk.
+            "openai_api": {"api_key": "synthetic-environment-value"},
+        },
+        environment={"OPENAI_API_KEY": "synthetic-environment-value"},
+    )
+
+    credential = state.credentials["openai"]
+    assert credential.source.value == "Environment"
+    assert credential.local_saved is False
+    assert credential.local_shadowed is False
 
 
 @pytest.mark.asyncio

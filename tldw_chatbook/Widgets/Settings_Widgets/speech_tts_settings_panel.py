@@ -1644,7 +1644,7 @@ class SpeechTTSSettingsPanel(Vertical):
             "Saving global Speech & TTS settings locally…",
             severity="information",
         )
-        self.post_message(
+        self.app.post_message(
             STTSSettingsSaveEvent(
                 proposal.settings,
                 delete_setting_keys=proposal.delete_setting_keys,
@@ -1687,7 +1687,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._set_result(
             f"Applying explicit {intent.value} credential operation locally…"
         )
-        self.post_message(
+        self.app.post_message(
             STTSSettingsSaveEvent(
                 settings,
                 delete_setting_keys=delete_keys,
@@ -2357,7 +2357,7 @@ class SpeechTTSSettingsPanel(Vertical):
             "view": "playground",
             **speech_tts_navigation_context(target),
         }
-        self.post_message(NavigateToScreen("stts", context))
+        self.app.post_message(NavigateToScreen("stts", context))
 
     @on(Button.Pressed, ".settings-speech-credential Button")
     def handle_credential_action(self, event: Button.Pressed) -> None:
