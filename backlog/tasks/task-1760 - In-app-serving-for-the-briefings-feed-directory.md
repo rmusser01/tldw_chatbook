@@ -1,7 +1,7 @@
 ---
 id: TASK-1760
 title: 'In-app serving for the briefings feed directory'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 20:05'
 labels:
