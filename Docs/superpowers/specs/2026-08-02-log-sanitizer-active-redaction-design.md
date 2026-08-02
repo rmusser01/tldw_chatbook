@@ -398,32 +398,19 @@ The subscription diagnostic change necessarily changes the reviewed
 `monitoring_engine.py` digest in
 `Docs/security/production-diagnostic-inventory.json`.
 
-The latest-dev baseline was checked explicitly at `db493a89d` and is already
-stale outside TASK-856:
+The latest-dev baseline was rechecked after its reviewed inventory refresh at
+`f5ca03d42`. The checker is green with 442 owner files, 1,089 TASK-492
+calls, 6,769 TASK-494 calls, and five sink files; all three inventory
+architecture tests pass. The checked and generated `monitoring_engine.py`
+entries are identical before this task: TASK-494, 16 calls, digest
+`5bd6f2dfc3a7c56e9aea`.
 
-- checked summary: 434 owner files, 1,073 TASK-492 calls, 6,684 TASK-494 calls,
-  and four sink files;
-- generated summary: 441 owner files, 1,088 TASK-492 calls, 6,746 TASK-494
-  calls, and four sink files;
-- eight owner paths exist only in generated output, one only in the checked
-  artifact, and 41 common owner entries differ; and
-- the checked and generated `monitoring_engine.py` entries are identical before
-  this task: TASK-494, 16 calls, digest `5bd6f2dfc3a7c56e9aea`.
-
-Consequently the unmodified checker and one of its three architecture tests
-fail on the base revision; the persistent-marker and chained-call tests pass.
-TASK-856 must not claim that global gate is green and must not absorb unrelated
-drift with a blanket `--write`.
-
-Instead, implementation captures generated base and head inventories in memory
-and proves that every entry except `monitoring_engine.py` is identical between
+Implementation captures generated base and head inventories in memory and
+proves that every entry except `monitoring_engine.py` is identical between
 them. The monitoring entry must retain its owner, reason, and 16-call count;
 only its digest may change. The checked JSON is patched only for that one digest
-so TASK-856 introduces no additional inventory mismatch. Closeout reruns the
-checker and architecture tests, records the same pre-existing failure, and
-requires the two unaffected architecture sentinels to remain green. This is a
-base-to-head no-regression proof, not a waiver or silent re-baseline of the
-repository-wide drift.
+rather than accepting unrelated changes through a blanket `--write`.
+Closeout requires the checker and all three architecture tests to remain green.
 
 ## Architecture decision record
 

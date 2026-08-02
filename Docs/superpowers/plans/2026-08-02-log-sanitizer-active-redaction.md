@@ -100,7 +100,15 @@ Expected monitoring entry on the currently approved base:
 {"call_count": 16, "diagnostic_digest": "5bd6f2dfc3a7c56e9aea", "owner": "TASK-494", "path": "tldw_chatbook/Subscriptions/monitoring_engine.py", "reason": "remaining Chatbook production diagnostic owner"}
 ```
 
-Record the printed non-monitoring SHA-256 in the plan execution notes. If latest `dev` changes the entry, reconcile it before proceeding.
+Expected non-monitoring SHA-256 at `f5ca03d42`:
+
+```text
+15f2e147c842ca5958ae14f53eeec3081966ba0ec8163f415088c02ad225d455
+```
+
+Record the actual output in the plan execution notes. If latest `dev` changes
+either value, reconcile it before proceeding rather than forcing the old
+baseline.
 
 - [ ] **Step 4: Move the existing sanitizer tests to their dedicated owner**
 
@@ -608,7 +616,7 @@ git diff -- Docs/security/production-diagnostic-inventory.json
 
 Expected: one digest line changes.
 
-- [ ] **Step 8: Re-run the known-red global inventory gate without misreporting it**
+- [ ] **Step 8: Run the complete diagnostic-inventory gate GREEN**
 
 Run:
 
@@ -616,7 +624,7 @@ Run:
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 ```
 
-Expected on the currently approved base: exit 1 with the same pre-existing global drift.
+Expected: exit 0 with the reviewed owner/sink summary.
 
 Run:
 
@@ -626,7 +634,7 @@ Run:
   -q
 ```
 
-Expected on the currently approved base: the inventory-equality test remains the one known failure; the persistent-metadata-marker and chained-logger-call sentinels pass. Record this as a base/head-equivalent limitation, not a task pass.
+Expected: all three architecture tests pass.
 
 - [ ] **Step 9: Commit the corrected consumers**
 
@@ -744,7 +752,7 @@ Use `superpowers:requesting-code-review` with TASK-856, ADR-029, the approved sp
 Update TASK-856 only after code and reviews are complete:
 
 - check all six acceptance criteria;
-- add concise `## Implementation Notes` covering the classifier/scanner, consumer boundary changes, installed-wheel proof, exact inventory limitation, changed files, and ADR-029;
+- add concise `## Implementation Notes` covering the classifier/scanner, consumer boundary changes, installed-wheel proof, one-digest inventory update, changed files, and ADR-029;
 - record every verification count and the known base/head-equivalent inventory failure;
 - change the design status to `Implemented and verified`;
 - check completed plan steps and document any deviation; and
@@ -770,4 +778,4 @@ git commit -m "docs(security): close TASK-856 sanitizer repair"
 
 - [ ] **Step 9: Run final verification after the closeout commit**
 
-Re-run the complete focused commands from Steps 1–5 plus the installed-wheel test. Confirm the worktree is clean, every implementation commit is based on the current `origin/dev`, and the only known red gate is identical to the recorded latest-dev diagnostic-inventory baseline. Do not describe that gate as passing.
+Re-run the complete focused commands from Steps 1–5 plus the installed-wheel test. Confirm the worktree is clean, every implementation commit is based on the current `origin/dev`, and every required gate is green.

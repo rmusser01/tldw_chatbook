@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-27 04:35'
-updated_date: '2026-08-02 23:50'
+updated_date: '2026-08-02 23:52'
 labels:
   - security
   - config
@@ -60,8 +60,8 @@ to log them.
 2. Move sanitizer tests to a dedicated module and use TDD to compose structured redaction from the canonical sensitive-config-key predicate plus exact log/protocol fields.
 3. Use TDD to replace regex-first assignment handling with the monotonic classify-first scanner and bounded standalone rules; extend the existing installed-wheel probe.
 4. Use direct production functions and the full production app to separate Ollama/Transformers display validation and omit the subscription URL at its diagnostic producer.
-5. Prove only monitoring_engine.py’s reviewed diagnostic digest changes relative to base; do not absorb the known unrelated global inventory drift.
-6. Run focused, production-app, subscription, installed-wheel, lint, format, syntax, hygiene, and independent-review gates; complete task notes and status only after verified closeout.
+5. Prove only monitoring_engine.py’s reviewed diagnostic digest changes relative to the green latest-dev inventory; do not use a blanket inventory rewrite.
+6. Run focused, production-app, subscription, installed-wheel, diagnostic-inventory, lint, format, syntax, hygiene, and independent-review gates; complete task notes and status only after verified closeout.
 
 ADR required: yes
 ADR path: backlog/decisions/029-local-private-data-boundary.md
