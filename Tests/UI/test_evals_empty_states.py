@@ -754,6 +754,176 @@ async def test_importing_a_file_that_cannot_be_read_notifies(
         assert evals_app.app_instance.notifications
 
 
+# ---------------------------------------------------------------------------
+# Whole-branch review Important 2: importing a probe set must never land on
+# the word-bench SnippetEditor -- its "Import…" control writes SNIPPET-
+# shaped samples into the selected dataset's own metadata, and a probe
+# set's `turns`-shaped samples raise on the resulting mixed list, breaking
+# every bench bound to it with no undo (see `ProbeSetDetail`'s own module
+# docstring in character_bench_editor.py for the full chain). These tests
+# drive the exact same import entry point
+# `test_importing_a_probe_file_creates_a_marked_probe_set` does, then
+# inspect what the SCREEN actually mounts for the resulting selection.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_importing_a_probe_file_selects_the_read_only_probe_set_detail(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    from tldw_chatbook.UI.Evals.character_bench_editor import ProbeSetDetail
+    from tldw_chatbook.UI.Evals.snippet_editor import SnippetEditor
+
+    probe_file = tmp_path / "starter.txt"
+    probe_file.write_text("What do you think about lying?\n---\nAnd to protect someone?")
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        rail._handle_probe_import_file_selected(probe_file)
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        assert screen._selection.kind == "dataset"
+        assert screen.query(ProbeSetDetail)
+        # The word-bench editor must never mount for this selection --
+        # this is the exact defect this fix round closes.
+        assert not screen.query(SnippetEditor)
+        assert not screen.query("#evals-import-snippets")
+
+
+@pytest.mark.asyncio
+async def test_the_probe_set_detail_renders_every_probe_read_only(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    probe_file = tmp_path / "starter.txt"
+    probe_file.write_text(
+        "What do you think about lying?\n---\nAnd to protect someone?\n===\n"
+        "Describe your earliest memory."
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        rail._handle_probe_import_file_selected(probe_file)
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        name_line = str(screen.query_one("#evals-probeset-detail-name").render())
+        assert "starter" in name_line
+        count_line = str(screen.query_one("#evals-probeset-detail-count").render())
+        assert "2 probes" in count_line
+        probes_line = str(screen.query_one("#evals-probeset-detail-probes").render())
+        assert "What do you think about lying?" in probes_line
+        assert "Describe your earliest memory." in probes_line
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_existing_probe_set_row_also_renders_the_detail_not_the_editor(
+    evals_app, evals_db: EvalsDB
+):
+    """Mirrors the import-flow test above, but drives a plain rail-row
+    click on an ALREADY-imported probe set (``EvalsScreen.select()``
+    directly, the same real routing seam an existing dataset row's click
+    handler uses) -- this fix must hold for every path that can select a
+    probe-set dataset, not only the one landed on right after import."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+    from tldw_chatbook.UI.Evals.character_bench_editor import ProbeSetDetail
+    from tldw_chatbook.UI.Evals.snippet_editor import SnippetEditor
+
+    probe_set_id = save_probe_set(
+        evals_db, "villain probes", ProbeSet(probes=(Probe(turns=("Hello.",)),))
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="dataset", id=probe_set_id)
+        await pilot.pause()
+
+        assert screen.query(ProbeSetDetail)
+        assert not screen.query(SnippetEditor)
+
+
+@pytest.mark.asyncio
+async def test_the_probe_set_detail_degrades_to_unavailable_for_a_corrupt_probe_set(
+    evals_app, evals_db: EvalsDB
+):
+    """Mirrors `CharacterBenchEditor`'s own "(probe set unavailable)"
+    degrade for a probe-set row whose stored samples do not parse -- fail
+    LOUDLY at the point of first use is this program's own convention
+    (see character_bench_editor.py's `_build_probe_set_section`
+    docstring), never a silent empty listing that reads as "genuinely no
+    probes"."""
+    from tldw_chatbook.Evals.character_probe.storage import PROBE_DATASET_TYPE
+
+    dataset_id = evals_db.create_dataset(
+        name="corrupt probes",
+        format="custom",
+        source_path="inline:corrupt",
+        metadata={"dataset_type": PROBE_DATASET_TYPE},
+    )
+    # No samples key written at all -- `_samples_to_probe_set` raises on
+    # this exact shape (see that function's own docstring).
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+
+        count_line = str(screen.query_one("#evals-probeset-detail-count").render())
+        assert "unavailable" in count_line
+        probes_line = str(screen.query_one("#evals-probeset-detail-probes").render())
+        assert "unavailable" in probes_line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 45), (235, 52)], ids=["160x45", "235x52"])
+async def test_the_probe_set_detail_stays_hit_testable_at_realistic_sizes(
+    evals_app, evals_db: EvalsDB, size
+):
+    """Painted geometry, not DOM presence, is the arbiter (this workbench's
+    own established convention -- see e.g. `test_dataset_action_buttons_
+    stay_hit_testable_with_import_probes_added`): each of `ProbeSetDetail`'s
+    three Statics must resolve via `Screen.get_widget_at` at its own region
+    center, at both the narrow (160x45) and wide (235x52) realistic
+    terminal sizes this workbench is verified against elsewhere. 20 probes
+    (well over the bounded listing's own `max-height: 6`) forces the SAME
+    nested-scroll shape `#evals-cb-probes` already proves elsewhere, one
+    level up in a bare probe-set detail instead of inside a bench editor."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    save_probe_set(
+        evals_db,
+        "geometry probes",
+        ProbeSet(probes=tuple(Probe(turns=(f"Probe {i}?",)) for i in range(20))),
+    )
+    probe_set_id = evals_db.list_datasets()[0]["id"]
+    async with evals_app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        screen.select(kind="dataset", id=probe_set_id)
+        await pilot.pause()
+
+        for widget_id in (
+            "#evals-probeset-detail-name",
+            "#evals-probeset-detail-count",
+            "#evals-probeset-detail-probes",
+        ):
+            widget = screen.query_one(widget_id)
+            widget.scroll_visible(animate=False)
+            await pilot.pause()
+            try:
+                hit, _ = screen.get_widget_at(*widget.region.center)
+            except Exception:  # NoWidget -- treated as "not reachable" below
+                hit = None
+            assert hit is widget, (
+                f"{widget_id} not hit-testable at {size} -- landed on "
+                f"{hit!r} instead"
+            )
+
+
 @pytest.mark.asyncio
 async def test_the_import_probes_button_is_present_in_the_dataset_actions(evals_app):
     async with evals_app.run_test(size=(160, 45)) as pilot:
@@ -1534,6 +1704,98 @@ async def test_new_bench_collapsing_the_benches_section_hides_it_too(
         await pilot.pause()
 
         assert button.region.width == 0
+
+
+# ---------------------------------------------------------------------------
+# Whole-branch review Important 3: "+ New bench" (the WORD-bench creation
+# affordance) must never bind to, or be enabled solely because of, a probe
+# set -- a probe set holds zero snippets a word bench could ever measure.
+# The reviewer's own reproduction: importing a probe set leaves it BOTH
+# selected and newest, so the very next "+ New bench" press used to create
+# a word bench pointed at a dataset with no real snippets.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_bench_button_stays_disabled_with_only_a_probe_set(
+    evals_app, evals_db: EvalsDB
+):
+    """Zero word-bench datasets, one probe set -- `has_dataset` must read
+    `word_bench_datasets()`, not `datasets()` (a probe set IS a dataset
+    row), so "+ New bench" stays disabled with its usual hint even though
+    `datasets()` itself is non-empty."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    save_probe_set(evals_db, "probes", ProbeSet(probes=(Probe(turns=("Hi",)),)))
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        button = screen.query_one("#evals-rail-new-bench")
+        assert button.disabled
+        hint = screen.query_one("#evals-rail-new-bench-hint")
+        assert "Create or import a dataset first." in str(hint.renderable)
+        # The character-bench affordance, meanwhile, is enabled -- this
+        # probe set is real and usable for THAT bench type.
+        assert not screen.query_one("#evals-rail-new-character-bench").disabled
+
+
+@pytest.mark.asyncio
+async def test_new_bench_never_binds_to_a_currently_selected_probe_set(
+    configured_app, evals_db: EvalsDB
+):
+    """A probe set is selected (exactly the state importing one leaves
+    the rail in) AND a real word-bench dataset also exists -- "+ New
+    bench" must skip the selected probe set and fall back to the word-
+    bench dataset, never create a bench bound to the probe set."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    word_dataset_id = evals_db.create_dataset(
+        name="real snippets", format="custom", source_path="inline:real"
+    )
+    probe_set_id = save_probe_set(
+        evals_db, "imported probes", ProbeSet(probes=(Probe(turns=("Hi",)),))
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="dataset", id=probe_set_id)
+        await pilot.pause()
+
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        benches = evals_db.list_tasks()
+        assert len(benches) == 1
+        assert benches[0]["dataset_id"] == word_dataset_id
+
+
+@pytest.mark.asyncio
+async def test_new_bench_with_only_probe_sets_stale_selection_is_refused_not_crashed(
+    configured_app, evals_db: EvalsDB
+):
+    """Defensive-only path (the button is disabled whenever `word_bench_
+    datasets()` is empty -- see `_new_bench_actions`), reachable only via a
+    stale render or a direct call bypassing the widget: with ONLY a probe
+    set in the database (no word-bench dataset at all), a press must
+    refuse with the usual "Create or import a dataset first." toast, never
+    create a bench bound to the probe set as a last resort."""
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    save_probe_set(evals_db, "only probes", ProbeSet(probes=(Probe(turns=("Hi",)),)))
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one(LibraryRail)
+        rail._create_new_bench()
+        await pilot.pause()
+
+        assert evals_db.list_tasks() == []
+        message, severity = screen.app_instance.notifications[-1]
+        assert "Create or import a dataset first." in message
+        assert severity == "warning"
 
 
 # ---------------------------------------------------------------------------

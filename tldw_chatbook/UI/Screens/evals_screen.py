@@ -46,6 +46,7 @@ from ...Evals.character_probe.runner import (
 )
 from ...Evals.character_probe.storage import (
     create_probe_run_group,
+    is_probe_set,
     load_character_bench,
     load_probe_set,
     save_character_bench,
@@ -58,7 +59,7 @@ from ...Evals.word_bench.storage import _unique_name, duplicate_bench
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
-from ..Evals.character_bench_editor import CharacterBenchEditor
+from ..Evals.character_bench_editor import CharacterBenchEditor, ProbeSetDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import CharacterBenchEstimate, EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
@@ -137,9 +138,10 @@ def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> Chat
     character-bench target reachable through this app's own UI today is a
     ``llama_cpp`` row: ``CharacterBenchEditor`` (Task 4) has no Add-target
     control, so ``target_ids`` is populated ONLY at bench creation, via
-    ``sample_bench.resolve_sample_target`` -- the SAME llama.cpp-only
-    resolution the one-click sample bench uses (see
-    ``_on_new_character_bench_requested``'s own docstring). Inventing a
+    ``sample_bench.resolve_unsteered_llama_cpp_target`` -- an llama.cpp-
+    only resolution, like the one-click sample bench's own (see
+    ``_on_new_character_bench_requested``'s own docstring for why it is a
+    DIFFERENT function, not the same one). Inventing a
     per-provider dispatch here for targets this app can never actually
     create would be exactly the kind of fabrication ``sample_bench.py``'s
     own module docstring already rules out for the identical reason.
@@ -613,21 +615,41 @@ class EvalsScreen(LabScreen):
         verbatim with no Add/Remove control of its own -- bench creation is
         the ONLY place ``target_ids`` is ever populated for this bench
         type. Leaving it empty here would ship a bench with no path to
-        ever becoming runnable, so ``sample_bench.resolve_sample_target``
-        (the SAME resolution the one-click sample bench already uses) is
-        called with ``create=True``: reuse an existing ``llama_cpp``
-        ``eval_models`` row if one exists, else mint one from the
-        configured endpoint if ``app_config`` names one -- still a plain
-        DB write, no network call (``resolve_sample_target`` never dials
-        out; it only ever reads config and writes a row naming an
-        endpoint). If NEITHER is available, ``target_ids`` stays empty and
-        the created bench genuinely cannot be made runnable through this
-        UI alone -- ``config.py`` ships a default ``llama_cpp`` API URL, so
-        this is the near-universal case in practice (mirrors
-        ``resolve_sample_target``'s own "near-universal" note), but it is
-        a real, reachable gap this task cannot close: this editor offers
-        no way to add a target after the fact. The toast below names that
-        state explicitly rather than claiming an unconditional success.
+        ever becoming runnable, so ``sample_bench.resolve_unsteered_llama_
+        cpp_target`` is called with ``create=True``: reuse an existing
+        UNSTEERED ``llama_cpp`` ``eval_models`` row if one exists, else
+        mint a fresh (also unsteered) one from the configured endpoint if
+        ``app_config`` names one -- still a plain DB write, no network call
+        (like its sibling ``resolve_sample_target``, this never dials out;
+        it only ever reads config and writes a row naming an endpoint).
+
+        **Whole-branch review Critical 1 (fix round): this deliberately
+        does NOT call ``resolve_sample_target`` -- the one-click sample
+        bench's own resolver -- even though it once did.** That function
+        reuses ``list_models(provider="llama_cpp")[0]`` -- the newest
+        ``llama_cpp`` row, whatever it is -- with no regard for its
+        ``config``, so it could just as easily hand back a row
+        ``bench_editor.py``'s "+ New target" mini-form steered with a
+        ``prefix`` or ``system_prompt``. Both are silently wrong for THIS
+        caller: a ``prefix``-steered row makes every run attempt raise in
+        ``targets.resolve_target`` (a probe is chat-shaped, with no slot
+        for a literal prefix), permanently stranding the bench -- this
+        editor has no way to change its target afterward -- and a
+        ``system_prompt``-steered row has its steering composed ahead of
+        the card's own system prompt by ``runner.py``, silently
+        contaminating every probe conversation the bench exists to
+        observe. See ``resolve_unsteered_llama_cpp_target``'s own
+        docstring for the full account.
+
+        If NEITHER an existing unsteered row nor a configured endpoint is
+        available, ``target_ids`` stays empty and the created bench
+        genuinely cannot be made runnable through this UI alone --
+        ``config.py`` ships a default ``llama_cpp`` API URL, so this is the
+        near-universal case in practice (mirrors ``resolve_sample_
+        target``'s own "near-universal" note), but it is a real, reachable
+        gap this task cannot close: this editor offers no way to add a
+        target after the fact. The toast below names that state explicitly
+        rather than claiming an unconditional success.
 
         ``character_ids`` starts empty (a draft has no characters picked
         yet -- that is the editor's job) and ``strict=False`` is required
@@ -658,7 +680,7 @@ class EvalsScreen(LabScreen):
         # extra sort needed.
         probe_set = probe_sets[0]
         app_config = self._current_app_config()
-        target = sample_bench.resolve_sample_target(
+        target = sample_bench.resolve_unsteered_llama_cpp_target(
             self._view_model, app_config, create=True
         )
         target_ids = (target["id"],) if target is not None else ()
@@ -1205,20 +1227,24 @@ class EvalsScreen(LabScreen):
     def _mark_character_run_ids(
         db: Optional[EvalsDB], run_ids: Mapping[str, str], status: str
     ) -> None:
-        """Best-effort terminal-status stamp for every run
+        """Best-effort status stamp for every run
         ``_run_character_bench_worker`` created, mirroring ``sample_bench.
         _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
         call and its "log and continue, never let a bookkeeping failure
-        mask the real outcome" contract -- called from the success path
-        (``status="completed"``), the ``CancelledError`` path
-        (``status="cancelled"``), AND (review round 2 -- the general
-        ``except Exception:`` branch is reachable with `run_ids` already
-        populated too: ``factory(config)`` failing to build a chat
-        callable, ``asyncio.Semaphore(config.concurrency)`` raising for a
-        non-positive concurrency, or a plain DB I/O failure inside
-        ``save_conversations`` itself are all ordinary exceptions, not
-        cancellations) the general failure path (``status="failed"``) of
-        that worker.
+        mask the real outcome" contract -- called immediately after
+        ``create_probe_run_group`` returns (``status="running"``, whole-
+        branch review fix round: the in-flight window between that call
+        and ``save_conversations`` succeeding was the one outcome this
+        worker's own remediation for every OTHER status had not yet
+        covered), the success path (``status="completed"``), the
+        ``CancelledError`` path (``status="cancelled"``), AND (review
+        round 2 -- the general ``except Exception:`` branch is reachable
+        with `run_ids` already populated too: ``factory(config)`` failing
+        to build a chat callable, ``asyncio.Semaphore(config.
+        concurrency)`` raising for a non-positive concurrency, or a plain
+        DB I/O failure inside ``save_conversations`` itself are all
+        ordinary exceptions, not cancellations) the general failure path
+        (``status="failed"``) of that worker.
 
         Necessary because ``character_probe.storage``/``runner`` (Task 1's
         phase-1 engine) never call ``EvalsDB.update_run_status``
@@ -1249,7 +1275,8 @@ class EvalsScreen(LabScreen):
                 ``create_probe_run_group`` -- empty (``{}``) when this
                 worker failed or was cancelled before that call ever ran,
                 in which case there is nothing to stamp either.
-            status: ``"completed"``, ``"cancelled"``, or ``"failed"``.
+            status: ``"running"``, ``"completed"``, ``"cancelled"``, or
+                ``"failed"``.
         """
         if db is None or not run_ids:
             return
@@ -1305,12 +1332,16 @@ class EvalsScreen(LabScreen):
         phase-1 engine) ever transitions ``eval_runs.status`` past its
         ``'pending'`` DB default itself -- unlike ``WordBenchRunner``,
         which moves each run pending -> running -> completed/cancelled on
-        its own -- so this method stamps the terminal status directly
-        (review round 1 fix): ``"completed"`` after ``save_conversations``
-        succeeds, ``"cancelled"`` in the ``except CancelledError`` branch
-        below, via ``_mark_character_run_ids`` (mirrors ``sample_bench.
-        _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
-        call and its "log and continue, never let a bookkeeping failure
+        its own -- so this method stamps every status transition directly:
+        ``"running"`` right after ``create_probe_run_group`` returns
+        (whole-branch review fix round -- closes the one in-flight window
+        this worker's own remediation for every other outcome had not yet
+        covered), ``"completed"`` after ``save_conversations`` succeeds
+        (review round 1 fix), ``"cancelled"`` in the ``except
+        CancelledError`` branch below, via ``_mark_character_run_ids``
+        (mirrors ``sample_bench._mark_orphaned_runs_cancelled``'s own
+        ``EvalsDB.update_run_status`` call and its "log and continue,
+        never let a bookkeeping failure
         mask the real outcome" contract). Left unstamped,
         ``EvalsViewModel.run_groups()``'s own pivot falls a "pending,
         nothing running/cancelled/failed" group through to "completed"
@@ -1349,6 +1380,19 @@ class EvalsScreen(LabScreen):
             new_group_id, run_ids = create_probe_run_group(
                 db, task_id, config, cards, probe_set, raw_targets
             )
+            # Whole-branch review, deferred-minor-promoted-to-must-fix: the
+            # run rows `create_probe_run_group` just wrote sit at their
+            # `'pending'` DB default from here until `save_conversations`
+            # succeeds below -- a real, observable window (the runner is
+            # about to make one or more provider calls, which can each take
+            # seconds). `_mark_character_run_ids`'s own docstring already
+            # explains why an unstamped run reads as "completed" through
+            # `run_groups()`'s pivot; the "completed"/"cancelled"/"failed"
+            # terminal stamps this worker already applies below make a
+            # lying-pending IN-FLIGHT group the one state this worker had
+            # not yet corrected, inconsistent with its own remediation for
+            # every OTHER outcome.
+            self._mark_character_run_ids(db, run_ids, "running")
             factory = (
                 self._character_probe_chat_factory
                 or _default_character_probe_chat_factory
@@ -1876,6 +1920,19 @@ class EvalsScreen(LabScreen):
                     id="evals-detail-missing",
                 )
                 return
+            if is_probe_set(dataset):
+                # Whole-branch review Important 2: `SnippetEditor` is
+                # word-bench shaped -- its Import control writes SNIPPET-
+                # shaped samples into the selected dataset's own metadata,
+                # which corrupts a probe set's `turns`-shaped samples on
+                # the very next press (see `ProbeSetDetail`'s own module
+                # docstring for the full failure chain). A probe-set
+                # selection gets a read-only listing instead, with no
+                # import/edit control of any kind.
+                yield ProbeSetDetail(
+                    self._view_model, dataset, id="evals-probeset-detail"
+                )
+                return
             yield SnippetEditor(
                 self._view_model, selection.id, id="evals-snippet-editor"
             )
@@ -2356,6 +2413,26 @@ class EvalsScreen(LabScreen):
         # get no run control, not even a disabled one.
 
         if selection.kind == "dataset":
+            dataset = (
+                self._view_model.dataset_by_id(selection.id) if selection.id else None
+            )
+            if dataset is not None and is_probe_set(dataset):
+                # Whole-branch review Important 3 (fix round): a probe set
+                # is bound to a bench via "+ New character bench", never
+                # "+ New bench" (that button now deliberately filters
+                # probe sets out -- see `library_rail._create_new_bench`'s
+                # own updated docstring), and that control binds to the
+                # NEWEST probe set, not necessarily the one selected here
+                # -- unlike a word bench's "+ New bench", which DOES bind
+                # to the currently-selected dataset. This branch must not
+                # claim otherwise.
+                return (
+                    "Run Bench",
+                    True,
+                    "Datasets are run from within a bench; use + New "
+                    "character bench in the Catalog rail to create one "
+                    "(binds to the newest probe set).",
+                )
             return (
                 "Run Bench",
                 True,

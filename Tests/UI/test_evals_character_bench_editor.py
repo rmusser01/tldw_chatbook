@@ -538,6 +538,85 @@ async def test_a_deleted_target_renders_unresolvable_without_crashing(
 
 
 # ---------------------------------------------------------------------------
+# Whole-branch review Critical 1 (fix round): a steered target's row is
+# unreachable through this bench type's normal creation path now (see
+# test_evals_screen.py's own steered-target coverage), but a pre-existing
+# or hand-authored bench can still carry one -- this listing must surface
+# that steering, mirroring bench_editor.py's `_build_target_row`, rather
+# than rendering the same bare "name (provider)" it did for every target
+# regardless of steering.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_prefix_steered_target_renders_as_unusable(character_app, evals_db):
+    target_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={"prefix": " Sure"},
+    )
+    bench_id = save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="prefix steered bench",
+            probe_set_id=_make_probe_set(evals_db),
+            character_ids=(3,),
+            target_ids=(target_id,),
+        ),
+    )
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, bench_id)
+        await pilot.pause()
+        rendered = str(pilot.app.screen.query_one("#evals-cb-target-0").render())
+        assert "steered-target" in rendered
+        assert "prefix" in rendered.lower()
+        assert "unusable" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_system_prompt_steered_target_renders_its_steering(
+    character_app, evals_db
+):
+    target_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={"system_prompt": "Be extra dramatic at all times."},
+    )
+    bench_id = save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="system prompt steered bench",
+            probe_set_id=_make_probe_set(evals_db),
+            character_ids=(3,),
+            target_ids=(target_id,),
+        ),
+    )
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, bench_id)
+        await pilot.pause()
+        rendered = str(pilot.app.screen.query_one("#evals-cb-target-0").render())
+        assert "steered-target" in rendered
+        assert "system prompt" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_an_unsteered_target_renders_with_no_steering_suffix(
+    character_app, saved_bench_id
+):
+    """`saved_bench_id`'s own target (`local-target`, no `config`) must
+    keep rendering the bare `name (provider)` label -- no steering suffix
+    of any kind for a genuinely unsteered row."""
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, saved_bench_id)
+        await pilot.pause()
+        rendered = str(pilot.app.screen.query_one("#evals-cb-target-0").render())
+        assert "local-target (llama_cpp)" in rendered
+        assert "·" not in rendered
+
+
+# ---------------------------------------------------------------------------
 # Revert
 # ---------------------------------------------------------------------------
 

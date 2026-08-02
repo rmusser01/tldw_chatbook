@@ -94,6 +94,14 @@ SAMPLE_TARGET_NAME = "Sample target (llama.cpp)"
 #: differently-steered target even when one already exists).
 BENCH_EDITOR_TARGET_NAME = "llama.cpp target"
 
+#: Whole-branch review Critical 1: the base name auto-generated for a
+#: newly-minted, deliberately UNSTEERED target created on behalf of
+#: ``EvalsScreen._on_new_character_bench_requested`` (see
+#: ``resolve_unsteered_llama_cpp_target`` below) -- distinct from both
+#: names above so a row minted this way does not read as though it came
+#: from either unrelated flow.
+CHARACTER_BENCH_TARGET_NAME = "Character bench target (llama.cpp)"
+
 #: The word bench's own preflight canary already answers "is this endpoint
 #: reachable and sane" honestly, post-creation -- this K is a modest default
 #: for a 4-row demo grid, not a claim about the target's capability.
@@ -311,6 +319,110 @@ def resolve_sample_target(
     # either way, per capture_client.py's own payload). "default" here is a
     # placeholder a real server discards, never a claim about a specific
     # model that exists.
+    model_id = configured_llama_cpp_model_id(app_config) or "default"
+    new_id = db.create_model(
+        name=_unique_name(name), provider="llama_cpp", model_id=model_id
+    )
+    return db.get_model(new_id)
+
+
+def _existing_unsteered_llama_cpp_target(db: EvalsDB) -> Optional[dict[str, Any]]:
+    """The newest already-registered ``llama_cpp`` row that carries NO
+    steering, if any.
+
+    Whole-branch review Critical 1: unlike ``_existing_sample_target``
+    (which returns ``list_models(provider="llama_cpp")[0]`` -- the newest
+    row, full stop, regardless of its ``config``), this walks the same
+    newest-first list and returns the first row ``model_steering`` reports
+    as carrying neither a ``prefix`` nor a ``system_prompt``. A character-
+    probe bench cannot safely reuse either: a raw-completion ``prefix``
+    has no slot in a probe's chat-shaped turns (``targets.resolve_target``
+    raises outright, permanently stranding a bench bound to one -- there
+    is no Add/Remove target control in this editor), and a
+    ``system_prompt`` would compose AHEAD of the card's own system prompt,
+    silently contaminating every conversation the bench exists to observe
+    -- see ``resolve_unsteered_llama_cpp_target``'s own docstring.
+
+    A row whose ``config`` is corrupt in some OTHER way (``model_steering``
+    raising -- e.g. it carries both kinds of steering at once) is skipped
+    rather than crashing this scan: it is not evidence of "deliberately
+    unsteered" either, so treating it as a candidate would be exactly as
+    wrong as treating a genuinely steered row as one.
+    """
+    for row in db.list_models(provider="llama_cpp"):
+        try:
+            prefix, system_prompt = model_steering(row)
+        except ValueError:
+            continue
+        if not prefix and not system_prompt:
+            return row
+    return None
+
+
+def resolve_unsteered_llama_cpp_target(
+    view_model: EvalsViewModel,
+    app_config: Optional[Mapping[str, Any]],
+    *,
+    create: bool = False,
+    name: str = CHARACTER_BENCH_TARGET_NAME,
+) -> Optional[dict[str, Any]]:
+    """The UNSTEERED ``eval_models`` row a character-probe bench creation
+    should bind to, or ``None``.
+
+    Whole-branch review Critical 1: ``EvalsScreen._on_new_character_bench_
+    requested`` used to call ``resolve_sample_target`` -- the word-bench
+    sample flow's own resolver -- for this. That function reuses
+    ``list_models(provider="llama_cpp")[0]`` (the newest row) with no
+    regard for its ``config``, so a target minted by ``bench_editor.py``'s
+    "+ New target" mini-form (which writes ``config["prefix"]`` or
+    ``config["system_prompt"]`` onto exactly this kind of row -- see
+    ``evals_screen.py``'s ``_on_bench_create_target_requested``) could be
+    silently handed to a brand-new character bench. Two ways that goes
+    wrong, both invisible in this editor's old target listing: a
+    ``prefix``-steered row makes ``targets.resolve_target`` raise on every
+    run attempt (the bench becomes permanently unrunnable -- this editor
+    has no way to change its target afterward), and a ``system_prompt``-
+    steered row has its steering composed ahead of the card's own system
+    prompt by ``runner.py``, silently contaminating every probe
+    conversation. This function is ``resolve_sample_target``'s sibling,
+    filtered to a row ``_existing_unsteered_llama_cpp_target`` confirms
+    carries neither.
+
+    A newly MINTED row (the ``create=True`` branch) is unsteered by
+    construction -- ``EvalsDB.create_model`` defaults an omitted ``config``
+    to ``{}``, and this function never passes one.
+
+    Args:
+        view_model: Supplies the ``EvalsDB`` handle (``None`` -> no
+            service, resolves to ``None``).
+        app_config: The app's config mapping, read only for the
+            ``llama_cpp`` endpoint/model id a new row would be minted
+            from -- see ``configured_llama_cpp_url``/``configured_llama_
+            cpp_model_id``.
+        create: Whether this call may WRITE a new ``eval_models`` row.
+            Defaults to ``False`` for the identical reason ``resolve_
+            sample_target``'s own ``create`` parameter does: a predicate
+            that mutates the database must never run from a passive
+            render path.
+        name: The base name for a newly CREATED row (irrelevant when an
+            existing unsteered row is reused instead). Always passed
+            through ``storage._unique_name`` before the write.
+
+    Returns:
+        The resolved ``eval_models`` row, or ``None`` if there is no
+        unsteered row to reuse and either ``create`` is ``False`` or no
+        ``llama_cpp`` endpoint is configured to mint one from.
+    """
+    db = view_model.db
+    if db is None:
+        return None
+    existing = _existing_unsteered_llama_cpp_target(db)
+    if existing is not None:
+        return existing
+
+    url = configured_llama_cpp_url(app_config)
+    if url is None or not create:
+        return None
     model_id = configured_llama_cpp_model_id(app_config) or "default"
     new_id = db.create_model(
         name=_unique_name(name), provider="llama_cpp", model_id=model_id

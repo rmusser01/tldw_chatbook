@@ -364,6 +364,55 @@ async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
 
 
 @pytest.mark.asyncio
+async def test_an_in_flight_character_bench_run_reads_as_running_not_completed(
+    evals_app, runnable_character_bench
+):
+    """Whole-branch review, deferred-minor-promoted-to-must-fix: one
+    ``_mark_character_run_ids(db, run_ids, "running")`` call was missing
+    right after ``create_probe_run_group`` -- before it, every run row
+    this worker created sat at its ``'pending'`` DB default for the
+    ENTIRE run, not merely the hard-cancellation window the test below
+    covers. ``EvalsViewModel.run_groups()``'s own pivot falls a "pending,
+    nothing running/cancelled/failed" group through to "completed" (see
+    that method's own docstring), so a run genuinely IN PROGRESS read
+    exactly like one that had already finished successfully with real
+    results, from the very first provider call onward -- inconsistent
+    with this same worker's own terminal-status remediation for every
+    OTHER outcome (completed/cancelled/failed all already stamped
+    correctly)."""
+    release = threading.Event()
+
+    def _pausable(*, messages, model, temperature, max_tokens, seed) -> str:
+        release.wait()
+        return "In character, while paused."
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen._character_probe_chat_factory = lambda cfg: _pausable
+        screen.select(kind="character_bench", id=runnable_character_bench)
+        await pilot.pause()
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._character_bench_run_running)
+        await pilot.pause()
+
+        try:
+            run_groups = screen._view_model.run_groups()
+            assert len(run_groups) == 1
+            assert run_groups[0]["status"] == "running"
+        finally:
+            # Unblock the paused provider thread NO MATTER what the
+            # assertions above did -- `to_thread` survives Task
+            # cancellation (see `_run_character_bench_worker`'s own
+            # module docstring), so an assertion failure here must still
+            # release it or the worker thread leaks past this test and
+            # hangs the whole run's teardown waiting to join it.
+            release.set()
+        await _wait_until(pilot, lambda: not screen._character_bench_run_running)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
     evals_app, runnable_character_bench
 ):

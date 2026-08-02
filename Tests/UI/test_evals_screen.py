@@ -2935,8 +2935,8 @@ async def test_new_character_bench_without_a_resolvable_target_still_creates_a_d
     evals_app, evals_db, probe_set_id
 ):
     """No `llama_cpp` `eval_models` row exists and no endpoint is
-    configured in `app_config` -- `resolve_sample_target` can mint
-    nothing, so the created draft's `target_ids` is genuinely empty. This
+    configured in `app_config` -- `resolve_unsteered_llama_cpp_target` can
+    mint nothing, so the created draft's `target_ids` is genuinely empty. This
     is the one residual dead end `_on_new_character_bench_requested`'s own
     docstring names explicitly: the character-bench editor has no
     Add-target control, so this specific bench can never become runnable
@@ -2966,13 +2966,187 @@ async def test_new_character_bench_without_a_resolvable_target_still_creates_a_d
         assert "delete" in message.lower()
 
 
+# ---------------------------------------------------------------------------
+# Whole-branch review Critical 1 (fix round): a reused word-bench target
+# steered with a `prefix` or `system_prompt` must never be handed to a NEW
+# character bench -- both are silently wrong for this bench type (see
+# `sample_bench.resolve_unsteered_llama_cpp_target`'s own docstring for the
+# full account). Every scenario here drives the REAL rail button
+# (`#evals-rail-new-character-bench`) through `_on_new_character_bench_
+# requested`, never a hand-built `CharacterProbeConfig`/target dict -- the
+# root cause the reviewer named is a fixture (`runnable_character_bench` in
+# test_evals_character_run_e2e.py) that never saw a steered row and never
+# exercised bench creation at all. The steered rows below are created the
+# SAME way `evals_screen.py`'s own `_on_bench_create_target_requested`
+# writes one (`bench_editor.py`'s "+ New target" mini-form): `db.
+# create_model(..., provider="llama_cpp", config={"prefix": ...})` or
+# `config={"system_prompt": ...}` -- never a hand-invented shape.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_never_binds_to_a_prefix_steered_target(
+    evals_app, evals_db, probe_set_id
+):
+    """The ONLY existing `llama_cpp` row is `prefix`-steered, and no
+    endpoint is configured to mint a fresh one -- before this fix,
+    `resolve_sample_target` would have handed this row straight back
+    (`list_models(provider="llama_cpp")[0]`, with no regard for `config`),
+    permanently stranding the bench (`targets.resolve_target` raises on a
+    `prefix`-steered row for every run attempt, and this editor has no
+    Add/Remove target control to recover with). The fix must refuse to
+    reuse it and fall back to the same honest "no target configured" draft
+    `test_new_character_bench_without_a_resolvable_target_still_creates_a_
+    draft` already pins, not silently mint a broken bench."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    steered_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={"prefix": " Sure"},
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        target_ids = benches[0]["config_data"]["target_ids"]
+        assert target_ids == []
+        assert steered_id not in target_ids
+        # No new row was minted either (no endpoint configured) -- the
+        # steered row is still the only one in the database.
+        assert len(evals_db.list_models(provider="llama_cpp")) == 1
+        message, severity = pilot.app.screen.app_instance.notifications[-1]
+        assert severity == "warning"
+        assert "cannot be run" in message
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_never_binds_to_a_system_prompt_steered_target(
+    evals_app, evals_db, probe_set_id
+):
+    """Sibling of the `prefix` case above for `system_prompt` steering --
+    that failure mode is quieter (the bench LOOKS runnable and silently
+    contaminates every conversation, per `runner.py` composing the
+    target's steering ahead of the card's own system prompt) but must be
+    refused identically: a NEW character bench's target resolution must
+    never reuse a steered row, full stop."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    steered_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={"system_prompt": "Be extra dramatic at all times."},
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        target_ids = benches[0]["config_data"]["target_ids"]
+        assert target_ids == []
+        assert steered_id not in target_ids
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_mints_a_fresh_unsteered_target_when_only_a_steered_row_exists(
+    evals_db, probe_set_id
+):
+    """A `llama_cpp` endpoint IS configured, so `create=True` can mint a
+    row -- but the only pre-existing `llama_cpp` row is `prefix`-steered.
+    The fix must mint a genuinely NEW, unsteered row rather than reusing
+    the steered one, and bind the bench to THAT new row."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    steered_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={"prefix": " Sure"},
+    )
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    app = EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        target_ids = benches[0]["config_data"]["target_ids"]
+        assert len(target_ids) == 1
+        bound_id = target_ids[0]
+        assert bound_id != steered_id
+        bound_row = evals_db.get_model(bound_id)
+        assert bound_row is not None
+        assert bound_row["config"] == {}
+        # Both rows now exist -- the steered one was never touched, only
+        # skipped.
+        assert len(evals_db.list_models(provider="llama_cpp")) == 2
+
+
+@pytest.mark.asyncio
+async def test_new_character_bench_reuses_an_existing_unsteered_target_over_a_newer_steered_one(
+    evals_db, probe_set_id
+):
+    """Proves this is a genuine FILTER, not luck: the unsteered row is
+    created FIRST (older) and the steered row SECOND (newer, timestamps
+    forced apart exactly like `test_new_bench_bound_to_the_currently_
+    selected_dataset` forces dataset timestamps apart) so
+    `list_models(provider="llama_cpp")[0]` -- the pre-fix resolution --
+    would resolve to the STEERED row. The fix must skip it and reuse the
+    older unsteered one instead, minting nothing new even though an
+    endpoint is configured (there is no need to)."""
+    from tldw_chatbook.Evals.character_probe.storage import is_character_bench
+
+    unsteered_id = evals_db.create_model(
+        name="unsteered-target", provider="llama_cpp", model_id="m"
+    )
+    steered_id = evals_db.create_model(
+        name="steered-target",
+        provider="llama_cpp",
+        model_id="m2",
+        config={"prefix": " Sure"},
+    )
+    conn = evals_db._get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_models SET created_at = ? WHERE id = ?",
+            ("2020-01-01 00:00:00", unsteered_id),
+        )
+        conn.execute(
+            "UPDATE eval_models SET created_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", steered_id),
+        )
+    assert (
+        evals_db.list_models(provider="llama_cpp")[0]["id"] == steered_id
+    ), "sanity: the steered row must be newest"
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    app = EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-character-bench")
+        await pilot.pause()
+        benches = [t for t in evals_db.list_tasks() if is_character_bench(t)]
+        assert len(benches) == 1
+        target_ids = benches[0]["config_data"]["target_ids"]
+        assert target_ids == [unsteered_id]
+        # Nothing new was minted -- the existing unsteered row was reused.
+        assert len(evals_db.list_models(provider="llama_cpp")) == 2
+
+
 @pytest.mark.asyncio
 async def test_new_character_bench_button_is_not_provider_gated(evals_db, probe_set_id):
     """Mirrors `test_new_bench_button_is_not_provider_gated` exactly for
     the character-bench affordance: creating a DRAFT writes only
     `eval_tasks` rows (target resolution reuses/mints an `eval_models` row,
-    still no network call -- see `resolve_sample_target`'s own docstring),
-    so it must render enabled even with zero providers configured."""
+    still no network call -- see `resolve_unsteered_llama_cpp_target`'s
+    own docstring), so it must render enabled even with zero providers
+    configured."""
     app = EvalsHarness(_FakeAppInstance(evals_db, app_config={}))
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()

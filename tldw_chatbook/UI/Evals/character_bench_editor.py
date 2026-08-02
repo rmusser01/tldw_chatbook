@@ -48,6 +48,18 @@ turns, any of which may itself carry an embedded newline) still renders as
 exactly one row in the read-only ``#evals-cb-probes`` listing -- the same
 shared newline guard ``bench_editor.py``'s own ``_steering_preview_text``
 now delegates to (see that function's updated docstring).
+
+**``ProbeSetDetail`` (whole-branch review Important 2, fix round)** also
+lives in this module: the read-only detail for a bare probe-set DATASET
+row selected directly from the rail (``kind="dataset"``), distinct from
+``CharacterBenchEditor`` above (which renders a probe set only as ONE
+section of a whole BENCH's own form). It exists because ``evals_screen.
+py``'s ``"dataset"`` selection branch used to mount the word-bench
+``SnippetEditor`` unconditionally, snippet dataset or probe set alike --
+see that class's own docstring for the corruption chain that let a probe
+set's own "Import…" press destroy it. Shares the probe-listing renderer
+(``_probe_listing_widget``) with ``_build_probe_set_section`` above so the
+two never drift into disagreeing about what "read-only probes" looks like.
 """
 
 from __future__ import annotations
@@ -63,12 +75,13 @@ from textual.message import Message
 from textual.widgets import Button, Input, Static
 
 from ...DB.Evals_DB import ConflictError, EvalsDB
-from ...Evals.character_probe.models import CharacterProbeConfig, Probe
+from ...Evals.character_probe.models import CharacterProbeConfig, Probe, ProbeSet
 from ...Evals.character_probe.storage import (
     load_character_bench,
     load_probe_set,
     save_character_bench,
 )
+from ...Evals.steering import model_steering
 from .card_picker import CardPicker
 from .evals_state import EvalsViewModel
 from .snippet_editor import guard_single_line, render_snippet_cell
@@ -110,6 +123,33 @@ def _probe_preview_text(probe: Probe) -> str:
         str: ``probe``'s turns joined and guarded to a single line.
     """
     return guard_single_line("\n".join(probe.turns))
+
+
+def _probe_listing_widget(probe_set: Optional[ProbeSet], widget_id: str) -> Static:
+    """The ␣/⏎-marker probe listing itself (everything below the "Probes
+    (read-only) — ..." label), shared by ``_build_probe_set_section``
+    (inside a bench's own editor) and ``ProbeSetDetail`` (a bare probe-set
+    dataset selected directly from the rail -- whole-branch review
+    Important 2). ``widget_id`` differs per caller so both can mount in
+    the same screen across a selection change without an id collision.
+
+    Args:
+        probe_set: The loaded probe set, or ``None`` when it could not be
+            read (a missing/corrupt dataset row).
+        widget_id: The id to give the returned ``Static``.
+
+    Returns:
+        Static: "(probe set unavailable)", "(no probes yet)", or the
+        rendered, ␣/⏎-marked probes -- always ``markup=False`` (probe text
+        is user-authored).
+    """
+    if probe_set is None:
+        return Static("(probe set unavailable)", id=widget_id, markup=False)
+    if not probe_set.probes:
+        return Static("(no probes yet)", id=widget_id, markup=False)
+    lines = [render_snippet_cell(_probe_preview_text(probe)) for probe in probe_set.probes]
+    combined = Text("\n").join(lines)
+    return Static(combined, id=widget_id, markup=False)
 
 
 class CharacterBenchEditor(Vertical):
@@ -411,19 +451,7 @@ class CharacterBenchEditor(Vertical):
                 classes="evals-cb-field-label",
             )
         )
-        if probe_set is None:
-            widgets.append(
-                Static("(probe set unavailable)", id="evals-cb-probes", markup=False)
-            )
-        elif not probe_set.probes:
-            widgets.append(Static("(no probes yet)", id="evals-cb-probes", markup=False))
-        else:
-            lines = [
-                render_snippet_cell(_probe_preview_text(probe))
-                for probe in probe_set.probes
-            ]
-            combined = Text("\n").join(lines)
-            widgets.append(Static(combined, id="evals-cb-probes", markup=False))
+        widgets.append(_probe_listing_widget(probe_set, "evals-cb-probes"))
         return widgets
 
     @staticmethod
@@ -442,6 +470,22 @@ class CharacterBenchEditor(Vertical):
         mirroring ``BenchEditor._build_target_row``'s identical treatment
         of the same case for a word bench.
 
+        Whole-branch review Critical 1 (fix round): a target's STEERING
+        (``model_steering`` -- read via ``...Evals.steering`` directly,
+        never ``word_bench.storage``, so this module still imports nothing
+        word-bench-flavored) is now surfaced too, mirroring ``bench_
+        editor.py``'s ``_build_target_row`` -- before this fix, this
+        listing rendered only ``name (provider)`` for every target
+        regardless of steering, so a bench bound to a steered row (bench
+        creation is the ONLY place this bench type's ``target_ids`` is
+        ever populated -- see ``EvalsScreen._on_new_character_bench_
+        requested``, which this fix round also stopped from resolving a
+        steered row in the first place) gave no visible clue why it either
+        could never run (a ``prefix``) or was quietly producing
+        contaminated conversations (a ``system_prompt``). Reading a
+        corrupt row's steering (``model_steering`` raising) degrades to
+        the unsuffixed label rather than crashing this render.
+
         Returns:
             list[Any]: Widgets to yield, in order.
         """
@@ -457,7 +501,29 @@ class CharacterBenchEditor(Vertical):
             if model is None:
                 label: Any = f"(deleted target {target_id}) — unresolvable"
             else:
-                label = f"{model['name']} ({model['provider']})"
+                base = f"{model['name']} ({model['provider']})"
+                try:
+                    prefix, system_prompt = model_steering(model)
+                except ValueError:
+                    prefix, system_prompt = None, None
+                if prefix:
+                    # A raw-completion prefix has no slot in a probe's
+                    # chat-shaped turns -- `targets.resolve_target` raises
+                    # on this target for every run attempt, so this is
+                    # named as unusable rather than merely "set" (unlike
+                    # bench_editor.py's identical case, which IS usable
+                    # for a word bench).
+                    label = (
+                        f"{base} · prefix set — unusable by a character "
+                        "probe (a probe has no prefix slot)"
+                    )
+                elif system_prompt:
+                    label = (
+                        f"{base} · system prompt set — composed ahead of "
+                        "the card's own system prompt"
+                    )
+                else:
+                    label = base
             rows.append(
                 Static(
                     label,
@@ -592,3 +658,92 @@ class CharacterBenchEditor(Vertical):
         screen_select = getattr(self.screen, "select", None)
         if callable(screen_select):
             screen_select(kind="character_bench", id=self._bench_id)
+
+
+class ProbeSetDetail(Vertical):
+    """Read-only detail for a probe-set dataset row selected directly from
+    the rail (``kind="dataset"``, ``character_probe.storage.is_probe_set``
+    true).
+
+    Whole-branch review Important 2: importing a probe set used to leave
+    the newly-created row selected with ``kind="dataset"`` (mirroring the
+    plain snippet-import flow exactly -- see ``library_rail.py``'s
+    ``_handle_probe_import_file_selected``), and ``evals_screen.py``'s
+    ``"dataset"`` selection branch mounted ``SnippetEditor`` for EVERY
+    ``kind="dataset"`` selection unconditionally, snippet or probe set
+    alike. ``SnippetEditor`` reads the shared samples key as snippet-
+    shaped ``text`` rows (a probe set stores ``turns`` instead), so it
+    rendered three blank rows for three real probes, AND its "Import…"
+    button was still enabled -- pressing it calls ``import_snippets_into_
+    dataset``, appending snippet-shaped samples into the probe set's own
+    metadata; ``_samples_to_probe_set`` then raises on the resulting mixed
+    list, permanently breaking every bench bound to that probe set with no
+    undo. This widget is mounted for a probe-set selection instead: a
+    read-only probe listing with no import/edit control of any kind,
+    reusing the exact same ``_probe_listing_widget`` helper ``_build_
+    probe_set_section`` uses inside a bench's own editor (the shared
+    piece is genuinely identical; only the surrounding framing differs --
+    there is no bench here to be "chosen when created").
+
+    Never mentions top-K, logprobs, a normalizer, or a canary check, per
+    this module's own promise (see the module docstring) -- word benches
+    and character-probe benches never share a detail surface, and neither
+    should a bare probe SET and a bare snippet dataset.
+    """
+
+    def __init__(
+        self, view_model: EvalsViewModel, dataset: Mapping[str, Any], **kwargs: Any
+    ) -> None:
+        """Args:
+            view_model: The read side for this workbench -- only ``db``
+                is used here (a plain read: ``load_probe_set``).
+            dataset: The already-fetched ``eval_datasets`` row (``EvalsView
+                Model.dataset_by_id``'s own shape) -- this widget never
+                re-resolves it, mirroring ``CharacterBenchEditor``'s own
+                "receives already-fetched data" convention for cards.
+        """
+        super().__init__(**kwargs)
+        self._view_model = view_model
+        self._dataset = dict(dataset)
+
+    def compose(self) -> ComposeResult:
+        dataset = self._dataset
+        # markup=False: the probe set's name is exactly as user-authored
+        # as a word bench's or a classic task's (see `ClassicTaskDetail.
+        # compose`'s identical guard) -- a bare `[/]` would raise
+        # `MarkupError` the instant this Static lays out.
+        yield Static(
+            str(dataset.get("name") or "Untitled probe set"),
+            id="evals-probeset-detail-name",
+            classes="evals-pane-heading",
+            markup=False,
+        )
+
+        db = self._view_model.db
+        if db is None:
+            yield Static(
+                "The evaluation service is unavailable.",
+                id="evals-probeset-detail-unavailable",
+            )
+            return
+
+        dataset_id = str(dataset.get("id") or "")
+        try:
+            probe_set = load_probe_set(db, dataset_id)
+        except ValueError:
+            probe_set = None
+
+        if probe_set is None:
+            count_text: str = "(probe set unavailable)"
+        else:
+            count = len(probe_set.probes)
+            probe_word = "probe" if count == 1 else "probes"
+            count_text = f"{count} {probe_word}"
+        yield Static(count_text, id="evals-probeset-detail-count", markup=False)
+
+        yield Static(
+            "Probes (read-only) — leading/trailing/interior-run "
+            "whitespace shown as ␣, line breaks as ⏎",
+            classes="evals-cb-field-label",
+        )
+        yield _probe_listing_widget(probe_set, "evals-probeset-detail-probes")

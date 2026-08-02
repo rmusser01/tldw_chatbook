@@ -135,6 +135,34 @@ class EvalsViewModel:
 
         return [row for row in self.datasets() if is_probe_set(row)]
 
+    def word_bench_datasets(self) -> list[dict[str, Any]]:
+        """Datasets holding snippets rather than probes -- ``datasets()``
+        minus ``probe_sets()``, mirroring that method's own "no new read,
+        only a filter" shape.
+
+        Whole-branch review Important 3: ``library_rail.py``'s "+ New
+        bench" used to bind a WORD bench to whatever dataset was currently
+        selected (or the newest one) out of ``datasets()`` directly --
+        including a probe set, since that method draws no distinction.
+        Importing a probe set leaves it selected AND newest (see
+        ``ProbeSetDetail``'s own module docstring for the sibling defect
+        this shares a root cause with), so the very next "+ New bench"
+        press after an import created a word bench pointed at a probe set
+        with zero real snippets. Both the button's enabled state
+        (``LibraryRail._new_bench_actions``) and its bind target
+        (``LibraryRail._create_new_bench``) now read this method instead
+        of ``datasets()`` directly, so a probe set can never satisfy
+        either.
+
+        Returns:
+            list[dict[str, Any]]: Matching dataset rows, in ``datasets()``'s
+            own order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_probe_set
+
+        return [row for row in self.datasets() if not is_probe_set(row)]
+
     def character_cards(self, chacha_db: Any) -> list[dict[str, Any]]:
         """Character cards for the picker (``card_picker.py``'s
         ``CardPicker``), ordered by name.

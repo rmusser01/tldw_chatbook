@@ -301,11 +301,15 @@ class LibraryRail(NotifyMixin, Vertical):
         Unlike ``_create_new_bench``'s plain in-widget DB write (a draft
         word bench needs nothing beyond a dataset id), creating a draft
         character bench also resolves a target via ``sample_bench.
-        resolve_sample_target`` -- the SAME function ``EvalsScreen``'s own
-        sample-bench flow already calls, and reusing it (rather than
-        reimplementing target resolution here) is why this posts a message
-        for ``EvalsScreen`` to handle instead of doing the write here, the
-        way ``_create_new_bench`` does. See
+        resolve_unsteered_llama_cpp_target`` -- a sibling of the ``sample_
+        bench.resolve_sample_target`` function ``EvalsScreen``'s own
+        sample-bench flow calls (whole-branch review Critical 1: NOT the
+        same function -- that one reuses ANY existing ``llama_cpp`` row
+        with no regard for its steering, which is unsafe for a character
+        probe; see the sibling function's own docstring). Reusing target-
+        resolution logic (rather than reimplementing it here) is why this
+        posts a message for ``EvalsScreen`` to handle instead of doing the
+        write here, the way ``_create_new_bench`` does. See
         ``EvalsScreen._on_new_character_bench_requested`` for why a target
         must be resolved at CREATE time at all: the character-bench editor
         (task-1691 phase 2, Task 4) has no Add-target control of its own,
@@ -485,11 +489,19 @@ class LibraryRail(NotifyMixin, Vertical):
         Both buttons are disabled -- with an explanatory tooltip AND an
         adjacent one-line hint, never a silent no-op (the fix-batch
         convention) -- when there is nothing yet to bind the new bench to:
-        a dataset for "+ New bench", a probe set (``EvalsViewModel.
-        probe_sets()``) for "+ New character bench" -- a character bench
-        with no probe set has no probes to ever run.
+        a WORD-BENCH dataset (``EvalsViewModel.word_bench_datasets()``) for
+        "+ New bench", a probe set (``EvalsViewModel.probe_sets()``) for
+        "+ New character bench" -- a character bench with no probe set has
+        no probes to ever run.
+
+        Whole-branch review Important 3 (fix round): ``has_dataset`` reads
+        ``word_bench_datasets()``, not ``datasets()`` -- a probe set is a
+        dataset row too, but it holds zero snippets a word bench could
+        ever measure. Before this fix, a probe-set-only library still
+        showed "+ New bench" enabled (see ``word_bench_datasets()``'s own
+        docstring for the exact failure chain this closes).
         """
-        has_dataset = bool(self.view_model.datasets())
+        has_dataset = bool(self.view_model.word_bench_datasets())
         has_probe_set = bool(self.view_model.probe_sets())
         yield Horizontal(
             Button(
@@ -920,19 +932,23 @@ class LibraryRail(NotifyMixin, Vertical):
 
         Dataset binding (task-1482, pinned): the currently selected
         dataset if one is selected and still resolves, else the newest
-        dataset -- ``view_model.datasets()`` is already newest-first
-        (``EvalsDB.list_datasets``'s own ``ORDER BY created_at DESC``), so
-        ``datasets[0]`` IS "the newest one" with no extra sort needed. A
-        stale ``kind="dataset"`` selection (its id no longer resolves --
-        e.g. the dataset was deleted from under the rail) degrades to the
-        same newest-dataset fallback rather than creating an unbound
-        bench or crashing.
+        dataset -- ``view_model.word_bench_datasets()`` is already newest-
+        first (``EvalsDB.list_datasets``'s own ``ORDER BY created_at
+        DESC``, ``word_bench_datasets()``'s own filter preserves that
+        order -- see its own docstring), so ``datasets[0]`` IS "the newest
+        one" with no extra sort needed. A stale ``kind="dataset"``
+        selection (its id no longer resolves -- e.g. the dataset was
+        deleted from under the rail, OR (whole-branch review Important 3,
+        fix round) it resolves to a PROBE SET, which this method must
+        never bind a word bench to -- see ``word_bench_datasets()``'s own
+        docstring) degrades to the same newest-word-bench-dataset fallback
+        rather than creating an unbound or probe-set-bound bench.
         """
         db = self.view_model.db
         if db is None:
             self._notify("The evaluation service is unavailable.", severity="error")
             return
-        datasets = self.view_model.datasets()
+        datasets = self.view_model.word_bench_datasets()
         if not datasets:
             # The button is disabled whenever this is true (see
             # `_new_bench_actions`) -- reachable only via a stale render or
