@@ -603,7 +603,7 @@ class LibraryIngestCanvas(VerticalScroll):
                         )
         if state.queue_show_clear_finished:
             yield Button(
-                "Clear finished",
+                state.queue_clear_finished_label,
                 id="library-ingest-clear-finished",
                 classes="library-canvas-action",
                 compact=True,

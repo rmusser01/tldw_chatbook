@@ -9533,6 +9533,10 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
 
+        # (task-2015) Clearing now takes an arming press plus a confirming
+        # press -- one accidental press must not destroy the receipts.
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
         screen.query_one("#library-ingest-clear-finished", Button).press()
         await pilot.pause()
 
@@ -11945,3 +11949,124 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
         assert expected, "generic group unexpectedly has no value fields"
         for label in expected:
             assert label in labels, f"value field {label!r} has no visible label"
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_typing_debounce_runs_preflight_and_keeps_focus(
+    tmp_path,
+):
+    """(task-2015) Path feedback must not wait for blur: typing arms a
+    debounce timer whose fire runs the pre-flight, and the apply must not
+    steal focus from the input (context-preserving refresh)."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2-debounce")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/nope/definitely-missing.txt"
+        await pilot.pause()
+
+        assert screen._library_ingest_path_debounce_timer is not None
+
+        # Deterministic fire instead of sleeping out the real 0.8s delay.
+        screen._run_debounced_library_ingest_preflight()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen._library_ingest_form.preflight is not None:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Debounced pre-flight never applied.")
+
+        assert screen._library_ingest_form.preflight.errors
+        await pilot.pause()
+        remounted = screen.query_one("#library-ingest-path", Input)
+        assert screen.app.focused is remounted, (
+            "debounced pre-flight apply stole focus from the path input"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_batch_completion_posts_summary_toast(tmp_path):
+    """(task-2015) When the queue's active jobs settle to zero, one summary
+    toast announces the outcome above the fold."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2-toast")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+    harness.notify = Mock()
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        done_job = harness.submit_library_ingest_job(source_path=str(source))
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if (
+                jobs.get(done_job.job_id) == IngestJobState.DONE
+                and jobs.get(failing_job.job_id) == IngestJobState.FAILED
+            ):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Jobs never settled.")
+        await pilot.pause()
+
+        summaries = [
+            call.args[0]
+            for call in harness.notify.call_args_list
+            if call.args and str(call.args[0]).startswith("Ingest finished")
+        ]
+        assert len(summaries) == 1, (
+            f"expected exactly one completion toast, saw: "
+            f"{harness.notify.call_args_list}"
+        )
+        assert "1 imported" in summaries[0]
+        assert "1 failed" in summaries[0]
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
+    """(task-2015) One unconfirmed press destroyed every receipt. The first
+    press arms (label changes, nothing cleared); the second clears."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2-clear")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        done_job = harness.submit_library_ingest_job(source_path=str(source))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(done_job.job_id) == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached DONE.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
+        assert harness.library_ingest_jobs.counts()["done"] == 1, (
+            "first press must arm, not clear"
+        )
+        armed_button = screen.query_one("#library-ingest-clear-finished", Button)
+        assert "again" in str(armed_button.label).lower()
+
+        armed_button.press()
+        await pilot.pause()
+        assert harness.library_ingest_jobs.counts()["done"] == 0

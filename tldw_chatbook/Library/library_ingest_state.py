@@ -472,6 +472,9 @@ class LibraryIngestCanvasState:
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
     queue_show_clear_finished: bool
+    #: (task-2015) Two-press confirm: the armed label names what a second
+    #: press will destroy; the resting label is plain "Clear finished".
+    queue_clear_finished_label: str
     errors: list[str]
     #: ``True`` when the errors are about the path itself, so the canvas
     #: offers a way to pick a different one instead of a Retry that would
@@ -776,6 +779,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    clear_finished_armed: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -847,6 +851,16 @@ def build_library_ingest_state(
     queue_rows = tuple(_build_queue_row(job, now=resolved_now) for job in jobs)
     queue_show_clear_finished = any(
         job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+    )
+    finished_count = sum(
+        1
+        for job in jobs
+        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+    )
+    queue_clear_finished_label = (
+        f"Press again to clear {finished_count} finished"
+        if clear_finished_armed
+        else "Clear finished"
     )
 
     # Pre-flight summary fields. Copy ``type_groups`` so the frozen
@@ -947,6 +961,7 @@ def build_library_ingest_state(
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,
         queue_show_clear_finished=queue_show_clear_finished,
+        queue_clear_finished_label=queue_clear_finished_label,
         errors=errors,
         errors_are_path_problem=errors_are_path_problem,
         intro_lines=intro_lines,
