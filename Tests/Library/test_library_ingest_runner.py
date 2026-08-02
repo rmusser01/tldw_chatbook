@@ -1019,6 +1019,64 @@ async def test_shutdown_flag_stops_late_parse_completion_callbacks(
         assert app._ingest_parse_pool is not None
 
 
+@pytest.mark.asyncio
+async def test_parse_completion_preserves_direct_local_stt_failure_provenance(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool)
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    failed_attempt = {
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": "ingest-job-1",
+        "provider_id": "transcribe-cpp",
+        "model_id": "local-gguf:whisper",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "native",
+        "requested_device": "auto",
+        "effective_device": None,
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "error_code": "artifact_incompatible",
+    }
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source))
+        await pilot.pause()
+        pool.trigger_success(
+            0,
+            {
+                "ok": False,
+                "error": "The selected GGUF cannot be used by transcribe.cpp.",
+                "permanent": False,
+                "error_detail": {
+                    "category": "stt_failure",
+                    "code": "artifact_incompatible",
+                    "message": "The selected GGUF cannot be used by transcribe.cpp.",
+                    "actions": [
+                        "choose_another_gguf",
+                        "retry_faster_whisper",
+                    ],
+                },
+                "stt_failure_provenance": failed_attempt,
+            },
+        )
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.FAILED)
+
+        failed = app.library_ingest_jobs.get_job(job.job_id)
+        assert failed.error_detail["actions"] == [
+            "choose_another_gguf",
+            "retry_faster_whisper",
+        ]
+        assert failed.stt_failure_provenance == failed_attempt
+
+
 # --- F3 Task 4 review fixes: quit-deadlock guard + payload-sparing ----------
 #
 # The Task 4 review found a quit-time deadlock race: Textual's

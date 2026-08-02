@@ -2504,6 +2504,7 @@ class LibraryIngestQueueMixin:
                 error=error_text or "Library ingest parsing failed.",
                 permanent=bool(result.get("permanent", False)),
                 error_detail=result.get("error_detail"),
+                stt_failure_provenance=result.get("stt_failure_provenance"),
             )
         self._top_up_ingest_parse_pool()
 

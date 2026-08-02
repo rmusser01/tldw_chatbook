@@ -52,6 +52,11 @@ from .routing import (
     build_builtin_registry,
     default_routing_policy,
 )
+from .persistence import (
+    FailedTranscriptionAttempt,
+    dump_failed_transcription_attempt,
+    load_failed_transcription_attempt,
+)
 
 
 PROVIDER_ID = "transcribe-cpp"
@@ -63,7 +68,13 @@ _RETRY_FASTER_WHISPER = "retry_faster_whisper"
 class TranscribeCppFailure(Exception):
     """Path-safe direct-local failure with bounded recovery actions."""
 
-    __slots__ = ("actions", "code", "model_id")
+    __slots__ = (
+        "actions",
+        "code",
+        "error_detail",
+        "model_id",
+        "stt_failure_provenance",
+    )
 
     def __init__(
         self,
@@ -71,11 +82,20 @@ class TranscribeCppFailure(Exception):
         *,
         model_id: str = "local-gguf:unavailable",
         actions: tuple[str, ...] = (),
+        failed_attempt: dict[str, Any] | None = None,
     ) -> None:
         self.code = code
         self.model_id = model_id
         self.actions = actions
-        super().__init__(_failure_message(code))
+        message = _failure_message(code)
+        self.error_detail = {
+            "category": "stt_failure",
+            "code": code.value,
+            "message": message,
+            "actions": list(actions),
+        }
+        self.stt_failure_provenance = failed_attempt
+        super().__init__(message)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(code={self.code.value!r})"
@@ -367,6 +387,35 @@ def _failure_actions(code: TranscriptionFailureCode) -> tuple[str, ...]:
     return (_RETRY_FASTER_WHISPER,)
 
 
+def _failed_attempt_document(
+    *,
+    code: TranscriptionFailureCode,
+    attempt_id: str,
+    batch_id: str | None,
+    job_id: str | None,
+    model_id: str,
+    language: str,
+) -> dict[str, Any]:
+    attempt = FailedTranscriptionAttempt(
+        attempt_id=attempt_id,
+        batch_id=batch_id,
+        job_id=job_id,
+        provider_id=PROVIDER_ID,
+        model_id=model_id,
+        artifact_root=None,
+        artifact_dependencies=(),
+        precision=PRECISION,
+        requested_device=ExecutionDevice.AUTO,
+        effective_device=None,
+        requested_language=language,
+        effective_language=language,
+        detected_language=None,
+        task=TranscriptionTask.TRANSCRIBE,
+        error_code=code,
+    )
+    return load_failed_transcription_attempt(dump_failed_transcription_attempt(attempt))
+
+
 def transcribe_file(
     *,
     audio_path: Path,
@@ -387,10 +436,33 @@ def transcribe_file(
     payload, while the native runtime remains absent from module scope.
     """
 
+    normalized_language = (language or "en").strip().lower()
+
+    def failure(
+        code: TranscriptionFailureCode,
+        *,
+        model_id: str = "local-gguf:unavailable",
+        actions: tuple[str, ...] | None = None,
+    ) -> TranscribeCppFailure:
+        selected_actions = _failure_actions(code) if actions is None else actions
+        return TranscribeCppFailure(
+            code,
+            model_id=model_id,
+            actions=selected_actions,
+            failed_attempt=_failed_attempt_document(
+                code=code,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=model_id,
+                language=normalized_language,
+            ),
+        )
+
     try:
         runtime = importlib.import_module("transcribe_cpp")
     except Exception as error:
-        raise TranscribeCppFailure(
+        raise failure(
             TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
             actions=(_RETRY_FASTER_WHISPER,),
         ) from error
@@ -398,7 +470,7 @@ def transcribe_file(
     try:
         admission = validate_local_gguf(model_path)
     except Exception as error:
-        raise TranscribeCppFailure(
+        raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
         ) from error
@@ -426,7 +498,7 @@ def transcribe_file(
             close = getattr(model, "close", None)
             if callable(close):
                 close()
-        raise TranscribeCppFailure(
+        raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             model_id=model_id,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
@@ -458,7 +530,7 @@ def transcribe_file(
             source=FileAudioSource(audio_path),
             provider_id=PROVIDER_ID,
             model_id=model_id,
-            language=(language or "en").strip().lower(),
+            language=normalized_language,
             task=TranscriptionTask.TRANSCRIBE,
             precision=PRECISION,
             device=ExecutionDevice.AUTO,
@@ -472,7 +544,7 @@ def transcribe_file(
         )
         return coordinator.transcribe(request)
     except TranscriptionCoordinatorError as error:
-        raise TranscribeCppFailure(
+        raise failure(
             error.failure.code,
             model_id=model_id,
             actions=_failure_actions(error.failure.code),
@@ -480,7 +552,7 @@ def transcribe_file(
     except TranscribeCppFailure:
         raise
     except Exception as error:
-        raise TranscribeCppFailure(
+        raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             model_id=model_id,
             actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),

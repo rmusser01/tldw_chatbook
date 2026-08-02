@@ -117,6 +117,21 @@ class PermanentIngestError(FileIngestionError):
     """
 
 
+class DirectLocalSTTIngestError(FileIngestionError):
+    """A sanitized direct-local STT failure crossing the spawn boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_detail: dict[str, Any],
+        failed_attempt: dict[str, Any],
+    ) -> None:
+        self.error_detail = error_detail
+        self.stt_failure_provenance = failed_attempt
+        super().__init__(message)
+
+
 _VIDEO_URL_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com")
 _VIDEO_EXTS = (
     ".mp4",
@@ -593,6 +608,7 @@ def parse_local_file_for_ingest(
                     "transcription_provider", "faster-whisper"
                 ),
                 transcription_model_dir=options.get("transcription_model_dir"),
+                transcription_context=options.get("transcription_context"),
                 transcription_model=options.get(
                     "transcription_model",
                     chunk_options.get("transcription_model", "base"),
@@ -633,6 +649,12 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
+                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                        raise DirectLocalSTTIngestError(
+                            result_data.get("error", "Speech-to-text failed."),
+                            error_detail=result_data["error_detail"],
+                            failed_attempt=result_data["stt_failure_provenance"],
+                        )
                     raise FileIngestionError(
                         f"Audio processing failed: {result_data.get('error', 'Unknown error')}"
                     )
@@ -647,6 +669,10 @@ def parse_local_file_for_ingest(
                     "chunks": result_data.get("chunks", []),
                     "analysis": result_data.get("analysis", ""),
                     "metadata": result_data.get("metadata", {}),
+                    "transcription_model": result_data.get("transcription_model"),
+                    "transcription_provenance": result_data.get(
+                        "transcription_provenance"
+                    ),
                 }
             else:
                 raise FileIngestionError("Audio processing returned no results")
@@ -664,6 +690,7 @@ def parse_local_file_for_ingest(
                     "transcription_provider", "faster-whisper"
                 ),
                 transcription_model_dir=options.get("transcription_model_dir"),
+                transcription_context=options.get("transcription_context"),
                 transcription_model=options.get(
                     "transcription_model",
                     chunk_options.get("transcription_model", "base"),
@@ -704,6 +731,12 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
+                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                        raise DirectLocalSTTIngestError(
+                            result_data.get("error", "Speech-to-text failed."),
+                            error_detail=result_data["error_detail"],
+                            failed_attempt=result_data["stt_failure_provenance"],
+                        )
                     raise FileIngestionError(
                         f"Video processing failed: {result_data.get('error', 'Unknown error')}"
                     )
@@ -718,6 +751,10 @@ def parse_local_file_for_ingest(
                     "chunks": result_data.get("chunks", []),
                     "analysis": result_data.get("analysis", ""),
                     "metadata": result_data.get("metadata", {}),
+                    "transcription_model": result_data.get("transcription_model"),
+                    "transcription_provenance": result_data.get(
+                        "transcription_provenance"
+                    ),
                 }
             else:
                 raise FileIngestionError("Video processing returned no results")
@@ -837,8 +874,12 @@ def parse_local_file_for_ingest(
             'metadata': media_metadata,
             'file_path': raw_source if is_url else str(file_path),
             'warnings': warnings,
+            'transcription_model': result.get('transcription_model'),
+            'transcription_provenance': result.get('transcription_provenance'),
         }
 
+    except DirectLocalSTTIngestError:
+        raise
     except PermanentIngestError:
         # keep the permanent classification intact for classify_parse_failure
         raise
