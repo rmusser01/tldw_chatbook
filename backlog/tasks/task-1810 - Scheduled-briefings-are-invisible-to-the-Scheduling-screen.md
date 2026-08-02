@@ -1,7 +1,7 @@
 ---
 id: TASK-1810
 title: Scheduled briefings are invisible to the Scheduling screen
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 18:25'
 updated_date: '2026-08-02 08:44'

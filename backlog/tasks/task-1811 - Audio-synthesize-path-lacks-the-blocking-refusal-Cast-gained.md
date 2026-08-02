@@ -1,7 +1,7 @@
 ---
 id: TASK-1811
 title: Audio synthesize path lacks the blocking refusal Cast gained
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 18:25'
 updated_date: '2026-08-02 08:57'
