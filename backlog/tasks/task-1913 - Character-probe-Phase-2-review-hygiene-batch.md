@@ -28,4 +28,5 @@ trap; each is an inconsistency worth closing while the code is fresh.
 - [ ] #5 A target row carrying BOTH `prefix` and `system_prompt` is flagged as corrupt in the targets listing rather than silently degrading to an unsuffixed label
 - [ ] #6 `EvalsViewModel.character_benches()` and `probe_sets()` have direct unit tests
 - [ ] #7 `CardRow.__init__` calls `super().__init__()` before setting instance attributes, matching `Widgets/emoji_picker.py`
+- [ ] #8 `SnippetEditor._handle_import_file_selected` reads its file off the UI thread, matching the shared `LibraryRail._read_import_file_off_thread` seam its two siblings now use
 <!-- AC:END -->
