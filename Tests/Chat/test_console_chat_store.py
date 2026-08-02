@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -2667,6 +2668,150 @@ def test_set_message_usage_after_a_terminal_mark_flushes_to_persistence():
     assert '"uncached_input": 3571' in persistence.usage_values[-1]
     assert '"cache_read": 6656' in persistence.usage_values[-1]
     assert '"partial": true' in persistence.usage_values[-1]
+
+
+class _UsageUpdatePersistence(RecordingPersistence):
+    """RecordingPersistence that keeps every usage_json it is handed."""
+
+    def __init__(self):
+        super().__init__()
+        self.usage_values = []
+
+    def update_message_content(self, *, usage_json=None, **kwargs):
+        self.usage_values.append(usage_json)
+        return super().update_message_content(**kwargs)
+
+    def last_usage(self):
+        recorded = [value for value in self.usage_values if value is not None]
+        return recorded[-1] if recorded else None
+
+
+def _completed_message_with_usage(store, session, usage):
+    """Stream an answer to completion with `usage` recorded against it."""
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "the original answer")
+    store.set_message_usage(message.id, usage)
+    store.mark_message_complete(message.id)
+    return message
+
+
+@pytest.mark.parametrize("attach_before_mark", [False, True])
+def test_stopped_regenerate_keeps_the_original_answers_usage(attach_before_mark):
+    """A stopped regenerate must not price the ORIGINAL answer with the
+    abandoned run's numbers.
+
+    ``mark_message_stopped`` restores a mid-regenerate message to its
+    pre-regenerate content AND status, so the message ends up "complete"
+    again, showing the original answer. The abandoned run's cancelled task
+    then attaches its partial usage -- and the terminal flush added for the
+    Stop path (F3) wrote it straight over the original's durable record.
+
+    Both real orderings are pinned:
+      * ``attach_before_mark=False`` -- ``stop_active_run`` finalizes the
+        message first, then cancels the task whose handler attaches (the
+        empirically reproduced case).
+      * ``attach_before_mark=True`` -- the in-loop cancel check attaches
+        before calling ``_mark_stream_stopped``.
+    """
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    original_usage = ProviderUsage(
+        uncached_input=1200,
+        output=340,
+        provider="anthropic",
+        model="claude-sonnet-5",
+        partial=False,
+    )
+    message = _completed_message_with_usage(store, session, original_usage)
+    assert store.get_message(message.id).usage == original_usage
+    assert '"uncached_input": 1200' in persistence.last_usage()
+
+    # Regenerate: the pre-regenerate content, status AND usage are snapshotted.
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "half of a new ans")
+
+    abandoned_usage = ProviderUsage(
+        output=7, provider="anthropic", model="claude-sonnet-5", partial=True
+    )
+    if attach_before_mark:
+        store.set_message_usage(message.id, abandoned_usage)
+        stopped = store.mark_message_stopped(message.id)
+    else:
+        stopped = store.mark_message_stopped(message.id)
+        store.set_message_usage(message.id, abandoned_usage)
+
+    # Restored to the original generation in every respect.
+    assert stopped.content == "the original answer"
+    assert stopped.status == "complete"
+    current = store.get_message(message.id)
+    assert current.content == "the original answer"
+    assert current.usage == original_usage
+    assert current.usage.partial is False
+
+    persisted = persistence.last_usage()
+    assert '"uncached_input": 1200' in persisted
+    assert '"output": 340' in persisted
+    assert '"partial": false' in persisted
+    assert '"output": 7' not in persisted
+
+
+def test_regenerating_again_after_a_stopped_regenerate_records_usage_normally():
+    """The guard is scoped to the abandoned run, not to the message: a fresh
+    regenerate re-arms usage capture."""
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    message = _completed_message_with_usage(
+        store,
+        session,
+        ProviderUsage(uncached_input=1200, output=340, provider="anthropic", model="m"),
+    )
+    store.begin_variant_stream(message.id)
+    store.mark_message_stopped(message.id)
+    store.set_message_usage(
+        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+    )
+
+    # Second regenerate, this one succeeds.
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "a better answer")
+    second_usage = ProviderUsage(
+        uncached_input=1500, output=400, provider="anthropic", model="m"
+    )
+    store.set_message_usage(message.id, second_usage)
+    store.finalize_variant_stream(message.id)
+
+    assert store.get_message(message.id).usage == second_usage
+    assert '"uncached_input": 1500' in persistence.last_usage()
+
+
+def test_failed_regenerate_keeps_the_original_answers_usage():
+    """``mark_message_failed`` restores the same pre-regenerate state as
+    ``mark_message_stopped``; the agent path attaches ahead of BOTH terminal
+    marks, so the same clobber applies."""
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    original_usage = ProviderUsage(
+        uncached_input=1200, output=340, provider="anthropic", model="m"
+    )
+    message = _completed_message_with_usage(store, session, original_usage)
+
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "half a")
+    store.mark_message_failed(message.id)
+    store.set_message_usage(
+        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+    )
+
+    assert store.get_message(message.id).usage == original_usage
+    assert '"output": 7' not in persistence.last_usage()
 
 
 def test_set_message_usage_unknown_id_raises_keyerror():

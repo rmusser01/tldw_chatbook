@@ -54,13 +54,18 @@ TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 class _VariantStreamBase:
     """Pre-regenerate snapshot captured by ``begin_variant_stream``.
 
-    Carries both the visible content *and* the message's status at the
-    moment regeneration began, so a failed regenerate can restore the
-    message to exactly the state it was in before -- not just its content.
+    Carries the visible content, the message's status *and* its recorded
+    usage at the moment regeneration began, so a failed or stopped
+    regenerate can restore the message to exactly the state it was in
+    before -- not just its content. Usage is part of that state: it
+    describes the generation that produced the content being restored, so
+    leaving the abandoned run's numbers behind would attribute one
+    generation's spend to another's answer.
     """
 
     content: str
     prior_status: ConsoleMessageStatus
+    prior_usage: "ProviderUsage | None" = None
 
 
 class ConsoleChatPersistence(Protocol):
@@ -427,6 +432,15 @@ class ConsoleChatStore:
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
         self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
+        # Messages whose CURRENT content was RESTORED from a pre-regenerate
+        # base by a stopped/failed terminal mark. Their content belongs to
+        # the ORIGINAL generation, so a late usage attach arriving from the
+        # abandoned run (the Stop path finalizes the message first and only
+        # then cancels the stream task, whose CancelledError handler
+        # attaches) must not land on -- let alone persist over -- the
+        # original's own record. Cleared the moment a new generation starts
+        # on the message (`begin_variant_stream`/`prepare_message_retry`).
+        self._variant_restored_message_ids: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -753,6 +767,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(message_id, None)
             self._pending_persistence_message_ids.discard(message_id)
             self._variant_stream_bases.pop(message_id, None)
+            self._variant_restored_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
 
@@ -974,6 +989,7 @@ class ConsoleChatStore:
         # Pre-existing bug fixed while here: the regenerate base snapshots were
         # never cleared on restore, leaking across a state replacement.
         self._variant_stream_bases.clear()
+        self._variant_restored_message_ids.clear()
         self._message_speech_revisions.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
@@ -1766,6 +1782,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(node_id, None)
             self._pending_persistence_message_ids.discard(node_id)
             self._variant_stream_bases.pop(node_id, None)
+            self._variant_restored_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
@@ -1996,8 +2013,21 @@ class ConsoleChatStore:
         branch and never persists again. Without this flush, a stopped
         turn's real, already-billed input tokens were dropped on the floor
         (final-review F3).
+
+        A stopped/failed REGENERATE is the exception: it restores the message
+        to the pre-regenerate answer, so a late attach from the abandoned run
+        no longer describes what the message says and is ignored (see
+        ``_variant_restored_message_ids``).
         """
         message = self._message_or_raise(message_id)
+        if message.id in self._variant_restored_message_ids:
+            # The visible content was restored to the ORIGINAL generation's
+            # answer, so this usage belongs to a run whose output no longer
+            # exists here. Dropping the attach is what keeps the original's
+            # own durable record intact -- combined with the flush below, a
+            # late attach would otherwise overwrite it in the DB, leaving the
+            # original answer priced by the abandoned regeneration.
+            return self._snapshot(message)
         message.usage = usage
         if message.status not in {"pending", "streaming"}:
             self._persist_existing_message(message)
@@ -2079,8 +2109,11 @@ class ConsoleChatStore:
         if base is not None:
             message.content = base.content
             message.status = base.prior_status
+            message.usage = base.prior_usage
+            self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "stopped"
+            self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -2111,8 +2144,11 @@ class ConsoleChatStore:
         if base is not None:
             message.content = base.content
             message.status = base.prior_status
+            message.usage = base.prior_usage
+            self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "failed"
+            self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -2197,6 +2233,8 @@ class ConsoleChatStore:
         message.status = "pending"
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
+        # A new generation starts here -- see `begin_variant_stream`.
+        self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
@@ -2242,7 +2280,11 @@ class ConsoleChatStore:
         self._variant_stream_bases[message.id] = _VariantStreamBase(
             content=message.content,
             prior_status=message.status,
+            prior_usage=message.usage,
         )
+        # A new generation starts here, so this message's next usage attach
+        # is legitimate again even if an earlier regenerate was abandoned.
+        self._variant_restored_message_ids.discard(message.id)
         message.content = ""
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
