@@ -1287,8 +1287,16 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         screen.query_one("#library-prompt-name", Input).value = "Kappa copy"
         screen.query_one("#library-prompt-conflict-save-new", Button).press()
         await pilot.pause()
+        # The handler removes the conflict banner synchronously, then starts
+        # the detached save after the recompose. Wait for that save's actual
+        # success state instead of treating banner removal as completion.
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) == 0:
+            if (
+                calls["count"] == 2
+                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and screen._library_prompt_dirty is False
+                and screen._selected_prompt_id is not None
+            ):
                 break
             await pilot.pause(0.02)
 
@@ -1440,8 +1448,15 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
 
         screen.query_one("#library-prompt-conflict-save-new", Button).press()
         await pilot.pause()
+        # The banner disappears before the post-refresh save worker starts,
+        # so wait for the retry to reach its persisted success state.
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) == 0:
+            if (
+                calls["count"] == 2
+                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and screen._library_prompt_dirty is False
+                and screen._selected_prompt_id is not None
+            ):
                 break
             await pilot.pause(0.02)
 
