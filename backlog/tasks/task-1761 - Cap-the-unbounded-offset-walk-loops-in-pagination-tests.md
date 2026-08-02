@@ -1,7 +1,7 @@
 ---
 id: TASK-1761
 title: 'Cap the unbounded offset-walk loops in pagination tests'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 20:05'
 labels:
