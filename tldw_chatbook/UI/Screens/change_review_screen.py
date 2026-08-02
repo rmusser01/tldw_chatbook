@@ -16,6 +16,7 @@ line by line with diff coloring, never markup-parsed: file content is data
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -78,19 +79,27 @@ class AgentRunsChangeReviewProvider:
         conversation_id: str,
         diff_display_max_lines: int | None = None,
     ) -> None:
-        """Args:
-        db: The runs database holding ``change_snapshots`` rows.
-        service: Shadow-repo service for diff content.
-        conversation_id: Conversation whose turns are reviewable.
-        diff_display_max_lines: Per-file render cap; ``None`` reads the
-            flat ``[change_review]`` config section (default 2000).
+        """Create a provider over one conversation's recorded turns.
+
+        Args:
+            db: The runs database holding ``change_snapshots`` rows.
+            service: Shadow-repo service for diff content.
+            conversation_id: Conversation whose turns are reviewable.
+            diff_display_max_lines: Per-file render cap; ``None`` reads the
+                flat ``[change_review]`` config section (default 2000).
         """
         self._db = db
         self._service = service
         self._conversation_id = conversation_id
         if diff_display_max_lines is None:
             diff_display_max_lines = self._configured_cap()
-        self.diff_display_max_lines = diff_display_max_lines
+        # Review finding: an explicit 0/negative/non-int cap would defeat
+        # the windowing guarantee (negative slicing renders almost the full
+        # diff) or crash mid-render. Same floor as the configured path.
+        try:
+            self.diff_display_max_lines = max(50, int(diff_display_max_lines))
+        except (TypeError, ValueError):
+            self.diff_display_max_lines = DEFAULT_DIFF_DISPLAY_MAX_LINES
 
     @staticmethod
     def _configured_cap() -> int:
@@ -188,6 +197,11 @@ class ChangeReviewScreen(Screen):
     # -- compose -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        """Header + banner + (tree | diff pane) + footer.
+
+        Returns:
+            The screen's widget tree.
+        """
         with Vertical(id="change-review-screen"):
             with Horizontal(id="change-review-header"):
                 yield Static(
@@ -222,14 +236,17 @@ class ChangeReviewScreen(Screen):
             )
 
     def on_mount(self) -> None:
+        """Load turn history and open on the latest turn."""
         self._turns = self._provider.turns()
         select = self.query_one("#change-review-turn-select", Select)
         select.set_options(
             (turn.label, turn.run_id) for turn in self._turns
         )
         if self._turns:
+            # Setting the value posts Select.Changed; the handler is the ONE
+            # loader (review finding: value-set + direct _load_turn loaded
+            # every turn twice -- doubled git work per open).
             select.value = self._turns[0].run_id
-            self._load_turn(self._turns[0])
         else:
             self._show_empty("No file changes recorded for this conversation.")
 
@@ -243,10 +260,10 @@ class ChangeReviewScreen(Screen):
         """
         for turn in self._turns:
             if turn.run_id == run_id:
-                self.query_one("#change-review-turn-select", Select).value = (
-                    run_id
-                )
-                self._load_turn(turn)
+                select = self.query_one("#change-review-turn-select", Select)
+                if select.value == run_id:
+                    return  # already loaded; a same-value set posts nothing
+                select.value = run_id  # Select.Changed performs the load
                 return
 
     @on(Select.Changed, "#change-review-turn-select")

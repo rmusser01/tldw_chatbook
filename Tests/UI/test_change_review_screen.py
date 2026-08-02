@@ -244,6 +244,61 @@ async def test_only_the_focused_files_diff_is_mounted(review_fixture):
 
 
 @pytest.mark.asyncio
+async def test_opening_loads_each_turn_exactly_once(review_fixture):
+    """Review finding: value-set + direct call loaded every turn TWICE --
+    doubled git work on every open. Select.Changed is the one loader."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        loads: list[str] = []
+        original = screen._load_turn
+        screen._load_turn = lambda turn: (loads.append(turn.run_id), original(turn))[1]
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and _tree_labels(screen.query_one(Tree))) or None,
+            "initial load",
+        )
+        await pilot.pause()
+        assert loads.count(run2) <= 1, f"the latest turn loaded twice: {loads}"
+
+        screen.select_turn(run1)
+        await _wait_for(
+            pilot,
+            lambda: run1 in loads or None,
+            "turn 1 load",
+        )
+        await pilot.pause()
+        assert loads.count(run1) == 1, f"turn 1 loaded twice: {loads}"
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_cap_cannot_defeat_windowing(tmp_path):
+    """Review finding: a negative explicit cap slices from the END --
+    rendering almost the whole diff and inverting the guarantee."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db, tracker, root, run,
+        lambda: (root / "big.txt").write_text(
+            "".join(f"line {n}\n" for n in range(500))
+        ),
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c", diff_display_max_lines=-5
+    )
+    assert provider.diff_display_max_lines >= 50
+
+
+@pytest.mark.asyncio
 async def test_turn_selector_navigates_to_a_previous_turn(review_fixture):
     provider, root, run1, run2 = review_fixture
     app = _Harness(provider)
