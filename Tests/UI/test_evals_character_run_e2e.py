@@ -167,6 +167,13 @@ async def test_running_a_character_bench_persists_conversations(
     ``chat_api_call`` against whatever llama.cpp endpoint happens to be
     configured, or none at all) and could never satisfy `all(c.turns for
     c in conversations)` against a real or absent server in a unit test.
+
+    Review round 2 (verification gap noted by the re-reviewer): also
+    asserts the run group reads ``"completed"`` through the REAL
+    ``EvalsViewModel.run_groups()`` classification (the same pivot the
+    rail itself renders from), not the raw ``eval_runs.status`` column --
+    the property this whole fix round exists to protect is what the RAIL
+    shows, and ``run_groups()`` is the one function that decides that.
     """
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         pilot.app.screen._character_probe_chat_factory = lambda cfg: succeeding_chat
@@ -180,6 +187,11 @@ async def test_running_a_character_bench_persists_conversations(
         assert len(conversations) == 4
         assert all(c.turns for c in conversations)
         assert all(not c.error for c in conversations)
+
+        run_groups = pilot.app.screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert run_groups[0]["id"] == pilot.app.screen._selection.id
+        assert run_groups[0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -403,3 +415,58 @@ async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
         # docstring), so it must be released rather than left to leak
         # past this test.
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_run_that_errors_ordinarily_does_not_read_as_completed(
+    evals_app, runnable_character_bench
+):
+    """Review round 2 (Important finding): the general ``except
+    Exception:`` branch of ``_run_character_bench_worker`` is reachable
+    with ``run_ids`` already populated -- ``create_probe_run_group`` runs
+    (and writes real ``eval_runs`` rows) BEFORE the chat factory is ever
+    called -- whenever an ORDINARY exception fires afterward, not only a
+    cancellation. Here the injected ``_character_probe_chat_factory``
+    itself raises building the chat callable, the same class of failure a
+    real ``chat_api_call`` configuration error would produce. Before this
+    fix, the created run rows stayed stuck at their ``'pending'`` DB
+    default forever, which ``run_groups()``'s own pivot fell through to
+    "completed" -- indistinguishable from a genuinely finished run with
+    real results.
+    """
+
+    def _broken_factory(cfg):
+        raise RuntimeError("simulated: could not build a chat client")
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen._character_probe_chat_factory = _broken_factory
+        screen.select(kind="character_bench", id=runnable_character_bench)
+        await pilot.pause()
+
+        await pilot.click("#evals-primary-action")
+
+        def _toasted() -> bool:
+            return any(
+                "Could not run the bench" in message
+                for message, _severity in screen.app_instance.notifications
+            )
+
+        await _wait_until(pilot, _toasted)
+        await pilot.pause()
+
+        # The run genuinely failed -- the selection must not have moved to
+        # a run group (there is nothing worth navigating to).
+        assert screen._selection.kind == "character_bench"
+
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert run_groups[0]["status"] != "completed"
+        # The concrete classification, not merely "not completed" --
+        # `run_groups()`'s own pivot has no separate group-level "failed"
+        # bucket (a run-level "failed" status buckets into the SAME
+        # group-level "cancelled" label a "cancelled" run-level status
+        # gets -- see `EvalsScreen._mark_character_run_ids`'s own
+        # docstring), so this is the real, deterministic value, not a
+        # guess.
+        assert run_groups[0]["status"] == "cancelled"

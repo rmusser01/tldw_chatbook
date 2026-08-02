@@ -1209,9 +1209,16 @@ class EvalsScreen(LabScreen):
         ``_run_character_bench_worker`` created, mirroring ``sample_bench.
         _mark_orphaned_runs_cancelled``'s own ``EvalsDB.update_run_status``
         call and its "log and continue, never let a bookkeeping failure
-        mask the real outcome" contract -- called from both the success
-        path (``status="completed"``) and the ``CancelledError`` path
-        (``status="cancelled"``) of that worker.
+        mask the real outcome" contract -- called from the success path
+        (``status="completed"``), the ``CancelledError`` path
+        (``status="cancelled"``), AND (review round 2 -- the general
+        ``except Exception:`` branch is reachable with `run_ids` already
+        populated too: ``factory(config)`` failing to build a chat
+        callable, ``asyncio.Semaphore(config.concurrency)`` raising for a
+        non-positive concurrency, or a plain DB I/O failure inside
+        ``save_conversations`` itself are all ordinary exceptions, not
+        cancellations) the general failure path (``status="failed"``) of
+        that worker.
 
         Necessary because ``character_probe.storage``/``runner`` (Task 1's
         phase-1 engine) never call ``EvalsDB.update_run_status``
@@ -1221,8 +1228,17 @@ class EvalsScreen(LabScreen):
         "pending, nothing running/cancelled/failed" group through to
         "completed" (see that method's own docstring) -- true by
         coincidence for a genuinely successful run, but also true, and
-        misleading, for one that was hard-cancelled with zero results
-        (task-1691 phase 2 Task 6 review round 1 finding).
+        misleading, for one that never finished, regardless of WHY.
+
+        ``"failed"`` and ``"cancelled"`` are not the same run-level fact
+        (one was requested, one wasn't) but ``run_groups()``'s own pivot
+        deliberately has no separate group-level "failed" bucket -- its
+        ``_has_blocked`` check groups a run-level ``"cancelled"`` OR
+        ``"failed"`` status into the identical group-level ``"cancelled"``
+        label (see that method's own docstring). Stamping ``"failed"``
+        here is therefore both the semantically honest run-level fact AND
+        sufficient for the group to stop reading "completed" in the rail
+        -- the property review round 1/2 both actually care about.
 
         Args:
             db: The evals database handle, or ``None`` -- nothing to
@@ -1233,7 +1249,7 @@ class EvalsScreen(LabScreen):
                 ``create_probe_run_group`` -- empty (``{}``) when this
                 worker failed or was cancelled before that call ever ran,
                 in which case there is nothing to stamp either.
-            status: ``"completed"`` or ``"cancelled"``.
+            status: ``"completed"``, ``"cancelled"``, or ``"failed"``.
         """
         if db is None or not run_ids:
             return
@@ -1362,6 +1378,32 @@ class EvalsScreen(LabScreen):
             logger.info("Character bench run worker was cancelled.")
             raise
         except Exception as exc:
+            # Review round 2 (Important finding): the window between
+            # `create_probe_run_group` (populates `run_ids`) and
+            # `save_conversations` completing is reachable by an ORDINARY
+            # exception, not only cancellation -- `factory(config)`
+            # failing to build a chat callable, `asyncio.Semaphore(config.
+            # concurrency)` raising for a non-positive concurrency inside
+            # `runner.run`, or a plain DB I/O failure inside `save_
+            # conversations` itself (`db.get_run`/`update_run`/
+            # `store_result`, all real writes). Left unstamped, this run
+            # group's rows would stay `'pending'` forever, which `run_
+            # groups()`'s own pivot (see `_mark_character_run_ids`'s own
+            # docstring) falls through to "completed" -- the exact
+            # falsehood the CancelledError branch above already guards
+            # against. `"failed"` (not `"cancelled"`): this run was never
+            # requested to stop, it genuinely errored -- `run_groups()`'s
+            # pivot buckets a `"failed"` run-level status into the SAME
+            # group-level `"cancelled"` label a `"cancelled"` run-level
+            # status gets (there is no separate group-level "failed"
+            # bucket; see that method's own `_has_blocked` check), so this
+            # still reads truthfully as "not completed" in the rail even
+            # though the run-level row itself records the more precise
+            # reason. `run_ids` is `{}` if this exception fired before
+            # `create_probe_run_group` ever ran -- `_mark_character_run_
+            # ids` no-ops on an empty mapping, so this is safe
+            # unconditionally, mirroring the CancelledError branch.
+            self._mark_character_run_ids(db, run_ids, "failed")
             # Type only: persistent exception diagnostics can serialize
             # frame locals, which here include the bench's own config and
             # every snapshotted card's full text.
