@@ -25,6 +25,7 @@ CSS_MODULES = [
     "components/_forms.tcss",
     "components/_lists.tcss",
     "components/_navigation.tcss",
+    "components/_change_review.tcss",
     "components/_messages.tcss",
     "components/_dialogs.tcss",
     "components/_status.tcss",

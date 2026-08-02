@@ -1,0 +1,415 @@
+"""The Agent Change Review screen (TASK-1973).
+
+A PUSHED overlay (``push_screen`` from the Console, ``Esc`` returns) — not a
+``BaseAppScreen`` tab: the spec deliberately chose an overlay so diffs get
+full real estate without a new tab route.
+
+Layout: header (turn selector, totals), honesty banners (tracking errors),
+left changed-file tree grouped Added/Modified/Deleted/Renamed (rare git
+letters bucket as Other — TASK-1970's verbatim-status contract), right diff
+pane. The diff pane mounts ONLY the focused file — a 50k-line generated
+file must not freeze the screen — and renders as a Rich ``Text`` assembled
+line by line with diff coloring, never markup-parsed: file content is data
+(the transcript's literal-backslash lesson).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from rich.text import Text
+from textual import on
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import Screen
+from textual.widgets import Select, Static, Tree
+
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Workspaces.change_tracking import (
+    ChangedFile,
+    ChangeTrackingError,
+    ShadowRepoService,
+)
+
+#: Default per-file diff display cap; the Settings surface is TASK-1979,
+#: but the flat section name is the spec's (dotted sections drop defaults).
+DEFAULT_DIFF_DISPLAY_MAX_LINES = 2000
+
+#: Group headings in display order. "Other" carries the rare git letters
+#: (T typechange, C copy) that pass through verbatim rather than being
+#: coerced — see ``ChangedFile.status``.
+_GROUPS: tuple[tuple[str, str], ...] = (
+    ("A", "Added"),
+    ("M", "Modified"),
+    ("D", "Deleted"),
+    ("R", "Renamed"),
+)
+_OTHER_GROUP = "Other"
+
+
+@dataclass(frozen=True)
+class ReviewTurn:
+    """One reviewable turn: an agent run's snapshot rows.
+
+    Attributes:
+        run_id: The agent run.
+        label: Selector copy (run timestamp + totals).
+        rows: The run's ``change_snapshots`` rows (one per root).
+    """
+
+    run_id: str
+    label: str
+    rows: tuple[dict, ...]
+
+
+class AgentRunsChangeReviewProvider:
+    """Concrete data source over (AgentRunsDB, ShadowRepoService).
+
+    Used by production AND by tests — the fixture-invented-shapes trap has
+    bitten this repo four separate times, so the tests drive this real
+    provider against a real database and real git.
+    """
+
+    def __init__(
+        self,
+        *,
+        db: AgentRunsDB,
+        service: ShadowRepoService,
+        conversation_id: str,
+        diff_display_max_lines: int | None = None,
+    ) -> None:
+        """Args:
+        db: The runs database holding ``change_snapshots`` rows.
+        service: Shadow-repo service for diff content.
+        conversation_id: Conversation whose turns are reviewable.
+        diff_display_max_lines: Per-file render cap; ``None`` reads the
+            flat ``[change_review]`` config section (default 2000).
+        """
+        self._db = db
+        self._service = service
+        self._conversation_id = conversation_id
+        if diff_display_max_lines is None:
+            diff_display_max_lines = self._configured_cap()
+        self.diff_display_max_lines = diff_display_max_lines
+
+    @staticmethod
+    def _configured_cap() -> int:
+        try:
+            from tldw_chatbook.config import get_cli_setting
+
+            value = get_cli_setting(
+                "change_review",
+                "diff_display_max_lines",
+                DEFAULT_DIFF_DISPLAY_MAX_LINES,
+            )
+            return max(50, int(value))
+        except Exception:  # noqa: BLE001 -- a bad config never breaks review
+            return DEFAULT_DIFF_DISPLAY_MAX_LINES
+
+    def turns(self) -> list[ReviewTurn]:
+        """Reviewable turns, NEWEST first (the screen opens on the latest).
+
+        Returns:
+            One :class:`ReviewTurn` per run that has snapshot rows.
+        """
+        by_run: dict[str, list[dict]] = {}
+        order: list[str] = []
+        for row in self._db.change_snapshots_for_conversation(
+            self._conversation_id
+        ):
+            run_id = str(row["run_id"])
+            if run_id not in by_run:
+                by_run[run_id] = []
+                order.append(run_id)
+            by_run[run_id].append(row)
+        turns: list[ReviewTurn] = []
+        for run_id in reversed(order):
+            rows = by_run[run_id]
+            files = sum(int(r["files_changed"] or 0) for r in rows)
+            adds = sum(int(r["adds"] or 0) for r in rows)
+            dels = sum(int(r["dels"] or 0) for r in rows)
+            stamp = str(rows[0].get("created_at", ""))[:19].replace("T", " ")
+            turns.append(
+                ReviewTurn(
+                    run_id=run_id,
+                    label=f"{stamp} · {files} files +{adds} −{dels}",
+                    rows=tuple(rows),
+                )
+            )
+        return turns
+
+    def changed_files(self, row: dict) -> list[ChangedFile]:
+        """A snapshot row's changed files (empty for tracking-error rows).
+
+        Args:
+            row: One ``change_snapshots`` row.
+
+        Returns:
+            The row's :class:`ChangedFile` list from the shadow repo.
+        """
+        if row.get("tracking_error") or not row.get("end_sha"):
+            return []
+        repo = self._service.repo_for_root(row["root"])
+        return repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
+
+    def diff_text(self, row: dict, path: str) -> str:
+        """One file's unified diff for a snapshot row.
+
+        Args:
+            row: One ``change_snapshots`` row.
+            path: Root-relative changed path.
+
+        Returns:
+            Unified diff text.
+        """
+        repo = self._service.repo_for_root(row["root"])
+        return repo.diff_text(str(row["baseline_sha"]), str(row["end_sha"]), path)
+
+
+class ChangeReviewScreen(Screen):
+    """Changed-file tree + windowed diff viewer for one conversation."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Back"),
+        Binding("j", "next_file", "Next file"),
+        Binding("k", "previous_file", "Previous file"),
+        Binding("enter", "focus_diff", "View diff", show=False),
+    ]
+
+    def __init__(self, provider: AgentRunsChangeReviewProvider) -> None:
+        super().__init__()
+        self._provider = provider
+        self._turns: list[ReviewTurn] = []
+        self._active_turn: ReviewTurn | None = None
+        #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
+        self._leaves: list[tuple[dict, ChangedFile]] = []
+        self._focused_leaf: int = -1
+
+    # -- compose -----------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="change-review-screen"):
+            with Horizontal(id="change-review-header"):
+                yield Static(
+                    "Change review", id="change-review-title", markup=False
+                )
+                yield Select(
+                    [],
+                    id="change-review-turn-select",
+                    allow_blank=True,
+                    prompt="No turns",
+                )
+                yield Static("", id="change-review-totals", markup=False)
+            yield Static(
+                "",
+                id="change-review-banner",
+                classes="change-review-banner",
+                markup=False,
+            )
+            with Horizontal(id="change-review-body"):
+                yield Tree("Changes", id="change-review-tree")
+                with VerticalScroll(id="change-review-diff"):
+                    yield Static(
+                        "",
+                        id="change-review-diff-content",
+                        classes="change-review-diff-body",
+                        markup=False,
+                    )
+            yield Static(
+                "j/k files · Enter diff · Esc back",
+                id="change-review-footer",
+                markup=False,
+            )
+
+    def on_mount(self) -> None:
+        self._turns = self._provider.turns()
+        select = self.query_one("#change-review-turn-select", Select)
+        select.set_options(
+            (turn.label, turn.run_id) for turn in self._turns
+        )
+        if self._turns:
+            select.value = self._turns[0].run_id
+            self._load_turn(self._turns[0])
+        else:
+            self._show_empty("No file changes recorded for this conversation.")
+
+    # -- turn loading ------------------------------------------------------
+
+    def select_turn(self, run_id: str) -> None:
+        """Switch the view to ``run_id``'s turn (also the Select's handler).
+
+        Args:
+            run_id: A turn from the provider's history.
+        """
+        for turn in self._turns:
+            if turn.run_id == run_id:
+                self.query_one("#change-review-turn-select", Select).value = (
+                    run_id
+                )
+                self._load_turn(turn)
+                return
+
+    @on(Select.Changed, "#change-review-turn-select")
+    def _on_turn_changed(self, event: Select.Changed) -> None:
+        if isinstance(event.value, str) and event.value:
+            for turn in self._turns:
+                if turn.run_id == event.value:
+                    self._load_turn(turn)
+                    return
+
+    def _load_turn(self, turn: ReviewTurn) -> None:
+        self._active_turn = turn
+        multi_root = len(turn.rows) > 1
+        tree = self.query_one("#change-review-tree", Tree)
+        tree.clear()
+        tree.root.expand()
+        self._leaves = []
+        banners: list[str] = []
+        grouped: dict[str, list[tuple[dict, ChangedFile]]] = {}
+        for row in turn.rows:
+            error = str(row.get("tracking_error") or "")
+            if error:
+                banners.append(f"⚠ tracking failed for {row['root']}: {error}")
+                continue
+            try:
+                for change in self._provider.changed_files(row):
+                    grouped.setdefault(change.status, []).append((row, change))
+            except ChangeTrackingError as exc:
+                banners.append(f"⚠ diff unavailable for {row['root']}: {exc}")
+
+        known = {code for code, _label in _GROUPS}
+        for code, label in _GROUPS:
+            entries = grouped.get(code, [])
+            if not entries:
+                continue
+            branch = tree.root.add(f"{label} ({len(entries)})", expand=True)
+            for row, change in entries:
+                branch.add_leaf(self._leaf_label(row, change, multi_root))
+                self._leaves.append((row, change))
+        other = [
+            entry
+            for code, entries in grouped.items()
+            if code not in known
+            for entry in entries
+        ]
+        if other:
+            branch = tree.root.add(f"{_OTHER_GROUP} ({len(other)})", expand=True)
+            for row, change in other:
+                branch.add_leaf(self._leaf_label(row, change, multi_root))
+                self._leaves.append((row, change))
+
+        banner = self.query_one("#change-review-banner", Static)
+        banner.update("\n".join(banners))
+        banner.display = bool(banners)
+
+        totals = self.query_one("#change-review-totals", Static)
+        adds = sum(int(r["adds"] or 0) for r in turn.rows)
+        dels = sum(int(r["dels"] or 0) for r in turn.rows)
+        totals.update(f"{len(self._leaves)} files  +{adds} −{dels}")
+
+        if self._leaves:
+            self._focus_leaf(0)
+        else:
+            self._show_empty("No file changes in this turn.")
+
+    @staticmethod
+    def _leaf_label(row: dict, change: ChangedFile, multi_root: bool) -> Text:
+        """Build one leaf label as a PLAIN rich Text.
+
+        Tree labels are markup-PARSED when given as strings — "[binary]"
+        silently vanished as a tag, and a FILENAME containing brackets
+        would corrupt the same way (caught by this screen's own group
+        test). A ``Text`` instance is rendered verbatim: labels are data.
+        """
+        parts = [change.path]
+        if change.status == "R" and change.old_path:
+            parts = [f"{change.old_path} → {change.path}"]
+        if change.binary:
+            parts.append("(binary)")
+        else:
+            parts.append(f"+{change.adds} −{change.dels}")
+        if multi_root:
+            from pathlib import Path as _P
+
+            parts.append(f"· {_P(str(row['root'])).name}")
+        return Text("  ".join(parts))
+
+    def _show_empty(self, copy: str) -> None:
+        self.query_one("#change-review-diff-content", Static).update(copy)
+
+    # -- file focus / diff pane -------------------------------------------
+
+    def select_file(self, path: str) -> None:
+        """Focus the first leaf whose change path matches ``path``.
+
+        Args:
+            path: Root-relative path from the active turn.
+        """
+        for index, (_row, change) in enumerate(self._leaves):
+            if change.path == path:
+                self._focus_leaf(index)
+                return
+
+    def _focus_leaf(self, index: int) -> None:
+        if not self._leaves:
+            return
+        self._focused_leaf = max(0, min(index, len(self._leaves) - 1))
+        row, change = self._leaves[self._focused_leaf]
+        self._render_diff(row, change)
+
+    def action_next_file(self) -> None:
+        self._focus_leaf(self._focused_leaf + 1)
+
+    def action_previous_file(self) -> None:
+        self._focus_leaf(self._focused_leaf - 1)
+
+    def action_focus_diff(self) -> None:
+        self.query_one("#change-review-diff", VerticalScroll).focus()
+
+    def action_dismiss_screen(self) -> None:
+        self.dismiss(None)
+
+    def diff_pane_text(self) -> str:
+        """The diff pane's current plain text (test/observability seam)."""
+        content = self.query_one("#change-review-diff-content", Static)
+        renderable = content.renderable
+        if isinstance(renderable, Text):
+            return renderable.plain
+        return str(renderable)
+
+    def _render_diff(self, row: dict, change: ChangedFile) -> None:
+        content = self.query_one("#change-review-diff-content", Static)
+        if change.binary:
+            content.update(
+                Text(
+                    f"{change.path}\nBinary file changed.",
+                    no_wrap=False,
+                )
+            )
+            return
+        try:
+            diff = self._provider.diff_text(row, change.path)
+        except ChangeTrackingError as exc:
+            content.update(Text(f"diff unavailable: {exc}"))
+            return
+        cap = self._provider.diff_display_max_lines
+        lines = diff.splitlines()
+        hidden = max(0, len(lines) - cap)
+        text = Text()
+        for line in lines[:cap]:
+            # Plain-string appends with explicit styles: content is DATA;
+            # nothing here is ever markup-parsed.
+            if line.startswith("+") and not line.startswith("+++"):
+                text.append(line, style="green")
+            elif line.startswith("-") and not line.startswith("---"):
+                text.append(line, style="red")
+            elif line.startswith("@@"):
+                text.append(line, style="cyan")
+            else:
+                text.append(line)
+            text.append("\n")
+        if hidden:
+            text.append(
+                f"… diff truncated — {hidden} more lines", style="yellow"
+            )
+        content.update(text)
