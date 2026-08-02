@@ -1,9 +1,11 @@
 ---
 id: TASK-856
 title: 'Decide the fate of Utils/log_sanitizer.py: wire it in fixed, or delete it'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 04:35'
+updated_date: '2026-08-02 23:14'
 labels:
   - security
   - config
@@ -13,14 +15,40 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Utils/log_sanitizer.py has zero production importers -- a repo-wide grep for log_sanitizer under tldw_chatbook/ and Tests/ finds only Tests/Utils/test_security_enhancements.py. The 40+ sanitize_string call sites elsewhere in the app resolve to a different function in Utils/input_validation.py. So every literal in this module protects nothing at runtime today; only the test file exercises it, making that test green and vacuous.
+The original audit found no production importers, but that premise is stale on
+current `dev`: `Utils/log_sanitizer.py` now has three production consumers.
+Ollama uses it both to redact successful API payloads and to transform model
+names, Transformers uses it to transform local model display names, and the
+subscription monitor uses it before interpolating a URL into a pruning
+diagnostic. The module therefore needs an explicit, correct runtime boundary
+rather than deletion.
 
-Independent of the dead-import problem, the module's rules are wrong in both directions. log_sanitizer.py:16 labels the pattern claude-[a-zA-Z0-9-]+ as matching "Anthropic keys", but claude-* is the model-id prefix (e.g. claude-opus-4-20250514), not a key format; a reproduction showed a log line naming the model claude-opus-4-20250514 gets its model name destroyed (replaced with ***ANTHROPIC_KEY***) while a real Anthropic key (sk-ant-api03-...) and a real OpenAI key (sk-proj-...) both survive sanitize_string unredacted, because :15's sk-[a-zA-Z0-9]{20,} character class excludes "-" and stops at "sk-ant"/"sk-proj". sanitize_dict() similarly redacts openai_api_key and auth_token but passes x-api-key, cohere_api_key, api_token, secret_key, and refresh_token through untouched. SENSITIVE_FIELDS also names ten literals that appear nowhere in this codebase (aws_access_key_id, connection_string, private_key, etc.) and misses roughly 30 real ones. If this module is ever wired in as-is, it will strip model names from logs while letting real credentials through.
+Its rules remain wrong in both directions. The `claude-*` pattern treats an
+Anthropic model-ID prefix as a credential, so
+`claude-opus-4-20250514` becomes `***ANTHROPIC_KEY***`. Meanwhile real-shaped
+`sk-ant-api03-*` and `sk-proj-*` credentials are only partially matched or
+survive because the generic `sk-` character class stops at their embedded
+hyphens. `sanitize_dict()` also has a second, drifting secret-field list that
+misses real shipped names such as `x-api-key`, `cohere_api_key`, `api_token`,
+`secret_key`, and `refresh_token`.
+
+Credential redaction and display-name validation are separate operations.
+Model names must receive bounded single-line input validation without being
+rewritten as secrets. Structured and labeled credential values must use the
+shared sensitive-config-key classification plus HTTP/log-specific secret
+fields. Ambiguous opaque provider tokens can only be safely recognized from
+that context; attempting to identify every opaque token as a standalone
+credential would corrupt ordinary identifiers. URL-bearing diagnostics must
+omit private URL components instead of treating regex redaction as permission
+to log them.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is made and implemented: either log_sanitizer.py is deleted (along with its now-vacuous test), or it is fixed (correct key-format regexes, a field list that matches the app's real key names, an inverted Anthropic-key rule corrected) and wired into at least the log paths that currently rely on Utils/input_validation.sanitize_string for secret redaction
-- [ ] #2 If kept, a test builds its expected-redacted-field list from the app's real config key names (not the module's own literal list) and confirms every real provider key format (openai, anthropic, cohere, etc.) is actually redacted from a sample log line
-- [ ] #3 If deleted, its test file is removed and no remaining code references the module
+- [ ] #1 `Utils/log_sanitizer.py` remains importable under its existing public function names and redacts complete credential values without rewriting ordinary model identifiers such as `claude-opus-4-20250514`
+- [ ] #2 Structured redaction covers the app's real sensitive config key names, sourced in tests from shipped configuration rather than a duplicate sanitizer-owned list, plus authentication headers, cookies, credential containers, and connection-secret fields
+- [ ] #3 Labeled credentials from every configured provider are redacted even when their opaque value has no safely recognizable standalone format; high-confidence standalone key families are fully redacted rather than partially matched
+- [ ] #4 Ollama and Transformers model names use bounded single-line input validation, preserve legitimate `claude-*` identifiers, and do not rely on credential redaction for display safety
+- [ ] #5 Subscription snapshot-pruning diagnostics contain useful non-private metadata but omit the monitored URL and all URL credentials, paths, queries, and fragments
+- [ ] #6 Recursive, non-mutating dictionary/list behavior, non-string mapping keys, `deep=False`, formatting fallback, and the installed-wheel import path are covered without introducing a reduced or test-only application
 <!-- AC:END -->
