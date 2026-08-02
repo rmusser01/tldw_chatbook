@@ -72,6 +72,56 @@ class NoteSaveOutcomeKind(StrEnum):
     STALE = "stale"
 
 
+class ConflictAction(StrEnum):
+    """User-selected optimistic-conflict recovery actions."""
+
+    OVERWRITE = "overwrite"
+    RELOAD = "reload"
+
+
+class ConflictOutcomeKind(StrEnum):
+    """Typed conflict-resolution result kinds."""
+
+    OVERWRITTEN = "overwritten"
+    RELOADED = "reloaded"
+    DRAFT_CHANGED = "draft_changed"
+    ALREADY_RUNNING = "already_running"
+    RENEWED_CONFLICT = "renewed_conflict"
+    VALIDATION_VETO = "validation_veto"
+    MISSING = "missing"
+    FAILED = "failed"
+    STALE = "stale"
+    NOT_IN_CONFLICT = "not_in_conflict"
+
+
+class NoteFlushOutcomeKind(StrEnum):
+    """Typed navigation-barrier result kinds."""
+
+    PERMITTED = "permitted"
+    VALIDATION_VETO = "validation_veto"
+    FAILED = "failed"
+    CONFLICTED = "conflicted"
+    BLOCKED = "blocked"
+    STALE = "stale"
+
+
+class DestructiveKind(StrEnum):
+    """Coordinator-gated destructive Database Note actions."""
+
+    DISCARD_NEW_NOTE = "discard_new_note"
+    DELETE = "delete"
+
+
+class DestructiveAdmissionOutcomeKind(StrEnum):
+    """Typed destructive-admission result kinds."""
+
+    ADMITTED = "admitted"
+    FLUSH_VETOED = "flush_vetoed"
+    ALREADY_RUNNING = "already_running"
+    NOT_ELIGIBLE = "not_eligible"
+    STALE = "stale"
+
+
 @dataclass(frozen=True)
 class DatabaseNotePortLoadReply:
     """Normalized result from the injected detail-fetch port."""
@@ -167,6 +217,64 @@ class NoteSaveOutcome:
     veto: NoteValidationVeto | None = None
 
 
+@dataclass(frozen=True)
+class ConflictOutcome:
+    """Typed public result of one gated conflict action."""
+
+    kind: ConflictOutcomeKind
+    action: ConflictAction
+    note_id: str = ""
+    message: str = ""
+    save_outcome: NoteSaveOutcome | None = None
+
+
+@dataclass(frozen=True)
+class NoteFlushOutcome:
+    """Typed public navigation-barrier result."""
+
+    kind: NoteFlushOutcomeKind
+    message: str = ""
+    save_outcome: NoteSaveOutcome | None = None
+
+
+@dataclass(frozen=True)
+class DestructiveAdmission:
+    """Immutable authority token revalidated immediately before deletion."""
+
+    kind: DestructiveKind
+    note_id: str
+    session_generation: int
+    expected_version: int
+    operation_token: int
+    create_token: str | None = None
+
+
+@dataclass(frozen=True)
+class DestructiveAdmissionOutcome:
+    """Typed public result of requesting destructive admission."""
+
+    kind: DestructiveAdmissionOutcomeKind
+    message: str = ""
+    admission: DestructiveAdmission | None = None
+    flush_outcome: NoteFlushOutcome | None = None
+
+
+@dataclass(frozen=True)
+class _ConflictOperation:
+    action: ConflictAction
+    note_id: str
+    session_generation: int
+    conflict_generation: int
+    draft_revision: int
+    operation_token: int
+
+
+@dataclass(frozen=True)
+class _DestructiveState:
+    admission: DestructiveAdmission
+    running: bool = False
+
+
 class DatabaseNoteSessionCoordinator:
     """Own one canonical draft and serialize all saves admitted for it."""
 
@@ -190,7 +298,10 @@ class DatabaseNoteSessionCoordinator:
         self._save_task: asyncio.Task[NoteSaveOutcome] | None = None
         self._pending_save_requested = False
         self._untouched_create_token: str | None = None
-        self._destructive: object | None = None
+        self._conflict_operation_counter = 0
+        self._active_conflict_operation: _ConflictOperation | None = None
+        self._destructive_operation_counter = 0
+        self._destructive: _DestructiveState | None = None
 
     @property
     def snapshot(self) -> LibraryNoteSessionSnapshot | None:
@@ -201,6 +312,21 @@ class DatabaseNoteSessionCoordinator:
     def untouched_create_token(self) -> str | None:
         """Return the active untouched-create token, if still eligible."""
         return self._untouched_create_token
+
+    @property
+    def conflict_resolution_running(self) -> bool:
+        """Return whether one conflict action currently owns the gate."""
+        return self._active_conflict_operation is not None
+
+    @property
+    def destructive_admission(self) -> DestructiveAdmission | None:
+        """Return the active destructive authority token, if admitted."""
+        return self._destructive.admission if self._destructive is not None else None
+
+    @property
+    def destructive_running(self) -> bool:
+        """Return whether the admitted destructive service call has begun."""
+        return self._destructive is not None and self._destructive.running
 
     def invalidate_session_request(self) -> None:
         """Make every currently pending detail-load completion stale."""
@@ -297,6 +423,7 @@ class DatabaseNoteSessionCoordinator:
         self._save_task = None
         self._pending_save_requested = False
         self._untouched_create_token = untouched_create_token
+        self._active_conflict_operation = None
         self._destructive = None
 
     def mutate(
@@ -572,3 +699,416 @@ class DatabaseNoteSessionCoordinator:
                 f"Save failed — {message.rstrip('.')}. Edits kept. Press Save to retry."
             )
         return "Save failed — edits kept. Press Save to retry."
+
+    async def resolve_conflict(self, action: ConflictAction) -> ConflictOutcome:
+        """Run one token-gated Reload or revision-safe Overwrite operation.
+
+        Args:
+            action: Recovery action selected by the user.
+
+        Returns:
+            A typed terminal or already-running conflict outcome.
+        """
+        snapshot = self._snapshot
+        if self._active_conflict_operation is not None:
+            return ConflictOutcome(
+                ConflictOutcomeKind.ALREADY_RUNNING,
+                action,
+                note_id=snapshot.note_id if snapshot is not None else "",
+                message="A conflict action is already running.",
+            )
+        if snapshot is None or not snapshot.in_conflict:
+            return ConflictOutcome(
+                ConflictOutcomeKind.NOT_IN_CONFLICT,
+                action,
+                note_id=snapshot.note_id if snapshot is not None else "",
+                message="No note conflict is active.",
+            )
+
+        self._conflict_operation_counter += 1
+        operation = _ConflictOperation(
+            action=action,
+            note_id=snapshot.note_id,
+            session_generation=snapshot.session_generation,
+            conflict_generation=snapshot.conflict_generation,
+            draft_revision=snapshot.draft_revision,
+            operation_token=self._conflict_operation_counter,
+        )
+        self._active_conflict_operation = operation
+
+        try:
+            reply = await self._port.load_note(operation.note_id)
+        except Exception:
+            if not self._conflict_operation_is_current(operation):
+                self._finish_conflict_operation(operation)
+                return ConflictOutcome(
+                    ConflictOutcomeKind.STALE,
+                    action,
+                    note_id=operation.note_id,
+                    message=(
+                        "The note session changed before conflict recovery completed."
+                    ),
+                )
+            return self._finish_conflict_failure(
+                operation,
+                "Conflict refresh failed — try again.",
+            )
+
+        if not self._conflict_operation_is_current(operation):
+            self._finish_conflict_operation(operation)
+            return ConflictOutcome(
+                ConflictOutcomeKind.STALE,
+                action,
+                note_id=operation.note_id,
+                message="The note session changed before conflict recovery completed.",
+            )
+
+        current = self._snapshot
+        assert current is not None
+        if reply.kind is PortLoadKind.FAILED:
+            failure_detail = reply.message.strip()
+            message = (
+                f"Conflict refresh failed — {failure_detail.rstrip('.')}. Try again."
+                if failure_detail
+                else "Conflict refresh failed — try again."
+            )
+            return self._finish_conflict_failure(operation, message)
+        if reply.kind is PortLoadKind.MISSING:
+            if action is ConflictAction.RELOAD:
+                if current.draft_revision != operation.draft_revision:
+                    return self._reload_draft_changed(operation)
+                self._close_session()
+                return ConflictOutcome(
+                    ConflictOutcomeKind.MISSING,
+                    action,
+                    note_id=operation.note_id,
+                    message="Note no longer exists; local conflict draft was discarded.",
+                )
+            message = "Note no longer exists — local draft kept."
+            self._snapshot = replace(current, status_message=message)
+            self._finish_conflict_operation(operation)
+            return ConflictOutcome(
+                ConflictOutcomeKind.MISSING,
+                action,
+                note_id=operation.note_id,
+                message=message,
+            )
+
+        detail = reply.detail
+        if detail is None or detail.note_id != operation.note_id:
+            return self._finish_conflict_failure(
+                operation,
+                "Conflict refresh returned the wrong note — try again.",
+            )
+
+        if action is ConflictAction.RELOAD:
+            if current.draft_revision != operation.draft_revision:
+                return self._reload_draft_changed(operation)
+            revision = current.draft_revision + 1
+            draft = DatabaseNoteDraft(
+                note_id=detail.note_id,
+                title=detail.title,
+                body=detail.body,
+                keywords_text=", ".join(detail.keywords),
+                revision=revision,
+            )
+            self._snapshot = replace(
+                current,
+                baseline=detail,
+                draft=draft,
+                saved_revision=revision,
+                dirty=False,
+                saving=False,
+                in_conflict=False,
+                status_message="Reloaded latest saved note.",
+            )
+            self._finish_conflict_operation(operation)
+            return ConflictOutcome(
+                ConflictOutcomeKind.RELOADED,
+                action,
+                note_id=operation.note_id,
+                message="Reloaded latest saved note.",
+            )
+
+        self._snapshot = replace(
+            current,
+            baseline=detail,
+            dirty=True,
+            saving=False,
+            in_conflict=False,
+            status_message="Unsaved changes",
+        )
+        save_outcome = await self.request_save(explicit=True)
+        if not self._conflict_operation_matches_session(operation):
+            self._finish_conflict_operation(operation)
+            return ConflictOutcome(
+                ConflictOutcomeKind.STALE,
+                action,
+                note_id=operation.note_id,
+                message="The note session changed before overwrite completed.",
+                save_outcome=save_outcome,
+            )
+
+        outcome_kind = {
+            NoteSaveOutcomeKind.SAVED: ConflictOutcomeKind.OVERWRITTEN,
+            NoteSaveOutcomeKind.ACKNOWLEDGED: ConflictOutcomeKind.OVERWRITTEN,
+            NoteSaveOutcomeKind.CONFLICTED: ConflictOutcomeKind.RENEWED_CONFLICT,
+            NoteSaveOutcomeKind.VALIDATION_VETO: ConflictOutcomeKind.VALIDATION_VETO,
+            NoteSaveOutcomeKind.FAILED: ConflictOutcomeKind.FAILED,
+            NoteSaveOutcomeKind.STALE: ConflictOutcomeKind.STALE,
+            NoteSaveOutcomeKind.BLOCKED: ConflictOutcomeKind.FAILED,
+        }[save_outcome.kind]
+        self._finish_conflict_operation(operation)
+        return ConflictOutcome(
+            outcome_kind,
+            action,
+            note_id=operation.note_id,
+            message=save_outcome.message,
+            save_outcome=save_outcome,
+        )
+
+    def _conflict_operation_is_current(self, operation: _ConflictOperation) -> bool:
+        snapshot = self._snapshot
+        return (
+            self._active_conflict_operation == operation
+            and snapshot is not None
+            and snapshot.note_id == operation.note_id
+            and snapshot.session_generation == operation.session_generation
+            and snapshot.in_conflict
+            and snapshot.conflict_generation == operation.conflict_generation
+        )
+
+    def _conflict_operation_matches_session(
+        self, operation: _ConflictOperation
+    ) -> bool:
+        snapshot = self._snapshot
+        return (
+            self._active_conflict_operation == operation
+            and snapshot is not None
+            and snapshot.note_id == operation.note_id
+            and snapshot.session_generation == operation.session_generation
+        )
+
+    def _finish_conflict_operation(self, operation: _ConflictOperation) -> None:
+        if self._active_conflict_operation == operation:
+            self._active_conflict_operation = None
+
+    def _finish_conflict_failure(
+        self,
+        operation: _ConflictOperation,
+        message: str,
+    ) -> ConflictOutcome:
+        if self._conflict_operation_is_current(operation):
+            assert self._snapshot is not None
+            self._snapshot = replace(self._snapshot, status_message=message)
+        self._finish_conflict_operation(operation)
+        return ConflictOutcome(
+            ConflictOutcomeKind.FAILED,
+            operation.action,
+            note_id=operation.note_id,
+            message=message,
+        )
+
+    def _reload_draft_changed(self, operation: _ConflictOperation) -> ConflictOutcome:
+        message = "Draft changed — Reload not applied. Choose again."
+        if self._conflict_operation_is_current(operation):
+            assert self._snapshot is not None
+            self._snapshot = replace(self._snapshot, status_message=message)
+        self._finish_conflict_operation(operation)
+        return ConflictOutcome(
+            ConflictOutcomeKind.DRAFT_CHANGED,
+            operation.action,
+            note_id=operation.note_id,
+            message=message,
+        )
+
+    async def flush(self) -> NoteFlushOutcome:
+        """Cross the pending-work barrier without inferring from widget state."""
+        while True:
+            snapshot = self._snapshot
+            if snapshot is None:
+                return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+            if self._destructive is not None:
+                return NoteFlushOutcome(
+                    NoteFlushOutcomeKind.BLOCKED,
+                    "A destructive action is in progress.",
+                )
+            if self._active_conflict_operation is not None:
+                return NoteFlushOutcome(
+                    NoteFlushOutcomeKind.BLOCKED,
+                    "A conflict action is in progress.",
+                )
+            if snapshot.in_conflict:
+                return NoteFlushOutcome(
+                    NoteFlushOutcomeKind.CONFLICTED,
+                    "Conflict — review the choices before leaving.",
+                )
+            if not snapshot.dirty and not snapshot.saving:
+                return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+
+            save_outcome = await self.request_save(explicit=False)
+            if save_outcome.kind in {
+                NoteSaveOutcomeKind.SAVED,
+                NoteSaveOutcomeKind.ACKNOWLEDGED,
+            }:
+                continue
+            outcome_kind = {
+                NoteSaveOutcomeKind.VALIDATION_VETO: NoteFlushOutcomeKind.VALIDATION_VETO,
+                NoteSaveOutcomeKind.FAILED: NoteFlushOutcomeKind.FAILED,
+                NoteSaveOutcomeKind.CONFLICTED: NoteFlushOutcomeKind.CONFLICTED,
+                NoteSaveOutcomeKind.BLOCKED: NoteFlushOutcomeKind.BLOCKED,
+                NoteSaveOutcomeKind.STALE: NoteFlushOutcomeKind.STALE,
+            }[save_outcome.kind]
+            return NoteFlushOutcome(
+                outcome_kind,
+                save_outcome.message,
+                save_outcome=save_outcome,
+            )
+
+    async def request_destructive_admission(
+        self,
+        kind: DestructiveKind,
+        *,
+        note_id: str,
+        session_generation: int,
+        expected_version: int,
+        create_token: str | None = None,
+    ) -> DestructiveAdmissionOutcome:
+        """Flush, revalidate, then atomically block mutation and save admission."""
+        if self._destructive is not None:
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.ALREADY_RUNNING,
+                "A destructive action is already admitted.",
+            )
+
+        initial = self._snapshot
+        if (
+            initial is None
+            or initial.note_id != note_id
+            or initial.session_generation != session_generation
+            or initial.version != expected_version
+        ):
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.STALE,
+                "The note changed before the destructive action was admitted.",
+            )
+        if kind is DestructiveKind.DISCARD_NEW_NOTE and (
+            create_token is None or create_token != self._untouched_create_token
+        ):
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.NOT_ELIGIBLE,
+                "This note is no longer eligible for discard.",
+            )
+
+        flush_outcome = await self.flush()
+        if flush_outcome.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.FLUSH_VETOED,
+                flush_outcome.message,
+                flush_outcome=flush_outcome,
+            )
+        if self._destructive is not None:
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.ALREADY_RUNNING,
+                "A destructive action is already admitted.",
+            )
+
+        snapshot = self._snapshot
+        if (
+            snapshot is None
+            or snapshot.note_id != note_id
+            or snapshot.session_generation != session_generation
+        ):
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.STALE,
+                "The note changed before the destructive action was admitted.",
+            )
+        if kind is DestructiveKind.DISCARD_NEW_NOTE and (
+            create_token is None or create_token != self._untouched_create_token
+        ):
+            return DestructiveAdmissionOutcome(
+                DestructiveAdmissionOutcomeKind.NOT_ELIGIBLE,
+                "This note is no longer eligible for discard.",
+            )
+
+        self._destructive_operation_counter += 1
+        admission = DestructiveAdmission(
+            kind=kind,
+            note_id=snapshot.note_id,
+            session_generation=snapshot.session_generation,
+            expected_version=snapshot.version,
+            operation_token=self._destructive_operation_counter,
+            create_token=create_token,
+        )
+        self._destructive = _DestructiveState(admission)
+        return DestructiveAdmissionOutcome(
+            DestructiveAdmissionOutcomeKind.ADMITTED,
+            admission=admission,
+        )
+
+    def mark_destructive_running(self, admission: DestructiveAdmission) -> bool:
+        """Revalidate the full admission immediately before the service call."""
+        state = self._destructive
+        snapshot = self._snapshot
+        if (
+            state is None
+            or state.running
+            or state.admission != admission
+            or snapshot is None
+            or snapshot.note_id != admission.note_id
+            or snapshot.session_generation != admission.session_generation
+            or snapshot.version != admission.expected_version
+            or (
+                admission.kind is DestructiveKind.DISCARD_NEW_NOTE
+                and admission.create_token != self._untouched_create_token
+            )
+        ):
+            return False
+        self._destructive = replace(state, running=True)
+        return True
+
+    def cancel_destructive(self, admission: DestructiveAdmission) -> bool:
+        """Cancel only an admitted operation whose service call has not begun."""
+        state = self._destructive
+        if state is None or state.running or state.admission != admission:
+            return False
+        self._destructive = None
+        return True
+
+    def finish_destructive(
+        self,
+        admission: DestructiveAdmission,
+        *,
+        success: bool,
+    ) -> bool:
+        """Finish a running destructive action, closing only on success."""
+        state = self._destructive
+        if state is None or not state.running or state.admission != admission:
+            return False
+        if success:
+            self._close_session()
+            return True
+
+        self._destructive = None
+        if self._snapshot is not None:
+            action = (
+                "Discard"
+                if admission.kind is DestructiveKind.DISCARD_NEW_NOTE
+                else "Delete"
+            )
+            self._snapshot = replace(
+                self._snapshot,
+                status_message=f"{action} failed — edits kept. Try again.",
+            )
+        return True
+
+    def _close_session(self) -> None:
+        """Invalidate all tokens and end the active in-memory session."""
+        self._session_request_token += 1
+        self._session_generation += 1
+        self._snapshot = None
+        self._save_task = None
+        self._pending_save_requested = False
+        self._untouched_create_token = None
+        self._active_conflict_operation = None
+        self._destructive = None
