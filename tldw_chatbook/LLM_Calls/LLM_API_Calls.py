@@ -1523,7 +1523,9 @@ def chat_with_anthropic(
                         "created": created_ts,
                         "model": current_model,
                         "choices": [],
-                        "usage": dict(usage if usage is not None else usage_accumulator),
+                        "usage": dict(
+                            usage if usage is not None else usage_accumulator
+                        ),
                     }
                     return f"data: {json.dumps(sse_chunk)}\n\n"
 
