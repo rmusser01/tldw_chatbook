@@ -1,11 +1,11 @@
 ---
 id: TASK-596.1
 title: Add bounded Hugging Face GGUF discovery to the managed model browser
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 21:51'
-updated_date: '2026-08-01 22:46'
+updated_date: '2026-08-02 01:47'
 labels:
   - stt
   - artifacts
@@ -32,12 +32,12 @@ Let users explicitly find and download remote GGUF models through the shared man
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening Remote performs no network request; explicit search or exact repository submission runs off the Textual event loop with bounded, generation-fenced results.
-- [ ] #2 A selected repository resolves to an immutable commit and offers only LFS-backed single GGUF files or complete bounded GGUF shard sets with recorded sizes and SHA-256 digests.
-- [ ] #3 A selected candidate reaches the existing managed preflight, consent, download, verification, and installation flow; configured Hugging Face credentials support gated or private repositories without being persisted or forwarded across origins.
-- [ ] #4 Known license metadata is shown; missing license metadata is recorded as NOASSERTION with a pinned source-review page and requires explicit acknowledgment before download.
-- [ ] #5 Focused adapter, GGUF grouping, Textual, redirect-security, and managed-acquisition tests cover the flow without adding native or platform-specific dependencies; Windows and Linux gates remain required when runners are available.
-- [ ] #6 Remote installation labels the model Local integrity recorded and does not activate it; its descriptor uses consumer=unassigned, Installed offers no activation action for that consumer, and no UI presents it as runtime-compatible, transcription-ready, or eligible for automatic routing.
+- [x] #1 Opening Remote performs no network request; explicit search or exact repository submission runs off the Textual event loop with bounded, generation-fenced results.
+- [x] #2 A selected repository resolves to an immutable commit and offers only LFS-backed single GGUF files or complete bounded GGUF shard sets with recorded sizes and SHA-256 digests.
+- [x] #3 A selected candidate reaches the existing managed preflight, consent, download, verification, and installation flow; configured Hugging Face credentials support gated or private repositories without being persisted or forwarded across origins.
+- [x] #4 Known license metadata is shown; missing license metadata is recorded as NOASSERTION with a pinned source-review page and requires explicit acknowledgment before download.
+- [x] #5 Focused adapter, GGUF grouping, Textual, redirect-security, and managed-acquisition tests cover the flow without adding native or platform-specific dependencies; Windows and Linux gates remain required when runners are available.
+- [x] #6 Remote installation labels the model Local integrity recorded and does not activate it; its descriptor uses consumer=unassigned, Installed offers no activation action for that consumer, and no UI presents it as runtime-compatible, transcription-ready, or eligible for automatic routing.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,3 +54,24 @@ ADR required: no
 ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 Reason: ADR-025 already owns remote artifact provenance, managed acquisition, activation, and runtime boundaries; this slice is additive within that boundary.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented bounded Hugging Face GGUF discovery through the shared managed-artifact flow.
+
+- Added explicit fixed-origin search and exact-repository resolution with streamed metadata limits, immutable commit pinning, LFS size/SHA-256 validation, complete bounded shard grouping, deterministic artifact identity, pinned source maps, license handling, and sanitized recovery errors.
+- Added additive install-without-activation support and HTTPS-to-HTTP redirect rejection while preserving existing callers and credential stripping.
+- Added a lazy Remote Textual view with generation and identity fencing, worker-local configured credentials, frozen preflight/consent/provision state, unknown-license acknowledgment, exact selected-file integrity/source review, and Installed refresh. Remote artifacts remain LOCAL_INTEGRITY_RECORDED, consumer=unassigned, inactive, and explicitly compatibility-unverified.
+- Updated shared inventory, activation, plan, and consent controls through backward-compatible optional/default inputs; Delete remains available and Activate is absent for unassigned models.
+- Added focused adapter/grouping/security/UI tests plus a real mocked-payload resolve-to-managed-install integration test.
+- Final whole-branch review and scoped fix re-review are clean. After rebasing onto current dev, 576 affected tests passed with one existing Requests dependency warning; 12 credential-boundary and 8 deterministic macOS evidence tests passed. Branch-edited scope passes Ruff, mypy, py_compile, and diff checks. The known fetch.py F401 and acquisition.py:1823 mypy mismatch were verified on dev and remain out of scope. Windows/Linux gates remain required when runners are available.
+
+ADR required: no. ADR-025 remains authoritative for managed acquisition, provenance, activation, and runtime boundaries. No new dependency, provider framework, cache, compatibility detector, or alternate downloader was introduced.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Users can explicitly discover and securely download pinned Hugging Face GGUF artifacts through the managed model browser without automatic activation or unsupported runtime-compatibility claims.
+<!-- SECTION:FINAL_SUMMARY:END -->
