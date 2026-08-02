@@ -74,7 +74,10 @@ def test_snapshot_succeeds_from_a_hostile_home(service, root, monkeypatch, tmp_p
 
 def test_symlinked_and_direct_root_resolve_to_one_shadow_repo(service, root, tmp_path):
     link = tmp_path / "root_link"
-    link.symlink_to(root)
+    try:
+        link.symlink_to(root, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
     direct = service.repo_for_root(root)
     via_link = service.repo_for_root(link)
     assert direct.git_dir == via_link.git_dir
@@ -203,6 +206,61 @@ def test_hostile_filename_roundtrips_snapshot_diff_and_restore(service, root):
 
     repo.restore_paths(b, [name])
     assert hostile.read_text() == "original\n"
+
+
+def test_a_toplevel_git_file_is_never_tracked_or_restored(service, root):
+    """A linked git WORKTREE carries a `.git` FILE at its root. Git's own
+    path special-casing refuses to track it (verified before writing this),
+    and the exclude pins that guarantee against future edits -- restoring a
+    worktree's `.git` link would corrupt the user's worktree.
+    """
+    (root / ".git").write_text("gitdir: /main/repo/.git/worktrees/x\n")
+    (root / "code.py").write_text("x = 1\n")
+    repo = service.repo_for_root(root)
+    b = repo.snapshot("baseline")
+    (root / "code.py").write_text("x = 2\n")
+    e = repo.snapshot("end")
+    assert [c.path for c in repo.changed_files(b, e)] == ["code.py"]
+    proc = repo._run("ls-tree", "-r", "--name-only", e)
+    assert ".git" not in str(proc.stdout).split()
+
+
+def test_mixed_case_git_env_vars_are_scrubbed(service, root, monkeypatch, tmp_path):
+    """Windows env vars are case-insensitive: `Git_Index_File` reaches git
+    exactly as GIT_INDEX_FILE does. Asserted on the env builder directly --
+    POSIX git ignores the lowercase spelling, so a subprocess test could not
+    tell scrubbed from ignored.
+    """
+    monkeypatch.setenv("Git_Index_File", str(tmp_path / "wrong-index"))
+    repo = service.repo_for_root(root)
+    assert "Git_Index_File" not in repo._env()
+
+
+def test_a_missing_root_fails_fast_with_a_clear_error(service, tmp_path):
+    from tldw_chatbook.Workspaces.change_tracking import ChangeTrackingError
+
+    with pytest.raises(ChangeTrackingError, match="not a directory"):
+        service.repo_for_root(tmp_path / "vanished")
+
+
+def test_a_typechange_status_passes_through_verbatim(service, root):
+    """file -> symlink is git status `T`; coercing it to A/M/D/R would lie.
+    Documented pass-through, consumers bucket unknown letters as "other".
+    """
+    target = root / "pointee.txt"
+    target.write_text("data\n")
+    changer = root / "changer"
+    changer.write_text("was a file\n")
+    repo = service.repo_for_root(root)
+    b = repo.snapshot("baseline")
+    changer.unlink()
+    try:
+        changer.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unsupported on this platform/permission level")
+    e = repo.snapshot("end")
+    by_path = {c.path: c for c in repo.changed_files(b, e)}
+    assert by_path["changer"].status == "T"
 
 
 # -- change classification --------------------------------------------------

@@ -39,7 +39,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from loguru import logger
 
@@ -47,7 +47,13 @@ from loguru import logger
 #: carry. The user's own ``.gitignore`` files are additionally honored by git
 #: itself (with the tool-touched force-add carve-out applied in TASK-1971).
 FORCED_EXCLUDES: tuple[str, ...] = (
+    # Both spellings: `.git/` (directory) and `.git` (the FILE a linked git
+    # worktree carries). Git's own path special-casing already refuses to
+    # track a top-level `.git` of either kind -- verified empirically -- so
+    # these are belt-and-braces pinning the guarantee against future
+    # exclude edits, not a live bug fix.
     ".git/",
+    ".git",
     "node_modules/",
     ".venv/",
     "venv/",
@@ -85,7 +91,11 @@ class ChangedFile:
 
     Attributes:
         path: Path relative to the root (the NEW path for renames).
-        status: ``"A"``/``"M"``/``"D"``/``"R"`` (added/modified/deleted/renamed).
+        status: ``"A"``/``"M"``/``"D"``/``"R"`` (added/modified/deleted/
+            renamed) for the overwhelmingly common cases; rarer git letters
+            (``"T"`` typechange, ``"C"`` copy) pass through VERBATIM rather
+            than being coerced into a lie -- consumers group unknown letters
+            into an "other" bucket.
         adds: Added-line count (0 for binary).
         dels: Deleted-line count (0 for binary).
         old_path: The pre-rename path, or ``None``.
@@ -163,6 +173,14 @@ class ShadowRepoService:
                 "change tracking needs git — install git to enable"
             )
         canonical = Path(root).expanduser().resolve()
+        if not canonical.is_dir():
+            # Roots come from the workspace registry, not from agent input,
+            # so this is a sanity guard rather than a security boundary --
+            # but a vanished/mistyped root must fail HERE with a clear
+            # message, not five calls later inside a git subprocess.
+            raise ChangeTrackingError(
+                f"change tracking root is not a directory: {canonical}"
+            )
         key = hashlib.sha256(str(canonical).encode("utf-8")).hexdigest()[:16]
         repo_home = self._data_dir / key
         assert self._git is not None  # narrowed by `available`
@@ -196,7 +214,14 @@ class ShadowRepo:
 
     def _env(self) -> dict[str, str]:
         """Environment for git calls: ``GIT_*`` scrubbed, prompts disabled."""
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        # Case-INSENSITIVE match: Windows environment variables are
+        # case-insensitive, so `Git_Index_File` reaches git just as
+        # GIT_INDEX_FILE does. Harmless over-scrub on POSIX.
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.upper().startswith("GIT_")
+        }
         env["GIT_TERMINAL_PROMPT"] = "0"
         return env
 
@@ -318,7 +343,11 @@ class ShadowRepo:
     # -- snapshots ---------------------------------------------------------
 
     def tip(self) -> str | None:
-        """Current snapshot tip sha, or ``None`` before the first snapshot."""
+        """Return the current snapshot tip.
+
+        Returns:
+            The tip commit sha, or ``None`` before the first snapshot.
+        """
         proc = self._run("rev-parse", "--verify", "HEAD", check=False)
         if proc.returncode != 0:
             return None
@@ -330,6 +359,15 @@ class ShadowRepo:
         A clean tree returns the existing tip without a new commit. The very
         first snapshot commits even an empty tree (``--allow-empty``) so a
         baseline tip always exists.
+
+        Args:
+            message: Commit message recorded on the snapshot (turn labels).
+
+        Returns:
+            The tip sha after the snapshot.
+
+        Raises:
+            ChangeTrackingError: A git step failed or produced no tip.
         """
         with self._locked():
             self.ensure_initialized()
@@ -360,6 +398,13 @@ class ShadowRepo:
         Merges ``--name-status -z`` (status/rename pairs) with
         ``--numstat -z`` (line counts, binary detection). Both streams are
         NUL-delimited; paths are data.
+
+        Args:
+            base: Older snapshot sha (exclusive).
+            end: Newer snapshot sha (inclusive).
+
+        Returns:
+            One :class:`ChangedFile` per changed path, in git's diff order.
         """
         status_by_path: dict[str, tuple[str, str | None]] = {}
         ordered: list[str] = []
@@ -421,12 +466,29 @@ class ShadowRepo:
         return [t.decode("utf-8", "surrogateescape") for t in raw.split(b"\0") if t]
 
     def diff_text(self, base: str, end: str, path: str) -> str:
-        """Unified diff for one file between two snapshots."""
+        """Return the unified diff for one file between two snapshots.
+
+        Args:
+            base: Older snapshot sha.
+            end: Newer snapshot sha.
+            path: Root-relative path to diff.
+
+        Returns:
+            Unified diff text (rename-aware), empty for no change.
+        """
         proc = self._run("diff", "-M", base, end, "--", path)
         return str(proc.stdout)
 
     def file_bytes(self, commit: str, path: str) -> bytes | None:
-        """A file's content at a snapshot, or ``None`` if absent there."""
+        """Return a file's content at a snapshot.
+
+        Args:
+            commit: Snapshot sha to read from.
+            path: Root-relative path.
+
+        Returns:
+            Raw bytes, or ``None`` when the path does not exist there.
+        """
         proc = self._run("show", f"{commit}:{path}", check=False, binary=True)
         if proc.returncode != 0:
             return None
@@ -440,6 +502,14 @@ class ShadowRepo:
         Low-level primitive: every path must EXIST at ``commit`` (un-create —
         deleting a path absent from the snapshot — is TASK-1974's guarded
         delete, deliberately not hidden inside this call).
+
+        Args:
+            commit: Snapshot sha to restore from.
+            paths: Root-relative paths, all present at ``commit``.
+
+        Raises:
+            ChangeTrackingError: The checkout failed (including any path
+                absent from ``commit``).
         """
         if not paths:
             return
