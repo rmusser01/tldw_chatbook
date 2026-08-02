@@ -132,6 +132,30 @@ class ExportBriefingRequested(Message):
     """
 
 
+class KeepBriefingRequested(Message):
+    """Posted when the user asks to keep the selected briefing into
+    ChaChaNotes (task-1780, Task 5).
+
+    Carries nothing, same shape as `ExportBriefingRequested` and for the
+    same reason: the briefing to keep is the screen's own `_selected_
+    briefing`, and the origin is always `"manual"` for a button press --
+    there is nothing this message needs to carry that the screen does not
+    already hold or already know.
+    """
+
+
+class KeptBriefingsRequested(Message):
+    """Posted when the user asks to open the kept-briefings modal
+    (task-1780, Task 5: `KeptBriefingsModal`, list + detail + cast).
+
+    Carries nothing: unlike every other message on this pane, the surface
+    it opens is deliberately SCOPE-INDEPENDENT -- it lists ChaChaNotes
+    content, reachable whether or not a watchlist is currently in scope
+    (including after the watchlist that produced a kept briefing is gone)
+    -- so there is no selection or scope state for this message to carry.
+    """
+
+
 class BriefingModeChanged(Message):
     """Posted when the user picks a different selection mode.
 
@@ -647,6 +671,16 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: offering to export nothing is a spec violation (phase 2b shipped a
     #: disabled Play for exactly this reason).
     has_audio_episodes = reactive(False, recompose=True)
+    #: task-1780, Task 5: whether the screen has a live ChaChaNotes handle
+    #: (`getattr(app_instance, "chachanotes_db", None) is not None`).
+    #: Screen-supplied, exactly like `has_audio_episodes` above -- this
+    #: widget has no database handle of its own, and ChaChaNotes is a
+    #: SEPARATE database from the `SubscriptionsDB` briefings live in.
+    #: Gates BOTH the Keep button (which also needs a complete selection)
+    #: and the Kept Briefings… button (which needs nothing else at all --
+    #: see `KeptBriefingsRequested`'s own docstring on why that surface is
+    #: scope-independent).
+    chachanotes_available = reactive(False, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -838,6 +872,51 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     "Select a completed briefing to export it."
                     if export_disabled
                     else "Export this briefing as a markdown file."
+                ),
+            )
+            # task-1780, Task 5: keeping a briefing into ChaChaNotes so it
+            # survives this watchlist's deletion. Same disabled shape as
+            # Export above (no selection, or a non-`complete` row) PLUS a
+            # second, independent requirement: a live ChaChaNotes handle --
+            # `keep_briefing` writes into a database this pane has no
+            # access to at all, so a missing handle degrades this ONE
+            # button (never the whole pane, never the whole toolbar), with
+            # a tooltip naming which of the two conditions is unmet.
+            keep_disabled = export_disabled or not self.chachanotes_available
+            if export_disabled:
+                keep_tooltip = "Select a completed briefing to keep it."
+            elif not self.chachanotes_available:
+                keep_tooltip = (
+                    "Connect a ChaChaNotes database to keep briefings."
+                )
+            else:
+                keep_tooltip = (
+                    "Keep this briefing (and its scripts) so it survives "
+                    "this watchlist's deletion."
+                )
+            yield Button(
+                "Keep",
+                id="artifacts-keep-button",
+                compact=True,
+                disabled=keep_disabled,
+                tooltip=keep_tooltip,
+            )
+            # Opens Task 5's `KeptBriefingsModal` -- deliberately gated on
+            # `chachanotes_available` ALONE, unlike every sibling button in
+            # this toolbar: it lists ChaChaNotes content directly, so it
+            # needs no selected briefing and no watchlist in scope at all
+            # (see `KeptBriefingsRequested`'s own docstring).
+            yield Button(
+                "Kept Briefings…",
+                id="artifacts-kept-briefings-button",
+                compact=True,
+                disabled=not self.chachanotes_available,
+                tooltip=(
+                    "Connect a ChaChaNotes database to browse kept "
+                    "briefings."
+                    if not self.chachanotes_available
+                    else "Browse, cast from, or delete briefings you have "
+                    "kept."
                 ),
             )
             # Task 5 (phase 3): review round 1, Important #1. The brief
@@ -1360,6 +1439,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(RefreshBriefingsRequested())
         elif button_id == "artifacts-export-button":
             self.post_message(ExportBriefingRequested())
+        elif button_id == "artifacts-keep-button":
+            self.post_message(KeepBriefingRequested())
+        elif button_id == "artifacts-kept-briefings-button":
+            self.post_message(KeptBriefingsRequested())
         elif button_id == "artifacts-presets-button":
             self.post_message(ManagePresetsRequested())
         elif button_id == "artifacts-cast-button":
