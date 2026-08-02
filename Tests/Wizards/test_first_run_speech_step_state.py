@@ -171,6 +171,27 @@ class TestSpeechPrefillStatus:
         assert "nemo-parakeet-tdt-0.6b-v2" in text
         assert "en" in text
 
+    def test_runtime_absent_states_the_config_without_directing_to_a_button(self):
+        """Final-review residual of NEW-2: with the onnx-asr runtime absent
+        the "use as default" affordance is never composed, so the sentence
+        must not send the user to a control that is not on screen -- and
+        must not promise that installing here can switch anything.
+
+        Args:
+            self: Test instance.
+
+        Returns:
+            None.
+        """
+        prefill = SpeechPrefill(
+            provider_id="remote-whisper", model_id="x", language="auto"
+        )
+        text = speech_prefill_status(
+            prefill, installed_active=True, runtime_installed=False
+        )
+        assert text == "Currently configured: remote-whisper."
+        assert "below" not in text and "installing" not in text
+
     def test_different_provider_reports_current_default_and_consequence(self):
         prefill = SpeechPrefill(
             provider_id="remote-whisper", model_id="whisper-1", language="auto"

@@ -239,6 +239,7 @@ def speech_prefill_status(
     *,
     installed_active: bool = False,
     acted_this_run: bool = False,
+    runtime_installed: bool = True,
 ) -> str:
     """Human copy describing what is currently persisted, or "" for nothing.
 
@@ -269,6 +270,10 @@ def speech_prefill_status(
             (installed, activated, or used "use as default") -- the
             pending change has not been written to disk yet (that happens
             in ``commit()`` on Next), but is no longer merely "possible".
+        runtime_installed: Whether the onnx-asr runtime is importable. When
+            it is not, the "use as default" affordance is (correctly) never
+            composed, so the sentence must not direct the user to a button
+            that is not on screen (final-review residual of NEW-2).
 
     Returns:
         Empty when nothing is persisted at all; otherwise a sentence
@@ -285,6 +290,11 @@ def speech_prefill_status(
             "Parakeet v2 will become your default when you continue "
             f"(currently: {prefill.provider_id})."
         )
+    if not runtime_installed:
+        # No action on this step can switch the default without the
+        # runtime, and the "use as default" button is not composed -- state
+        # the fact without directing the user to a control that isn't there.
+        return f"Currently configured: {prefill.provider_id}."
     if installed_active:
         return (
             f"Currently configured: {prefill.provider_id} — choose "

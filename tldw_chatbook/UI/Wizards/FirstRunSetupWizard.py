@@ -1291,6 +1291,7 @@ class SpeechSetupStep(SetupStep):
             self._prefill(),
             installed_active=self._installed_active(),
             acted_this_run=self._acted_this_run,
+            runtime_installed=self._runtime_installed(),
         )
 
     def _use_as_default_offer(self) -> bool:
