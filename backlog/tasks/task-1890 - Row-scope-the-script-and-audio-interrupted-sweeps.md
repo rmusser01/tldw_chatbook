@@ -1,7 +1,7 @@
 ---
 id: TASK-1890
 title: Row-scope the script and audio interrupted sweeps
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02'
 labels:
@@ -64,3 +64,11 @@ the fix into 1811/1812's own scope.
 - [ ] #6 A claim taken but not yet row-recorded survives a sweep run inside that exact window, for both the script and audio sweeps (window regression tests, mirroring this branch's briefings window test)
 - [ ] #7 The Synthesize blocking toast (`watchlists_collections_screen.py`) never names a crash-zombie audio row as "already being synthesized" -- once the audio sweep is row-scoped, a zombie sharing a `script_id` with a live claim is swept before the toast is composed, so only the genuinely live row's label can appear
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Mirror the merged briefings shape (`briefing_service.py`: `_ACTIVE_BRIEFING_CLAIM_ROW_IDS`, `pending_briefing_claim_watchlist_ids()`, row-id `exclude` + `exclude_watchlists` pending-claim guard) into `briefing_cast.py` (`fail_interrupted_scripts`, claims keyed by script/briefing id) and `briefing_audio.py` (`fail_interrupted_audio`, claims keyed by script_id) — same registry-dict + frozen-snapshot + finally-cleared discipline, row id recorded as soon as the INSERT returns.
+2. Update the two sweeps' SQL from key-scoped `NOT IN` to row-id `NOT IN` + pending-key `NOT IN`; update every call site (screen sweeps `_sweep_and_guard_cast`/`_sweep_and_guard_audio` and any handler/service callers) to pass the new exclude pair.
+3. Tests per ACs 4-6 mirroring the briefings coexistence + window tests; AC 7 pinned at the screen: zombie audio row + live claim → toast names only the live row.
+<!-- SECTION:PLAN:END -->
