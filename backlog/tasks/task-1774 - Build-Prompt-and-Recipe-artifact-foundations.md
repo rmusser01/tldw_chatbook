@@ -4,7 +4,7 @@ title: Build Prompt and Recipe artifact foundations
 status: In Progress
 assignee: []
 created_date: '2026-08-01 23:27'
-updated_date: '2026-08-02 00:53'
+updated_date: '2026-08-02 02:33'
 labels: []
 dependencies:
   - TASK-1773
@@ -40,3 +40,9 @@ Create the durable Prompt/Recipe artifact contract that lets Console and server-
 
 ADR required: yes; ADR path: backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md; Reason: the stage implements the adopted cross-module versioning/storage/runtime contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task 4 server parity implementation committed in tldw_server2 on branch `codex/server-console-block-artifacts` at commit `7fd772cdd50d75b505d7449111458833252add87`.
+<!-- SECTION:NOTES:END -->
