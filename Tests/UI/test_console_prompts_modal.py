@@ -778,6 +778,11 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         )
         update = modal.query_one("#prompt-editor-update-original", Button)
         assert update.disabled is False
+        assert update.tooltip in (None, "")
+        assert (
+            str(modal.query_one("#prompt-editor-update-reason", Static).renderable)
+            == ""
+        )
 
         update.press()
         await pilot.pause()
@@ -786,6 +791,176 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
     assert backend.save_calls[1]["prompt_identifier"] == "local:prompt:new-77"
     assert backend.save_calls[1]["expected_version"] == 9
     assert backend.save_calls[1]["name"] == "Saved Prompt"
+
+
+@pytest.mark.asyncio
+async def test_existing_prompt_save_recipe_does_not_retarget_prompt_working_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _PromptBackend()
+    backend.detail_result = {
+        **_detail(identifier="prompt-original", version=4),
+        "system_prompt": "STALE COMPILED SYSTEM",
+    }
+    backend.save_result = _detail(
+        artifact_type="recipe",
+        identifier="recipe-new",
+        version=1,
+    )
+    app = _Harness(backend)
+    notifications: list[str] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("prompt-original")
+        await pilot.pause()
+        original_record = modal._selected_record
+        original_decoded = modal._decoded
+        warning = modal.query_one("#console-prompts-compatibility-stale", Static)
+        modal.mark_dirty()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notifications.append(str(message)),
+        )
+
+        modal.query_one("#prompt-editor-save-recipe", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert backend.save_calls[0]["artifact_type"] == "recipe"
+        assert modal.state.selected_identity == "prompt-original"
+        assert modal.state.selected_version == 4
+        assert modal.state.working_copy_unsaved is False
+        assert modal.state.dirty is True
+        assert modal._selected_record is original_record
+        assert modal._decoded is original_decoded
+        assert warning.display is True
+        update = modal.query_one("#prompt-editor-update-original", Button)
+        assert update.disabled is False
+        assert notifications == ["Recipe saved as a new artifact."]
+
+        backend.save_result = _detail(
+            identifier="prompt-original",
+            version=5,
+        )
+        update.press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert backend.save_calls[1]["artifact_type"] == "prompt"
+    assert backend.save_calls[1]["prompt_identifier"] == "prompt-original"
+    assert backend.save_calls[1]["expected_version"] == 4
+    assert all(
+        call.get("prompt_identifier") != "recipe-new" for call in backend.save_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_recipe_derived_prompt_save_recipe_stays_unsaved_and_not_updatable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _PromptBackend()
+    backend.detail_result = _detail(
+        artifact_type="recipe",
+        identifier="recipe-source",
+        version=3,
+    )
+    backend.save_result = _detail(
+        artifact_type="recipe",
+        identifier="recipe-copy",
+        version=1,
+    )
+    app = _Harness(backend)
+    notifications: list[str] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("recipe-source")
+        await pilot.pause()
+        original_record = modal._selected_record
+        original_decoded = modal._decoded
+        modal.mark_dirty()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notifications.append(str(message)),
+        )
+
+        modal.query_one("#prompt-editor-save-recipe", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert backend.save_calls[0]["artifact_type"] == "recipe"
+        assert modal.state.selected_identity == "recipe-source"
+        assert modal.state.selected_version == 3
+        assert modal.state.working_copy_unsaved is True
+        assert modal.state.dirty is True
+        assert modal._selected_record is original_record
+        assert modal._decoded is original_decoded
+        update = modal.query_one("#prompt-editor-update-original", Button)
+        assert update.disabled is True
+        assert notifications == ["Recipe saved as a new artifact."]
+
+        update.press()
+        await pilot.pause()
+
+    assert len(backend.save_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_name_only_prompt_save_response_warns_and_keeps_working_copy_unpromoted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _PromptBackend()
+    backend.detail_result = _detail(
+        artifact_type="recipe",
+        identifier="recipe-source",
+        version=3,
+    )
+    backend.save_result = {
+        "name": "Name is not identity",
+        "artifact_type": "prompt",
+        "version": 9,
+    }
+    app = _Harness(backend)
+    notifications: list[tuple[str, str | None]] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.open_artifact("recipe-source")
+        await pilot.pause()
+        original_record = modal._selected_record
+        modal.mark_dirty()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            ),
+        )
+
+        modal.query_one("#prompt-editor-save-prompt", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert modal.state.selected_identity == "recipe-source"
+        assert modal.state.selected_identity != "Name is not identity"
+        assert modal.state.selected_version == 3
+        assert modal.state.working_copy_unsaved is True
+        assert modal.state.dirty is True
+        assert modal._selected_record is original_record
+        assert modal.query_one("#prompt-editor-update-original", Button).disabled
+
+    assert notifications == [
+        (
+            "Prompt saved, but its new identity was not returned. Reload the Library before updating it.",
+            "warning",
+        )
+    ]
 
 
 @pytest.mark.asyncio

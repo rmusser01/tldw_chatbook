@@ -390,6 +390,8 @@ class ConsolePromptsModal(ModalScreen[None]):
                 "Update unavailable — this source does not support conditional updates "
                 "for this version; save as new."
             )
+        else:
+            update.tooltip = None
         apply_button = editor.query_one("#prompt-editor-apply", Button)
         apply_button.disabled = True
         apply_button.tooltip = "Applying to the composer is unavailable in this stage; save the Prompt instead."
@@ -796,50 +798,57 @@ class ConsolePromptsModal(ModalScreen[None]):
                 severity="error",
             )
             return
-        self.state = self.state.with_dirty(False)
-        if isinstance(saved, Mapping):
-            saved_record = dict(saved)
-            try:
-                identity = _saved_record_identifier(saved_record)
-            except ValueError:
-                self.notify(
-                    "Prompt saved, but its new identity was not returned. Reload the Library before updating it.",
-                    severity="warning",
-                )
-                return
-            source_value = str(saved_record.get("backend") or "")
-            selected_source: PromptSource = (
-                source_value
-                if source_value in {"local", "server"}
-                else self.state.selected_source or self.state.source
-            )  # type: ignore[assignment]
-            self._selected_record = saved_record
-            try:
-                self._decoded = decode_prompt_artifact(saved_record)
-            except (TypeError, ValueError):
-                self._decoded = None
-            if self._decoded is not None and not self._decoded.compatibility_stale:
-                try:
-                    self.query_one(
-                        "#console-prompts-compatibility-stale", Static
-                    ).display = False
-                except NoMatches:
-                    pass
-            self._editor_state = editor_state
-            self.state = (
-                self.state.select(
-                    identity=identity,
-                    version=_record_version(saved_record),
-                    source=selected_source,
-                    capabilities=self.state.selected_capabilities,
-                )
-                .as_unsaved_copy(False)
-                .with_dirty(False)
+        if artifact_type == "recipe":
+            self.notify("Recipe saved as a new artifact.")
+            return
+        if not isinstance(saved, Mapping):
+            self.notify(
+                "Prompt saved, but its new identity was not returned. Reload the Library before updating it.",
+                severity="warning",
             )
-            self.query_one("#console-prompts-location", Static).update(
-                self._location_copy(self.state.mode)
+            return
+        saved_record = dict(saved)
+        try:
+            identity = _saved_record_identifier(saved_record)
+        except ValueError:
+            self.notify(
+                "Prompt saved, but its new identity was not returned. Reload the Library before updating it.",
+                severity="warning",
             )
-            self._sync_editor_host_gates()
+            return
+        source_value = str(saved_record.get("backend") or "")
+        selected_source: PromptSource = (
+            source_value
+            if source_value in {"local", "server"}
+            else self.state.selected_source or self.state.source
+        )  # type: ignore[assignment]
+        self._selected_record = saved_record
+        try:
+            self._decoded = decode_prompt_artifact(saved_record)
+        except (TypeError, ValueError):
+            self._decoded = None
+        if self._decoded is not None and not self._decoded.compatibility_stale:
+            try:
+                self.query_one(
+                    "#console-prompts-compatibility-stale", Static
+                ).display = False
+            except NoMatches:
+                pass
+        self._editor_state = editor_state
+        self.state = (
+            self.state.select(
+                identity=identity,
+                version=_record_version(saved_record),
+                source=selected_source,
+                capabilities=self.state.selected_capabilities,
+            )
+            .as_unsaved_copy(False)
+            .with_dirty(False)
+        )
+        self.query_one("#console-prompts-location", Static).update(
+            self._location_copy(self.state.mode)
+        )
+        self._sync_editor_host_gates()
         self.notify("Prompt saved.")
 
     @on(Button.Pressed)
