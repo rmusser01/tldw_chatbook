@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import monotonic
 
 from typing import Iterable, Literal, Mapping
@@ -12,6 +12,7 @@ from typing import Iterable, Literal, Mapping
 from loguru import logger
 from PIL import Image as PILImage
 from rich_pixels import Pixels
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
@@ -19,6 +20,7 @@ from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
+from textual.widgets import Button
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -74,6 +76,7 @@ _ACTION_TOOLTIPS = {
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
     "save-image": "Save image to disk.",
+    "tool-output": "Show or hide this tool call's full result (o).",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -582,6 +585,7 @@ class ConsoleTranscript(VerticalScroll):
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
+        ("o", "invoke_selected_action('tool-output')", "Full output"),
     ]
 
     PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset(
@@ -637,6 +641,12 @@ class ConsoleTranscript(VerticalScroll):
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        #: TASK-1860: ids of TOOL markers currently showing their FULL result.
+        #: Pure view state, owned here: expansion never touches the store, is
+        #: per row (so several calls in one turn expand independently), and is
+        #: deliberately dropped when the transcript is rebuilt for another
+        #: session rather than following the user across conversations.
+        self._expanded_tool_output_ids: set[str] = set()
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -1195,6 +1205,7 @@ class ConsoleTranscript(VerticalScroll):
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
         for message in self._messages:
+            message = self._with_expanded_tool_output(message)
             selected = message.id == self.selected_message_id
             rows.append(
                 _TranscriptRow(
@@ -1592,6 +1603,48 @@ class ConsoleTranscript(VerticalScroll):
             self._signature_compute_counts.get(message.id, 0) + 1
         )
         return signature
+
+    def _with_expanded_tool_output(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleChatMessage:
+        """Return ``message`` showing its full tool result, when expanded.
+
+        TASK-1860. Applied at the ONE walk that plans rows, so the row
+        renderable, its cached signature and its action row all see the same
+        message -- a row that renders expanded while its signature says
+        collapsed would never repaint.
+        """
+        full = message.tool_output_full
+        if not full or message.id not in self._expanded_tool_output_ids:
+            return message
+        head, separator, _preview = message.content.partition(" \u2192 ")
+        expanded = f"{head}{separator}{full}" if separator else f"{message.content}\n{full}"
+        return replace(message, content=expanded)
+
+    @on(Button.Pressed, ".console-transcript-action-button")
+    def _intercept_tool_output_press(self, event: Button.Pressed) -> None:
+        """Handle the Full-output button here; let every other action bubble.
+
+        Expansion is view state owned by this widget -- it never reaches the
+        store and nothing outside the transcript needs to know about it -- so
+        routing it through the screen's action dispatch would add a hop that
+        carries no information. Every other action id is left untouched and
+        still bubbles to `ChatScreen`.
+        """
+        button_id = event.button.id or ""
+        prefix = "console-message-action-tool-output-"
+        if not button_id.startswith(prefix):
+            return
+        event.stop()
+        self.toggle_tool_output(button_id.removeprefix(prefix))
+
+    def toggle_tool_output(self, message_id: str) -> None:
+        """Expand or collapse one TOOL marker's full result."""
+        if message_id in self._expanded_tool_output_ids:
+            self._expanded_tool_output_ids.discard(message_id)
+        else:
+            self._expanded_tool_output_ids.add(message_id)
+        self.call_later(self.refresh_messages)
 
     @staticmethod
     def _message_row_signature(message: ConsoleChatMessage, *, selected: bool) -> tuple:

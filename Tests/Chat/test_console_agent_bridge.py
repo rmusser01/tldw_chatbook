@@ -3030,3 +3030,60 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
         raised = True
     assert raised
     assert exited == ["builtin", "mcp"]
+
+
+def test_resumed_markers_carry_the_same_full_output_as_live_ones(
+    tmp_path, monkeypatch
+):
+    """TASK-1860 AC#5: resume is a second door, and it has been missed before.
+
+    `resume_marker_messages` re-derives markers from AgentRunsDB and builds
+    `ConsoleChatMessage` objects DIRECTLY, bypassing the live append path. A
+    resumed transcript whose markers could not be expanded would be the same
+    data loss by a different door -- exactly how TASK-1842's first fix leaked.
+
+    The display cap is forced to its MINIMUM (20) so the ~57-char calculator
+    result is actually truncated. Without that BOTH sides are None and the
+    comparison passes while proving nothing -- which is how this test was
+    first written. A value below the minimum is clamped back to the default,
+    so it must be the real floor, not an arbitrary small number.
+    """
+    from tldw_chatbook.config import MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+    monkeypatch.setenv(
+        "TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS",
+        str(MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS),
+    )
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is ", "42."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+    _run(bridge, store, session, aid)
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert live, "sanity: the live run left a marker"
+    assert any(m.tool_output_full for m in live), (
+        "precondition: at least one marker must actually hide part of its "
+        f"result, or this test is vacuous: {[m.content for m in live]}"
+    )
+
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m
+        for _anchor, block in fresh_bridge.resume_marker_messages("conv-1")
+        for m in block
+    ]
+
+    assert [m.content for m in resumed] == [m.content for m in live]
+    assert [m.tool_output_full for m in resumed] == [
+        m.tool_output_full for m in live
+    ], (
+        "a resumed marker exposes a different amount of its result than the "
+        "live one did"
+    )
