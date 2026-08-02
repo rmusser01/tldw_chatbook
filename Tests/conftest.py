@@ -250,12 +250,18 @@ def install_css_parse_cache() -> "Iterator[None]":
 
 @pytest.fixture(autouse=True)
 def drain_test_app_user_data_dirs() -> "Iterator[None]":
-    """Remove the user-data dirs the shared app factory created during a test.
+    """Remove the user-data dirs and stop the service patches the shared app
+    factory created during a test.
 
     ``Tests/UI/app_factory._build_test_app`` records every ``mkdtemp`` it
     makes; draining here (task-1458) stops the per-call leak that accumulated
-    324k orphaned sandboxes (~285GB) on one dev machine. The import is lazy
-    and conditional so the ~18k tests that never build an app pay nothing.
+    324k orphaned sandboxes (~285GB) on one dev machine. It also stops every
+    still-running service patch the factory started (task-1631:
+    ``get_subscriptions_db_path`` is patched OUTSIDE the factory's own
+    ``ExitStack`` so it stays in effect for the whole test, not just
+    ``TldwCli.__init__`` -- see that module for why), so it never leaks into
+    the next test. The import is lazy and conditional so the ~18k tests that
+    never build an app pay nothing.
 
     Yields:
         None. Draining happens in teardown.
@@ -263,6 +269,7 @@ def drain_test_app_user_data_dirs() -> "Iterator[None]":
     yield
     factory = sys.modules.get("Tests.UI.app_factory")
     if factory is not None:
+        factory.drain_active_service_patches()
         factory.drain_created_dirs()
 
 

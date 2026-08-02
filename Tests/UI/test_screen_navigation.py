@@ -1003,6 +1003,38 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
 from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402
 
 
+def test_local_watchlists_service_db_factory_resolves_the_same_path_as_the_eager_subscriptions_db():
+    """task-1631: `_build_test_app`'s `get_subscriptions_db_path` patch must
+    stay in effect for the WHOLE test, not just `TldwCli.__init__`.
+
+    `LocalWatchlistsService.db_factory` (wired inside
+    `_wire_watchlists_and_notifications_services`) is a lambda that
+    re-resolves `get_subscriptions_db_path()` fresh on every call rather than
+    once at construction, so calling it here -- well after `_build_test_app()`
+    has already returned -- exercises exactly the "every call the running
+    screen makes" case the split used to break. `watchlist_bundle_service.db`
+    is the SAME eager `subscriptions_db` built during `__init__`
+    (`self.watchlist_bundle_service = WatchlistBundleService(subscriptions_db)`),
+    so it is the other half of the comparison.
+
+    Compares RESOLVED PATHS, not object identity: `db_factory()` builds a
+    brand-new `SubscriptionsDB` instance on every call by design (mirroring
+    production), so the two sides are never the same object even when the
+    harness is correct -- only the underlying on-disk file must match.
+    """
+    app = _build_test_app()
+
+    eager_path = app.watchlist_bundle_service.db.db_path
+    lazy_path = app.local_watchlists_service.db_factory().db_path
+
+    assert lazy_path == eager_path, (
+        "local_watchlists_service.db_factory() resolved a DIFFERENT on-disk "
+        f"file ({lazy_path}) than the eagerly-built subscriptions_db "
+        f"({eager_path}) -- the get_subscriptions_db_path patch fell out of "
+        "scope before this call, splitting the app across two databases"
+    )
+
+
 def test_file_notes_owner_is_injected_into_fresh_library_workspaces(
     monkeypatch,
     tmp_path,

@@ -1305,21 +1305,11 @@ async def test_the_inspector_still_saves_every_shipped_default_selector():
 def _seed_new_item(app, *, content_hash: str) -> tuple[Any, int, int]:
     """Seed one subscription with one "new" item through the real database.
 
-    Seeded through `app.local_watchlists_service._db()` -- the connection
-    the Items pane's own real load path resolves to (`_load_items` -> the
-    controller -> `LocalWatchlistsService`) -- and NOT
-    `app.watchlist_bundle_service.db`, even though the latter is what
-    `WatchlistsCollectionsScreen._briefings_db()` (the queue-toggle write
-    path) reaches. In the running app both resolve to the identical on-disk
-    file, but in THIS harness they do not:
-    `_build_test_app()`'s `get_subscriptions_db_path` patch only lives for
-    the duration of `TldwCli.__init__`, so `watchlist_bundle_service`'s
-    connection (built EAGERLY, inside that init, while the patch is live)
-    and `local_watchlists_service`'s connection (built LAZILY, per call, once
-    the patch has already exited) resolve to two DIFFERENT temp files here.
-    `_open_items_with_seeded_item` below points `watchlist_bundle_service`
-    at THIS connection once the screen's initial load has settled, so
-    `_briefings_db()` agrees with what the Items pane reads.
+    Seeded through `app.local_watchlists_service._db()`, the same on-disk
+    file `app.watchlist_bundle_service.db` uses (task-1631 unified them via
+    `_build_test_app`, so `_open_items_with_seeded_item`'s
+    `watchlist_bundle_service._db = db` realignment below is now a belt-
+    and-suspenders identity pin rather than a fix for a real file split).
 
     Returns:
         `(db, source_id, item_id)` -- `db` is the connection to read the
