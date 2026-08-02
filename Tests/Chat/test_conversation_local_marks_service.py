@@ -77,6 +77,8 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
     # A V16 fixture also predates the V27->V28 character-authority column.
     conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+    # A V16 fixture also predates the V29->V30 local-only usage_json column.
+    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
     # A V16 fixture must not retain citation tables introduced at V26->V27.
     for table in (

@@ -321,6 +321,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                     "model": model,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
+                completed_usage = (event.get("response") or {}).get("usage")
+                if isinstance(completed_usage, dict):
+                    chunk["usage"] = completed_usage
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
@@ -606,6 +609,8 @@ def chat_with_openai(
         payload["input"] = api_messages
     else:
         payload["messages"] = api_messages
+    if final_streaming and not use_responses_api:
+        payload["stream_options"] = {"include_usage": True}
     # Add optional parameters if they have a value. Reasoning-family models
     # (and therefore every Responses-API request, which this handler only
     # builds for reasoning params) reject temperature/top_p with HTTP 400,
@@ -710,6 +715,24 @@ def chat_with_openai(
                     response = session.post(
                         api_url, headers=headers, json=payload, stream=True, timeout=180
                     )
+                    if (
+                        response.status_code == 400
+                        and "stream_options" in payload
+                        and "stream_options" in (response.text or "")
+                    ):
+                        logger.warning(
+                            "OpenAI: endpoint rejected stream_options; retrying without usage reporting."
+                        )
+                        retry_payload = {
+                            k: v for k, v in payload.items() if k != "stream_options"
+                        }
+                        response = session.post(
+                            api_url,
+                            headers=headers,
+                            json=retry_payload,
+                            stream=True,
+                            timeout=180,
+                        )
                     response.raise_for_status()
                     if use_responses_api:
                         yield from _responses_stream_to_chat_sse(
@@ -1298,6 +1321,20 @@ def chat_with_anthropic(
                 tool_call_positions = {}
                 next_tool_position = 0
 
+                usage_accumulator: dict = {}
+                output_captured = False
+
+                def _usage_sse_chunk(usage: dict | None = None) -> str:
+                    sse_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": current_model,
+                        "choices": [],
+                        "usage": dict(usage if usage is not None else usage_accumulator),
+                    }
+                    return f"data: {json.dumps(sse_chunk)}\n\n"
+
                 try:
                     for line_bytes in response.iter_lines():  # iter_lines gives bytes
                         line = line_bytes.decode("utf-8").strip()
@@ -1316,6 +1353,29 @@ def chat_with_anthropic(
                                 delta_content = None
                                 finish_reason = None
                                 tool_calls_delta = None  # For future tool streaming
+
+                                if anthropic_event.get("type") == "message_start":
+                                    message_obj = anthropic_event.get("message")
+                                    start_usage = (
+                                        message_obj.get("usage")
+                                        if isinstance(message_obj, dict)
+                                        else None
+                                    )
+                                    if isinstance(start_usage, dict) and start_usage:
+                                        usage_accumulator.update(start_usage)
+                                        # message_start's usage always carries a
+                                        # small placeholder output_tokens value
+                                        # (Anthropic bills it before generation
+                                        # starts) -- never surface it as if it
+                                        # were authoritative output usage.
+                                        input_usage = {
+                                            k: v
+                                            for k, v in start_usage.items()
+                                            if k != "output_tokens"
+                                        }
+                                        if input_usage:
+                                            yield _usage_sse_chunk(input_usage)
+                                    continue
 
                                 if anthropic_event.get("type") == "content_block_start":
                                     block = anthropic_event.get("content_block") or {}
@@ -1362,7 +1422,11 @@ def chat_with_anthropic(
                                     finish_reason_anth = anthropic_event.get(
                                         "delta", {}
                                     ).get("stop_reason")
-                                    # usage_anth = anthropic_event.get("usage") # Can capture usage here
+                                    delta_usage = anthropic_event.get("usage")
+                                    if isinstance(delta_usage, dict):
+                                        usage_accumulator.update(delta_usage)
+                                        if "output_tokens" in delta_usage:
+                                            output_captured = True
                                     if finish_reason_anth:
                                         finish_reason_map = {
                                             "end_turn": "stop",
@@ -1413,6 +1477,9 @@ def chat_with_anthropic(
                                 logger.warning(
                                     f"Anthropic Stream: Could not decode JSON: {event_data_str}"
                                 )
+
+                    if output_captured:
+                        yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
                 ) as e:  # ... error handling ...

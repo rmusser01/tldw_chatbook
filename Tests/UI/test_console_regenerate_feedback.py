@@ -31,7 +31,7 @@ class GatedGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.release = asyncio.Event()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "first-chunk"
         await self.release.wait()
         yield " final-chunk"

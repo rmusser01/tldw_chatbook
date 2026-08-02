@@ -34,7 +34,7 @@ class StreamingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
 

@@ -29,7 +29,7 @@ class StreamingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("edi", "ted-reply"):
             yield chunk
 
@@ -48,7 +48,7 @@ class NotReadyGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):  # pragma: no cover - unreachable
+    async def stream_chat(self, resolution, messages, **kwargs):  # pragma: no cover - unreachable
         yield ""
 
 
@@ -326,7 +326,7 @@ class _RecordingStreamingGateway(StreamingGateway):
     def __init__(self):
         self.messages_seen = None
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.messages_seen = [dict(m) for m in messages]
         for chunk in ("edi", "ted-reply"):
             yield chunk

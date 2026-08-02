@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
     LlamaCppProviderConfig,
     ProviderToolCalls,
     build_llamacpp_chat_payload,
@@ -33,6 +34,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
@@ -1100,22 +1102,40 @@ def test_normalize_generic_provider_response_shapes() -> None:
     ) == [unsupported]
 
 
-def test_stream_signal_privacy_has_one_content_free_private_event_and_read_only_state() -> (
+def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload() -> (
     None
 ):
     signals = gateway_module.ConsoleProviderStreamSignals()
 
     signal_fields = dataclasses.fields(signals)
-    assert [item.name for item in signal_fields] == ["_synthetic_fallback"]
+    assert [item.name for item in signal_fields] == [
+        "_synthetic_fallback",
+        "usage_payload",
+        "completed_usage_payloads",
+        "_usage_lock",
+    ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
-    assert signals.__class__.__slots__ == ("_synthetic_fallback",)
+    assert signals.__class__.__slots__ == (
+        "_synthetic_fallback",
+        "usage_payload",
+        "completed_usage_payloads",
+        "_usage_lock",
+    )
     assert not hasattr(signals, "__dict__")
     assert signals.synthetic_fallback_emitted is False
     with pytest.raises(AttributeError):
         signals.synthetic_fallback_emitted = True
+    assert signals.usage_payload is None
+    assert signals.completed_usage_payloads == []
+    assert signals.usage_payloads() == []
 
+    # Content-free repr: usage payloads are provider-reported token counts,
+    # not transcript text, but they are still per-request data that has no
+    # business landing in a log line, so every field stays repr=False.
     rendered = repr(signals)
     assert rendered == "ConsoleProviderStreamSignals()"
+    signals.record_usage_payload({"prompt_tokens": 4242})
+    assert repr(signals) == "ConsoleProviderStreamSignals()"
     for governed_text in (
         NO_PROVIDER_CONTENT_COPY,
         UNSUPPORTED_PROVIDER_RESPONSE_COPY,
@@ -2672,3 +2692,191 @@ def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
 
     assert "system_message" not in kwargs
     assert kwargs["messages_payload"] == messages
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_records_usage_payload_from_sse_chunk() -> None:
+    usage_line = (
+        'data: {"object": "chat.completion.chunk", "choices": [], '
+        '"usage": {"prompt_tokens": 100, "completion_tokens": 20}}'
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield usage_line
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+
+    assert chunks == ["hi"]  # usage chunk yields no text
+    # The call ended, so its payload was closed out of the in-flight slot and
+    # into the completed list -- one provider call, one billable payload.
+    assert signals.usage_payload is None
+    assert signals.usage_payloads() == [
+        {"prompt_tokens": 100, "completion_tokens": 20}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_merges_split_usage_payloads() -> None:
+    # Anthropic emits input-side usage at message_start and output at end.
+    # Both belong to ONE call, so they must still key-merge into ONE payload.
+    def fake_chat_api_call(**_kwargs):
+        yield (
+            'data: {"choices": [], "usage": {"input_tokens": 3571, '
+            '"cache_read_input_tokens": 6656}}'
+        )
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield 'data: {"choices": [], "usage": {"output_tokens": 727}}'
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet-4-6")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payloads() == [
+        {
+            "input_tokens": 3571,
+            "cache_read_input_tokens": 6656,
+            "output_tokens": 727,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_per_call_without_leaking_stale_cache_fields() -> None:
+    """Two provider calls on one signals object must not key-merge.
+
+    Regression for the final-review F2 finding: an agent turn makes N calls
+    through the SAME signals object. Merging call 2's ``prompt_tokens`` on top
+    of call 1's ``prompt_tokens_details.cached_tokens`` made the second call
+    look 100% cached (uncached_input=0) and fabricated a 4096-token cache
+    read that was never billed.
+    """
+    calls = iter(
+        (
+            (
+                'data: {"choices": [{"delta": {"content": "a"}}]}',
+                'data: {"choices": [], "usage": {"prompt_tokens": 5000, '
+                '"completion_tokens": 10, '
+                '"prompt_tokens_details": {"cached_tokens": 4096}}}',
+            ),
+            (
+                'data: {"choices": [{"delta": {"content": "b"}}]}',
+                'data: {"choices": [], "usage": {"prompt_tokens": 900, '
+                '"completion_tokens": 30}}',
+            ),
+        )
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        yield from next(calls)
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    for _ in range(2):
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}], signals=signals
+            )
+        ]
+
+    # Two separate payloads, each intact -- no cross-call key merge.
+    assert signals.usage_payloads() == [
+        {
+            "prompt_tokens": 5000,
+            "completion_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 4096},
+        },
+        {"prompt_tokens": 900, "completion_tokens": 30},
+    ]
+
+    # And the normalized, summed buckets are the honest bill: call 1 is
+    # 904 uncached + 4096 cached, call 2 is 900 uncached + 0 cached.
+    total = None
+    for payload in signals.usage_payloads():
+        usage = ProviderUsage.from_provider_payload(
+            payload, provider="openai", model="gpt-4.1"
+        )
+        total = usage if total is None else total.plus(usage)
+    assert total.uncached_input == 1804
+    assert total.cache_read == 4096
+    assert total.output == 40
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_mapping_response_records_usage() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+        }
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert chunks == ["hello"]
+    assert signals.usage_payloads() == [{"prompt_tokens": 10, "completion_tokens": 2}]
+
+
+@pytest.mark.asyncio
+async def test_stream_without_usage_leaves_signals_none() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield "plain text"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payload is None
+    assert signals.usage_payloads() == []

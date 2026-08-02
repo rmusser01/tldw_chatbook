@@ -57,7 +57,7 @@ class _Gateway:
 
         return _R()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
@@ -523,7 +523,7 @@ class _ParkingGateway:
     async def resolve_for_send(self, _selection):
         return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-    async def stream_chat(self, _resolution, _messages):
+    async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
         # Blocking (not async) wait: this runs inside the bridge's own
         # private per-run event loop (``run_loop.run_until_complete`` in
@@ -797,7 +797,10 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
     gateway = controller.provider_gateway
     real_stream_chat = gateway.stream_chat
 
-    async def stop_before_first_chunk(resolution, messages):
+    # `**kwargs` (forwarded verbatim): the agent bridge now always hands the
+    # gateway this run's `signals=`, since usage capture is no longer a
+    # citation-repair-only concern.
+    async def stop_before_first_chunk(resolution, messages, **kwargs):
         # Mirror ConsoleChatController.stop_active_run(): mark the message
         # stopped and flip should_cancel *before* the gateway ever streams
         # a chunk into the store -- simulating Stop landing while the
@@ -813,7 +816,7 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # run's per-session cancel_event, never the shared `_stop_requested`
         # flag -- simulate Stop via the real internal signalling path.
         controller._signal_stop(session_id=session_id)
-        async for chunk in real_stream_chat(resolution, messages):
+        async for chunk in real_stream_chat(resolution, messages, **kwargs):
             yield chunk
 
     gateway.stream_chat = stop_before_first_chunk
@@ -1173,7 +1176,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
         async def resolve_for_send(self, _selection):
             return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-        async def stream_chat(self, _resolution, _messages):
+        async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
                 yield chunk
 
@@ -1692,7 +1695,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
         (empty rows defer -- the AC#3 NULL case, covered separately below), so
         the persisted-id recording needs a partial reply in the buffer."""
 
-        async def stream_chat(self, _resolution, _messages):
+        async def stream_chat(self, _resolution, _messages, **kwargs):
             yield "partial answer\n"
             self.started.set()
             self.release.wait(timeout=60)

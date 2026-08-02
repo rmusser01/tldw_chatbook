@@ -11,6 +11,8 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
     conn.execute("ALTER TABLE world_book_entries DROP COLUMN priority")
     # A V20 fixture also predates the V27->V28 character-authority column.
     conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+    # A V20 fixture also predates the V29->V30 local-only usage_json column.
+    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
     # A v20 fixture must not retain citation tables introduced at v26→v27.
     for table in (
         "rag_artifact_owner_operations",

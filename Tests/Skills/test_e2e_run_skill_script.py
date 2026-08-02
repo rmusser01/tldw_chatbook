@@ -74,7 +74,7 @@ class _PlainTextGateway:
     tool-call path, so no script executes during capture.
     """
 
-    async def stream_chat(self, resolution, messages, tools=None):
+    async def stream_chat(self, resolution, messages, tools=None, **_kwargs):
         yield "ok"
 
 

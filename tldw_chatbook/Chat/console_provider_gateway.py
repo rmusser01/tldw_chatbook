@@ -74,6 +74,26 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    # Usage for the provider call currently in flight. Key-merged, because a
+    # single Anthropic call splits its usage across two SSE chunks
+    # (message_start carries the input/cache buckets, message_delta the
+    # output tokens). NEVER merged across CALLS -- see close_usage_call.
+    usage_payload: dict[str, Any] | None = field(default=None, repr=False)
+    # One entry per provider call that has already finished. An agent turn
+    # makes N calls through the SAME signals object; key-merging those
+    # together silently corrupts the bill (call 2's prompt_tokens landing
+    # next to call 1's stale prompt_tokens_details.cached_tokens yields
+    # uncached_input=0 plus a phantom cache read). Consumers normalize each
+    # entry on its own and SUM the disjoint buckets instead.
+    completed_usage_payloads: list[dict[str, Any]] = field(
+        default_factory=list,
+        repr=False,
+    )
+    _usage_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -83,6 +103,40 @@ class ConsoleProviderStreamSignals:
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""
         self._synthetic_fallback.set()
+
+    def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        """Merge a usage payload into the IN-FLIGHT provider call's payload."""
+        with self._usage_lock:
+            merged = dict(self.usage_payload or {})
+            merged.update(payload)
+            self.usage_payload = merged
+
+    def close_usage_call(self) -> None:
+        """Close the in-flight provider call out at its own call boundary.
+
+        Called by the gateway when a ``stream_chat`` invocation ends -- the
+        one place that knows where one provider call stops and the next
+        begins. MOVES (never copies) the in-flight payload into
+        ``completed_usage_payloads``, so a consumer that already billed the
+        in-flight payload of an aborted stream can never bill it twice.
+        """
+        with self._usage_lock:
+            if self.usage_payload is None:
+                return
+            self.completed_usage_payloads.append(self.usage_payload)
+            self.usage_payload = None
+
+    def usage_payloads(self) -> list[dict[str, Any]]:
+        """Return every payload to bill: completed calls + any in flight.
+
+        The in-flight tail is included for aborted streams, whose generator
+        may never reach its own close-out before the controller persists.
+        """
+        with self._usage_lock:
+            payloads = [dict(payload) for payload in self.completed_usage_payloads]
+            if self.usage_payload is not None:
+                payloads.append(dict(self.usage_payload))
+            return payloads
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -1107,11 +1161,30 @@ class ConsoleProviderGateway:
             passed and the provider returned native tool-calls -- a final
             ``ProviderToolCalls``.
         """
-        if not resolution.ready or not resolution.model:
-            return
-        if resolution.provider in {"llama_cpp", "local_llamacpp"}:
-            if not resolution.streaming:
-                completion = await self.complete_llamacpp_chat(
+        # ONE invocation of this method == ONE provider call. A turn (agent
+        # runs especially) makes N of them through the SAME signals object,
+        # so the in-flight usage payload is closed out here, at the only
+        # seam that knows where a call ends -- never in the consumer, which
+        # cannot see the boundary at all.
+        try:
+            if not resolution.ready or not resolution.model:
+                return
+            if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                if not resolution.streaming:
+                    completion = await self.complete_llamacpp_chat(
+                        base_url=resolution.base_url,
+                        model=resolution.model,
+                        messages=messages,
+                        temperature=resolution.temperature,
+                        top_p=resolution.top_p,
+                        min_p=resolution.min_p,
+                        top_k=resolution.top_k,
+                        max_tokens=resolution.max_tokens,
+                    )
+                    if completion:
+                        yield completion
+                    return
+                async for chunk in self.stream_llamacpp_chat(
                     base_url=resolution.base_url,
                     model=resolution.model,
                     messages=messages,
@@ -1120,28 +1193,18 @@ class ConsoleProviderGateway:
                     min_p=resolution.min_p,
                     top_k=resolution.top_k,
                     max_tokens=resolution.max_tokens,
-                )
-                if completion:
-                    yield completion
+                ):
+                    yield chunk
                 return
-            async for chunk in self.stream_llamacpp_chat(
-                base_url=resolution.base_url,
-                model=resolution.model,
-                messages=messages,
-                temperature=resolution.temperature,
-                top_p=resolution.top_p,
-                min_p=resolution.min_p,
-                top_k=resolution.top_k,
-                max_tokens=resolution.max_tokens,
-            ):
-                yield chunk
-            return
-        if resolution.execution_key:
-            async for chunk in self._stream_generic_chat(
-                resolution, messages, tools=tools, signals=signals
-            ):
-                yield chunk
-            return
+            if resolution.execution_key:
+                async for chunk in self._stream_generic_chat(
+                    resolution, messages, tools=tools, signals=signals
+                ):
+                    yield chunk
+                return
+        finally:
+            if signals is not None:
+                signals.close_usage_call()
 
     async def _stream_generic_chat(
         self,
@@ -1260,7 +1323,7 @@ class ConsoleProviderGateway:
             Assistant-visible text chunks (and, unless suppressed,
             normalized fallback copy).
         """
-        content = _content_from_provider_item(response)
+        content = _content_from_provider_item(response, signals=signals)
         if isinstance(content, str):
             if content:
                 yield content
@@ -1273,7 +1336,7 @@ class ConsoleProviderGateway:
             if _is_iterable_response(response):
                 emitted = False
                 for item in response:
-                    item_content = _content_from_provider_item(item)
+                    item_content = _content_from_provider_item(item, signals=signals)
                     if isinstance(item_content, str):
                         if item_content:
                             emitted = True
@@ -1519,22 +1582,42 @@ def _is_iterable_response(response: Any) -> bool:
     )
 
 
-def _content_from_provider_item(item: Any) -> str | object:
+def _maybe_record_usage(
+    payload: Mapping[str, Any],
+    signals: "ConsoleProviderStreamSignals | None",
+) -> None:
+    if signals is None:
+        return
+    usage = payload.get("usage")
+    if isinstance(usage, Mapping) and usage:
+        signals.record_usage_payload(usage)
+
+
+def _content_from_provider_item(
+    item: Any,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     if isinstance(item, str):
         if item.startswith("data:"):
-            return _content_from_sse_data(item)
+            return _content_from_sse_data(item, signals=signals)
         return item
     if isinstance(item, bytes):
         decoded = item.decode("utf-8", errors="replace")
         if decoded.startswith("data:"):
-            return _content_from_sse_data(decoded)
+            return _content_from_sse_data(decoded, signals=signals)
         return decoded
     if isinstance(item, Mapping):
+        _maybe_record_usage(item, signals)
         return _content_from_provider_mapping(item)
     return _UNSUPPORTED_RESPONSE
 
 
-def _content_from_sse_data(line: str) -> str | object:
+def _content_from_sse_data(
+    line: str,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     ConsoleProviderGateway._raise_for_sse_error(line)
     data = line.removeprefix("data:").strip()
     if not data or data == "[DONE]":
@@ -1545,6 +1628,7 @@ def _content_from_sse_data(line: str) -> str | object:
         return _EMPTY_RESPONSE
     if not isinstance(payload, Mapping):
         return _EMPTY_RESPONSE
+    _maybe_record_usage(payload, signals)
     content = _content_from_provider_mapping(payload)
     return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
 

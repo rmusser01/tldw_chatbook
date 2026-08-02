@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -53,13 +54,18 @@ TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 class _VariantStreamBase:
     """Pre-regenerate snapshot captured by ``begin_variant_stream``.
 
-    Carries both the visible content *and* the message's status at the
-    moment regeneration began, so a failed regenerate can restore the
-    message to exactly the state it was in before -- not just its content.
+    Carries the visible content, the message's status *and* its recorded
+    usage at the moment regeneration began, so a failed or stopped
+    regenerate can restore the message to exactly the state it was in
+    before -- not just its content. Usage is part of that state: it
+    describes the generation that produced the content being restored, so
+    leaving the abandoned run's numbers behind would attribute one
+    generation's spend to another's answer.
     """
 
     content: str
     prior_status: ConsoleMessageStatus
+    prior_usage: "ProviderUsage | None" = None
 
 
 class ConsoleChatPersistence(Protocol):
@@ -93,6 +99,7 @@ class ConsoleChatPersistence(Protocol):
         feedback: str | None = None,
         attachments: Sequence[Mapping[str, Any]] | None = None,
         citation_write: SealedCitationWrite | None = None,
+        usage_json: str | None = None,
     ) -> str:
         """Create a persisted message and return its ID.
 
@@ -104,6 +111,11 @@ class ConsoleChatPersistence(Protocol):
         ``citation_write``, when present, is committed atomically with the
         message by citation-aware adapters. Narrow test fakes may omit this
         optional parameter entirely.
+
+        ``usage_json`` (Console cost ticker), when present, is the
+        message's normalized provider-usage JSON. Optional: narrow test
+        fakes may omit this parameter entirely -- the store only passes it
+        to adapters that declare it (see ``_persistence_accepts_kwarg``).
         """
 
     def update_message_content(
@@ -118,6 +130,7 @@ class ConsoleChatPersistence(Protocol):
         update_parent: bool = False,
         update_feedback: bool = False,
         attachments: Sequence[Mapping[str, Any]] | None = None,
+        usage_json: str | None = None,
     ) -> bool:
         """Update persisted message content.
 
@@ -125,6 +138,35 @@ class ConsoleChatPersistence(Protocol):
         ``create_message``; ``None`` (the Console store's edit path always
         passes this) leaves attachments untouched. Optional: fakes used in
         tests may omit this parameter entirely.
+
+        ``usage_json`` (Console cost ticker), when present, overwrites the
+        row's normalized provider-usage JSON. Optional: narrow test fakes
+        may omit this parameter entirely -- the store only passes it to
+        adapters that declare it, and only when usage is actually known,
+        so a content-only update never clobbers an existing value with
+        ``None``.
+        """
+
+    def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
+        """Persist normalized usage as a version-neutral, local-only write.
+
+        Unlike ``update_message_content``'s optional ``usage_json`` kwarg
+        (which rides a content update and legitimately bumps the row's
+        version), this method exists SOLELY for a usage-only flush against
+        an already-terminal message -- the Stop-path case described on
+        ``ConsoleChatStore.set_message_usage``. It must not advance
+        ``version``/``last_modified`` (the ``messages_sync_update`` trigger
+        watches those columns, not just content, so bumping them on a
+        usage-only write would enqueue a ``sync_log`` row whose payload can
+        never carry ``usage_json`` -- pure cross-device churn for a column
+        that is local-only by design).
+
+        Entirely optional: this whole method, not just a kwarg, may be
+        absent. The store probes for it with ``hasattr``/``callable``
+        (same philosophy as ``_persistence_accepts_kwarg``) and falls back
+        to the ordinary content-carrying update path when it is not
+        present, so narrow test fakes written before this method existed
+        keep working unchanged.
         """
 
     def get_message_version(self, message_id: str) -> int | None:
@@ -412,6 +454,15 @@ class ConsoleChatStore:
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
         self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
+        # Messages whose CURRENT content was RESTORED from a pre-regenerate
+        # base by a stopped/failed terminal mark. Their content belongs to
+        # the ORIGINAL generation, so a late usage attach arriving from the
+        # abandoned run (the Stop path finalizes the message first and only
+        # then cancels the stream task, whose CancelledError handler
+        # attaches) must not land on -- let alone persist over -- the
+        # original's own record. Cleared the moment a new generation starts
+        # on the message (`begin_variant_stream`/`prepare_message_retry`).
+        self._variant_restored_message_ids: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -738,6 +789,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(message_id, None)
             self._pending_persistence_message_ids.discard(message_id)
             self._variant_stream_bases.pop(message_id, None)
+            self._variant_restored_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
 
@@ -959,6 +1011,7 @@ class ConsoleChatStore:
         # Pre-existing bug fixed while here: the regenerate base snapshots were
         # never cleared on restore, leaking across a state replacement.
         self._variant_stream_bases.clear()
+        self._variant_restored_message_ids.clear()
         self._message_speech_revisions.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
@@ -1751,6 +1804,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(node_id, None)
             self._pending_persistence_message_ids.discard(node_id)
             self._variant_stream_bases.pop(node_id, None)
+            self._variant_restored_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
@@ -1966,6 +2020,41 @@ class ConsoleChatStore:
         self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
+    def set_message_usage(
+        self, message_id: str, usage: ProviderUsage
+    ) -> ConsoleChatMessage:
+        """Attach normalized usage; persist now if the message is already terminal.
+
+        In the normal ordering the caller attaches usage while the message is
+        still ``pending``/``streaming`` and the terminal mark that follows
+        flushes it. The Stop path inverts that: ``stop_active_run`` finalizes
+        the message synchronously (``mark_message_stopped`` -> terminal
+        flush) and only THEN cancels the stream task, whose ``CancelledError``
+        handler attaches the partial usage -- against an already-terminal
+        message whose second ``_mark_stream_stopped`` takes the read-back
+        branch and never persists again. Without this flush, a stopped
+        turn's real, already-billed input tokens were dropped on the floor
+        (final-review F3).
+
+        A stopped/failed REGENERATE is the exception: it restores the message
+        to the pre-regenerate answer, so a late attach from the abandoned run
+        no longer describes what the message says and is ignored (see
+        ``_variant_restored_message_ids``).
+        """
+        message = self._message_or_raise(message_id)
+        if message.id in self._variant_restored_message_ids:
+            # The visible content was restored to the ORIGINAL generation's
+            # answer, so this usage belongs to a run whose output no longer
+            # exists here. Dropping the attach is what keeps the original's
+            # own durable record intact -- combined with the flush below, a
+            # late attach would otherwise overwrite it in the DB, leaving the
+            # original answer priced by the abandoned regeneration.
+            return self._snapshot(message)
+        message.usage = usage
+        if message.status not in {"pending", "streaming"}:
+            self._persist_usage_only(message)
+        return self._snapshot(message)
+
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)
@@ -2042,8 +2131,11 @@ class ConsoleChatStore:
         if base is not None:
             message.content = base.content
             message.status = base.prior_status
+            message.usage = base.prior_usage
+            self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "stopped"
+            self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -2074,8 +2166,11 @@ class ConsoleChatStore:
         if base is not None:
             message.content = base.content
             message.status = base.prior_status
+            message.usage = base.prior_usage
+            self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "failed"
+            self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -2160,6 +2255,8 @@ class ConsoleChatStore:
         message.status = "pending"
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
+        # A new generation starts here -- see `begin_variant_stream`.
+        self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
@@ -2205,7 +2302,11 @@ class ConsoleChatStore:
         self._variant_stream_bases[message.id] = _VariantStreamBase(
             content=message.content,
             prior_status=message.status,
+            prior_usage=message.usage,
         )
+        # A new generation starts here, so this message's next usage attach
+        # is legitimate again even if an earlier regenerate was abandoned.
+        self._variant_restored_message_ids.discard(message.id)
         message.content = ""
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
@@ -2881,6 +2982,13 @@ class ConsoleChatStore:
                     message.attachments, message.generation_metadata
                 )
             ]
+        # Normalized provider usage (Console cost ticker): forwarded only
+        # when this message actually carries usage AND the adapter declares
+        # the kwarg -- narrow test fakes without it keep working untouched.
+        if message.usage is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "usage_json"
+        ):
+            create_kwargs["usage_json"] = message.usage.to_json()
         if citation_write is not None:
             create_kwargs["citation_write"] = citation_write
         if terminal_persistence:
@@ -2957,6 +3065,52 @@ class ConsoleChatStore:
                 logger.warning("terminal_citation_persistence_abandoned")
                 return None
 
+    def _persist_usage_only(self, message: ConsoleChatMessage) -> None:
+        """Flush an already-terminal message's usage without a version bump.
+
+        This is the Stop-path terminal flush described on
+        ``set_message_usage``: the message's content/version were already
+        persisted by an earlier terminal mark, and only ``usage_json`` is
+        new here. Routing that through the ordinary content path
+        (``_persist_existing_message`` -> ``update_message_content`` ->
+        ``CharactersRAGDB.update_message``) would still bump ``version``/
+        ``last_modified`` on a write where content did not change, which
+        trips the ``messages_sync_update`` trigger's ``WHEN`` clause (it
+        watches those two columns, not just content) and enqueues a
+        ``sync_log`` row whose payload can never carry ``usage_json`` --
+        cross-device churn, and a spurious optimistic-lock version bump, for
+        a column that is local-only by design (Qodo round).
+
+        Prefers the persistence adapter's ``update_message_usage`` method
+        (a version-neutral, local-only column write -- see
+        ``ChatPersistenceService.update_message_usage``) when the adapter
+        provides one, probed the same hasattr+callable way as
+        ``_persistence_accepts_kwarg`` so narrow test fakes that predate
+        this method are not broken. Those older fakes -- and the
+        not-yet-durably-created case -- fall back to the pre-existing
+        content-carrying ``_persist_existing_message`` path unchanged, so
+        behavior degrades gracefully rather than breaking.
+        """
+        if self.persistence is None:
+            return
+        if message.persisted_message_id is None or message.usage is None:
+            self._persist_existing_message(message)
+            return
+        usage_writer = getattr(self.persistence, "update_message_usage", None)
+        if callable(usage_writer):
+            usage_writer(
+                message_id=message.persisted_message_id,
+                usage_json=message.usage.to_json(),
+            )
+            # Sync v2 (a separate, content-carrying sync pipeline) never
+            # transmits usage_json either, and the terminal mark that
+            # preceded this usage-only flush already enqueued this
+            # message's content once -- re-enqueueing identical content
+            # here would be the same flavor of profitless churn this fix
+            # is removing from the legacy sync_log trigger path.
+            return
+        self._persist_existing_message(message)
+
     def _persist_existing_message(
         self,
         message: ConsoleChatMessage,
@@ -2987,6 +3141,15 @@ class ConsoleChatStore:
             self.persistence.update_message_content, "attachments"
         ):
             update_kwargs["attachments"] = None
+        # Normalized provider usage (Console cost ticker): forwarded only
+        # when this message actually carries usage AND the adapter declares
+        # the kwarg. Omitted entirely (never sent as ``None``) so a
+        # content-only update (e.g. a mid-stream edit before usage is known)
+        # never overwrites an already-persisted usage value with NULL.
+        if message.usage is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content, "usage_json"
+        ):
+            update_kwargs["usage_json"] = message.usage.to_json()
         self.persistence.update_message_content(**update_kwargs)
         self._enqueue_sync_v2_message_if_ready(message)
 

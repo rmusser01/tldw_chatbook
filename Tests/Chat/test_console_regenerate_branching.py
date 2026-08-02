@@ -29,13 +29,13 @@ class StreamingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
 
 
 class FailingBeforeAnyChunkGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         raise RuntimeError("regen exploded")
         yield ""  # pragma: no cover - unreachable, keeps this an async generator
 

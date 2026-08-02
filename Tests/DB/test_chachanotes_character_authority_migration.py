@@ -105,7 +105,7 @@ def _identity_only_v28_database(
                 schema_name TEXT PRIMARY KEY NOT NULL,
                 version INTEGER NOT NULL
             );
-            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', 28);
+            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', {CharactersRAGDB._CURRENT_SCHEMA_VERSION});
             CREATE TABLE rag_identity_context(
                 context_name TEXT,
                 local_authority_id
@@ -127,10 +127,12 @@ def test_fresh_database_reaches_v28_and_local_authority_survives_reopen(
     path = tmp_path / "fresh-v28.sqlite"
     db = CharactersRAGDB(path, client_id="authority-test")
 
-    # task-1780 bumped the schema past v28 (kept_briefings/kept_scripts);
-    # this test only cares that a fresh DB reaches "whatever is current"
-    # and that local authority survives reopen, so assert dynamically
-    # rather than re-pinning a version number this file doesn't own.
+    # task-1780 bumped the schema past v28 (kept_briefings/kept_scripts), and
+    # cost ticker PR1 (v29->v30, local-only messages.usage_json) bumped it
+    # again; this test only cares that a fresh DB reaches "whatever is
+    # current" and that local authority survives reopen, so assert
+    # dynamically rather than re-pinning a version number this file doesn't
+    # own.
     assert _version(db.get_connection()) == db._CURRENT_SCHEMA_VERSION
     authority_id = db.get_local_authority_id()
     assert 1 <= len(authority_id.encode("utf-8")) <= 256
@@ -241,10 +243,12 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     db = CharactersRAGDB(path, client_id="migration-test")
     connection = db.get_connection()
 
-    # task-1780 bumped the schema past v28; a real CharactersRAGDB always
-    # migrates fully to whatever is current, so assert dynamically. The
-    # v28->v29 migration only adds new tables and never touches
-    # `conversations`, so the column-delta assertion below is unaffected.
+    # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
+    # bumped it again; a real CharactersRAGDB always migrates fully to
+    # whatever is current, so assert dynamically. Neither the v28->v29
+    # (kept_briefings/kept_scripts) nor the v29->v30 (messages.usage_json)
+    # migration touches `conversations`, so the column-delta assertion below
+    # is unaffected.
     assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     after_columns = _conversation_columns(connection)
     assert after_columns - before_columns == {"assistant_authority_id"}

@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -2600,3 +2601,336 @@ def test_deleting_an_anchor_node_purges_the_markers_it_anchored():
         anchor == answer.id
         for anchor, _marker in store._tool_markers_by_session.get(session.id, [])
     ), "a marker is still anchored to a deleted node"
+
+
+def test_set_message_usage_on_a_streaming_message_defers_persistence():
+    """The normal ordering: usage lands on a still-streaming message and the
+    TERMINAL mark that follows is what flushes it (one write, not two)."""
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "hi")
+    usage = ProviderUsage(uncached_input=10, output=5, provider="openai", model="gpt-4o")
+
+    updated = store.set_message_usage(message.id, usage)
+
+    assert updated.usage == usage
+    assert store.get_message(message.id).usage == usage
+    assert store.get_message(message.id).status == "streaming"
+    assert persistence.updated == [], "a streaming message must not flush early"
+
+
+def test_set_message_usage_after_a_terminal_mark_flushes_to_persistence():
+    """Final-review F3: on the Stop path the message is finalized BEFORE the
+    cancelled task attaches its partial usage, so the terminal mark cannot
+    flush it -- the attach itself has to. Without this, a stopped turn's
+    already-billed input tokens never reached the DB.
+    """
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    class UsageUpdatePersistence(RecordingPersistence):
+        def __init__(self):
+            super().__init__()
+            self.usage_values = []
+
+        def update_message_content(self, *, usage_json=None, **kwargs):
+            self.usage_values.append(usage_json)
+            return super().update_message_content(**kwargs)
+
+    persistence = UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "partial answer")
+    stopped = store.mark_message_stopped(message.id)
+    assert stopped.status == "stopped"
+    assert all(value is None for value in persistence.usage_values)
+
+    store.set_message_usage(
+        message.id,
+        ProviderUsage(
+            uncached_input=3571,
+            cache_read=6656,
+            provider="anthropic",
+            model="claude-sonnet-5",
+            partial=True,
+        ),
+    )
+
+    assert persistence.usage_values[-1] is not None
+    assert '"uncached_input": 3571' in persistence.usage_values[-1]
+    assert '"cache_read": 6656' in persistence.usage_values[-1]
+    assert '"partial": true' in persistence.usage_values[-1]
+
+
+def test_stop_path_usage_flush_uses_local_write_and_leaves_version_unchanged():
+    """Qodo round (Finding 4), AC (d)(ii): the same Stop-path late-usage-
+    attach flush as the F3 test above, but against a REAL
+    ``ChatPersistenceService``/``CharactersRAGDB`` pair instead of a hand-
+    rolled fake -- proving the usage-only flush actually lands through
+    ``update_message_usage_local`` (no version/last_modified bump, no
+    ``sync_log`` row) rather than only through a fake that can't observe
+    that distinction.
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.ensure_session(title="Chat 1")
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(message.id, "partial answer")
+        stopped = store.mark_message_stopped(message.id)
+        assert stopped.status == "stopped"
+
+        persisted_id = store.get_message(message.id).persisted_message_id
+        assert persisted_id is not None
+        row_after_stop = db.get_message_by_id(persisted_id)
+        assert row_after_stop["usage_json"] is None
+        version_after_stop = row_after_stop["version"]
+        last_modified_after_stop = row_after_stop["last_modified"]
+        change_id_after_stop = db.get_latest_sync_log_change_id()
+
+        store.set_message_usage(
+            message.id,
+            ProviderUsage(
+                uncached_input=3571,
+                cache_read=6656,
+                provider="anthropic",
+                model="claude-sonnet-5",
+                partial=True,
+            ),
+        )
+
+        row_after_usage = db.get_message_by_id(persisted_id)
+        assert row_after_usage["usage_json"] is not None
+        assert '"uncached_input": 3571' in row_after_usage["usage_json"]
+        assert '"cache_read": 6656' in row_after_usage["usage_json"]
+        # The load-bearing assertion: the usage-only flush did NOT bump
+        # version/last_modified a second time on top of the stop flush.
+        assert row_after_usage["version"] == version_after_stop
+        assert row_after_usage["last_modified"] == last_modified_after_stop
+
+        new_entries = db.get_sync_log_entries(
+            since_change_id=change_id_after_stop, entity_type="messages"
+        )
+        assert new_entries == [], (
+            "the usage-only local flush must not enqueue a sync_log row"
+        )
+    finally:
+        db.close_connection()
+
+
+class _UsageUpdatePersistence(RecordingPersistence):
+    """RecordingPersistence that keeps every usage_json it is handed."""
+
+    def __init__(self):
+        super().__init__()
+        self.usage_values = []
+
+    def update_message_content(self, *, usage_json=None, **kwargs):
+        self.usage_values.append(usage_json)
+        return super().update_message_content(**kwargs)
+
+    def last_usage(self):
+        recorded = [value for value in self.usage_values if value is not None]
+        return recorded[-1] if recorded else None
+
+
+def _completed_message_with_usage(store, session, usage):
+    """Stream an answer to completion with `usage` recorded against it."""
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "the original answer")
+    store.set_message_usage(message.id, usage)
+    store.mark_message_complete(message.id)
+    return message
+
+
+@pytest.mark.parametrize("attach_before_mark", [False, True])
+def test_stopped_regenerate_keeps_the_original_answers_usage(attach_before_mark):
+    """A stopped regenerate must not price the ORIGINAL answer with the
+    abandoned run's numbers.
+
+    ``mark_message_stopped`` restores a mid-regenerate message to its
+    pre-regenerate content AND status, so the message ends up "complete"
+    again, showing the original answer. The abandoned run's cancelled task
+    then attaches its partial usage -- and the terminal flush added for the
+    Stop path (F3) wrote it straight over the original's durable record.
+
+    Both real orderings are pinned:
+      * ``attach_before_mark=False`` -- ``stop_active_run`` finalizes the
+        message first, then cancels the task whose handler attaches (the
+        empirically reproduced case).
+      * ``attach_before_mark=True`` -- the in-loop cancel check attaches
+        before calling ``_mark_stream_stopped``.
+    """
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    original_usage = ProviderUsage(
+        uncached_input=1200,
+        output=340,
+        provider="anthropic",
+        model="claude-sonnet-5",
+        partial=False,
+    )
+    message = _completed_message_with_usage(store, session, original_usage)
+    assert store.get_message(message.id).usage == original_usage
+    assert '"uncached_input": 1200' in persistence.last_usage()
+
+    # Regenerate: the pre-regenerate content, status AND usage are snapshotted.
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "half of a new ans")
+
+    abandoned_usage = ProviderUsage(
+        output=7, provider="anthropic", model="claude-sonnet-5", partial=True
+    )
+    if attach_before_mark:
+        store.set_message_usage(message.id, abandoned_usage)
+        stopped = store.mark_message_stopped(message.id)
+    else:
+        stopped = store.mark_message_stopped(message.id)
+        store.set_message_usage(message.id, abandoned_usage)
+
+    # Restored to the original generation in every respect.
+    assert stopped.content == "the original answer"
+    assert stopped.status == "complete"
+    current = store.get_message(message.id)
+    assert current.content == "the original answer"
+    assert current.usage == original_usage
+    assert current.usage.partial is False
+
+    persisted = persistence.last_usage()
+    assert '"uncached_input": 1200' in persisted
+    assert '"output": 340' in persisted
+    assert '"partial": false' in persisted
+    assert '"output": 7' not in persisted
+
+
+def test_regenerating_again_after_a_stopped_regenerate_records_usage_normally():
+    """The guard is scoped to the abandoned run, not to the message: a fresh
+    regenerate re-arms usage capture."""
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    message = _completed_message_with_usage(
+        store,
+        session,
+        ProviderUsage(uncached_input=1200, output=340, provider="anthropic", model="m"),
+    )
+    store.begin_variant_stream(message.id)
+    store.mark_message_stopped(message.id)
+    store.set_message_usage(
+        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+    )
+
+    # Second regenerate, this one succeeds.
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "a better answer")
+    second_usage = ProviderUsage(
+        uncached_input=1500, output=400, provider="anthropic", model="m"
+    )
+    store.set_message_usage(message.id, second_usage)
+    store.finalize_variant_stream(message.id)
+
+    assert store.get_message(message.id).usage == second_usage
+    assert '"uncached_input": 1500' in persistence.last_usage()
+
+
+def test_failed_regenerate_keeps_the_original_answers_usage():
+    """``mark_message_failed`` restores the same pre-regenerate state as
+    ``mark_message_stopped``; the agent path attaches ahead of BOTH terminal
+    marks, so the same clobber applies."""
+    persistence = _UsageUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    original_usage = ProviderUsage(
+        uncached_input=1200, output=340, provider="anthropic", model="m"
+    )
+    message = _completed_message_with_usage(store, session, original_usage)
+
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "half a")
+    store.mark_message_failed(message.id)
+    store.set_message_usage(
+        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+    )
+
+    assert store.get_message(message.id).usage == original_usage
+    assert '"output": 7' not in persistence.last_usage()
+
+
+def test_set_message_usage_unknown_id_raises_keyerror():
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store = ConsoleChatStore()
+    store.ensure_session(title="Chat 1")
+    with pytest.raises(KeyError):
+        store.set_message_usage("missing", ProviderUsage())
+
+
+def test_terminal_flush_passes_usage_json_to_accepting_persistence():
+    """``mark_message_complete`` first materializes the streamed content
+    (a create through ``_persist_pending_message_if_ready``), then flushes
+    the terminal status through ``_persist_existing_message`` -- which now
+    has a ``persisted_message_id`` and so calls ``update_message_content``.
+    Usage set before completion must ride that final update call."""
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    class UsagePersistence(RecordingPersistence):  # RecordingPersistence at :1792
+        def __init__(self):
+            super().__init__()
+            self.update_usage_values = []
+
+        def update_message_content(self, *, usage_json=None, **kwargs):
+            self.update_usage_values.append(usage_json)
+            return super().update_message_content(**kwargs)
+
+    persistence = UsagePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "hello")
+    store.set_message_usage(
+        message.id,
+        ProviderUsage(uncached_input=10, output=2, provider="openai", model="gpt-4o"),
+    )
+
+    store.mark_message_complete(message.id)
+
+    assert persistence.update_usage_values
+    stored = persistence.update_usage_values[-1]
+    assert stored is not None and '"uncached_input": 10' in stored
+
+
+def test_narrow_persistence_without_usage_kwarg_still_works():
+    # FakePersistence (:573) declares keyword-only params and no
+    # **kwargs -- the _persistence_accepts_kwarg probe must skip usage_json.
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(message.id, "hello")
+    store.set_message_usage(message.id, ProviderUsage(uncached_input=1))
+
+    completed = store.mark_message_complete(message.id)  # must not raise
+    assert completed.status == "complete"

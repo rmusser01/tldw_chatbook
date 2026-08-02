@@ -63,7 +63,7 @@ class StreamingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
 
@@ -72,7 +72,7 @@ class RecordingStreamingGateway(StreamingGateway):
     def __init__(self):
         self.messages_seen = None
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.messages_seen = messages
         yield "ok"
 
@@ -99,26 +99,26 @@ class WipBlockedGateway:
 
 
 class FailingStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"
         raise RuntimeError("llama.cpp stream failed")
 
 
 class FailingBeforeChunkGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         if getattr(resolution, "never_yield", False):
             yield ""
         raise RuntimeError("retry failed before streaming")
 
 
 class EmptyStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         if getattr(resolution, "never_yield", False):
             yield ""
 
 
 class EmptyHeartbeatStreamingGateway(StreamingGateway):
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield ""
 
 
@@ -706,7 +706,7 @@ async def test_stop_active_run_marks_assistant_message_stopped():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.release.wait()
@@ -778,7 +778,7 @@ async def test_submit_draft_rejects_concurrent_send_while_streaming():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.release.wait()
@@ -818,7 +818,7 @@ async def test_submit_draft_rejects_concurrent_send_during_provider_validation()
             await self.release.wait()
             return await super().resolve_for_send(selection)
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "done"
 
     gateway = SlowResolveGateway()
@@ -846,7 +846,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
             self.started = asyncio.Event()
             self.never_release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.never_release.wait()
@@ -881,7 +881,7 @@ async def test_shutdown_stops_and_awaits_active_stream_task():
             self.started = asyncio.Event()
             self.never_release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
             yield "partial"
             await self.never_release.wait()
@@ -935,7 +935,7 @@ async def test_close_streaming_session_stops_run_without_key_error():
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "partial"
             self.started.set()
             await self.release.wait()
@@ -1064,7 +1064,7 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
     observed = []
 
     class ObservingGateway(StreamingGateway):
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             observed.append(controller.run_state.status)
             yield "recovered"
 
@@ -1447,7 +1447,7 @@ class _AutoTitleReadyGateway:
     async def resolve_for_send(self, selection):
         return SimpleNamespace(ready=True, visible_copy="")
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         yield "ok"
 
 
@@ -1567,7 +1567,7 @@ async def test_regenerate_failure_adds_system_row_without_touching_variants():
     controller.provider_gateway = FailingStreamingGateway()
 
     class FailingBeforeAnyChunkGateway(StreamingGateway):
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             if getattr(resolution, "never_yield", False):
                 yield ""
             raise RuntimeError("regen exploded")
@@ -3290,7 +3290,7 @@ async def test_stop_mid_stream_consumes_one_shot():
         def __init__(self):
             self.controller = None
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "partial"
             # Fix round 1 (Critical 1): the direct/legacy stream loop now
             # reads only its OWN run's per-session cancel_event, never the
@@ -3326,7 +3326,7 @@ async def test_re_armed_one_shot_survives_in_flight_send_completion():
             self.store = None
             self.session_id = None
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **kwargs):
             yield "chunk-one"
             # Simulate a `/prefill SECOND` issued while this send is
             # still streaming.
@@ -4032,3 +4032,374 @@ def test_unclaimed_names_pass_through_the_hook_unreviewed_switch_off():
     assert verdicts == {}, (
         f"unclaimed names must pass through unreviewed, got: {verdicts}"
     )
+class UsageEmittingGateway(StreamingGateway):
+    """Mirrors the real gateway's usage seam.
+
+    One ``stream_chat`` invocation is one provider CALL: payloads recorded
+    during the stream key-merge into the in-flight slot, and the call is
+    closed out in a ``finally`` -- exactly what
+    ``ConsoleProviderGateway.stream_chat`` does. Successive calls consume
+    successive entries of ``payloads_per_call`` so an agent turn's N calls
+    can be exercised.
+    """
+
+    payloads_per_call = ({"prompt_tokens": 100, "completion_tokens": 20},)
+
+    def __init__(self):
+        self.calls = 0
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        signals = kwargs.get("signals")
+        index = self.calls
+        self.calls += 1
+        try:
+            for chunk in ("hel", "lo"):
+                yield chunk
+            if signals is not None and index < len(self.payloads_per_call):
+                payload = self.payloads_per_call[index]
+                # A payload may itself arrive split across chunks (Anthropic).
+                for fragment in (
+                    payload if isinstance(payload, tuple) else (payload,)
+                ):
+                    signals.record_usage_payload(fragment)
+        finally:
+            if signals is not None:
+                signals.close_usage_call()
+
+
+@pytest.mark.asyncio
+async def test_completed_message_carries_normalized_usage():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=UsageEmittingGateway()
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    result = await controller.submit_draft("hi")
+    assert result.accepted
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.status == "complete"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 100
+    assert assistant.usage.output == 20
+    assert assistant.usage.partial is False
+    assert assistant.usage.provider  # attributed from resolution
+
+
+#
+# Final-review F1/F2/F3/F7: usage capture on every terminal path
+#
+class _UsageRecordingPersistence:
+    """Minimal persistence that records the usage_json it is handed."""
+
+    def __init__(self):
+        self.created = []
+        self.updated = []
+        self._counter = 0
+
+    def create_conversation(self, **kwargs):
+        return "conv-usage"
+
+    def create_message(self, **kwargs):
+        self.created.append(kwargs)
+        self._counter += 1
+        return f"msg-{self._counter}"
+
+    def update_message_content(self, **kwargs):
+        self.updated.append(kwargs)
+        return True
+
+    def usage_values(self):
+        return [
+            kwargs.get("usage_json")
+            for kwargs in (*self.created, *self.updated)
+            if kwargs.get("usage_json") is not None
+        ]
+
+
+class _GatewayDrivingBridge:
+    """Stub agent bridge that dispatches through the gateway exactly as the
+    real ``ConsoleAgentBridge`` does.
+
+    The load-bearing detail is `console_agent_bridge.py`'s own seam: it adds
+    ``signals=`` to the gateway call ONLY when ``provider_stream_signals`` is
+    non-None. The controller used to forward ``None`` on this (default!)
+    path, so nothing was ever captured for the agent runtime -- finding F1.
+    """
+
+    def __init__(self, gateway, store, *, calls_per_turn=1):
+        self._gateway = gateway
+        self._store = store
+        self._calls_per_turn = calls_per_turn
+        self.signals_seen = "never-called"
+
+    def run_reply(self, **kwargs):
+        self.signals_seen = kwargs.get("provider_stream_signals")
+        stream_kwargs = {}
+        if self.signals_seen is not None:
+            stream_kwargs["signals"] = self.signals_seen
+        assistant_message_id = kwargs["assistant_message_id"]
+
+        async def _drain():
+            text = ""
+            for _ in range(self._calls_per_turn):
+                async for chunk in self._gateway.stream_chat(
+                    kwargs["resolution"], kwargs["agent_messages"], **stream_kwargs
+                ):
+                    self._store.append_stream_chunk(assistant_message_id, chunk)
+                    text += chunk
+            return text
+
+        final_text = asyncio.run(_drain())
+        return "run-usage", RunOutcome(
+            status=RUN_DONE, steps=[], final_text=final_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_path_attaches_and_persists_usage():
+    """F1 regression: the DEFAULT send path (agent runtime on, bridge wired)
+    captured NOTHING because the controller only built stream signals for
+    citation repair. Every real send took this path.
+    """
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = UsageEmittingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge = _GatewayDrivingBridge(gateway, store)
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+
+    result = await controller.submit_draft("hi")
+    assert result.accepted
+
+    assert bridge.signals_seen not in (None, "never-called"), (
+        "the agent bridge must receive a real signals object, not None"
+    )
+    assistant = store.messages_for_session(session.id)[-1]
+    assert assistant.status == "complete"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 100
+    assert assistant.usage.output == 20
+    assert assistant.usage.partial is False
+    assert any('"uncached_input": 100' in value for value in persistence.usage_values())
+
+
+@pytest.mark.asyncio
+async def test_agent_turn_sums_usage_across_provider_calls():
+    """F2 regression at the turn level: an agent turn makes N provider calls.
+    Raw-payload key-merging made call 2's 900 prompt_tokens sit next to call
+    1's stale cached_tokens=4096 -> uncached_input 0 and a phantom cache read.
+    Correct: normalize per call, then SUM the disjoint buckets.
+    """
+
+    class TwoCallGateway(UsageEmittingGateway):
+        payloads_per_call = (
+            {
+                "prompt_tokens": 5000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 4096},
+            },
+            {"prompt_tokens": 900, "completion_tokens": 30},
+        )
+
+    store = ConsoleChatStore()
+    gateway = TwoCallGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    controller._agent_bridge = _GatewayDrivingBridge(gateway, store, calls_per_turn=2)
+    session = _arm_session(store)
+
+    assert (await controller.submit_draft("hi")).accepted
+
+    usage = store.messages_for_session(session.id)[-1].usage
+    assert usage is not None
+    assert usage.uncached_input == 1804  # (5000-4096) + 900
+    assert usage.cache_read == 4096  # call 1 only -- never re-billed for call 2
+    assert usage.output == 40
+
+
+@pytest.mark.asyncio
+async def test_stopped_stream_persists_partial_input_usage():
+    """F3 regression: ``stop_active_run`` finalizes the message BEFORE the
+    cancelled task attaches usage, and the second ``_mark_stream_stopped``
+    takes the read-back branch -- so nothing ever persisted the tokens the
+    provider had already billed. Anthropic-shaped: the input side arrives at
+    ``message_start``, long before any output tokens exist.
+    """
+
+    class StalledAnthropicGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"input_tokens": 3571, "cache_read_input_tokens": 6656}
+                    )
+                self.started.set()
+                yield "partial"
+                await self.never_release.wait()
+                yield "ignored"
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = StalledAnthropicGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result.accepted
+
+    stopped = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ][-1]
+    assert stopped.status == "stopped"
+    assert stopped.usage is not None
+    assert stopped.usage.uncached_input == 3571
+    assert stopped.usage.cache_read == 6656
+    assert stopped.usage.partial is True
+
+    persisted = persistence.usage_values()
+    assert persisted, "the stopped turn's usage never reached persistence"
+    assert '"uncached_input": 3571' in persisted[-1]
+    assert '"partial": true' in persisted[-1]
+
+
+class _RaisingOnUsageWritePersistence(_UsageRecordingPersistence):
+    """Like ``_UsageRecordingPersistence``, but its content update raises
+    once the write actually carries a ``usage_json`` payload -- simulating
+    a SQLite/persistence exception during the stop-path's usage-only
+    terminal flush."""
+
+    def update_message_content(self, **kwargs):
+        if kwargs.get("usage_json") is not None:
+            raise RuntimeError("simulated persistence failure during usage flush")
+        return super().update_message_content(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_stop_path_usage_attach_survives_a_persistence_exception():
+    """Qodo round (Finding 1): ``_attach_stream_usage`` is documented "must
+    never fail a send", but it used to only catch ``KeyError`` around
+    ``store.set_message_usage``. Since that call now persists immediately
+    for an already-terminal message (the stop-path flush, F3), ANY
+    exception the persistence layer raises during that flush -- not just a
+    missing message -- must not escape into stop/cancel control flow. A
+    persistence adapter whose ``update_message_content`` raises
+    ``RuntimeError`` specifically on the usage-carrying write proves the
+    broadened ``except Exception`` swallows it and the stop outcome (status,
+    content) is unaffected.
+    """
+
+    class StalledAnthropicGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"input_tokens": 3571, "cache_read_input_tokens": 6656}
+                    )
+                self.started.set()
+                yield "partial"
+                await self.never_release.wait()
+                yield "ignored"
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _RaisingOnUsageWritePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = StalledAnthropicGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    # Must not raise: the RuntimeError from the persistence layer's usage
+    # write must be swallowed inside `_attach_stream_usage`, not propagate
+    # out through the stream task.
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result.accepted
+
+    stopped = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ][-1]
+    assert stopped.status == "stopped"
+    assert stopped.content == "partial"
+    # The in-memory attach still happened (the send itself never failed) --
+    # only the DURABLE write behind it raised and was swallowed.
+    assert stopped.usage is not None
+    assert stopped.usage.uncached_input == 3571
+
+
+@pytest.mark.asyncio
+async def test_billed_turn_without_visible_content_still_records_usage():
+    """F7 (decided): a turn that reported usage but emitted no content -- a
+    refusal, or a stream that ended after the usage chunk -- cost real money.
+    The spec's "total = money actually spent" beats "failed sends produce no
+    usage row", which is about transport failures where nothing was billed.
+    """
+
+    class ContentlessBilledGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            try:
+                if signals is not None:
+                    signals.record_usage_payload(
+                        {"prompt_tokens": 812, "completion_tokens": 0}
+                    )
+                return
+                yield  # pragma: no cover -- makes this an async generator
+            finally:
+                if signals is not None:
+                    signals.close_usage_call()
+
+    persistence = _UsageRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=ContentlessBilledGateway()
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    assert (await controller.submit_draft("hi")).accepted
+
+    assistant = store.messages_for_session(session.id)[-1]
+    assert assistant.status == "failed"
+    assert assistant.usage is not None
+    assert assistant.usage.uncached_input == 812
+    assert assistant.usage.partial is True
+
+    # Documented boundary, NOT an oversight: the store never persists an
+    # empty-content message at all (`_persist_pending_message_if_ready`
+    # requires content), so this turn has no DB row for usage to ride on and
+    # `usage_values()` stays empty. The record still exists on the in-store
+    # message, which is what the live per-session ticker reads. Persisting
+    # contentless rows is a store-wide semantics change, out of scope here.
+    assert persistence.usage_values() == []
+    assert [entry["sender"] for entry in persistence.created] == ["user"]

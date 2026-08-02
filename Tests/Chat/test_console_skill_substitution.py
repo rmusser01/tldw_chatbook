@@ -94,7 +94,7 @@ class _RecordingGateway:
     async def resolve_for_send(self, selection):
         return _ReadyResolution()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append(messages)
         yield "reply"
         if self.fail:

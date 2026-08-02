@@ -537,3 +537,153 @@ def test_resume_chains_degenerate_all_user_legacy_conversation():
             assert count == 1
     finally:
         db.close_connection()
+
+
+def test_resume_restores_usage_from_usage_json():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        service = ChatConversationService(db)
+        conversation_id = service.create_conversation(
+            id="usage-conv-1",
+            title="Usage",
+            scope_type="global",
+            state="in-progress",
+        )
+        u1 = db.add_message(
+            {
+                "id": "m-usage-u1",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1",
+                "timestamp": "2026-01-01T00:00:00.000000+00:00",
+            }
+        )
+        db.add_message(
+            {
+                "id": "m-usage-a1",
+                "conversation_id": conversation_id,
+                "parent_message_id": u1,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "a1",
+                "timestamp": "2026-01-01T00:00:01.000000+00:00",
+                "usage_json": (
+                    '{"uncached_input": 10, "cache_read": 0, "cache_write": 0,'
+                    ' "output": 5, "provider": "openai", "model": "gpt-4o",'
+                    ' "partial": false}'
+                ),
+            }
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assistant = store.messages_for_session(session.id)[-1]
+        assert assistant.content == "a1"
+        assert assistant.usage is not None
+        assert assistant.usage.uncached_input == 10
+        assert assistant.usage.output == 5
+        assert assistant.usage.provider == "openai"
+    finally:
+        db.close_connection()
+
+
+def test_resume_tolerates_null_and_garbage_usage_json():
+    # Legacy rows (NULL) and corrupt JSON must load with usage=None, never raise.
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        service = ChatConversationService(db)
+        conversation_id = service.create_conversation(
+            id="usage-conv-2",
+            title="UsageLegacy",
+            scope_type="global",
+            state="in-progress",
+        )
+        u1 = db.add_message(
+            {
+                "id": "m-legacy-u1",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1",
+                "timestamp": "2026-01-01T00:00:00.000000+00:00",
+            }
+        )
+        db.add_message(
+            {
+                "id": "m-legacy-a1",
+                "conversation_id": conversation_id,
+                "parent_message_id": u1,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "a1",
+                "timestamp": "2026-01-01T00:00:01.000000+00:00",
+                "usage_json": "{broken",
+            }
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert all(
+            m.usage is None for m in store.messages_for_session(session.id)
+        )
+    finally:
+        db.close_connection()
+
+
+def test_screen_state_round_trip_preserves_usage():
+    """F6: navigating away and back serializes the transcript to a JSON-safe
+    snapshot. That snapshot dropped `usage`, so a session that had already
+    recorded real spend came back reading $0 / "no usage" until the
+    conversation was reloaded from the DB (and never, for unsaved sessions).
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    usage = ProviderUsage(
+        uncached_input=904,
+        cache_read=4096,
+        cache_write=128,
+        output=42,
+        provider="anthropic",
+        model="claude-sonnet-5",
+        partial=True,
+    )
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        usage=usage,
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+    assert payload["usage_json"] is not None
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.usage == usage
+
+
+def test_screen_state_round_trip_tolerates_missing_and_broken_usage():
+    """Legacy snapshots have no `usage_json` key at all; a corrupt one must
+    degrade to "no usage known", never raise mid-restore."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+
+    without_usage = ChatScreen._serialize_console_message(
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a")
+    )
+    assert without_usage["usage_json"] is None
+    assert ChatScreen._restore_console_message(without_usage).usage is None
+
+    legacy = {"role": "assistant", "content": "a", "status": "complete"}
+    assert ChatScreen._restore_console_message(legacy).usage is None
+
+    corrupt = {**legacy, "usage_json": "{not json"}
+    assert ChatScreen._restore_console_message(corrupt).usage is None

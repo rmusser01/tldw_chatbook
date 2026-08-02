@@ -251,6 +251,8 @@ class TestDBInitialization:
             conn.execute(f"DROP TABLE {table}")
         # A V17 fixture also predates the V27->V28 character-authority column.
         conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+        # A V17 fixture also predates the V29->V30 local-only usage_json column.
+        conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
         conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
         conn.execute(
             "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
@@ -692,6 +694,54 @@ class TestConversationsAndMessages:
         results = db_instance.search_messages_by_content("UniqueMessageContentAlpha")
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
+
+    def test_update_message_usage_local_leaves_version_and_last_modified_untouched(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """Qodo round (Finding 4): a usage-only local write must not bump
+        `version`/`last_modified` -- those two columns are exactly what the
+        `messages_sync_update` trigger's WHEN clause watches, so bumping
+        them on a write whose payload can never carry `usage_json` (the
+        trigger's payload only ever includes syncable columns) would
+        enqueue a cross-device `sync_log` row for a column that is
+        local-only by design.
+        """
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "UsageLocalConv"}
+        )
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "the answer",
+            }
+        )
+        before = db_instance.get_message_by_id(msg_id)
+        assert before["usage_json"] is None
+        latest_change_id = db_instance.get_latest_sync_log_change_id()
+
+        result = db_instance.update_message_usage_local(
+            msg_id, '{"uncached_input": 10, "output": 5}'
+        )
+
+        assert result is True
+        after = db_instance.get_message_by_id(msg_id)
+        assert after["usage_json"] == '{"uncached_input": 10, "output": 5}'
+        assert after["version"] == before["version"]
+        assert after["last_modified"] == before["last_modified"]
+
+        new_entries = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id, entity_type="messages"
+        )
+        assert new_entries == [], (
+            "a usage-only local write must not enqueue a sync_log row "
+            "for the messages entity"
+        )
+
+    def test_update_message_usage_local_unknown_id_returns_false(
+        self, db_instance: CharactersRAGDB
+    ):
+        assert db_instance.update_message_usage_local("missing-id", "{}") is False
 
     # @pytest.mark.parametrize(
     #     "msg_data, raises_error",

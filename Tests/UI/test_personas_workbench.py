@@ -6285,7 +6285,7 @@ class _FakePreviewGateway:
             provider="openai", base_url="", model="test-model", ready=True
         )
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **_kwargs):
         self.requests.append([dict(m) for m in messages])
         if self.gate is not None:
             await self.gate.wait()

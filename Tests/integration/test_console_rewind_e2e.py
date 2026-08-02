@@ -70,7 +70,7 @@ class _SequencedCapturingGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         self.calls.append(messages)
         text = self._replies[len(self.calls) - 1]
         yield text

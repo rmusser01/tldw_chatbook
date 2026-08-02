@@ -105,7 +105,7 @@ class _BlockingProviderGateway:
             execution_key="openai",
         )
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages
         self.started.set()
         try:
