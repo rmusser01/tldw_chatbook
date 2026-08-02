@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-23
 
-**Related tasks:** TASK-505, TASK-593 through TASK-605; see the
+**Related tasks:** TASK-505, TASK-593 through TASK-605, TASK-1861; see the
 [delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
 **Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md), amended by [ADR-040](../../../backlog/decisions/040-direct-local-gguf-before-managed-acquisition.md) for direct-path-first transcribe.cpp delivery
@@ -14,7 +14,10 @@
 > **2026-08-02 delivery amendment:** transcribe.cpp first accepts an explicitly
 > configured, boundedly validated local GGUF path. Managed GGUF catalogs,
 > downloads, copying, and artifact promotion are deferred until that provider
-> works end to end. See ADR-040 and the revised TASK-597 design.
+> works end to end. The first provider reuses the existing spawn-isolated
+> Library parse pool and one-heavy-job gate; the dedicated resident executor is
+> later hardening, not a prerequisite. See ADR-040 and the revised TASK-597
+> design.
 
 ## Executive decision
 
@@ -30,10 +33,10 @@ speech-to-text runtime for explicitly selected supported languages:
 - INT8 is the default Parakeet variant. F32 is an explicit, separately
   downloaded option.
 
-`transcribe.cpp` is adopted as an optional, curated GGUF breadth engine. It is
-not the default, the universal provider abstraction, or an automatic fallback.
-The initial catalog contains one representative model from four families:
-Whisper small, Canary 180M Flash, Moonshine tiny, and Qwen3-ASR 0.6B.
+`transcribe.cpp` is adopted first as an optional direct-local GGUF breadth
+engine. It is not the default, the universal provider abstraction, or an
+automatic fallback. A later managed-acquisition task adds the representative
+catalog: Whisper small, Canary 180M Flash, Moonshine tiny, and Qwen3-ASR 0.6B.
 
 Failures never silently cross engine boundaries. A failed eligible request
 offers an explicit **Retry with faster-whisper** action. A single
@@ -48,12 +51,14 @@ dependent artifacts such as the VAD model required for long-form Parakeet
 recognition. STT is the first consumer; moving LLM model management onto the
 service is a separate future task.
 
-Batch media ingestion is the first delivery surface. Audio/video work moves
-from the shared parse pool to a physically separate one-process heavy-media
-lane with one resident STT model. Legacy `parakeet` and `parakeet-mlx`
-implementations are removed in the landing release only after the specified
-batch, buffer, migration, platform, quality, performance, and recovery gates
-pass.
+Batch media ingestion is the first delivery surface. The first direct-local
+transcribe.cpp provider reuses the existing spawn-isolated parse pool and its
+one-heavy-job gate so usable transcription does not wait for a new executor.
+TASK-601 later moves local STT to a physically separate one-process
+heavy-media lane with resident-model reuse and finer cancellation. Legacy
+`parakeet` and `parakeet-mlx` implementations are removed in the landing
+release only after the specified batch, buffer, migration, platform, quality,
+performance, and recovery gates pass.
 
 ## Why this design
 

@@ -27,7 +27,7 @@ Add curated downloads and managed local-file import only after direct-path trans
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A representative curated transcribe.cpp catalog declares immutable sources, sizes, digests, licenses, capabilities, and reviewed precision options.
+- [ ] #1 A representative curated transcribe.cpp catalog declares immutable sources, sizes, digests, licenses, capabilities, Q8_0 as the default, and an explicit full-precision option where upstream publishes one.
 - [ ] #2 Users can explicitly download a curated GGUF or copy an existing compatible local GGUF into the managed artifact store with verified final bytes.
 - [ ] #3 Managed GGUF installation, activation, recovery, deletion, and browser status reuse the shared artifact core without changing provider inference behavior.
 - [ ] #4 The transcribe.cpp provider accepts either the existing validated direct path or a managed path, and direct-path users are not forced to migrate.

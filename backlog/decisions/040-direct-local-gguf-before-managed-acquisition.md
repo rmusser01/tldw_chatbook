@@ -2,14 +2,15 @@
 
 Status: Proposed
 Date: 2026-08-02
-Related Tasks: TASK-597, TASK-604, TASK-1861
+Related Tasks: TASK-597, TASK-601, TASK-604, TASK-1861
 Amends: ADR-025
 
 ## Decision
 
 The first usable transcribe.cpp release accepts one explicitly configured local
 GGUF path. Chatbook validates that path with a bounded, native-runtime-free
-admission boundary when selected and before request dispatch.
+admission boundary when selected and inside the existing spawn-isolated
+ingestion worker immediately before native model load.
 
 The first release does not require the file to be copied into the managed model
 artifact store. Curated GGUF catalogs, verified downloads, managed local import,
@@ -17,10 +18,10 @@ activation, and artifact promotion are deferred until after direct-path
 transcription works end to end.
 
 The local path is provider configuration, not transcript provenance. Only the
-path persists; source identity is recomputed per admission and participates in
-resident-worker reuse/recycle for that run. A compatible replacement at the
-same path is accepted as the new current file rather than treated as a
-persistent-identity violation.
+path persists; source identity is recomputed per admission and is not retained
+as an expected identity. A compatible replacement at the same path is accepted
+as the new current file rather than treated as a persistent-identity violation.
+TASK-601 may later use the same snapshot for resident-worker reuse/recycle.
 
 Direct-local transcript provenance uses `artifact_root = null` and an empty
 artifact dependency set. It records provider/model/runtime/precision/device/
@@ -32,6 +33,12 @@ managed acquisition lands.
 The file is never an automatic-routing candidate and is not labeled installed,
 curated, or integrity verified. transcribe.cpp remains an exact manual provider
 and never a silent fallback.
+
+The first usable provider reuses the existing Library parse pool and its
+one-heavy-job gate. It does not wait for TASK-601's dedicated resident executor,
+fine-grained cross-process cancellation, artifact leases, or heavy/light pool
+separation. TASK-601 remains later hardening; managed GGUF acquisition remains
+TASK-1861.
 
 ## Context
 
@@ -48,14 +55,19 @@ without changing inference behavior.
 ## Consequences
 
 - TASK-597 contains parser, compatibility, and direct-file admission only.
-- TASK-604 owns file selection/configuration and actual transcribe.cpp use.
-- The provider revalidates before request dispatch but cannot eliminate a race
-  between validation and the native runtime reopening the path.
+- TASK-604 owns file selection/configuration, the real Library batch selector
+  and production wiring, and actual transcribe.cpp use.
+- The ingestion worker revalidates immediately before native model load but
+  cannot eliminate a race between validation and the native runtime reopening
+  the path.
+- The first release loads once per ingest job. A native worker crash is
+  contained by the existing pool monitor but can make other in-flight parse
+  jobs retryable; TASK-601 later adds dedicated heavy-process isolation and
+  model residency.
 - Missing, symlinked, unreadable, or newly incompatible current files fail
   clearly and require re-selection.
 - A different compatible file at the same path is admitted as the current
-  model and forces resident-model recycle; no cross-restart expected snapshot
-  is persisted.
+  model on the next job; no cross-restart expected snapshot is persisted.
 - Direct-local transcripts have no immutable artifact revision or exact-byte
   reproducibility claim.
 - Local paths may be stored in provider configuration but never in transcript
@@ -70,6 +82,7 @@ without changing inference behavior.
 |---|---|
 | Managed GGUF store before provider | Delays usable transcription behind copying, descriptors, catalog, and lifecycle UI. |
 | Register external paths as artifacts | Adds state without making the bytes immutable or independently verified. |
+| Dedicated resident executor before provider | Adds useful reuse and cancellation but delays the first batch transcription even though the existing spawn pool already contains native faults. |
 | Native validation in the UI process | Unnecessarily exposes UI stability to untrusted/native parsing. |
 
 ## Rollback
