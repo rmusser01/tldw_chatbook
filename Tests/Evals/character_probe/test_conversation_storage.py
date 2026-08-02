@@ -13,14 +13,17 @@ from tldw_chatbook.Evals.character_probe.storage import (
     annotate_turn,
     conversation_sample_id,
     create_probe_run_group,
+    load_character_bench,
     load_conversations,
     load_probe_run_snapshot,
     load_review_state,
     load_turn_annotations,
     mark_conversation_reviewed,
+    run_group_vocabulary,
     save_character_bench,
     save_conversations,
 )
+from tldw_chatbook.Evals.character_probe.tags import BUILTIN_TAGS, Tag
 
 
 @pytest.fixture
@@ -90,11 +93,12 @@ def test_a_turn_annotation_persists_with_its_tags_and_note(db):
     assert stored["note"] == "drifted here"
 
 
-def test_re_annotating_the_same_turn_replaces_it(db):
-    run_id, target_id = _seed_run(db)
-    annotate_turn(db, "rg-1", 1, 0, 0, target_id, 0, ["refused"], "")
-    annotate_turn(db, "rg-1", 1, 0, 0, target_id, 0, ["in-character"], "fine actually")
-    stored = load_turn_annotations(db, "rg-1")[(1, 0, 0, target_id, 0)]
+def test_re_annotating_the_same_turn_replaces_it(db, probe_run_group):
+    annotate_turn(db, probe_run_group, 1, 0, 0, "t-1", 0, ["refused"], "")
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, ["in-character"], "fine actually"
+    )
+    stored = load_turn_annotations(db, probe_run_group)[(1, 0, 0, "t-1", 0)]
     assert stored["tags"] == ["in-character"]
 
 
@@ -181,6 +185,46 @@ def _target_row(db, name="steered", config=None):
         name=name, provider="llama_cpp", model_id="m", config=config or {}
     )
     return db.get_model(row_id)
+
+
+@pytest.fixture
+def probe_run_group(db, bench):
+    """A run group opened under a bench with no extra tags."""
+    config, task_id = bench
+    group_id, _ = create_probe_run_group(
+        db,
+        task_id,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db)],
+    )
+    return group_id
+
+
+@pytest.fixture
+def bench_id_of_that_run(db):
+    """A bench carrying an extra tag, saved before any run group opens."""
+    config = _bench_config(
+        name="villain probes with extras",
+        extra_tags=(Tag("meta-commentary", "Meta commentary", "failure"),),
+    )
+    return save_character_bench(db, config)
+
+
+@pytest.fixture
+def probe_run_group_with_extra_tags(db, bench_id_of_that_run):
+    """A run group opened under a bench that carries an extra tag."""
+    config = load_character_bench(db, bench_id_of_that_run)
+    group_id, _ = create_probe_run_group(
+        db,
+        bench_id_of_that_run,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db)],
+    )
+    return group_id
 
 
 def test_create_probe_run_group_returns_a_run_per_target(db, bench):
@@ -451,3 +495,360 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
         source = module.read_text()
         for token in forbidden_tokens:
             assert token not in source, f"{module.name} mentions {token}"
+
+
+# --- run_group_vocabulary (whole-branch review I4, task-4) ---------------
+
+
+def test_a_run_with_no_extra_tags_has_exactly_the_builtins(db, probe_run_group):
+    assert run_group_vocabulary(db, probe_run_group) == BUILTIN_TAGS
+
+
+def test_a_runs_vocabulary_includes_the_benchs_extras_as_of_the_run(
+    db, probe_run_group_with_extra_tags
+):
+    vocab = run_group_vocabulary(db, probe_run_group_with_extra_tags)
+    assert Tag("meta-commentary", "Meta commentary", "failure") in vocab
+
+
+def test_editing_the_bench_after_the_run_does_not_change_the_runs_vocabulary(
+    db, probe_run_group_with_extra_tags, bench_id_of_that_run
+):
+    """Snapshot provenance: the run is annotated with what it captured."""
+    config = load_character_bench(db, bench_id_of_that_run)
+    save_character_bench(
+        db,
+        type(config)(
+            name=config.name,
+            probe_set_id=config.probe_set_id,
+            character_ids=config.character_ids,
+            target_ids=config.target_ids,
+            extra_tags=(),
+        ),
+        bench_id_of_that_run,
+    )
+    vocab = run_group_vocabulary(db, probe_run_group_with_extra_tags)
+    assert any(t.slug == "meta-commentary" for t in vocab)
+
+
+def test_an_unknown_run_group_raises_naming_it(db):
+    with pytest.raises(Exception) as exc:
+        run_group_vocabulary(db, "no-such-group")
+    assert "no-such-group" in str(exc.value)
+
+
+# --- annotate_turn tag validation (whole-branch review I4, task-5) -------
+
+
+def test_a_known_tag_is_stored(db, probe_run_group):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character"], note="third turn",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_an_unknown_tag_is_rejected_naming_it(db, probe_run_group):
+    with pytest.raises(ValueError) as exc:
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["brok-charcter"], note="",
+        )
+    assert "brok-charcter" in str(exc.value)
+
+
+def test_nothing_is_written_when_one_tag_of_several_is_unknown(
+    db, probe_run_group
+):
+    with pytest.raises(ValueError):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["broke-character", "no-such-tag"], note="",
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_a_non_canonical_tag_is_canonicalised_rather_than_rejected(
+    db, probe_run_group
+):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["Broke Character"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_duplicate_tags_are_stored_once(db, probe_run_group):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character", "broke-character"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
+
+
+def test_an_annotation_with_no_tags_but_a_note_is_allowed(
+    db, probe_run_group
+):
+    """A note without a tag is a real observation, not an empty write."""
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=[], note="odd phrasing",
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["note"] == "odd phrasing"
+
+
+def test_a_benchs_extra_tag_is_accepted(db, probe_run_group_with_extra_tags):
+    annotate_turn(
+        db, probe_run_group_with_extra_tags, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+    )
+    stored = load_turn_annotations(db, probe_run_group_with_extra_tags)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+# --- annotate_turn's optional `vocabulary` param (final review fix wave,
+# findings 1+2) --------------------------------------------------------
+#
+# Phase 3b's recommended flow creates a tag mid-review: written to the
+# bench's `extra_tags` and added to the review pane's live vocabulary, never
+# to the already-captured run snapshot. Without a way to pass that live
+# vocabulary in, such a tag would render as selectable and then raise
+# ValueError on `annotate_turn`, which only ever consulted
+# `run_group_vocabulary` (the snapshot-derived vocabulary). These tests
+# cover the new `vocabulary` parameter that closes that gap.
+
+
+def test_an_explicit_vocabulary_accepts_a_tag_not_in_the_runs_snapshot(
+    db, probe_run_group
+):
+    """`probe_run_group`'s snapshot carries no extra tags, so
+    `run_group_vocabulary` alone would reject `meta-commentary`. Passing it
+    explicitly -- standing in for a review pane's live, session-extended
+    vocabulary -- accepts and persists it anyway."""
+    live_vocabulary = run_group_vocabulary(db, probe_run_group) + (
+        Tag("meta-commentary", "Meta commentary", "failure"),
+    )
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+        vocabulary=live_vocabulary,
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+def test_an_explicit_vocabulary_still_rejects_a_slug_outside_it(db, probe_run_group):
+    """An explicit vocabulary is a real allowlist, not a bypass: a slug
+    outside it is rejected exactly as the default (snapshot-derived) path
+    rejects a slug outside the run's captured vocabulary, and nothing is
+    written."""
+    live_vocabulary = run_group_vocabulary(db, probe_run_group) + (
+        Tag("meta-commentary", "Meta commentary", "failure"),
+    )
+    with pytest.raises(ValueError, match="no-such-tag"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["no-such-tag"], note="",
+            vocabulary=live_vocabulary,
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_omitting_vocabulary_still_validates_against_the_runs_captured_vocabulary(
+    db, probe_run_group
+):
+    """Omitting `vocabulary` must behave exactly as before this parameter
+    existed: the same `meta-commentary` slug that an explicit live
+    vocabulary accepts (see above) is still rejected here, because
+    `probe_run_group`'s own captured snapshot has no such extra tag."""
+    with pytest.raises(ValueError, match="meta-commentary"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["meta-commentary"], note="",
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+# --- annotate_turn's `vocabulary` param normalises its input (Qodo review
+# PR #1216, finding 4) ---------------------------------------------------
+#
+# The tests above pass `vocabulary` as `Tag` objects built from
+# `run_group_vocabulary`. A caller may instead hold the mapping/JSON form
+# stored rows and run snapshots use -- `annotate_turn` used to access
+# `tag.slug` directly and crash with an uncontrolled `AttributeError` on
+# that shape. It also never enforced kind-immutability against a supplied
+# vocabulary. Both are closed by running the supplied vocabulary through
+# `resolve_vocabulary` (which itself runs each entry through `coerce_tag`),
+# the same normalisation a stored vocabulary already gets.
+
+
+def test_an_explicit_vocabulary_given_as_mappings_is_accepted(db, probe_run_group):
+    """A caller holding a vocabulary read back from JSON -- the mapping
+    form, not `Tag` objects -- can still pass it to `vocabulary` directly."""
+    mapping_vocabulary = [
+        {"slug": tag.slug, "label": tag.label, "kind": tag.kind}
+        for tag in BUILTIN_TAGS
+    ] + [{"slug": "meta-commentary", "label": "Meta commentary", "kind": "failure"}]
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+        vocabulary=mapping_vocabulary,
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+def test_a_malformed_explicit_vocabulary_entry_raises_a_named_valueerror(
+    db, probe_run_group
+):
+    """Before this fix, a mapping-shaped `vocabulary` entry with no `slug`
+    crashed with an uncontrolled `AttributeError` from `tag.slug` on a
+    plain dict. It must instead raise a named `ValueError`, matching every
+    other malformed-tag path in this module (`coerce_tag`,
+    `resolve_vocabulary`)."""
+    with pytest.raises(ValueError) as exc:
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["broke-character"], note="",
+            vocabulary=[{"label": "No slug here", "kind": "failure"}],
+        )
+    assert not isinstance(exc.value, AttributeError)
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_an_explicit_vocabulary_cannot_change_a_builtins_kind(db, probe_run_group):
+    """A caller-supplied vocabulary is validated through the same
+    kind-immutability rule `resolve_vocabulary` already enforces for a
+    bench's stored `extra_tags`: `refused` is a built-in `failure` tag, and
+    an explicit vocabulary trying to relabel it `positive` is refused
+    rather than silently accepted -- Phase 3b's live, session-extended
+    vocabulary must not be able to smuggle that past validation."""
+    tampered_vocabulary = [
+        {"slug": "refused", "label": "Refused", "kind": "positive"},
+    ]
+    with pytest.raises(ValueError, match="refused"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["refused"], note="",
+            vocabulary=tampered_vocabulary,
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+# --- delete_task cascades probe annotations (whole-branch review I4, task-6) --
+#
+# `probe_run_group` is opened under the `bench` fixture's task_id (see the
+# `probe_run_group` fixture above: it destructures `bench` for its
+# `task_id`). Requesting `bench` directly here, alongside `probe_run_group`,
+# yields that SAME cached task_id -- pytest caches a function-scoped fixture
+# once per test, however many other fixtures also depend on it -- so `bench`
+# is the right handle for "the bench `probe_run_group` runs under", not
+# `bench_id_of_that_run` (that fixture is a deliberately different bench,
+# carrying an extra tag, used by `probe_run_group_with_extra_tags`).
+
+
+@pytest.fixture
+def second_probe_run_group(db):
+    """A run group under a bench distinct from `probe_run_group`'s, so the
+    cascade-isolation test can prove deleting one bench does not touch
+    another's annotations.
+
+    Uses its own target name -- eval_models is UNIQUE on
+    (name, provider, model_id), and this fixture is deliberately combined
+    with `probe_run_group` (via `bench`) in the same test, which already
+    creates a target named "steered" (`_target_row`'s default).
+    """
+    config = _bench_config(name="a different bench")
+    task_id = save_character_bench(db, config)
+    group_id, _ = create_probe_run_group(
+        db,
+        task_id,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        [_target_row(db, name="steered-2")],
+    )
+    return group_id
+
+
+@pytest.fixture
+def seeded_word_bench_id(db):
+    """A minimal word-bench `eval_tasks` row, written directly against
+    `create_task` the same way
+    `Tests/Evals/character_probe/test_bench_storage.py::
+    test_loading_a_word_bench_as_a_character_bench_raises` does. All this
+    test needs is a bench `delete_task` can target that is NOT a character
+    probe bench, to prove the cascade is scoped to that task's own run
+    groups rather than to every probe annotation row in the database.
+
+    Carries a real run group (an `eval_runs` row stamped with
+    `run_group_id`), not just the bare task row: without one,
+    `delete_task`'s own `run_group_ids` lookup for this task always returns
+    `[]`, and `delete_probe_annotations_for_run_groups` no-ops on an empty
+    id list -- the DELETE against `eval_probe_turn_annotations`/
+    `eval_probe_review_state` is never actually executed, so a scoping bug
+    in that DELETE's `WHERE run_group_id IN (...)` would pass unnoticed."""
+    task_id = db.create_task(
+        name="word bench",
+        description="",
+        task_type="logprob",
+        config_format="custom",
+        config_data={"bench_type": "word_bench"},
+    )
+    model_id = db.create_model(name="word-target", provider="llama_cpp", model_id="m")
+    run_id = db.create_run(name="r", task_id=task_id, model_id=model_id)
+    db.update_run(run_id, {"run_group_id": "word-bench-rg"})
+    return task_id
+
+
+def test_deleting_a_bench_removes_its_turn_annotations(db, probe_run_group, bench):
+    _config, task_id = bench
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["broke-character"], note="",
+    )
+    assert load_turn_annotations(db, probe_run_group)
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_turn_annotations(probe_run_group) == []
+
+
+def test_deleting_a_bench_removes_its_review_state(db, probe_run_group, bench):
+    _config, task_id = bench
+    mark_conversation_reviewed(db, probe_run_group, 1, 0, 0, "t-1", note="fine")
+    assert db.list_probe_review_state(probe_run_group)
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_review_state(probe_run_group) == []
+
+
+def test_deleting_a_bench_leaves_another_benchs_annotations_alone(
+    db, probe_run_group, bench, second_probe_run_group
+):
+    _config, task_id = bench
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+    )
+    annotate_turn(
+        db, second_probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["refused"], note="",
+    )
+
+    db.delete_task(task_id)
+
+    assert db.list_probe_turn_annotations(second_probe_run_group)
+
+
+def test_deleting_a_word_bench_touches_no_probe_annotation_rows(
+    db, probe_run_group, seeded_word_bench_id
+):
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+    )
+    db.delete_task(seeded_word_bench_id)
+    assert db.list_probe_turn_annotations(probe_run_group)

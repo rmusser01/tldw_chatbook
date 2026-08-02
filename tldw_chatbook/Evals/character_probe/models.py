@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass
-from typing import Optional
+from typing import Any, Optional
+
+from .tags import coerce_tag, resolve_vocabulary
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,13 @@ class CharacterProbeConfig:
             two "at least one" checks, this runs unconditionally: it must
             catch genuinely malformed data even on a lenient ``strict=False``
             read.
+        ValueError: If an ``extra_tags`` entry is not a ``Tag`` or a mapping
+            with a ``slug`` and a ``kind``, or if its ``kind`` would change a
+            built-in tag's kind (see ``tags.coerce_tag``/
+            ``tags.resolve_vocabulary``). This is NOT gated on ``strict``: a
+            malformed tag is corrupt data, never a draft state, so it is
+            rejected in every mode, including a lenient ``strict=False``
+            read.
     """
 
     name: str
@@ -116,7 +125,7 @@ class CharacterProbeConfig:
     seed: Optional[int] = None
     temperature: float = 0.8
     max_tokens: int = 512
-    extra_tags: tuple[dict, ...] = ()
+    extra_tags: tuple[Any, ...] = ()
     strict: InitVar[bool] = True
 
     def __post_init__(self, strict: bool) -> None:
@@ -134,6 +143,14 @@ class CharacterProbeConfig:
                     f"character_ids must be int (character_cards.id), got "
                     f"{cid!r} of type {type(cid).__name__}."
                 )
+
+        # Validate and canonicalise the bench's tag extensions. NOT gated on
+        # `strict`: that flag exists so a DRAFT bench with no characters and
+        # no targets can be created and reloaded (phase 2), and a malformed
+        # tag is corrupt data rather than a draft state.
+        coerced = tuple(coerce_tag(raw) for raw in self.extra_tags or ())
+        object.__setattr__(self, "extra_tags", coerced)
+        resolve_vocabulary(coerced)  # rejects a kind change to a built-in
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,7 @@ from .models import (
     ProbeSet,
 )
 from .prompt import compose_system_prompt
+from .tags import Tag, canonical_slug, coerce_tag, resolve_vocabulary
 from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
@@ -222,6 +223,41 @@ def is_character_bench(task_row: Mapping[str, Any]) -> bool:
     return config_data.get("bench_type") == BENCH_TYPE
 
 
+def _tags_to_json(tags: Sequence[Any]) -> list[dict[str, str]]:
+    """The stored form of a bench's extra tags.
+
+    Args:
+        tags: Validated ``Tag`` objects.
+
+    Returns:
+        list[dict[str, str]]: One JSON-safe mapping per tag.
+    """
+    return [{"slug": t.slug, "label": t.label, "kind": t.kind} for t in tags]
+
+
+def _tags_from_json(raw: Any, owner_id: str) -> tuple[Tag, ...]:
+    """Extra tags read back from a stored row or run snapshot.
+
+    Accepts the raw mappings written before the vocabulary existed, so rows
+    predating this phase still load.
+
+    Args:
+        raw: The stored ``extra_tags`` value, or None.
+        owner_id: The bench or run-group id, named in any error.
+
+    Returns:
+        tuple[Tag, ...]: Validated tags, empty when none were stored.
+
+    Raises:
+        ValueError: If a stored entry is malformed -- naming ``owner_id``, so
+            a corrupt row identifies itself rather than failing anonymously.
+    """
+    try:
+        return tuple(coerce_tag(entry) for entry in raw or ())
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{owner_id} has a corrupt extra_tags entry: {exc}") from exc
+
+
 def save_character_bench(
     db: EvalsDB, config: CharacterProbeConfig, task_id: Optional[str] = None
 ) -> str:
@@ -276,7 +312,7 @@ def save_character_bench(
         "seed": config.seed,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
-        "extra_tags": list(config.extra_tags),
+        "extra_tags": _tags_to_json(config.extra_tags),
     }
     if task_id is not None:
         updated = db.update_task(
@@ -455,8 +491,9 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
             propagated from ``_stored_int_field`` (see its own docstring)
             for a corrupt ``concurrency``/``samples_per_cell``/
             ``max_tokens``, from ``_stored_seed``/``_stored_temperature``
-            for a corrupt ``seed``/``temperature``, and from
-            ``CharacterProbeConfig.__post_init__`` for a stored
+            for a corrupt ``seed``/``temperature``, from ``_tags_from_json``
+            for a malformed stored ``extra_tags`` entry (naming this bench),
+            and from ``CharacterProbeConfig.__post_init__`` for a stored
             ``concurrency``/``samples_per_cell`` below its ``>= 1`` floor,
             or a non-``int`` element of ``character_ids``.
     """
@@ -477,7 +514,7 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         seed=_stored_seed(data, task_id),
         temperature=_stored_temperature(data, task_id, 0.8),
         max_tokens=_stored_int_field(data, "max_tokens", 512, task_id),
-        extra_tags=tuple(data.get("extra_tags") or ()),
+        extra_tags=_tags_from_json(data.get("extra_tags"), task_id),
         strict=False,
     )
 
@@ -553,7 +590,7 @@ def _probe_run_snapshot(
             "samples_per_cell": config.samples_per_cell,
             "concurrency": config.concurrency,
         },
-        "extra_tags": list(config.extra_tags),
+        "extra_tags": _tags_to_json(config.extra_tags),
         "targets": [
             {
                 "id": target.id,
@@ -670,6 +707,39 @@ def load_probe_run_snapshot(db: EvalsDB, run_group_id: str) -> dict[str, Any]:
     overrides = runs[0].get("config_overrides") or {}
     snapshot = overrides.get("snapshot")
     return snapshot if isinstance(snapshot, Mapping) else {}
+
+
+def run_group_vocabulary(db: EvalsDB, run_group_id: str) -> tuple[Tag, ...]:
+    """The tag vocabulary one run group was created under.
+
+    A reviewer annotates a run's answers, so the vocabulary that applies is
+    the one the run captured -- not the bench's current one. This is the same
+    provenance rule the card snapshot follows (see ``_probe_run_snapshot``):
+    editing the bench afterwards must not change what the run shows, and must
+    not orphan an annotation already recorded against a tag the bench has
+    since dropped. The read comes from ``load_probe_run_snapshot``, never
+    from the live ``eval_tasks`` row, for exactly that reason.
+
+    Args:
+        db: The evals database handle.
+        run_group_id: The run group to read.
+
+    Returns:
+        tuple[Tag, ...]: Built-in tags plus whatever extras the snapshot
+        recorded, resolved through ``resolve_vocabulary``. A snapshot with no
+        stored ``extra_tags`` (or no snapshot at all) yields exactly
+        ``BUILTIN_TAGS``.
+
+    Raises:
+        ValueError: Propagated from ``load_probe_run_snapshot`` if no runs
+            share this ``run_group_id`` -- naming the group. Also propagated
+            from ``_tags_from_json`` if the snapshot's stored tags are
+            corrupt -- naming the run group as the owner.
+    """
+    snapshot = load_probe_run_snapshot(db, run_group_id)
+    return resolve_vocabulary(
+        _tags_from_json(snapshot.get("extra_tags"), run_group_id)
+    )
 
 
 def save_conversations(
@@ -928,6 +998,7 @@ def annotate_turn(
     turn_index: int,
     tags: Sequence[str],
     note: str,
+    vocabulary: Optional[Sequence[Any]] = None,
 ) -> None:
     """Record or replace one conversation turn's reviewer annotation.
 
@@ -936,6 +1007,15 @@ def annotate_turn(
     below, which has no turn axis at all. Re-annotating the same turn
     replaces its tags and note rather than accumulating a second row (see
     ``EvalsDB.upsert_probe_turn_annotation``).
+
+    Every tag in ``tags`` is canonicalised and checked against ``vocabulary``
+    (or, when omitted, ``run_group_vocabulary(db, run_group_id)``) before
+    anything is written. An unknown tag has no kind, so the summary would
+    have nothing to group it under -- the same fail-loudly rule
+    ``resolve_vocabulary`` and ``coerce_tag`` already enforce for a bench's
+    ``extra_tags``. Validation runs over the whole list before the write, so
+    a rejected annotation leaves nothing behind: no partial write of "the
+    tags checked out before the bad one".
 
     Args:
         db: The evals database handle.
@@ -946,9 +1026,55 @@ def annotate_turn(
         target_id: The target's id, as used in ``save_conversations``'s
             ``run_ids``.
         turn_index: The zero-based turn within the conversation.
-        tags: Tag slugs describing this turn.
+        tags: Tag slugs describing this turn. May be empty -- a note
+            without a tag is still a real observation.
         note: Free-text reviewer note for this turn.
+        vocabulary: The vocabulary to validate ``tags`` against. Omit (or
+            pass ``None``) to validate against the run's captured
+            vocabulary, ``run_group_vocabulary(db, run_group_id)`` --
+            today's behaviour, unchanged for every existing caller. Pass an
+            explicit vocabulary to support a tag created during a review
+            session (written to the bench's ``extra_tags`` and added to a
+            live in-memory vocabulary) that is not yet in the run's
+            snapshot; it is also how a caller holding that vocabulary
+            already (e.g. cached once per run-group review session) avoids
+            re-deriving it -- and re-reading the run's snapshot, which
+            duplicates every card's text and composed system prompts -- on
+            every single write. Entries may be ``Tag`` objects or the
+            mapping/JSON form stored rows and run snapshots use (each run
+            through ``coerce_tag``, exactly like a stored vocabulary is);
+            a supplied entry may relabel a built-in but, like any other
+            vocabulary, may not change a built-in's kind (see
+            ``resolve_vocabulary``).
+
+    Raises:
+        ValueError: If any tag, once canonicalised, is not in the applicable
+            vocabulary -- naming the offending slug. When ``vocabulary`` is
+            omitted, also propagated from ``run_group_vocabulary`` if no
+            runs share this ``run_group_id``. When ``vocabulary`` is
+            supplied explicitly, also propagated from ``resolve_vocabulary``/
+            ``coerce_tag`` if an entry is malformed or tries to change a
+            built-in's kind -- naming the offending entry in either case,
+            never an unnamed ``AttributeError``.
     """
+    if vocabulary is None:
+        vocabulary = run_group_vocabulary(db, run_group_id)
+    else:
+        vocabulary = resolve_vocabulary(vocabulary)
+    known = {tag.slug for tag in vocabulary}
+    canonical: list[str] = []
+    for raw in tags or ():
+        slug = canonical_slug(str(raw))
+        if slug not in known:
+            raise ValueError(
+                f"{slug!r} is not a tag in this run's vocabulary "
+                f"({', '.join(sorted(known))}). Annotations are grouped by "
+                f"tag kind, so an unknown tag would have no kind to group "
+                f"under."
+            )
+        if slug not in canonical:
+            canonical.append(slug)
+
     db.upsert_probe_turn_annotation(
         run_group_id=run_group_id,
         card_id=card_id,
@@ -956,7 +1082,7 @@ def annotate_turn(
         sample_index=sample_index,
         target_id=target_id,
         turn_index=turn_index,
-        tags=list(tags),
+        tags=canonical,
         note=note,
     )
 

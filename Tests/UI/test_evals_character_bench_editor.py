@@ -65,6 +65,7 @@ from tldw_chatbook.Evals.character_probe.storage import (
     save_character_bench,
     save_probe_set,
 )
+from tldw_chatbook.Evals.character_probe.tags import Tag
 from tldw_chatbook.UI.Evals.character_bench_editor import (
     MAX_TOKENS_ERROR_TEXT,
     SAMPLES_ERROR_TEXT,
@@ -417,7 +418,7 @@ async def test_saving_carries_concurrency_and_extra_tags_through_verbatim(
             character_ids=(3,),
             target_ids=(target_id,),
             concurrency=4,
-            extra_tags=({"slug": "villain"},),
+            extra_tags=({"slug": "villain", "kind": "notable"},),
         ),
     )
     async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
@@ -428,7 +429,7 @@ async def test_saving_carries_concurrency_and_extra_tags_through_verbatim(
 
         stored = load_character_bench(evals_db, bench_id)
         assert stored.concurrency == 4
-        assert stored.extra_tags == ({"slug": "villain"},)
+        assert stored.extra_tags == (Tag("villain", "villain", "notable"),)
 
 
 # ---------------------------------------------------------------------------
