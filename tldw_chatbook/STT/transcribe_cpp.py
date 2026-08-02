@@ -329,16 +329,6 @@ class TranscribeCppAdapter:
                 )
                 for segment in getattr(native_result, "segments", ())
             )
-        native_timings = getattr(native_result, "timings", None)
-        reported_inference = (
-            sum(
-                float(getattr(native_timings, name, 0.0) or 0.0)
-                for name in ("mel_ms", "encode_ms", "decode_ms")
-            )
-            / 1000
-            if native_timings is not None
-            else inference_seconds
-        )
         detected = (
             str(getattr(native_result, "language", "")).strip().lower() or None
             if request.request.language == "auto"
@@ -360,7 +350,7 @@ class TranscribeCppAdapter:
             duration_seconds=duration,
             timings=TranscriptionTimings(
                 model_load_seconds=self._model_load_seconds,
-                inference_seconds=reported_inference,
+                inference_seconds=inference_seconds,
                 total_seconds=self._model_load_seconds + inference_seconds,
             ),
         )
@@ -437,6 +427,25 @@ def transcribe_file(
     The return annotation is deliberately broad at this legacy bridge: callers
     serialize the validated ``TranscriptionResult`` into their existing dict
     payload, while the native runtime remains absent from module scope.
+
+    Args:
+        audio_path: Local audio file to normalize and transcribe.
+        model_path: Configured local GGUF path, or ``None`` when unset.
+        attempt_id: Stable identity for this transcription attempt.
+        batch_id: Optional identity shared by a batch of ingest jobs.
+        job_id: Optional Library ingest job identity.
+        retry_of_attempt_id: Optional immediately preceding attempt identity.
+        retry_of_job_id: Optional immediately preceding Library job identity.
+        language: Explicit language code or ``auto``.
+        timestamps: Whether to request segment timestamps when supported.
+        ffmpeg_path: Optional explicit ffmpeg executable path.
+
+    Returns:
+        A validated provider-neutral ``TranscriptionResult``.
+
+    Raises:
+        TranscribeCppFailure: If admission, runtime loading, preflight, or
+            inference fails. The exception contains only bounded recovery data.
     """
 
     normalized_language = (language or "en").strip().lower()
@@ -477,6 +486,10 @@ def transcribe_file(
         ) from None
 
     try:
+        # Deliberately keep this native ABI load at the worker boundary instead
+        # of require_dependency(): that helper logs ImportError details and only
+        # normalizes import-related exceptions, while this path must redact every
+        # native loader/ABI failure before it can cross the spawn boundary.
         runtime = importlib.import_module("transcribe_cpp")
     except Exception:
         raise failure(

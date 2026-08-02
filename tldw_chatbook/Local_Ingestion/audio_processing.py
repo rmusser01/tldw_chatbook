@@ -319,11 +319,50 @@ class LocalAudioProcessor:
         transcription_batch_route_resolved: bool = False,
         transcription_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Process multiple audio inputs (URLs or local files).
+        """Process multiple audio inputs from URLs or local files.
+
+        Args:
+            inputs: Audio URLs or local file paths to process.
+            transcription_provider: Exact STT provider or semantic default.
+            transcription_model: Provider-specific model identifier.
+            transcription_model_dir: Optional local model directory.
+            transcription_language: Language code or ``auto``.
+            translation_target_language: Optional translation target language.
+            perform_chunking: Whether to chunk the resulting transcript.
+            chunk_method: Optional transcript chunking strategy.
+            max_chunk_size: Maximum chunk size for the selected strategy.
+            chunk_overlap: Requested overlap between adjacent chunks.
+            use_adaptive_chunking: Whether to enable adaptive chunk sizing.
+            use_multi_level_chunking: Whether to emit multiple chunk levels.
+            chunk_language: Optional language hint for chunking.
+            diarize: Whether to request speaker diarization.
+            vad_use: Whether to request voice activity detection.
+            timestamp_option: Whether to request transcript timestamps.
+            start_time: Optional media start-time bound.
+            end_time: Optional media end-time bound.
+            perform_analysis: Whether to analyze the transcript after STT.
+            api_name: Optional analysis provider identifier.
+            api_key: Optional analysis provider credential.
+            custom_prompt: Optional analysis user prompt.
+            system_prompt: Optional analysis system prompt.
+            summarize_recursively: Whether to recursively summarize chunks.
+            use_cookies: Whether media download may use configured cookies.
+            cookies: Optional cookies source for media download.
+            keep_original: Whether to retain the normalized audio artifact.
+            custom_title: Optional title override.
+            author: Optional author override.
+            temp_dir: Optional caller-owned processing directory.
+            transcription_progress_callback: Optional STT progress callback.
+            transcription_precision: Optional normalized precision choice.
+            transcription_local_files_only: Whether network model access is
+                forbidden for this route.
+            transcription_batch_route_resolved: Whether Library routing already
+                resolved provider/model semantics.
+            transcription_context: Optional worker-private direct-local model
+                path and retry-lineage values.
 
         Returns:
-            Dict with processing results
+            A dictionary containing per-input processing results and errors.
         """
         results = []
         errors = []

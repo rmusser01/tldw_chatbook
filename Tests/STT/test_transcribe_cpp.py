@@ -154,6 +154,9 @@ def test_transcribe_file_revalidates_then_loads_once_and_normalizes_result(
     assert result.provenance.artifact_dependencies == ()
     assert result.provenance.precision == "native"
     assert result.provenance.effective_device.value == "cpu"
+    assert result.timings.total_seconds == pytest.approx(
+        result.timings.model_load_seconds + result.timings.inference_seconds
+    )
 
 
 def test_loaded_capabilities_are_identical_in_declaration_and_probe() -> None:
