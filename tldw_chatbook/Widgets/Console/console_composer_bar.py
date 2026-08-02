@@ -143,13 +143,13 @@ class _DraftLineSlice:
     synthetic_prefix_columns: int = 0
 
 
-#: Cells of empty space between Mic and Send. The two were adjacent, so a
-#: press aimed at Mic could land on Send and fire the draft; the buffer
-#: makes that near-miss hit nothing.
+#: Cells of empty space between Send and Mic. The two were adjacent, so a
+#: press aimed at one could land on the other; the buffer makes that
+#: near-miss hit nothing.
 MIC_SEND_GAP = 2
 
-#: Fixed cell width of the composer action row at rest: Mic(8) + gap(2) +
-#: Send(8) + Stop(8). Stop is display-toggled rather than removed, so it is
+#: Fixed cell width of the composer action row at rest: Send(8) + gap(2) +
+#: Mic(8) + Stop(8). Stop is display-toggled rather than removed, so it is
 #: budgeted even while hidden. The ☰ menu button (4) moved out of this row
 #: to sit left of the draft, beside Composer ▾; Attach(10) and Save(8) live
 #: behind ☰ because this row is width-bounded and every always-present
@@ -3175,7 +3175,7 @@ class ConsoleComposerBar(Horizontal):
         The expanded row reads, left to right: the ``Composer ▾`` collapse
         toggle, the ``☰`` overflow-menu button, the visible draft (with its
         hidden compatibility/status companions), then the fixed-width action
-        row holding ``Mic``, the ``MIC_SEND_GAP`` buffer, ``Send``, and the
+        row holding ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
         display-toggled ``Stop``/``✕`` controls. The collapsed presentation
         is a one-row status line with ``Stop`` (while a run is active) and
         ``Expand ▴``. Both presentations are always mounted;
@@ -3310,18 +3310,11 @@ class ConsoleComposerBar(Horizontal):
             actions.styles.min_height = 1
             actions.styles.max_height = 1
             with actions:
-                # Mic hugs the draft it dictates into (the row is
-                # left-aligned so Stop's hidden budget never parks between
-                # draft and Mic), then Send follows across the MIC_SEND_GAP
-                # buffer so a press aimed at Mic cannot land on Send.
+                # Send hugs the draft it submits (the row is left-aligned
+                # so Stop's hidden budget never parks between draft and
+                # Send), then Mic follows across the MIC_SEND_GAP buffer so
+                # a press aimed at one cannot land on the other.
                 yield self._bounded_button(
-                    "Mic",
-                    width=8,
-                    id="console-dictation",
-                    classes="destination-action-button console-dictation-button",
-                    tooltip=self.DICTATION_IDLE_TOOLTIP,
-                )
-                send_button = self._bounded_button(
                     "Send",
                     width=8,
                     id="console-send-message",
@@ -3329,8 +3322,15 @@ class ConsoleComposerBar(Horizontal):
                     variant="primary",
                     tooltip="Send the active Console session draft.",
                 )
-                send_button.styles.margin = (0, 0, 0, MIC_SEND_GAP)
-                yield send_button
+                mic_button = self._bounded_button(
+                    "Mic",
+                    width=8,
+                    id="console-dictation",
+                    classes="destination-action-button console-dictation-button",
+                    tooltip=self.DICTATION_IDLE_TOOLTIP,
+                )
+                mic_button.styles.margin = (0, 0, 0, MIC_SEND_GAP)
+                yield mic_button
                 stop_button = self._bounded_button(
                     "Stop",
                     width=8,
@@ -3346,12 +3346,12 @@ class ConsoleComposerBar(Horizontal):
                 yield stop_button
                 # Attach and Save Chatbook moved into the ☰ menu: this row
                 # is width-bounded, so every always-present button here is
-                # space the draft never gets back. What remains is Mic,
-                # Send, and the two CONDITIONAL controls (Stop while a run
+                # space the draft never gets back. What remains is Send,
+                # Mic, and the two CONDITIONAL controls (Stop while a run
                 # is active, ✕ while an attachment is staged) -- those cost
                 # nothing at rest, are time-critical when shown, and sit
-                # AFTER Send in Stop's budgeted slot so toggling them never
-                # shifts Mic or Send.
+                # AFTER Mic in Stop's budgeted slot so toggling them never
+                # shifts Send or Mic.
                 clear_attachment = self._bounded_button(
                     "✕",
                     width=4,
