@@ -11,6 +11,7 @@ from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
+from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
@@ -26,6 +27,7 @@ class SchedulerLoop:
         poll_interval: float = 30,
         clock: Optional[Callable[[], datetime]] = None,
         watchlist_projection: WatchlistProjection | None = None,
+        briefing_projection: BriefingProjection | None = None,
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
     ) -> None:
@@ -40,7 +42,11 @@ class SchedulerLoop:
         self.expected_unhandled_types = expected_unhandled_types
         self.running = False
         self._tick_count = 0
-        self.queue = PriorityQueue(db, watchlist_projection=watchlist_projection)
+        self.queue = PriorityQueue(
+            db,
+            watchlist_projection=watchlist_projection,
+            briefing_projection=briefing_projection,
+        )
 
     def report_configuration(self) -> None:
         """Log what this scheduler will and will not run, once, at startup.

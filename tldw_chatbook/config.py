@@ -2362,6 +2362,12 @@ watchlist_checks_enabled = true   # Run watchlist checks on their configured cad
 # which need the execution path it exists to avoid, and reports those as
 # "shadow_unsupported" rather than pretending they were checked (TASK-1383).
 watchlist_checks_shadow = false
+# Run each watchlist's own briefing on its configured cadence
+# (`watchlists.briefing_cadence_seconds`, opt-in per watchlist, NULL/unset
+# means never -- briefings phase 4, Locked Decision 4). Only fires while
+# the app is open; a schedule spends the user's own LLM tokens unattended,
+# so this is the one flag that turns that on at all.
+briefing_schedules_enabled = true
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items

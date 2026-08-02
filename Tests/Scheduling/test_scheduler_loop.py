@@ -10,6 +10,7 @@ from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
+from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 
@@ -398,3 +399,129 @@ def test_queue_ignores_watchlist_jobs_without_next_run(db):
 
     assert len(queue) == 1
     assert queue.peek()["id"] == "watchlist:1"
+
+
+# ---------------------------------------------------------------------------
+# Briefing projection wiring (briefings phase 4, task 3)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBriefingProjection(BriefingProjection):
+    """Projection stub that returns canned jobs without touching SubscriptionsDB."""
+
+    def __init__(self, jobs):
+        # Bypass the base-class __init__ which expects a SubscriptionsDB.
+        self._jobs = jobs
+
+    def list_jobs(self, owner_id: str = "local", *, now=None) -> list[ScheduledTask]:
+        return list(self._jobs)
+
+
+def test_queue_loads_briefing_projection(db):
+    """Mechanism half of the config-gate seam: when a briefing projection
+    IS wired, its due jobs really do reach the queue -- mirrors
+    `test_queue_loads_watchlist_projection` exactly, generalized minimally
+    (a second named parameter, not a projections list)."""
+    projection = _FakeBriefingProjection(
+        [
+            ScheduledTask(
+                id="briefing:1",
+                title="Watchlist A",
+                type="briefing_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    queue = PriorityQueue(db, briefing_projection=projection)
+    queue.load()
+
+    now = datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc)
+    due = queue.pop_due(now)
+    assert len(due) == 1
+    assert due[0]["id"] == "briefing:1"
+    assert due[0]["type"] == "briefing_job"
+
+
+def test_queue_with_no_briefing_projection_loads_no_briefing_jobs(db):
+    """The other half of the config-gate seam: `app.py` passes `None` for
+    `briefing_projection` when `briefing_schedules_enabled` is off
+    (`test_config_flags.py` pins that wiring by source inspection, since
+    booting the whole app to prove it is prohibitively heavy for a unit
+    test). This pins what `None` actually does: nothing is loaded, however
+    due a schedule might otherwise be -- there is no code path by which an
+    un-wired queue could still dispatch a briefing."""
+    queue = PriorityQueue(db, briefing_projection=None)
+    queue.load()
+
+    assert len(queue) == 0
+
+
+def test_queue_loads_both_watchlist_and_briefing_projections_together(db):
+    """Both projections are independent and additive -- neither wiring the
+    other on or off."""
+    watchlist_projection = _FakeWatchlistProjection(
+        [
+            ScheduledTask(
+                id="watchlist:1",
+                title="Feed A",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    briefing_projection = _FakeBriefingProjection(
+        [
+            ScheduledTask(
+                id="briefing:1",
+                title="Watchlist A",
+                type="briefing_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    queue = PriorityQueue(
+        db,
+        watchlist_projection=watchlist_projection,
+        briefing_projection=briefing_projection,
+    )
+    queue.load()
+
+    assert len(queue) == 2
+    now = datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc)
+    ids = {item["id"] for item in queue.pop_due(now)}
+    assert ids == {"watchlist:1", "briefing:1"}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_loop_dispatches_a_due_briefing_job(db):
+    """End-to-end through `SchedulerLoop.__init__`'s own `briefing_projection`
+    parameter (the thread this task adds alongside `watchlist_projection`),
+    not just through `PriorityQueue` directly."""
+    projection = _FakeBriefingProjection(
+        [
+            ScheduledTask(
+                id="briefing:1",
+                title="Watchlist A",
+                type="briefing_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"briefing_job": handler},
+        clock=lambda: datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc),
+        briefing_projection=projection,
+    )
+    loop.queue.load()
+
+    await loop.tick()
+
+    handler.assert_awaited_once()
+    dispatched_task = handler.await_args.args[0]
+    assert dispatched_task["id"] == "briefing:1"
