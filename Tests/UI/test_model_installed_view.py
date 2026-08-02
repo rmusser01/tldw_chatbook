@@ -409,10 +409,16 @@ def test_curated_preflight_result_opens_the_shared_modal(
 
 
 def test_curated_progress_tolerates_recompose_gap() -> None:
-    """A progress event is retained while its widget is temporarily absent."""
+    """A progress event is retained while its widget is temporarily absent.
+
+    ``apply_progress`` (called only by the host screen, ``LLMScreen`` --
+    see its own docstring for why ``CuratedView`` no longer renders
+    itself in response to a bubbled ``InstallProgressed`` -- TASK-596
+    delta port fix round 1) shares this exact tolerance with the
+    self-listening handler it replaced.
+    """
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
-    from tldw_chatbook.Widgets.ModelArtifacts import InstallProgressed
 
     progress = AcquisitionProgress(
         "fetch",
@@ -425,7 +431,7 @@ def test_curated_progress_tolerates_recompose_gap() -> None:
     view.query_one = MagicMock(side_effect=NoMatches)
     view.refresh = MagicMock()
 
-    view._install_progressed(InstallProgressed(progress))
+    view.apply_progress(progress)
 
     assert view._progress is progress
     view.refresh.assert_called_once_with(recompose=True)

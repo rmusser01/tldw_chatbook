@@ -227,6 +227,11 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
     and a progress tick emitted AFTER the recompose -- delivered through
     the pre-recompose instance's own worker, exactly as the real download
     would -- still reaches and updates the fresh view (not stale).
+
+    Content-only, like this test: it cannot tell one render from three.
+    See test_curated_install_progress_renders_exactly_once_per_tick below
+    for the call-counting half of this fix (Review Important #1, fix
+    round 1).
     """
     import asyncio
     from unittest.mock import MagicMock
@@ -330,15 +335,80 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         # Half 2 of the fix: still updating. This tick is delivered by the
         # ORIGINAL (now unmounted, orphaned) curated instance's own
         # worker -- exactly what the real download does after a
-        # mid-install recompose. Without the dual-delivery fix this would
-        # be silently dropped (a closed widget's post_message() is a
-        # no-op) and the fresh view would stay on "encoder.onnx".
+        # mid-install recompose. self.post_message on that orphaned
+        # instance now returns False (a closed widget's post_message() is
+        # a no-op), so _deliver falls back to the captured screen; without
+        # that fallback this would be silently dropped and the fresh view
+        # would stay on "encoder.onnx".
         resume.set()
         await provision_task
         await pilot.pause()
         await pilot.pause()
 
         assert "decoder.onnx" in _progress_text(fresh_curated)
+
+
+@pytest.mark.asyncio
+async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatch):
+    """TASK-596 delta port, fix round 1 (Review Important #1).
+
+    ``InstallProgressed`` bubbles by default -- nothing in this codebase
+    ever called ``event.stop()`` on it. Posting one tick to ``CuratedView``
+    used to be handled by ``CuratedView``'s own ``_install_progressed``
+    (rendering the widget), then bubble on, unstopped, through
+    ``LLMManagementWindow`` (unrelated to this bug -- it mirrors into
+    ``InstalledView``, a different widget) up to ``LLMScreen``, whose
+    forwarding (added for the recompose fix above) rendered the SAME,
+    still-mounted ``CuratedView`` a second time via ``apply_progress``.
+    With the since-removed dual delivery (a second, independent
+    ``screen.post_message`` for the very same tick) that was three
+    renders total for one event -- confirmed live via a Pilot probe
+    before this fix. The recompose test above only ever asserted eventual
+    CONTENT, which cannot distinguish one render from three; this counts
+    the actual number of ``apply_progress`` calls instead.
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import InstallProgressed
+
+    calls: list[AcquisitionProgress] = []
+    original_apply_progress = CuratedView.apply_progress
+
+    def counting_apply_progress(self, progress):
+        calls.append(progress)
+        return original_apply_progress(self, progress)
+
+    monkeypatch.setattr(CuratedView, "apply_progress", counting_apply_progress)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        for _ in range(5):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one(CuratedView)
+
+        reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+        progress = AcquisitionProgress("fetch", reference, "encoder.onnx", 1, 2)
+
+        # Posted to the still-live, currently-mounted CuratedView -- the
+        # steady-state, no-recompose case _deliver's own docstring calls
+        # "the common case": exactly what self.post_message(message) does
+        # inside _deliver when it succeeds. Bubbles through
+        # LLMManagementWindow (mirrors into InstalledView, untouched by
+        # this fix) up to LLMScreen, whose forwarding is now the ONLY
+        # place that calls apply_progress.
+        curated.post_message(InstallProgressed(progress))
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert calls == [progress]
+    assert len(calls) == 1, (
+        f"expected exactly one apply_progress call for one progress tick, "
+        f"got {len(calls)}"
+    )
 
 
 @pytest.mark.asyncio

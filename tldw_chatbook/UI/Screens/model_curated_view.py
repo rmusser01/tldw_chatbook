@@ -35,7 +35,6 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
     InstallStatusChanged,
     ModelInstallModal,
     ModelInstallProgress,
-    make_progress_callback,
 )
 
 if TYPE_CHECKING:
@@ -119,9 +118,10 @@ class CuratedView(Widget):
         #: instance, the screen survives a screen-level
         #: ``LabScreen.recompose()`` that tears down and rebuilds the whole
         #: ``LLMManagementWindow`` (this view included) mid-download, so
-        #: ``_provision`` posts progress there too -- not only to
-        #: ``self`` -- letting the host screen re-apply live progress to
-        #: whichever ``CuratedView`` instance is mounted next (see
+        #: ``_deliver`` falls back to posting there -- once this instance
+        #: can no longer receive its own messages -- letting the host
+        #: screen re-apply live progress to whichever ``CuratedView``
+        #: instance is mounted next (see
         #: ``LLMScreen._hydrate_curated_progress``) instead of the
         #: download going silently unrendered for the rest of its run.
         self._progress_screen: "Screen | None" = None
@@ -315,41 +315,65 @@ class CuratedView(Widget):
             self._operation_reference = None
             self.refresh(recompose=True)
             return
-        if self._operation_reference is not None:
-            self.post_message(
-                InstallStatusChanged(self._operation_reference, active=True)
-            )
         # See _progress_screen's own docstring: captured here, on the main
         # thread, before the worker starts -- not inside _provision, which
-        # runs on the worker thread.
+        # runs on the worker thread -- and before the InstallStatusChanged
+        # post below, so _deliver's fallback is available from the very
+        # first message this install produces.
         try:
             self._progress_screen = self.screen
         except NoScreen:
             self._progress_screen = None
+        if self._operation_reference is not None:
+            self._deliver(
+                InstallStatusChanged(self._operation_reference, active=True)
+            )
         self._provision_model()
+
+    def _deliver(self, message: InstallProgressed | InstallStatusChanged) -> None:
+        """Post one message to whichever target can still receive it.
+
+        Tries this instance first -- ``self.post_message`` -- which
+        preserves today's exact bubble path (``CuratedView`` ->
+        ``LLMManagementWindow``, which mirrors progress into
+        ``InstalledView`` -- unrelated to this task -- -> ``LLMScreen``)
+        for the common, no-recompose case: exactly the same single message
+        this code posted before ``_progress_screen`` existed.
+        ``post_message`` returns ``False`` without raising once this
+        instance is closed (torn down by a screen-level recompose, see
+        ``_progress_screen``'s docstring) -- only THEN does this fall back
+        to the captured screen, so the durable channel is used exactly
+        when needed, never in addition to the normal path.
+
+        Review Important #1 (this delta port's first round): posting to
+        both targets unconditionally, every tick, meant ``LLMScreen``'s own
+        forwarding (``_model_install_progressed``/``_hydrate_curated_
+        progress``) re-applied the SAME event to the SAME still-mounted
+        ``CuratedView`` a second (and, with ``InstallProgressed`` also
+        bubbling through this instance's own now-removed self-listening
+        handler, third) time -- confirmed live via a Pilot probe showing
+        three ``apply_progress`` calls for one tick. Exactly one message
+        is posted per tick now, so ``LLMScreen`` renders exactly once.
+
+        Args:
+            message: The event to deliver; a fresh instance per call (never
+                reused across the two targets, so no Message ever needs
+                its ``_prevent`` set merged across two different posts).
+        """
+        if self.post_message(message):
+            return
+        screen = self._progress_screen
+        if screen is not None:
+            screen.post_message(message)
 
     async def _provision(self, report):
         """Provision the consented report on the worker's event loop."""
         from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
 
         acquisition = ArtifactAcquisitionService(self._service_for_worker())
-        # Dual delivery (TASK-596 delta port -- curated install progress
-        # survives a screen-level recompose): render_here preserves this
-        # exact instance's own self-rendering (_install_progressed) for the
-        # common no-recompose case, unchanged from before. render_on_screen
-        # additionally reaches the mounting screen directly -- see
-        # _progress_screen's own docstring for why that one survives a
-        # recompose that this instance would not.
-        render_here = make_progress_callback(self.post_message)
-        screen = self._progress_screen
-        render_on_screen = (
-            make_progress_callback(screen.post_message) if screen is not None else None
-        )
 
         def deliver(progress: "AcquisitionProgress") -> None:
-            render_here(progress)
-            if render_on_screen is not None:
-                render_on_screen(progress)
+            self._deliver(InstallProgressed(progress))
 
         return await acquisition.provision(
             report.root,
@@ -388,23 +412,23 @@ class CuratedView(Widget):
             return
         self.app.call_from_thread(self._apply_provision_result, None)
 
-    @on(InstallProgressed)
-    def _install_progressed(self, event: InstallProgressed) -> None:
-        """Retain and render worker progress outside the modal."""
-        self.apply_progress(event.progress)
-
     def apply_progress(self, progress: "AcquisitionProgress") -> None:
         """Render one acquisition progress event, retaining it for later.
 
-        Shares its rendering with ``_install_progressed`` (the in-process
-        path for a progress event this exact instance's own worker just
-        posted to itself). The host screen (``LLMScreen``) also calls this
-        directly -- via ``_hydrate_curated_progress`` and its own
-        ``InstallProgressed`` handler -- to re-apply the last known (or
-        latest live) progress to whichever ``CuratedView`` instance is
-        currently mounted, including a freshly (re)mounted one after a
-        screen-level recompose tore the previous instance down mid-download
-        (see ``_progress_screen``'s docstring).
+        Called ONLY by the host screen (``LLMScreen``) -- via its own
+        ``InstallProgressed`` handler for a live tick, and via
+        ``_hydrate_curated_progress`` to re-apply the last known progress
+        to a freshly (re)mounted instance after a screen-level recompose
+        (see ``_progress_screen``'s docstring). This view deliberately has
+        no ``@on(InstallProgressed)`` handler of its own: it used to
+        (re-rendering itself on receipt of the very message it had just
+        posted to itself), which meant one tick rendered TWICE on the same
+        still-mounted widget once ``LLMScreen`` started forwarding too --
+        confirmed live via a Pilot probe showing three ``apply_progress``
+        calls for one tick (Review Important #1). ``LLMScreen`` is now the
+        sole caller, giving exactly one render per tick regardless of
+        which delivery path (self or the durable screen fallback,
+        see ``_deliver``) carried it.
 
         ``self._progress`` is retained before either branch below runs, so
         a fallback ``refresh(recompose=True)`` still picks up the correct
@@ -414,9 +438,11 @@ class CuratedView(Widget):
         (re)mounted but its own ``ModelInstallProgress`` child has not yet
         finished composing ITS OWN children -- a widget that ``query_one``
         finds but whose own ``update_progress`` call then raises
-        ``NoMatches`` reaching into it. That is the same "temporarily
-        absent" gap ``_install_progressed`` always tolerated for the outer
-        widget; this also tolerates it one level deeper.
+        ``NoMatches`` reaching into it. Unrelated to the double-render
+        issue above (that was about how many times a fully-mounted widget
+        got re-rendered; this is about a widget still mid-mount) -- kept
+        even now that delivery is single-path, tolerating the outer
+        widget lookup being temporarily absent one level deeper.
 
         Args:
             progress: The acquisition progress event to render.
@@ -438,8 +464,10 @@ class CuratedView(Widget):
         self._pending_report = None
         self._operation_reference = None
         self._progress = None
-        screen = self._progress_screen
-        self._progress_screen = None
+        # _progress_screen itself is cleared only after _deliver (below)
+        # has had a chance to use it as its fallback target for this
+        # exact completion message -- clearing it first would silently
+        # disable the durable path for the one message that most needs it.
         try:
             progress = self.query_one(
                 "#curated-model-install-progress",
@@ -454,27 +482,16 @@ class CuratedView(Widget):
         else:
             self.notify("Model installed and activated.", severity="information")
         if reference is not None:
-            self.post_message(
-                InstallStatusChanged(
-                    reference,
-                    active=False,
-                    succeeded=error is None,
-                )
+            # _deliver (see its own docstring): tries this instance first,
+            # falls back to the captured screen only if a screen-level
+            # recompose already orphaned it -- otherwise this completion
+            # message would never bubble anywhere (a closed widget's
+            # post_message() is a silent no-op), and the host screen would
+            # never learn the install finished, re-hydrating a stale
+            # "still active" progress display on every future recompose
+            # (see LLMScreen._hydrate_curated_progress).
+            self._deliver(
+                InstallStatusChanged(reference, active=False, succeeded=error is None)
             )
-            # Dual delivery, mirroring _provision's own progress delivery:
-            # if a screen-level recompose orphaned this exact instance
-            # mid-download, the message above never bubbles anywhere (a
-            # closed widget's post_message() is a silent no-op), so the
-            # host screen would otherwise never learn the install finished
-            # and would keep re-hydrating a stale "still active" progress
-            # display on every future recompose (see
-            # LLMScreen._hydrate_curated_progress).
-            if screen is not None:
-                screen.post_message(
-                    InstallStatusChanged(
-                        reference,
-                        active=False,
-                        succeeded=error is None,
-                    )
-                )
+        self._progress_screen = None
         self.ensure_loaded(force=True)
