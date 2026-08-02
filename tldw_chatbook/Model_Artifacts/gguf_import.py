@@ -27,6 +27,9 @@ _DEFAULT_ALIGNMENT = 32
 _READ_CHUNK_BYTES = 64 * 1024
 _LOWERCASE_ALPHANUMERIC = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 _METADATA_KEY_CHARACTERS = _LOWERCASE_ALPHANUMERIC | {"_", "."}
+# transcribe.cpp v0.1.3 dispatches underscore identifiers such as
+# ``granite_speech``, so pinned-runtime admission is wider than generic GGUF prose.
+_ARCHITECTURE_CHARACTERS = _LOWERCASE_ALPHANUMERIC | {"_"}
 
 _TYPE_UINT8 = 0
 _TYPE_INT8 = 1
@@ -314,9 +317,9 @@ def _validate_architecture(value: str) -> None:
     if (
         not value
         or not value.isascii()
-        or any(character not in _LOWERCASE_ALPHANUMERIC for character in value)
+        or any(character not in _ARCHITECTURE_CHARACTERS for character in value)
     ):
-        raise GGUFParseError("GGUF general.architecture must match [a-z0-9]+")
+        raise GGUFParseError("GGUF general.architecture must match [a-z0-9_]+")
 
 
 def inspect_gguf(handle: BinaryIO, *, file_size: int) -> GGUFMetadata:

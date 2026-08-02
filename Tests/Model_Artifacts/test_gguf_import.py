@@ -537,7 +537,7 @@ def test_parser_rejects_noncanonical_bool_byte_in_array():
 
 @pytest.mark.parametrize(
     "architecture",
-    ["whis\nper", "Whisper", "whispér", "whisper-small", "whisper_small", ""],
+    ["whis\nper", "Whisper", "whispér", "whisper-small", "whisper.small", ""],
 )
 def test_parser_rejects_noncanonical_architecture(architecture: str):
     payload = make_gguf(architecture=architecture)
@@ -546,7 +546,10 @@ def test_parser_rejects_noncanonical_architecture(architecture: str):
         gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
 
 
-@pytest.mark.parametrize("architecture", ["a", "whisper", "qwen3", "123"])
+@pytest.mark.parametrize(
+    "architecture",
+    ["a", "whisper", "qwen3", "123", "granite_speech"],
+)
 def test_parser_retains_canonical_architecture_unchanged(architecture: str):
     payload = make_gguf(architecture=architecture)
 
