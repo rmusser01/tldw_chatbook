@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 import tomllib
+import warnings
 
 import pytest
 
@@ -26,6 +28,14 @@ EGRESS_POLICY_PATH = Path("Utils/egress.py")
 DISALLOWED_SCHEMES = frozenset({"file", "ftp", "gopher", "javascript", "data"})
 
 
+@dataclass(frozen=True)
+class _PolicyInventory:
+    """Immutable source-policy findings collected during one package scan."""
+
+    metadata_owners: tuple[tuple[str, frozenset[Path]], ...]
+    scheme_violations: tuple[tuple[Path, int, frozenset[str]], ...]
+
+
 def _production_python_files() -> list[Path]:
     """Return Python sources belonging to the shipped application package."""
     return sorted(PACKAGE_ROOT.rglob("*.py"))
@@ -33,7 +43,9 @@ def _production_python_files() -> list[Path]:
 
 def _source_tree(source_path: Path) -> ast.Module:
     """Parse one production source file without reading comments as policy."""
-    return ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
 
 
 def _literal_collection_values(node: ast.AST) -> set[str] | None:
@@ -55,6 +67,41 @@ def _literal_collection_values(node: ast.AST) -> set[str] | None:
     ):
         return _literal_collection_values(node.args[0])
     return None
+
+
+@pytest.fixture(scope="module")
+def _policy_inventory() -> _PolicyInventory:
+    """Scan production Python sources once for all shared-policy duplicates."""
+    endpoint_paths = {endpoint: set() for endpoint in CANONICAL_METADATA_ENDPOINTS}
+    violations: dict[tuple[Path, int], set[str]] = {}
+
+    for source_path in _production_python_files():
+        relative_path = source_path.relative_to(PACKAGE_ROOT)
+        for node in ast.walk(_source_tree(source_path)):
+            if isinstance(node, ast.Constant) and node.value in endpoint_paths:
+                endpoint_paths[node.value].add(relative_path)
+
+            values = _literal_collection_values(node)
+            if values is None:
+                continue
+            blocked_schemes = values & DISALLOWED_SCHEMES
+            if len(blocked_schemes) >= 3:
+                violations.setdefault((relative_path, node.lineno), set()).update(
+                    blocked_schemes
+                )
+
+    return _PolicyInventory(
+        metadata_owners=tuple(
+            (endpoint, frozenset(paths))
+            for endpoint, paths in sorted(endpoint_paths.items())
+        ),
+        scheme_violations=tuple(
+            (path, line, frozenset(schemes))
+            for (path, line), schemes in sorted(
+                violations.items(), key=lambda item: (item[0][0].as_posix(), item[0][1])
+            )
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -86,34 +133,31 @@ def test_shipped_subscription_config_has_no_security_child_table() -> None:
     assert "security" not in config_defaults["subscriptions"]
 
 
-def test_canonical_metadata_endpoints_are_owned_only_by_egress_policy() -> None:
+def test_canonical_metadata_endpoints_are_owned_only_by_egress_policy(
+    _policy_inventory: _PolicyInventory,
+) -> None:
     """Metadata endpoint literals have one canonical production policy owner."""
-    endpoint_paths = {endpoint: set() for endpoint in CANONICAL_METADATA_ENDPOINTS}
+    mismatches = tuple(
+        (endpoint, paths)
+        for endpoint, paths in _policy_inventory.metadata_owners
+        if paths != {EGRESS_POLICY_PATH}
+    )
 
-    for source_path in _production_python_files():
-        relative_path = source_path.relative_to(PACKAGE_ROOT)
-        for node in ast.walk(_source_tree(source_path)):
-            if isinstance(node, ast.Constant) and node.value in endpoint_paths:
-                endpoint_paths[node.value].add(relative_path)
-
-    for endpoint, paths in endpoint_paths.items():
-        assert paths == {EGRESS_POLICY_PATH}, (
-            f"{endpoint} must be declared only in {EGRESS_POLICY_PATH}; found {paths}"
-        )
+    assert not mismatches, "\n".join(
+        f"{endpoint} must be declared only in {EGRESS_POLICY_PATH}; found "
+        f"{tuple(sorted(path.as_posix() for path in paths))}"
+        for endpoint, paths in mismatches
+    )
 
 
-def test_disallowed_url_scheme_collections_are_not_duplicated() -> None:
+def test_disallowed_url_scheme_collections_are_not_duplicated(
+    _policy_inventory: _PolicyInventory,
+) -> None:
     """The egress allowlist, rather than blocked-scheme tables, owns scheme policy."""
-    violations: list[tuple[Path, int, set[str]]] = []
-
-    for source_path in _production_python_files():
-        relative_path = source_path.relative_to(PACKAGE_ROOT)
-        for node in ast.walk(_source_tree(source_path)):
-            values = _literal_collection_values(node)
-            if values is not None and len(values & DISALLOWED_SCHEMES) >= 3:
-                violations.append((relative_path, node.lineno, values & DISALLOWED_SCHEMES))
-
-    assert not violations, f"duplicate disallowed URL-scheme policy: {violations}"
+    assert not _policy_inventory.scheme_violations, (
+        "duplicate disallowed URL-scheme policy: "
+        f"{_policy_inventory.scheme_violations}"
+    )
 
 
 def test_subscription_validator_retains_only_its_http_scheme_boundary() -> None:
