@@ -138,6 +138,37 @@ def test_callback_never_raises_even_when_emit_explodes():
     sink._stream.tick(20)                    # would raise through callback if unguarded
 
 
+def test_zero_audio_open_close_never_starts():
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    sink.close()                             # nothing ever fed
+    h["s"].tick(3)
+    assert all(chunk == b"\x00" * BLOCK_BYTES for chunk in h["s"].out), "silence played"
+    assert not any(isinstance(e, SinkStarted) for e in events), "nothing ever played; no SinkStarted"
+
+
+def test_leftover_counts_toward_buffer_cap():
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    cap_blocks = BUFFER_CAP_SECONDS * 1000 // BLOCK_MS
+    assert sink.feed(_pcm(cap_blocks)) is True   # exactly the cap, one big chunk
+    h["s"].tick(1)                               # consumes 1 block; (cap - 1 block) becomes leftover
+    assert sink.feed(_pcm(cap_blocks)) is False, "leftover must count against the cap"
+    assert sum(isinstance(e, SinkBufferFull) for e in events) == 1
+
+
+def test_buffered_seconds_includes_leftover():
+    events, = ([],)
+    sink, h = _mk(events)
+    sink.open(sample_rate=RATE)
+    sink.feed(_pcm(16))                          # one 320ms chunk, crosses the 300ms prebuffer
+    assert round(sink.buffered_seconds, 4) == 0.32
+    h["s"].tick(1)                                # consumes 1 block off the SAME chunk -> _leftover
+    assert round(sink.buffered_seconds, 4) == 0.30, "leftover must be visible to buffered_seconds"
+
+
 def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
     import tldw_chatbook.Audio.streaming_sink as mod
     events = []

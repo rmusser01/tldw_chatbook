@@ -180,8 +180,9 @@ class StreamingPcmSink:
         self._factory = stream_factory
         self._lock = threading.Lock()
         self._buf: deque[bytes] = deque()      # arbitrary-size chunks
-        self._buffered_bytes = 0
-        self._leftover = b""                   # partial block carried between callbacks
+        self._buffered_bytes = 0                # bytes still queued whole in self._buf
+        self._leftover = b""                    # partial block carried between callbacks
+        self._leftover_off = 0                  # bytes already consumed from self._leftover
         self._state = "idle"
         self._audible = False
         self._closed = False
@@ -260,8 +261,10 @@ class StreamingPcmSink:
         Never blocks. If the buffer is already at (or would exceed) the
         `BUFFER_CAP_SECONDS` cap, the chunk is dropped and `False` is
         returned; a `SinkBufferFull` event is emitted the first time this
-        happens for this sink (subsequent rejections stay silent until the
-        buffer has room again).
+        happens for this sink and never again for the lifetime of this
+        sink instance -- the flag does not re-arm even if the buffer later
+        drains below the cap. Since sinks are single-use, "once per full
+        episode" and "once per sink" are the same thing in practice.
 
         Args:
             pcm: Raw PCM16 bytes to enqueue, at the sample rate/channel
@@ -271,10 +274,12 @@ class StreamingPcmSink:
             `True` if the chunk was accepted, `False` if it was rejected
             (sink not open/draining, already closed, or buffer full).
         """
+        report = False
         with self._lock:
             if self._state not in ("open", "draining") or self._closed:
                 return False
-            if self._buffered_bytes + len(pcm) > self._cap_bytes:
+            pending = self._buffered_bytes + self._leftover_remaining_locked()
+            if pending + len(pcm) > self._cap_bytes:
                 report = not self._full_reported
                 self._full_reported = True
             else:
@@ -293,6 +298,14 @@ class StreamingPcmSink:
         below the prebuffer threshold) is allowed to play out, after which
         the device callback transitions the sink to `"stopped"` and emits
         `SinkDrained`. Use `stop()` instead for immediate interruption.
+
+        Calling `close()` before `open()` has transitioned the sink to
+        `"open"` (i.e. while still `"idle"`, mid-`open()`, or after a
+        failed `open()`) is a caller bug: it is silently dropped and
+        `feed()`'d audio already queued will never be played out. Callers
+        must sequence `open()` -> `feed()`* -> `close()`/`stop()` on one
+        thread (as the TTS generation worker does), never call `close()`
+        speculatively before `open()` is known to have succeeded.
         """
         with self._lock:
             if self._state != "open":
@@ -317,6 +330,7 @@ class StreamingPcmSink:
             self._buf.clear()
             self._buffered_bytes = 0
             self._leftover = b""
+            self._leftover_off = 0
         stream, self._stream = self._stream, None
         if stream is not None:
             try:
@@ -362,16 +376,26 @@ class StreamingPcmSink:
                     outdata[:] = 0
                     return
                 if not self._audible:
-                    if self._buffered_bytes >= self._prebuffer_bytes or self._closed:
+                    have_any = self._buffered_bytes > 0 or self._leftover
+                    if self._buffered_bytes >= self._prebuffer_bytes or (self._closed and have_any):
                         self._audible = True
                         started = True
+                    elif self._closed:
+                        # Closed with nothing ever fed: nothing will ever
+                        # play, so skip the SinkStarted transition -- but
+                        # still fall through to the normal chunk/drained
+                        # logic below so the sink still reaches "stopped"
+                        # and emits SinkDrained instead of stalling in
+                        # "draining" forever.
+                        started = False
                     else:
                         outdata[:] = 0
                         return
                 else:
                     started = False
                 chunk = self._take_locked(need)
-                drained = self._closed and self._buffered_bytes == 0 and not self._leftover
+                drained = (self._closed and self._buffered_bytes == 0
+                           and self._leftover_remaining_locked() == 0)
             if started:
                 self._emit(SinkStarted())
             if chunk:
@@ -402,12 +426,29 @@ class StreamingPcmSink:
                 pass
             self._fail("audio callback error")
 
+    def _leftover_remaining_locked(self) -> int:
+        """Return how many unconsumed bytes remain in `self._leftover`.
+
+        Must be called with `self._lock` held. `self._leftover` is kept
+        around (rather than re-sliced down to just the unconsumed tail on
+        every callback) so that draining it one block at a time is an O(1)
+        offset bump instead of an O(n) copy -- see `_take_locked`.
+        """
+        return len(self._leftover) - self._leftover_off
+
     def _take_locked(self, need: int) -> bytes:
         """Pop up to `need` bytes of audio off the buffer.
 
         Must be called with `self._lock` held. Consumes carried-over
         `self._leftover` first, then whole chunks from `self._buf`, and
-        stashes any excess back into `self._leftover` for the next call.
+        stashes any excess back into `self._leftover` for later calls.
+
+        The common steady-state case -- one large fed chunk being drained
+        one block at a time -- takes a fast path that advances an offset
+        into the *same* `self._leftover` bytes object instead of
+        re-slicing (and thus re-copying and re-allocating) the entire
+        remaining tail on every callback; only the `need`-sized slice
+        actually handed to the caller is copied.
 
         Args:
             need: Number of bytes requested.
@@ -416,18 +457,30 @@ class StreamingPcmSink:
             Up to `need` bytes of audio; shorter than `need` only if the
             buffer did not contain enough data.
         """
-        parts = [self._leftover] if self._leftover else []
-        have = len(self._leftover)
+        remaining = self._leftover_remaining_locked()
+        if remaining >= need:
+            start = self._leftover_off
+            chunk = self._leftover[start:start + need]
+            self._leftover_off += need
+            if self._leftover_off >= len(self._leftover):
+                self._leftover = b""
+                self._leftover_off = 0
+            return chunk
+
+        parts = [self._leftover[self._leftover_off:]] if remaining else []
+        have = remaining
         self._leftover = b""
+        self._leftover_off = 0
         while have < need and self._buf:
             c = self._buf.popleft()
             self._buffered_bytes -= len(c)
             parts.append(c)
             have += len(c)
-        blob = b"".join(parts)
+        blob = parts[0] if len(parts) == 1 else b"".join(parts)
         if len(blob) > need:
-            self._leftover = blob[need:]
-            blob = blob[:need]
+            self._leftover = blob
+            self._leftover_off = need
+            return blob[:need]
         return blob
 
     def _note_underrun(self, frames: int) -> None:
@@ -458,10 +511,16 @@ class StreamingPcmSink:
 
     @property
     def buffered_seconds(self) -> float:
-        """Approximate seconds of audio currently buffered (not yet played)."""
+        """Approximate seconds of audio currently buffered (not yet played).
+
+        Includes both whole chunks still queued in the internal buffer and
+        any partially-consumed carry-over (`_leftover`) from the last
+        device callback.
+        """
         with self._lock:
             denom = self._cap_bytes / BUFFER_CAP_SECONDS if self._cap_bytes else 1
-            return self._buffered_bytes / denom
+            pending = self._buffered_bytes + self._leftover_remaining_locked()
+            return pending / denom
 
 
 #: The sink currently registered as "live" (i.e. actively producing audio
