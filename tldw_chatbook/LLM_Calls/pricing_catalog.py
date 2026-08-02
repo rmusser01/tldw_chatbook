@@ -78,6 +78,17 @@ def _entry(inp: float, out: float, cr: Optional[float] = None, cw: Optional[floa
     }
 
 
+def _lower_keys(mapping: Dict[str, Any]) -> Dict[str, Any]:
+    """Lowercase every "provider:model" key so lookups are case-insensitive.
+
+    get_pricing() always queries with a lowercased "provider:model" key; both
+    the seed table and any config-supplied `[pricing].models` overrides must
+    go through this before landing in `direct_mappings`, or a naturally-cased
+    override key would silently never match.
+    """
+    return {str(key).lower(): value for key, value in mapping.items()}
+
+
 # Anthropic: cache read = 0.1x input, cache write = 1.25x input (5-min TTL).
 # Verified 2026-08-01 (pre-verified rates supplied with the task brief).
 DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
@@ -250,10 +261,14 @@ class PricingCatalog:
             config = full_config.get("pricing", {})
 
         # Direct "provider:model" mappings (highest priority). Seed table merged
-        # with config overrides - overrides win on a per-key basis.
+        # with config overrides - overrides win on a per-key basis. get_pricing()
+        # always looks up a lowercased "provider:model" key, so both the seed and
+        # any config-supplied keys must be normalized to lowercase here - otherwise
+        # a naturally-capitalized TOML key (e.g. "Anthropic:Claude-Sonnet-4-6")
+        # would sit under its original casing and silently never match a lookup.
         self.direct_mappings: Dict[str, Dict[str, Any]] = {
-            **DEFAULT_MODEL_PRICING,
-            **config.get("models", {}),
+            **_lower_keys(DEFAULT_MODEL_PRICING),
+            **_lower_keys(config.get("models", {})),
         }
 
         # Pattern configurations by provider, merged the same way (a provider

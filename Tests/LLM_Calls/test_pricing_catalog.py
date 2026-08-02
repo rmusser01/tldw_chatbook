@@ -63,6 +63,27 @@ def test_config_override_beats_seed():
     assert pricing.as_of == "2026-09-01"
 
 
+def test_config_override_key_is_case_insensitive():
+    # A naturally-capitalized TOML key (mixed case in BOTH the provider and
+    # model segments) must still beat the seed when queried lowercase - the
+    # merge normalizes config-supplied keys, not just the lookup query.
+    config = {
+        "models": {
+            "Anthropic:Claude-Sonnet-4-6": {
+                "input_per_mtok": 9.0,
+                "output_per_mtok": 9.0,
+                "cache_read_per_mtok": None,
+                "cache_write_per_mtok": None,
+                "as_of": "2026-09-01",
+            }
+        }
+    }
+    pricing = _catalog(config).get_pricing("anthropic", "claude-sonnet-4-6")
+    assert pricing is not None
+    assert pricing.input_per_mtok == 9.0
+    assert pricing.as_of == "2026-09-01"
+
+
 def test_cost_for_usage_multiplies_disjoint_buckets():
     usage = ProviderUsage(
         uncached_input=1_000_000,
