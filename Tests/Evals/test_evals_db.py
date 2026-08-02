@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from loguru import logger
 
-from tldw_chatbook.DB.Evals_DB import EvalsDB, InputError
+from tldw_chatbook.DB.Evals_DB import EvalsDB, EvalsDBError, InputError
 
 
 class TestEvalsDBInitialization:
@@ -823,6 +823,31 @@ class TestErrorHandling:
         success = temp_db.update_task(task_id, description="Updated")
         # For now, this will succeed as optimistic locking is not implemented
         assert success
+
+    def test_delete_task_wraps_a_driver_error_in_evalsdberror(self, temp_db):
+        """delete_task's docstring promises EvalsDBError for "the delete
+        failed for a reason other than 'no matching row'" -- for the whole
+        method, not just the UPDATE that soft-deletes the task. The run-group
+        lookup that runs before that UPDATE (to find the task's
+        character-probe annotations to cascade) used to run outside the
+        method's own try/except, so a failure there leaked sqlite3's raw
+        driver exception instead. Dropping eval_runs simulates that lookup
+        failing; delete_task must still raise EvalsDBError, matching every
+        other failure path in this method and the docstring callers rely on.
+        """
+        task_id = temp_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        conn = temp_db.get_connection()
+        conn.execute("DROP TABLE eval_runs")
+        conn.commit()
+
+        with pytest.raises(EvalsDBError):
+            temp_db.delete_task(task_id)
 
 
 class TestThreadSafety:

@@ -998,6 +998,7 @@ def annotate_turn(
     turn_index: int,
     tags: Sequence[str],
     note: str,
+    vocabulary: Optional[Sequence[Tag]] = None,
 ) -> None:
     """Record or replace one conversation turn's reviewer annotation.
 
@@ -1007,14 +1008,14 @@ def annotate_turn(
     replaces its tags and note rather than accumulating a second row (see
     ``EvalsDB.upsert_probe_turn_annotation``).
 
-    Every tag in ``tags`` is canonicalised and checked against
-    ``run_group_vocabulary(db, run_group_id)`` before anything is written.
-    An unknown tag has no kind, so the summary would have nothing to group
-    it under -- the same fail-loudly rule ``resolve_vocabulary`` and
-    ``coerce_tag`` already enforce for a bench's ``extra_tags``. Validation
-    runs over the whole list before the write, so a rejected annotation
-    leaves nothing behind: no partial write of "the tags checked out before
-    the bad one".
+    Every tag in ``tags`` is canonicalised and checked against ``vocabulary``
+    (or, when omitted, ``run_group_vocabulary(db, run_group_id)``) before
+    anything is written. An unknown tag has no kind, so the summary would
+    have nothing to group it under -- the same fail-loudly rule
+    ``resolve_vocabulary`` and ``coerce_tag`` already enforce for a bench's
+    ``extra_tags``. Validation runs over the whole list before the write, so
+    a rejected annotation leaves nothing behind: no partial write of "the
+    tags checked out before the bad one".
 
     Args:
         db: The evals database handle.
@@ -1028,13 +1029,27 @@ def annotate_turn(
         tags: Tag slugs describing this turn. May be empty -- a note
             without a tag is still a real observation.
         note: Free-text reviewer note for this turn.
+        vocabulary: The vocabulary to validate ``tags`` against. Omit (or
+            pass ``None``) to validate against the run's captured
+            vocabulary, ``run_group_vocabulary(db, run_group_id)`` --
+            today's behaviour, unchanged for every existing caller. Pass an
+            explicit vocabulary to support a tag created during a review
+            session (written to the bench's ``extra_tags`` and added to a
+            live in-memory vocabulary) that is not yet in the run's
+            snapshot; it is also how a caller holding that vocabulary
+            already (e.g. cached once per run-group review session) avoids
+            re-deriving it -- and re-reading the run's snapshot, which
+            duplicates every card's text and composed system prompts -- on
+            every single write.
 
     Raises:
-        ValueError: If any tag, once canonicalised, is not in this run's
-            vocabulary -- naming the offending slug. Also propagated from
-            ``run_group_vocabulary`` if no runs share this ``run_group_id``.
+        ValueError: If any tag, once canonicalised, is not in the applicable
+            vocabulary -- naming the offending slug. When ``vocabulary`` is
+            omitted, also propagated from ``run_group_vocabulary`` if no
+            runs share this ``run_group_id``.
     """
-    vocabulary = run_group_vocabulary(db, run_group_id)
+    if vocabulary is None:
+        vocabulary = run_group_vocabulary(db, run_group_id)
     known = {tag.slug for tag in vocabulary}
     canonical: list[str] = []
     for raw in tags or ():

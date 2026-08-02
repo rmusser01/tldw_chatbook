@@ -609,6 +609,69 @@ def test_a_benchs_extra_tag_is_accepted(db, probe_run_group_with_extra_tags):
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
 
 
+# --- annotate_turn's optional `vocabulary` param (final review fix wave,
+# findings 1+2) --------------------------------------------------------
+#
+# Phase 3b's recommended flow creates a tag mid-review: written to the
+# bench's `extra_tags` and added to the review pane's live vocabulary, never
+# to the already-captured run snapshot. Without a way to pass that live
+# vocabulary in, such a tag would render as selectable and then raise
+# ValueError on `annotate_turn`, which only ever consulted
+# `run_group_vocabulary` (the snapshot-derived vocabulary). These tests
+# cover the new `vocabulary` parameter that closes that gap.
+
+
+def test_an_explicit_vocabulary_accepts_a_tag_not_in_the_runs_snapshot(
+    db, probe_run_group
+):
+    """`probe_run_group`'s snapshot carries no extra tags, so
+    `run_group_vocabulary` alone would reject `meta-commentary`. Passing it
+    explicitly -- standing in for a review pane's live, session-extended
+    vocabulary -- accepts and persists it anyway."""
+    live_vocabulary = run_group_vocabulary(db, probe_run_group) + (
+        Tag("meta-commentary", "Meta commentary", "failure"),
+    )
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+        vocabulary=live_vocabulary,
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+def test_an_explicit_vocabulary_still_rejects_a_slug_outside_it(db, probe_run_group):
+    """An explicit vocabulary is a real allowlist, not a bypass: a slug
+    outside it is rejected exactly as the default (snapshot-derived) path
+    rejects a slug outside the run's captured vocabulary, and nothing is
+    written."""
+    live_vocabulary = run_group_vocabulary(db, probe_run_group) + (
+        Tag("meta-commentary", "Meta commentary", "failure"),
+    )
+    with pytest.raises(ValueError, match="no-such-tag"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["no-such-tag"], note="",
+            vocabulary=live_vocabulary,
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_omitting_vocabulary_still_validates_against_the_runs_captured_vocabulary(
+    db, probe_run_group
+):
+    """Omitting `vocabulary` must behave exactly as before this parameter
+    existed: the same `meta-commentary` slug that an explicit live
+    vocabulary accepts (see above) is still rejected here, because
+    `probe_run_group`'s own captured snapshot has no such extra tag."""
+    with pytest.raises(ValueError, match="meta-commentary"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["meta-commentary"], note="",
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
 # --- delete_task cascades probe annotations (whole-branch review I4, task-6) --
 #
 # `probe_run_group` is opened under the `bench` fixture's task_id (see the
@@ -653,14 +716,26 @@ def seeded_word_bench_id(db):
     test_loading_a_word_bench_as_a_character_bench_raises` does. All this
     test needs is a bench `delete_task` can target that is NOT a character
     probe bench, to prove the cascade is scoped to that task's own run
-    groups rather than to every probe annotation row in the database."""
-    return db.create_task(
+    groups rather than to every probe annotation row in the database.
+
+    Carries a real run group (an `eval_runs` row stamped with
+    `run_group_id`), not just the bare task row: without one,
+    `delete_task`'s own `run_group_ids` lookup for this task always returns
+    `[]`, and `delete_probe_annotations_for_run_groups` no-ops on an empty
+    id list -- the DELETE against `eval_probe_turn_annotations`/
+    `eval_probe_review_state` is never actually executed, so a scoping bug
+    in that DELETE's `WHERE run_group_id IN (...)` would pass unnoticed."""
+    task_id = db.create_task(
         name="word bench",
         description="",
         task_type="logprob",
         config_format="custom",
         config_data={"bench_type": "word_bench"},
     )
+    model_id = db.create_model(name="word-target", provider="llama_cpp", model_id="m")
+    run_id = db.create_run(name="r", task_id=task_id, model_id=model_id)
+    db.update_run(run_id, {"run_group_id": "word-bench-rg"})
+    return task_id
 
 
 def test_deleting_a_bench_removes_its_turn_annotations(db, probe_run_group, bench):

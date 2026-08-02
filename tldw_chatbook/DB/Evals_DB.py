@@ -872,24 +872,29 @@ class EvalsDB:
         """
         conn = self._get_connection()
 
-        # Resolve the task's run groups BEFORE the soft-delete below. This
-        # is not read-after-write squeamishness: eval_runs.task_id points
-        # at eval_tasks.id directly and does not care about
-        # eval_tasks.deleted_at, so the lookup would still work after the
-        # soft-delete too. It runs first anyway so "gather everything this
-        # task owns, then remove the task and what it owns" is one clear,
-        # ordered operation rather than something that happens to work
-        # because of an unrelated table's lack of a filter.
-        run_group_ids = [
-            row["run_group_id"]
-            for row in conn.execute(
-                "SELECT DISTINCT run_group_id FROM eval_runs "
-                "WHERE task_id = ? AND run_group_id IS NOT NULL",
-                (task_id,),
-            ).fetchall()
-        ]
-
         try:
+            # Resolve the task's run groups BEFORE the soft-delete below. This
+            # is not read-after-write squeamishness: eval_runs.task_id points
+            # at eval_tasks.id directly and does not care about
+            # eval_tasks.deleted_at, so the lookup would still work after the
+            # soft-delete too. It runs first anyway so "gather everything this
+            # task owns, then remove the task and what it owns" is one clear,
+            # ordered operation rather than something that happens to work
+            # because of an unrelated table's lack of a filter. It is inside
+            # this `try` (not before it) so a failure here -- e.g. the
+            # `eval_runs` table being unavailable -- raises `EvalsDBError`
+            # like every other failure in this method, rather than leaking
+            # sqlite3's own driver exception past this method's documented
+            # contract.
+            run_group_ids = [
+                row["run_group_id"]
+                for row in conn.execute(
+                    "SELECT DISTINCT run_group_id FROM eval_runs "
+                    "WHERE task_id = ? AND run_group_id IS NOT NULL",
+                    (task_id,),
+                ).fetchall()
+            ]
+
             with conn:
                 cursor = conn.execute(
                     """
