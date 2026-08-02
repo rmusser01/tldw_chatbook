@@ -15,7 +15,7 @@ def test_fresh_db_is_v28_with_active_leaf_column(tmp_path):
     # A fresh DB always migrates to the CURRENT schema version, not the
     # version this column was introduced at -- this assertion moves with
     # each newer migration.
-    assert version == 29
+    assert version == 30
     assert "active_leaf_message_id" in cols
 
 

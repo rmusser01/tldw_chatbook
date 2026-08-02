@@ -849,8 +849,12 @@ def test_fresh_database_reaches_v29_with_kept_tables(tmp_path: Path) -> None:
     db = _make_db(tmp_path, "fresh.sqlite")
     try:
         connection = db.get_connection()
-        assert db._CURRENT_SCHEMA_VERSION == 29
-        assert _version(connection) == 29
+        # task-1780's kept_briefings/kept_scripts land at v29, but cost
+        # ticker PR1 (v29->v30, local-only messages.usage_json) bumped the
+        # schema further; a fresh DB always migrates to whatever is
+        # current, so assert dynamically rather than re-pinning a version
+        # number this file doesn't own.
+        assert _version(connection) == db._CURRENT_SCHEMA_VERSION
         assert {"kept_briefings", "kept_scripts"} <= _table_names(connection)
     finally:
         db.close_connection()
@@ -865,7 +869,9 @@ def test_v28_database_migrates_to_v29_and_gains_kept_tables(
     db = CharactersRAGDB(path, client_id="kept-migrated")
     try:
         connection = db.get_connection()
-        assert _version(connection) == 29
+        # See the dynamic-assertion note above: cost ticker PR1 bumped the
+        # schema past v29.
+        assert _version(connection) == db._CURRENT_SCHEMA_VERSION
         assert {"kept_briefings", "kept_scripts"} <= _table_names(connection)
     finally:
         db.close_connection()
