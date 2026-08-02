@@ -180,6 +180,10 @@ from ...Skills_Interop.skill_remote_fetch import (
     classify_skill_source_url,
     install_skill_from_url,
 )
+from ...STT.transcribe_cpp_config import (
+    configure_model_path as configure_transcribe_cpp_model_path,
+    is_gguf_file,
+)
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
@@ -432,6 +436,11 @@ def _ingestible_file_filters() -> Filters:
         ("Importable files", _is_ingestible),
         ("All files", lambda _path: True),
     )
+
+
+def _transcribe_cpp_gguf_filters() -> Filters:
+    """Restrict the direct-local model picker to GGUF files."""
+    return Filters(("GGUF models", is_gguf_file))
 
 
 def _library_carries_forward_line(titles: Sequence[str]) -> str:
@@ -1276,6 +1285,7 @@ class LibraryScreen(BaseAppScreen):
         # re-entry (see ``_reset_library_ingest_transient_state``); the
         # job queue itself is registry-owned, not screen state.
         self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
+        self._transcribe_cpp_configured = False
         # Dedupe counter for the "poke the source snapshot on transitions
         # into done" rule (Task 5's registry listener): only re-fetch when
         # the registry's done-job count has grown since the last time this
@@ -5658,6 +5668,7 @@ class LibraryScreen(BaseAppScreen):
             registry_available=registry is not None,
             ingest_backend=ingest_backend,
             server_ingest_available=server_ingest_available,
+            transcribe_cpp_configured=self._transcribe_cpp_configured,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -12203,6 +12214,81 @@ class LibraryScreen(BaseAppScreen):
             return
         self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
 
+    @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
+    def handle_transcribe_cpp_gguf_requested(
+        self,
+        event: LibraryIngestCanvas.TranscribeCppGGUFRequested,
+    ) -> None:
+        """Open the direct-local GGUF picker from provider settings."""
+        event.stop()
+        self._open_transcribe_cpp_gguf_picker()
+
+    def _open_transcribe_cpp_gguf_picker(
+        self, *, retry_job_id: str | None = None
+    ) -> None:
+        """Pick one GGUF, then validate and persist it in a worker thread."""
+
+        async def picker_callback(selected_path: Path | None) -> None:
+            if selected_path is not None:
+                self._configure_transcribe_cpp_gguf(
+                    selected_path, retry_job_id=retry_job_id
+                )
+
+        self.app.push_screen(
+            FileOpen(
+                location=self._library_ingest_browse_location(),
+                title="Choose transcribe.cpp GGUF",
+                filters=_transcribe_cpp_gguf_filters(),
+            ),
+            picker_callback,
+        )
+
+    @work(
+        thread=True,
+        group="library_transcribe_cpp_gguf",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _configure_transcribe_cpp_gguf(
+        self, selected_path: Path, *, retry_job_id: str | None = None
+    ) -> None:
+        """Admit and persist a selected GGUF off the Textual event loop."""
+        try:
+            configure_transcribe_cpp_model_path(selected_path)
+        except Exception:
+            self.app.call_from_thread(
+                self._apply_transcribe_cpp_gguf_result,
+                False,
+                retry_job_id,
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_transcribe_cpp_gguf_result,
+            True,
+            retry_job_id,
+        )
+
+    def _apply_transcribe_cpp_gguf_result(
+        self, configured: bool, retry_job_id: str | None
+    ) -> None:
+        """Show a path-free result and optionally requeue the failed job."""
+        if not configured:
+            self.app_instance.notify(
+                "That GGUF cannot be used by transcribe.cpp. Choose another GGUF.",
+                severity="warning",
+            )
+            return
+        self.app_instance.notify(
+            "Local GGUF configured for transcribe.cpp.",
+            severity="information",
+        )
+        self._transcribe_cpp_configured = True
+        if retry_job_id is not None:
+            retry = getattr(self.app_instance, "retry_library_ingest_job", None)
+            if callable(retry):
+                retry(retry_job_id)
+        self.refresh(recompose=True)
+
     @on(InstallProgressed)
     def handle_model_install_progressed(self, event: InstallProgressed) -> None:
         """Retain and render progress after the consent modal is dismissed."""
@@ -12576,6 +12662,11 @@ class LibraryScreen(BaseAppScreen):
         last-used options from previous sessions.
         """
         form = self._library_ingest_form
+        self._transcribe_cpp_configured = bool(
+            get_cli_setting(
+                "transcription.transcribe_cpp", "model_path", None
+            )
+        )
         for group in list_type_groups():
             cap = get_capabilities(group)
             prefix = f"library.ingest_options.{group}"
@@ -12779,6 +12870,34 @@ class LibraryScreen(BaseAppScreen):
             # not already superseded/dismissed) -- a stale or now-wrong-state
             # job id is a safe no-op, not a mis-targeted retry.
             retry(job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-choose-gguf")
+    def handle_library_ingest_choose_gguf(self, event: Button.Pressed) -> None:
+        """Choose a replacement GGUF and requeue the same manual provider."""
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-choose-gguf-"
+        )
+        if job_id is not None:
+            self._open_transcribe_cpp_gguf_picker(retry_job_id=job_id)
+
+    @on(Button.Pressed, ".library-ingest-retry-faster-whisper")
+    def handle_library_ingest_retry_faster_whisper(
+        self, event: Button.Pressed
+    ) -> None:
+        """Explicitly retry a direct-local failure with faster-whisper."""
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-retry-faster-whisper-"
+        )
+        if job_id is None:
+            return
+        retry = getattr(
+            self.app_instance, "retry_library_ingest_job_with_provider", None
+        )
+        if callable(retry):
+            retry(job_id, "faster-whisper")
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-ingest-cancel")

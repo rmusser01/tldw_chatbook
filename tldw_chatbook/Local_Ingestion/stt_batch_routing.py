@@ -11,6 +11,7 @@ PARAKEET_V3_MODEL = "nemo-parakeet-tdt-0.6b-v3"
 _DEFAULT_PROVIDER = "default"
 _FASTER_WHISPER_PROVIDER = "faster-whisper"
 _PARAKEET_PROVIDER = "parakeet-onnx"
+_TRANSCRIBE_CPP_PROVIDER = "transcribe-cpp"
 _AUTO_LANGUAGE = "auto"
 # Qodo review (task-1301 PR #1184): this set used to be a hand-duplicated
 # copy of tldw_chatbook.STT.routing's validated-v3 allowlist. Now sourced
@@ -81,6 +82,22 @@ def resolve_batch_stt_route(
             requested_provider,
             requested_language,
             normalized_target,
+        )
+
+    if requested_provider == _TRANSCRIBE_CPP_PROVIDER:
+        if normalized_target is not None:
+            raise BatchSTTRoutingError(
+                "transcribe-cpp does not support translation in Library batch ingest."
+            )
+        return BatchSTTRoute(
+            requested_provider=requested_provider,
+            provider=_TRANSCRIBE_CPP_PROVIDER,
+            model=None,
+            requested_language=requested_language,
+            target_language=None,
+            precision="native",
+            local_files_only=True,
+            reason="explicit_transcribe_cpp",
         )
 
     if requested_provider != _DEFAULT_PROVIDER:

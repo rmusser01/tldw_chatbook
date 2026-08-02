@@ -743,6 +743,20 @@ class LocalVideoProcessor:
                 logger.debug(
                     f"[VIDEO] Full audio result keys: {list(audio_result.keys()) if audio_result else 'None'}"
                 )
+                if audio_result.get("status") == "Error":
+                    result["status"] = "Error"
+                    result["error"] = audio_result.get(
+                        "error", "Speech-to-text failed."
+                    )
+                    if isinstance(audio_result.get("error_detail"), dict):
+                        result["error_detail"] = audio_result["error_detail"]
+                    if isinstance(
+                        audio_result.get("stt_failure_provenance"), dict
+                    ):
+                        result["stt_failure_provenance"] = audio_result[
+                            "stt_failure_provenance"
+                        ]
+                    return result
             else:
                 logger.error("[VIDEO] Audio processing failed - no result returned")
                 raise Exception("Audio processing failed - no result returned")
@@ -757,6 +771,12 @@ class LocalVideoProcessor:
                     "analysis": audio_result.get("analysis"),
                     "analysis_details": audio_result.get("analysis_details"),
                     "warnings": audio_result.get("warnings", []),
+                    "transcription_model": audio_result.get(
+                        "transcription_model"
+                    ),
+                    "transcription_provenance": audio_result.get(
+                        "transcription_provenance"
+                    ),
                 }
             )
 
