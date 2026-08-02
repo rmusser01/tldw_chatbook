@@ -672,6 +672,72 @@ def test_omitting_vocabulary_still_validates_against_the_runs_captured_vocabular
     assert load_turn_annotations(db, probe_run_group) == {}
 
 
+# --- annotate_turn's `vocabulary` param normalises its input (Qodo review
+# PR #1216, finding 4) ---------------------------------------------------
+#
+# The tests above pass `vocabulary` as `Tag` objects built from
+# `run_group_vocabulary`. A caller may instead hold the mapping/JSON form
+# stored rows and run snapshots use -- `annotate_turn` used to access
+# `tag.slug` directly and crash with an uncontrolled `AttributeError` on
+# that shape. It also never enforced kind-immutability against a supplied
+# vocabulary. Both are closed by running the supplied vocabulary through
+# `resolve_vocabulary` (which itself runs each entry through `coerce_tag`),
+# the same normalisation a stored vocabulary already gets.
+
+
+def test_an_explicit_vocabulary_given_as_mappings_is_accepted(db, probe_run_group):
+    """A caller holding a vocabulary read back from JSON -- the mapping
+    form, not `Tag` objects -- can still pass it to `vocabulary` directly."""
+    mapping_vocabulary = [
+        {"slug": tag.slug, "label": tag.label, "kind": tag.kind}
+        for tag in BUILTIN_TAGS
+    ] + [{"slug": "meta-commentary", "label": "Meta commentary", "kind": "failure"}]
+    annotate_turn(
+        db, probe_run_group, 1, 0, 0, "t-1", 0,
+        tags=["meta-commentary"], note="",
+        vocabulary=mapping_vocabulary,
+    )
+    stored = load_turn_annotations(db, probe_run_group)
+    assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
+
+
+def test_a_malformed_explicit_vocabulary_entry_raises_a_named_valueerror(
+    db, probe_run_group
+):
+    """Before this fix, a mapping-shaped `vocabulary` entry with no `slug`
+    crashed with an uncontrolled `AttributeError` from `tag.slug` on a
+    plain dict. It must instead raise a named `ValueError`, matching every
+    other malformed-tag path in this module (`coerce_tag`,
+    `resolve_vocabulary`)."""
+    with pytest.raises(ValueError) as exc:
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["broke-character"], note="",
+            vocabulary=[{"label": "No slug here", "kind": "failure"}],
+        )
+    assert not isinstance(exc.value, AttributeError)
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
+def test_an_explicit_vocabulary_cannot_change_a_builtins_kind(db, probe_run_group):
+    """A caller-supplied vocabulary is validated through the same
+    kind-immutability rule `resolve_vocabulary` already enforces for a
+    bench's stored `extra_tags`: `refused` is a built-in `failure` tag, and
+    an explicit vocabulary trying to relabel it `positive` is refused
+    rather than silently accepted -- Phase 3b's live, session-extended
+    vocabulary must not be able to smuggle that past validation."""
+    tampered_vocabulary = [
+        {"slug": "refused", "label": "Refused", "kind": "positive"},
+    ]
+    with pytest.raises(ValueError, match="refused"):
+        annotate_turn(
+            db, probe_run_group, 1, 0, 0, "t-1", 0,
+            tags=["refused"], note="",
+            vocabulary=tampered_vocabulary,
+        )
+    assert load_turn_annotations(db, probe_run_group) == {}
+
+
 # --- delete_task cascades probe annotations (whole-branch review I4, task-6) --
 #
 # `probe_run_group` is opened under the `bench` fixture's task_id (see the

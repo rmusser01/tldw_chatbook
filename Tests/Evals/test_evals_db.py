@@ -850,6 +850,108 @@ class TestErrorHandling:
             temp_db.delete_task(task_id)
 
 
+class TestProbeAnnotationCascadeBatching:
+    """PR #1216 Qodo review, finding 1: `delete_probe_annotations_for_run_groups`
+    used to build a single `DELETE ... WHERE run_group_id IN (?, ?, ...)`
+    with one bind parameter per run group. A bench with enough run groups
+    would exceed SQLite's own host-parameter limit (as low as 999 on some
+    builds), the DELETE would raise, and `delete_task` would leave the
+    bench undeletable. The fix batches the id list.
+    """
+
+    def test_delete_probe_annotations_for_run_groups_processes_every_batch(
+        self, in_memory_db, monkeypatch
+    ):
+        """Shrinking the batch-size constant to 3 (rather than inserting
+        thousands of rows to force a real overflow -- this machine's SQLite
+        build tolerates tens of thousands of host parameters, so no
+        practical row count here would reproduce the original crash)
+        exercises the exact same multi-batch code path deterministically
+        and fast: 7 run groups span three batches (3, 3, 1) per table.
+        Proves no id is skipped and none is double-counted.
+        """
+        import tldw_chatbook.DB.Evals_DB as evals_db_module
+
+        monkeypatch.setattr(
+            evals_db_module, "_PROBE_ANNOTATION_CASCADE_BATCH_SIZE", 3
+        )
+
+        run_group_ids = [f"rg-{i}" for i in range(7)]
+        for rg in run_group_ids:
+            in_memory_db.upsert_probe_turn_annotation(
+                run_group_id=rg,
+                card_id=1,
+                probe_index=0,
+                sample_index=0,
+                target_id="t-1",
+                turn_index=0,
+                tags=["refused"],
+                note="",
+            )
+
+        removed = in_memory_db.delete_probe_annotations_for_run_groups(
+            run_group_ids
+        )
+
+        assert removed == 7
+        for rg in run_group_ids:
+            assert in_memory_db.list_probe_turn_annotations(rg) == []
+
+    def test_deleting_a_bench_with_more_run_groups_than_one_batch_cascades_them_all(
+        self, in_memory_db
+    ):
+        """The scenario the brief asks for directly: a bench with more run
+        groups than fit in one cascade batch (default batch size 500) still
+        deletes cleanly through the real `delete_task` path, and every
+        annotation row is removed -- none silently skipped by a batch
+        boundary. 1200 run groups span three batches (500, 500, 200).
+
+        Run and annotation rows are stamped in directly via bulk `executemany`
+        against `eval_runs` / `eval_probe_turn_annotations` rather than via
+        `create_run` + `upsert_probe_turn_annotation` in a 1200-iteration
+        Python loop (each of those commits its own transaction) -- no real
+        conversations are needed, only rows the cascade should catch, per
+        the fix brief.
+        """
+        task_id = in_memory_db.create_task(
+            name="big bench",
+            description="",
+            task_type="generation",
+            config_format="custom",
+            config_data={"bench_type": "character_probe"},
+        )
+        model_id = in_memory_db.create_model(
+            name="m", provider="llama_cpp", model_id="m"
+        )
+
+        n = 1200
+        run_group_ids = [f"rg-{i}" for i in range(n)]
+
+        conn = in_memory_db.get_connection()
+        with conn:
+            conn.executemany(
+                "INSERT INTO eval_runs "
+                "(name, task_id, model_id, config_overrides, run_group_id, client_id) "
+                "VALUES (?, ?, ?, '{}', ?, 'test_client')",
+                [(f"r-{i}", task_id, model_id, rg) for i, rg in enumerate(run_group_ids)],
+            )
+            conn.executemany(
+                "INSERT INTO eval_probe_turn_annotations "
+                "(run_group_id, card_id, probe_index, sample_index, target_id, "
+                " turn_index, tags, note, client_id) "
+                "VALUES (?, 1, 0, 0, 't-1', 0, '[\"refused\"]', '', 'test_client')",
+                [(rg,) for rg in run_group_ids],
+            )
+
+        assert in_memory_db.delete_task(task_id) is True
+
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM eval_probe_turn_annotations "
+            "WHERE run_group_id LIKE 'rg-%'"
+        ).fetchone()[0]
+        assert remaining == 0
+
+
 class TestThreadSafety:
     """Test thread safety of database operations."""
 

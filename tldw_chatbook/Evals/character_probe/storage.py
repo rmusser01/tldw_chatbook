@@ -998,7 +998,7 @@ def annotate_turn(
     turn_index: int,
     tags: Sequence[str],
     note: str,
-    vocabulary: Optional[Sequence[Tag]] = None,
+    vocabulary: Optional[Sequence[Any]] = None,
 ) -> None:
     """Record or replace one conversation turn's reviewer annotation.
 
@@ -1040,16 +1040,27 @@ def annotate_turn(
             already (e.g. cached once per run-group review session) avoids
             re-deriving it -- and re-reading the run's snapshot, which
             duplicates every card's text and composed system prompts -- on
-            every single write.
+            every single write. Entries may be ``Tag`` objects or the
+            mapping/JSON form stored rows and run snapshots use (each run
+            through ``coerce_tag``, exactly like a stored vocabulary is);
+            a supplied entry may relabel a built-in but, like any other
+            vocabulary, may not change a built-in's kind (see
+            ``resolve_vocabulary``).
 
     Raises:
         ValueError: If any tag, once canonicalised, is not in the applicable
             vocabulary -- naming the offending slug. When ``vocabulary`` is
             omitted, also propagated from ``run_group_vocabulary`` if no
-            runs share this ``run_group_id``.
+            runs share this ``run_group_id``. When ``vocabulary`` is
+            supplied explicitly, also propagated from ``resolve_vocabulary``/
+            ``coerce_tag`` if an entry is malformed or tries to change a
+            built-in's kind -- naming the offending entry in either case,
+            never an unnamed ``AttributeError``.
     """
     if vocabulary is None:
         vocabulary = run_group_vocabulary(db, run_group_id)
+    else:
+        vocabulary = resolve_vocabulary(vocabulary)
     known = {tag.slug for tag in vocabulary}
     canonical: list[str] = []
     for raw in tags or ():

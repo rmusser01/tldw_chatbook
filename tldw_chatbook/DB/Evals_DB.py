@@ -35,9 +35,35 @@ if TYPE_CHECKING:
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 # Database Schema Version
 SCHEMA_VERSION = 5
+
+#: SQLite's own host-parameter limit varies by build -- as low as 999 on
+#: older versions, tens of thousands on newer ones -- so a single
+#: ``DELETE ... WHERE x IN (?, ?, ...)`` with one parameter per id can
+#: overflow it once a bench has enough run groups (TASK-1691 phase 3a
+#: finding 1). 500 stays comfortably under the lowest of those while still
+#: batching in large, efficient chunks.
+_PROBE_ANNOTATION_CASCADE_BATCH_SIZE = 500
+
+#: The two tables ``delete_probe_annotations_for_run_groups`` cascades a
+#: hard delete into. A bare table name can never be a bind parameter, so
+#: this literal, module-level tuple -- never caller-reachable -- is the
+#: identifier source; each name is still run through
+#: ``sql_validation.validate_identifier`` before being interpolated
+#: (TASK-1691 phase 3a finding 2), matching this project's "SQL identifiers
+#: through sql_validation.py" rule even though the source here is already a
+#: trusted literal. ``sql_validation.validate_table_name`` was not used
+#: instead: it whitelists against ``VALID_TABLES``, which is keyed by
+#: ``chachanotes``/``media``/``prompts`` and has no entry (or maintained
+#: test coverage, see that module's TASK-864 comment) for EvalsDB's own
+#: tables -- adding one is a larger, separate change than this fix.
+_PROBE_ANNOTATION_CASCADE_TABLES: Tuple[str, str] = (
+    "eval_probe_turn_annotations",
+    "eval_probe_review_state",
+)
 
 
 class EvalsDBError(Exception):
@@ -873,29 +899,38 @@ class EvalsDB:
         conn = self._get_connection()
 
         try:
-            # Resolve the task's run groups BEFORE the soft-delete below. This
-            # is not read-after-write squeamishness: eval_runs.task_id points
-            # at eval_tasks.id directly and does not care about
-            # eval_tasks.deleted_at, so the lookup would still work after the
-            # soft-delete too. It runs first anyway so "gather everything this
-            # task owns, then remove the task and what it owns" is one clear,
-            # ordered operation rather than something that happens to work
-            # because of an unrelated table's lack of a filter. It is inside
-            # this `try` (not before it) so a failure here -- e.g. the
-            # `eval_runs` table being unavailable -- raises `EvalsDBError`
-            # like every other failure in this method, rather than leaking
-            # sqlite3's own driver exception past this method's documented
-            # contract.
-            run_group_ids = [
-                row["run_group_id"]
-                for row in conn.execute(
-                    "SELECT DISTINCT run_group_id FROM eval_runs "
-                    "WHERE task_id = ? AND run_group_id IS NOT NULL",
-                    (task_id,),
-                ).fetchall()
-            ]
-
             with conn:
+                # Resolve the task's run groups BEFORE the soft-delete below.
+                # This is not read-after-write squeamishness: eval_runs.
+                # task_id points at eval_tasks.id directly and does not care
+                # about eval_tasks.deleted_at, so the lookup would still work
+                # after the soft-delete too. It runs first anyway so "gather
+                # everything this task owns, then remove the task and what it
+                # owns" is one clear, ordered operation rather than something
+                # that happens to work because of an unrelated table's lack
+                # of a filter. It is inside this `try` (not before it) so a
+                # failure here -- e.g. the `eval_runs` table being
+                # unavailable -- raises `EvalsDBError` like every other
+                # failure in this method, rather than leaking sqlite3's own
+                # driver exception past this method's documented contract.
+                #
+                # It is also inside this `with conn:` (not just the `try`),
+                # sharing one transaction with the UPDATE and the cascade
+                # below: a run group whose `eval_runs` row this SELECT
+                # already read is guaranteed to still be resolvable to the
+                # same task by the time the UPDATE runs, and a failure
+                # anywhere in this method -- including in the cascade --
+                # rolls back the soft-delete too, rather than leaving a task
+                # marked deleted with a run group this SELECT never saw.
+                run_group_ids = [
+                    row["run_group_id"]
+                    for row in conn.execute(
+                        "SELECT DISTINCT run_group_id FROM eval_runs "
+                        "WHERE task_id = ? AND run_group_id IS NOT NULL",
+                        (task_id,),
+                    ).fetchall()
+                ]
+
                 cursor = conn.execute(
                     """
                     UPDATE eval_tasks
@@ -929,6 +964,12 @@ class EvalsDB:
         nothing without them, so they are removed with the run rather than
         left orphaned -- see ``delete_task``, the only caller today.
 
+        The id list is deleted in batches of
+        ``_PROBE_ANNOTATION_CASCADE_BATCH_SIZE`` rather than one
+        ``IN (?, ?, ...)`` per id: a bench with more run groups than
+        SQLite's host-parameter limit would otherwise make this call raise
+        and leave the bench undeletable (TASK-1691 phase 3a finding 1).
+
         Args:
             run_group_ids: The run groups whose annotations and review
                 state should be removed. Falsy entries (``None``, ``""``)
@@ -937,26 +978,41 @@ class EvalsDB:
         Returns:
             int: Rows removed across both tables. Zero is a normal result
             -- a run group nobody reviewed has no annotations.
+
+        Raises:
+            EvalsDBError: If a cascade table name fails
+                ``sql_validation.validate_identifier``. Both names are
+                literals defined in this module and this should never
+                happen in practice; the check is defense-in-depth against
+                that assumption changing later.
         """
         ids = [str(rg) for rg in run_group_ids if rg]
         if not ids:
             return 0
-        placeholders = ",".join("?" for _ in ids)
+
+        for table in _PROBE_ANNOTATION_CASCADE_TABLES:
+            if not validate_identifier(table, "table name"):
+                raise EvalsDBError(
+                    f"Refusing to cascade-delete probe annotations: "
+                    f"{table!r} failed SQL identifier validation."
+                )
+
         removed = 0
         conn = self._get_connection()
         with conn:
-            # Table names below come from this two-element literal tuple in
-            # the function's own body, never from a caller; only the
-            # run_group_id values are parameters.
-            for table in (
-                "eval_probe_turn_annotations",
-                "eval_probe_review_state",
-            ):
-                cursor = conn.execute(
-                    f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
-                    ids,
-                )
-                removed += cursor.rowcount
+            # Table names come from the literal tuple above, never from a
+            # caller; only the run_group_id values are bind parameters.
+            for table in _PROBE_ANNOTATION_CASCADE_TABLES:
+                for start in range(
+                    0, len(ids), _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
+                ):
+                    batch = ids[start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE]
+                    placeholders = ",".join("?" for _ in batch)
+                    cursor = conn.execute(
+                        f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
+                        batch,
+                    )
+                    removed += cursor.rowcount
         return removed
 
     def get_task(
