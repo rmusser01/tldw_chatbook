@@ -911,6 +911,24 @@ class ConsoleComposerBar(Horizontal):
         self._sync_current_action_state()
         return snapshot
 
+    def validate_improvement(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> None:
+        """Validate a proposed improvement against live state without mutation."""
+        self._validate_snapshot_shape(snapshot)
+        live = self.capture_draft_snapshot()
+        if (
+            snapshot.edit_serial != live.edit_serial
+            or snapshot.generation != live.generation
+            or not hmac.compare_digest(snapshot.fingerprint, live.fingerprint)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot is stale and cannot be applied."
+            )
+        self._validated_apply_parts(snapshot, rewritten_model_text)
+
     def restore_snapshot(self, snapshot: ComposerDraftSnapshot) -> None:
         """Atomically restore exact draft state without calling ``load_draft``."""
         self._validate_snapshot_shape(snapshot)

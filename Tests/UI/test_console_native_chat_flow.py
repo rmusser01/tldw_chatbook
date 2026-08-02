@@ -13,7 +13,7 @@ import pytest
 from textual import on
 from textual.app import App
 from textual.content import Content
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -39,7 +40,11 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionResult,
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -58,10 +63,12 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
+    ConsolePromptsModal,
     ConsoleSetupModal,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
@@ -229,6 +236,562 @@ class _ReadyResolutionGateway:
             ready=True,
             visible_copy="",
         )
+
+
+class _PromptImprovementGateway:
+    """Return one strict rewrite using the request's protected projection."""
+
+    def __init__(self) -> None:
+        self.auxiliary_calls = 0
+        self.stream_calls = 0
+
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=selection.base_url or "http://127.0.0.1:9099",
+            model=selection.explicit_model or selection.configured_model or "local-model",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        )
+
+    async def complete_auxiliary(self, request):
+        self.auxiliary_calls += 1
+        payload = json.loads(str(request.messages[-1]["content"]))
+        rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
+        return AuxiliaryCompletionResult(
+            provider=request.resolution.provider,
+            model=str(request.resolution.model),
+            text=json.dumps(
+                {"kind": "prompt_rewrite", "rewritten_prompt": rewritten}
+            ),
+        )
+
+    async def stream_chat(self, *_args, **_kwargs):
+        self.stream_calls += 1
+        raise AssertionError("Prompt improvement must not use normal Console send")
+
+
+class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete_auxiliary(self, request):
+        self.started.set()
+        await self.release.wait()
+        return await super().complete_auxiliary(request)
+
+
+def _native_prompt_record(
+    *, artifact_type: str, identifier: str, version: int = 4
+) -> dict[str, object]:
+    kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
+    return {
+        "id": identifier,
+        "name": "Saved structured artifact",
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": {
+            "kind": kind,
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "freeform",
+                            "content": "Answer the question.",
+                        }
+                    ],
+                },
+            ],
+        },
+        "system_prompt": "# Role\n\nBe exact.",
+        "user_prompt": "Answer the question.",
+        "version": version,
+        "backend": "local",
+    }
+
+
+class _NativePromptScopeService:
+    def __init__(self, record: dict[str, object]) -> None:
+        self.record = record
+        self.usage_calls: list[tuple[str, str]] = []
+        self.usage_error: Exception | None = None
+
+    async def get_capabilities(self, *, mode: str):
+        return SimpleNamespace(
+            structured_kinds=frozenset({(2, "block_prompt"), (2, "block_recipe")}),
+            artifact_types=frozenset({"prompt", "recipe"}),
+            conditional_update=True,
+        )
+
+    async def list_prompts(self, *, mode: str, page: int, per_page: int):
+        return {
+            "items": [deepcopy(self.record)],
+            "page": page,
+            "per_page": per_page,
+            "total_items": 1,
+            "total_pages": 1,
+        }
+
+    async def search_prompts(self, *, mode: str, query: str, limit: int):
+        return [deepcopy(self.record)]
+
+    async def get_prompt(self, *, mode: str, prompt_identifier: str):
+        return deepcopy(self.record)
+
+    async def save_prompt(self, *, mode: str, **payload):
+        return payload
+
+    async def record_prompt_usage(self, *, mode: str, prompt_identifier: str):
+        self.usage_calls.append((mode, prompt_identifier))
+        if self.usage_error is not None:
+            raise self.usage_error
+        return deepcopy(self.record)
+
+
+@pytest.mark.asyncio
+async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact_draft():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft ")
+        composer.insert_file_segment("PRIVATE INLINE BYTES", "secret.txt · 20 B")
+        composer.insert_text(" answer")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        attachment = PendingAttachment(
+            file_path="/tmp/photo.png",
+            display_name="photo.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"\x89PNG-staged",
+            mime_type="image/png",
+            original_size=11,
+            processed_size=11,
+        )
+        attachment_state = vars(attachment).copy()
+        store.set_pending_attachment(store.active_session_id, attachment)
+        composer.set_pending_attachment_label(attachment.label)
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Improved PRIVATE INLINE BYTES answer"
+        assert composer.improvement_undo_available
+        assert gateway.auxiliary_calls == 1
+        assert gateway.stream_calls == 0
+        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert store.pending_attachment(store.active_session_id) is attachment
+        assert vars(attachment) == attachment_state
+        assert composer._pending_attachment_label == attachment.label
+
+        console._handle_console_composer_menu_choice("undo-prompt-improvement")
+        assert composer.capture_draft_snapshot().segments == before.segments
+        assert composer.draft_text() == "Draft PRIVATE INLINE BYTES answer"
+        assert not composer.improvement_undo_available
+        assert store.pending_attachment(store.active_session_id) is attachment
+        assert vars(attachment) == attachment_state
+        assert composer._pending_attachment_label == attachment.label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["session", "draft", "system", "provider"])
+async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_applies(
+    drift: str,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _HoldingPromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        original_session_id = store.active_session_id
+        transcript_before = tuple(store.messages_for_session(original_session_id))
+        original_settings = store.switch_session(original_session_id).settings
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await gateway.started.wait()
+
+        if drift == "session":
+            store.create_session(settings=original_settings)
+        elif drift == "draft":
+            composer.insert_text(" manual edit")
+        elif drift == "system":
+            store.set_session_system_prompt(original_session_id, "Changed system")
+        else:
+            assert original_settings is not None
+            store.replace_session_settings(
+                original_session_id,
+                replace(
+                    original_settings,
+                    model="changed-model",
+                    base_url="http://127.0.0.1:9191",
+                ),
+            )
+        expected_draft = composer.capture_draft_snapshot()
+        expected_system = store.switch_session(original_session_id).settings.system_prompt
+        if drift == "session":
+            store.create_session(settings=original_settings)
+        gateway.release.set()
+        for _ in range(12):
+            await pilot.pause()
+            if modal.query("#console-prompts-review-user"):
+                break
+
+        assert host.screen_stack[-1] is modal
+        candidate = modal.query_one("#console-prompts-review-user", TextArea)
+        assert "Improved answer" in candidate.text
+        assert composer.capture_draft_snapshot() == expected_draft
+        assert store.switch_session(original_session_id).settings.system_prompt == expected_system
+        assert tuple(store.messages_for_session(original_session_id)) == transcript_before
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["id", "version", "fingerprint"])
+async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift: str):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="recipe", identifier="recipe-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-result-recipe-1", Button).press()
+        await pilot.pause()
+
+        if drift == "id":
+            service.record["id"] = "recipe-replaced"
+        elif drift == "version":
+            service.record["version"] = 5
+        else:
+            definition = service.record["prompt_definition"]
+            assert isinstance(definition, dict)
+            lanes = definition["lanes"]
+            assert isinstance(lanes, list)
+            lanes[1]["blocks"][0]["content"] = "Changed recipe content."
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert composer.capture_draft_snapshot() == before
+        assert "changed" in str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        ).lower()
+        assert service.usage_calls == []
+        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_usage():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="recipe", identifier="recipe-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        original_system = store.switch_session(store.active_session_id).settings.system_prompt
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-result-recipe-1", Button).press()
+        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Answer the question."
+        assert store.switch_session(store.active_session_id).settings.system_prompt == original_system
+        assert service.usage_calls == []
+        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usage_fails", [False, True])
+async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_failure(
+    usage_fails: bool,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="prompt", identifier="prompt-1")
+    )
+    if usage_fails:
+        service.usage_error = RuntimeError("usage endpoint unavailable")
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-result-prompt-1", Button).press()
+        await pilot.pause()
+        apply_button = modal.query_one("#prompt-editor-apply", Button)
+        assert apply_button.disabled is False
+        apply_button.press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Answer the question."
+        assert service.usage_calls == [("local", "prompt-1")]
+        assert tuple(store.messages_for_session(store.active_session_id)) == transcript_before
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_edited_saved_prompt_applies_as_unsaved_copy_with_zero_usage():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="prompt", identifier="prompt-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-result-prompt-1", Button).press()
+        await pilot.pause()
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field("goal", "content", "Edited unsaved answer.")
+        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Edited unsaved answer."
+        assert service.usage_calls == []
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 40), (100, 30), (80, 24)])
+async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_visible(
+    size: tuple[int, int],
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = _PromptImprovementGateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        store.set_session_system_prompt(store.active_session_id, "Be accurate.")
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        shell = modal.query_one("#console-prompts-modal")
+        footer = modal.query_one("#console-prompts-footer")
+        assert 0 <= shell.region.x
+        assert 0 <= shell.region.y
+        assert shell.region.x + shell.region.width <= size[0]
+        assert shell.region.y + shell.region.height <= size[1]
+        assert shell.region.contains_region(footer.region)
+        assert footer.region.height > 0
+        assert modal.query_one("#console-prompts-current-system", TextArea).read_only
+        assert modal.query_one("#console-prompts-current-user", TextArea).read_only
+        include_system = modal.query_one("#console-prompts-include-system", Checkbox)
+        assert str(include_system.label) == "Include system prompt as analysis context"
+        assert include_system.value is True
+        assert [
+            str(modal.query_one(selector, Button).label)
+            for selector in (
+                "#console-prompts-auto-improve",
+                "#console-prompts-review-improve",
+                "#console-prompts-structured-recipe",
+            )
+        ] == [
+            "Analyze and auto-improve",
+            "Analyze and user review",
+            "Create or follow a structured recipe",
+        ]
+        assert not console.query("#console-control-prompts")
+
+
+@pytest.mark.asyncio
+async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_saves():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = _PromptImprovementGateway
+    host = ConsoleHarness(app)
+
+    class _FailOncePersistence:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def update_conversation_system_prompt(self, **_kwargs) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("simulated persistence failure")
+
+    persistence = _FailOncePersistence()
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Keep this draft")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        session.persisted_conversation_id = "conversation-1"
+        store.persistence = persistence
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field("role", "content", "Be precise.")
+        await pilot.pause()
+        editor.query_one("#prompt-editor-apply-system", Checkbox).value = True
+        await pilot.pause()
+        assert not editor.query_one("#prompt-editor-apply", Button).disabled
+        editor.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        ) == "Applied to this session, but could not save to the conversation."
+        assert composer.capture_draft_snapshot() == before
+        applied_system = store.switch_session(store.active_session_id).settings.system_prompt
+        assert "Be precise." in str(applied_system)
+        assert persistence.calls == 1
+
+        modal.query_one("#console-prompts-persistence-retry", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert persistence.calls == 2
+        assert store.switch_session(store.active_session_id).settings.system_prompt == applied_system
+        assert composer.capture_draft_snapshot() == before
 
 
 class SelectionCapturingGateway(_ReadyResolutionGateway):

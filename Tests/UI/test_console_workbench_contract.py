@@ -182,6 +182,19 @@ def _control_state() -> ConsoleControlState:
     )
 
 
+def test_prompt_improvement_has_no_top_bar_or_composer_row_button() -> None:
+    import inspect
+
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+    from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
+
+    control_source = inspect.getsource(ConsoleControlBar.compose)
+    composer_source = inspect.getsource(ConsoleComposerBar.compose)
+    assert "Prompt" not in control_source
+    assert "console-prompt" not in composer_source
+    assert "Undo prompt improvement" not in composer_source
+
+
 def test_console_control_summary_contains_one_persona_assistant_identity() -> None:
     state = ConsoleControlState.from_values(
         provider="llama_cpp",

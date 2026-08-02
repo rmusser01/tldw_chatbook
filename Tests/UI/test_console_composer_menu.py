@@ -86,6 +86,30 @@ def test_prompts_preserves_normal_and_temporary_menu_prefixes():
 
 
 @pytest.mark.unit
+def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
+    from tldw_chatbook.Widgets.Console import console_composer_menu_modal
+
+    action_undo = getattr(
+        console_composer_menu_modal,
+        "ACTION_UNDO_PROMPT_IMPROVEMENT",
+        "missing-undo-prompt-improvement-action",
+    )
+    idle = build_composer_menu_entries(improvement_undo_available=False)
+    actionable = build_composer_menu_entries(improvement_undo_available=True)
+
+    assert action_undo not in {
+        entry.action_id for entry in idle
+    }
+    assert [entry.action_id for entry in actionable[:2]] == [
+        "prompts",
+        action_undo,
+    ]
+    undo = actionable[1]
+    assert undo.label == "Undo prompt improvement"
+    assert undo.enabled is True
+
+
+@pytest.mark.unit
 def test_attach_and_save_chatbook_left_the_action_row_for_the_menu():
     """The two buttons are gone from the width-bounded row, not duplicated.
 

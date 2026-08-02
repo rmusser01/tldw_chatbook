@@ -390,9 +390,26 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_NARRATE_CONVERSATION,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
+    ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
-from ...Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from ...Widgets.Console.console_prompt_improve_view import (
+    ConsolePromptImprovementContext,
+)
+from ...Widgets.Console.console_prompts_modal import (
+    ConsolePromptsApplyOutcome,
+    ConsolePromptsModal,
+    ConsolePromptsResult,
+    ConsoleRecipeApplyGuard,
+    ConsoleSavedPromptApplyGuard,
+)
+from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
+from ...Prompt_Management.prompt_improvement_models import (
+    PromptImprovementRequestSnapshot,
+    fingerprint_block_definition,
+    fingerprint_text,
+)
+from ...Prompt_Management.prompt_improvement_service import PromptImprovementService
 from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
@@ -5631,6 +5648,7 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_composer_menu(self) -> None:
         """Open the composer overflow menu (task-1680)."""
+        composer = self._console_composer_or_none()
         self.app.push_screen(
             ConsoleComposerMenuModal(
                 attachment_kind=self._console_pending_attachment_kind(),
@@ -5638,6 +5656,9 @@ class ChatScreen(BaseAppScreen):
                 # Same input the action-row button read before it moved here,
                 # so Save Chatbook's available/unavailable copy is unchanged.
                 can_save_chatbook=self._console_chatbook_action_available(),
+                improvement_undo_available=bool(
+                    composer is not None and composer.improvement_undo_available
+                ),
             ),
             callback=self._handle_console_composer_menu_choice,
         )
@@ -5681,6 +5702,16 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_PROMPTS:
             self._open_console_prompts_modal()
             return
+        if action_id == ACTION_UNDO_PROMPT_IMPROVEMENT:
+            composer = self._console_composer_or_none()
+            if composer is None or not composer.undo_improvement():
+                return
+            store = self._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id is not None:
+                store.set_session_draft(session_id, composer.draft_text())
+            self._focus_console_composer_if_needed(force=True)
+            return
         # Attach and Save Chatbook moved out of the width-bounded action row
         # into this menu. Both route to the SAME handlers their buttons used,
         # so the menu is a second entry point rather than a second
@@ -5713,6 +5744,37 @@ class ChatScreen(BaseAppScreen):
     def _open_console_prompts_modal(self) -> None:
         """Open the source-aware Prompt Library without changing the draft."""
         service = getattr(self.app_instance, "prompt_scope_service", None)
+        recipe_sources: dict[str, str] = {}
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        settings = self._ensure_active_console_session_settings()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        composer_snapshot = composer.capture_draft_snapshot()
+        preview_projection = composer.project_snapshot_for_model(
+            composer_snapshot,
+            request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
+        )
+        current_system = str(settings.system_prompt or "")
+        current_system_fingerprint = fingerprint_text(current_system)
+        provider_display, model_display, _settings = (
+            self._active_console_provider_model_display()
+        )
+        opening_selection = self._build_console_provider_selection()
+        gateway = self._ensure_console_provider_gateway()
+        improvement_service = PromptImprovementService(gateway=gateway)
+        improvement_context = ConsolePromptImprovementContext(
+            session_id=session_id,
+            composer_snapshot=composer_snapshot,
+            current_user_projection=preview_projection,
+            current_system_prompt=current_system,
+            current_system_fingerprint=current_system_fingerprint,
+            provider_label=str(provider_display or "Not configured"),
+            model_label=str(model_display or "Not configured"),
+        )
 
         async def capabilities(source: str) -> Any:
             method = getattr(service, "get_capabilities", None)
@@ -5736,7 +5798,12 @@ class ChatScreen(BaseAppScreen):
             method = getattr(service, "get_prompt", None)
             if not callable(method):
                 raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source, prompt_identifier=identifier)
+            record = await method(mode=source, prompt_identifier=identifier)
+            recipe_sources[str(identifier)] = source
+            if isinstance(record, Mapping):
+                durable_id = record.get("id") or record.get("uuid") or identifier
+                recipe_sources[str(durable_id)] = source
+            return record
 
         async def save(**payload: Any) -> Any:
             method = getattr(service, "save_prompt", None)
@@ -5745,7 +5812,224 @@ class ChatScreen(BaseAppScreen):
             source = str(payload.pop("source", "local"))
             return await method(mode=source, **payload)
 
-        def restore_focus(_result: None) -> None:
+        def _active_system_fingerprint() -> str:
+            live_settings = self._ensure_active_console_session_settings()
+            return fingerprint_text(str(live_settings.system_prompt or ""))
+
+        def _resolution_identity(resolution: Any) -> tuple[str, str, str, str, str]:
+            return (
+                str(getattr(resolution, "provider", "")),
+                str(getattr(resolution, "model", "")),
+                str(getattr(resolution, "base_url", "")),
+                str(getattr(resolution, "readiness_key", "")),
+                str(getattr(resolution, "execution_key", "")),
+            )
+
+        def _selection_identity(selection: Any) -> tuple[str, str, str, str]:
+            return (
+                str(getattr(selection, "provider", "")),
+                str(getattr(selection, "explicit_model", "")),
+                str(getattr(selection, "configured_model", "")),
+                str(getattr(selection, "base_url", "")),
+            )
+
+        async def build_improvement_snapshot(**values: Any) -> Any:
+            if store.active_session_id != session_id:
+                raise ValueError("The active Console session changed.")
+            if _active_system_fingerprint() != current_system_fingerprint:
+                raise ValueError("The Console System prompt changed.")
+            request_id = str(values["request_id"])
+            projection = composer.project_snapshot_for_model(
+                composer_snapshot,
+                request_nonce=request_id,
+            )
+            composer.validate_improvement(composer_snapshot, projection.text)
+            resolution = await gateway.resolve_for_send(
+                self._build_console_provider_selection()
+            )
+            if not resolution.ready or not str(resolution.model or "").strip():
+                raise ValueError(resolution.visible_copy or "Provider is unavailable.")
+            include_system = bool(values.get("include_system"))
+            recipe_definition = values.get("recipe_definition")
+            return PromptImprovementRequestSnapshot(
+                request_id=request_id,
+                mode=values["mode"],
+                session_id=session_id,
+                composer_snapshot=composer_snapshot,
+                projection=projection,
+                system_prompt=current_system if include_system else None,
+                system_fingerprint=(
+                    current_system_fingerprint if include_system else None
+                ),
+                resolution=resolution,
+                provider_label=resolution.provider,
+                model_label=str(resolution.model),
+                recipe_source_id=values.get("recipe_source_id"),
+                recipe_version=values.get("recipe_version"),
+                recipe_definition=recipe_definition,
+                recipe_fingerprint=(
+                    fingerprint_block_definition(recipe_definition)
+                    if recipe_definition is not None
+                    else None
+                ),
+            )
+
+        def validate_improvement(captured: Any, text: str) -> None:
+            snapshot = getattr(captured, "composer_snapshot", composer_snapshot)
+            composer.validate_improvement(snapshot, text)
+
+        async def validate_saved_recipe(captured: Any) -> None:
+            recipe_source_id = str(
+                getattr(captured, "recipe_source_id", "") or ""
+            )
+            if not recipe_source_id or recipe_source_id.startswith("builtin:"):
+                return
+            source = recipe_sources.get(recipe_source_id)
+            if source is None:
+                raise ValueError("The selected Recipe source changed.")
+            latest = await detail(source, recipe_source_id)
+            if not isinstance(latest, Mapping):
+                raise ValueError("The selected Recipe is no longer available.")
+            latest_identity = latest.get("id") or latest.get("uuid")
+            if str(latest_identity or "") != recipe_source_id:
+                raise ValueError("The selected Recipe identity changed.")
+            latest_version = latest.get("version", latest.get("optimistic_version"))
+            if latest_version != getattr(captured, "recipe_version", None):
+                raise ValueError("The selected Recipe version changed.")
+            decoded = decode_prompt_artifact(latest)
+            if decoded.artifact_type != "recipe" or decoded.definition is None:
+                raise ValueError("The selected Recipe is no longer compatible.")
+            if fingerprint_block_definition(decoded.definition) != getattr(
+                captured, "recipe_fingerprint", None
+            ):
+                raise ValueError("The selected Recipe changed.")
+
+        async def validate_saved_prompt(captured: Any) -> None:
+            if not isinstance(captured, ConsoleSavedPromptApplyGuard):
+                return
+            latest = await detail(captured.source, captured.prompt_source_id)
+            if not isinstance(latest, Mapping):
+                raise ValueError("The selected Prompt is no longer available.")
+            latest_identity = latest.get("id") or latest.get("uuid")
+            if str(latest_identity or "") != captured.prompt_source_id:
+                raise ValueError("The selected Prompt identity changed.")
+            latest_version = latest.get("version", latest.get("optimistic_version"))
+            if latest_version != captured.prompt_version:
+                raise ValueError("The selected Prompt version changed.")
+            decoded = decode_prompt_artifact(latest)
+            if decoded.artifact_type != "prompt" or decoded.definition is None:
+                raise ValueError("The selected Prompt is no longer compatible.")
+            if fingerprint_block_definition(decoded.definition) != captured.prompt_fingerprint:
+                raise ValueError("The selected Prompt changed.")
+
+        async def record_applied_usage(captured: Any) -> None:
+            if not isinstance(
+                captured, ConsoleSavedPromptApplyGuard
+            ) or not captured.record_usage:
+                return
+            recorder = getattr(service, "record_prompt_usage", None)
+            if not callable(recorder):
+                return
+            try:
+                await recorder(
+                    mode=captured.source,
+                    prompt_identifier=captured.prompt_source_id,
+                )
+            except Exception:
+                self.app_instance.notify(
+                    "The prompt was applied, but Library usage could not be recorded.",
+                    severity="warning",
+                )
+
+        async def apply_improvement_result(
+            result: ConsolePromptsResult, captured: Any
+        ) -> ConsolePromptsApplyOutcome:
+            if store.active_session_id != session_id:
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The active Console session changed."
+                )
+            if _active_system_fingerprint() != current_system_fingerprint:
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The Console System prompt changed."
+                )
+            if isinstance(captured, PromptImprovementRequestSnapshot):
+                live_resolution = await gateway.resolve_for_send(
+                    self._build_console_provider_selection()
+                )
+                if _resolution_identity(live_resolution) != _resolution_identity(
+                    captured.resolution
+                ):
+                    return ConsolePromptsApplyOutcome(
+                        "stale", "The provider, model, or endpoint changed."
+                    )
+            elif isinstance(
+                captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
+            ):
+                if _selection_identity(
+                    self._build_console_provider_selection()
+                ) != _selection_identity(opening_selection):
+                    return ConsolePromptsApplyOutcome(
+                        "stale", "The provider, model, or endpoint changed."
+                    )
+            try:
+                await validate_saved_recipe(captured)
+                await validate_saved_prompt(captured)
+                if result.apply_user:
+                    if result.user_text is None:
+                        raise ValueError("The reviewed User prompt is missing.")
+                    composer.validate_improvement(
+                        result.composer_snapshot, result.user_text
+                    )
+                elif composer.capture_draft_snapshot() != result.composer_snapshot:
+                    raise ValueError("The Console draft changed.")
+            except Exception:
+                return ConsolePromptsApplyOutcome(
+                    "stale",
+                    "The draft or Recipe changed. Review the working copy and retry.",
+                )
+
+            if result.apply_user and result.user_text is not None:
+                composer.apply_improvement(
+                    result.composer_snapshot,
+                    result.user_text,
+                )
+                store.set_session_draft(session_id, composer.draft_text())
+            persisted = True
+            if result.apply_system:
+                _session, persisted = store.set_session_system_prompt(
+                    session_id, result.system_text
+                )
+                self._sync_console_chat_core_state()
+                self._sync_console_rail_system_line()
+                self._sync_console_settings_summary()
+            await record_applied_usage(captured)
+            if not persisted:
+                return ConsolePromptsApplyOutcome("persistence_failed")
+            return ConsolePromptsApplyOutcome("applied")
+
+        async def retry_improvement_persistence(
+            result: ConsolePromptsResult,
+        ) -> ConsolePromptsApplyOutcome:
+            if store.active_session_id != session_id or not result.apply_system:
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The active Console session changed."
+                )
+            live_settings = self._ensure_active_console_session_settings()
+            if str(live_settings.system_prompt or "") != str(result.system_text or ""):
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The live System prompt changed."
+                )
+            _session, persisted = store.set_session_system_prompt(
+                session_id, result.system_text
+            )
+            self._sync_console_chat_core_state()
+            self._sync_console_rail_system_line()
+            self._sync_console_settings_summary()
+            return ConsolePromptsApplyOutcome(
+                "applied" if persisted else "persistence_failed"
+            )
+
+        def restore_focus(_result: ConsolePromptsResult | None) -> None:
             self._focus_console_composer_if_needed(force=True)
 
         self.app.push_screen(
@@ -5757,6 +6041,12 @@ class ChatScreen(BaseAppScreen):
                 save=save,
                 improve_unavailable_reason=self._console_provider_blocker_copy(),
                 configure_provider=self._open_console_provider_recovery,
+                improvement_context=improvement_context,
+                build_improvement_snapshot=build_improvement_snapshot,
+                improve=improvement_service.improve,
+                validate_improvement=validate_improvement,
+                apply_improvement_result=apply_improvement_result,
+                retry_improvement_persistence=retry_improvement_persistence,
             ),
             callback=restore_focus,
         )

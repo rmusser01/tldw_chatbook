@@ -66,6 +66,7 @@ class ConsolePromptsBrowse(Vertical):
         page: int,
         improve_unavailable_reason: str = "",
         can_configure_provider: bool = False,
+        manual_improve_available: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -74,6 +75,7 @@ class ConsolePromptsBrowse(Vertical):
         self._page = page
         self._improve_unavailable_reason = improve_unavailable_reason.strip()
         self._can_configure_provider = bool(can_configure_provider)
+        self._manual_improve_available = bool(manual_improve_available)
         self._row_ids: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
@@ -81,15 +83,23 @@ class ConsolePromptsBrowse(Vertical):
             "Improve My Prompt",
             id="console-prompts-improve",
             classes="console-prompts-primary-action",
-            disabled=bool(self._improve_unavailable_reason),
+            disabled=bool(
+                self._improve_unavailable_reason
+                and not self._manual_improve_available
+            ),
         )
         if self._improve_unavailable_reason:
             improve.tooltip = self._improve_unavailable_reason
         yield improve
         yield Static(
             (
-                f"Improve unavailable — {self._improve_unavailable_reason} "
-                "Browse and manual editing remain available."
+                (
+                    f"Model improvement unavailable — {self._improve_unavailable_reason} "
+                    "Browse and structured Recipe editing remain available."
+                    if self._manual_improve_available
+                    else f"Improve unavailable — {self._improve_unavailable_reason} "
+                    "Browse and manual editing remain available."
+                )
                 if self._improve_unavailable_reason
                 else "Browse saved Prompts and Recipes by one source at a time."
             ),

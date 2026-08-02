@@ -9,9 +9,23 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
+
+from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
+    outcome_first_recipe,
+)
+from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
+    PromptImprovementOutcome,
+)
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ComposerTransactionValidationError,
+    ConsoleComposerBar,
+)
 
 from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
+from tldw_chatbook.Widgets.Console.console_prompt_improve_view import (
+    ConsolePromptImprovementContext,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_state import (
     ConsolePromptsState,
@@ -148,11 +162,13 @@ class _Harness(App):
         *,
         improve_unavailable_reason: str = "",
         configure_provider: Callable[[], Any] | None = None,
+        improvement_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.backend = backend
         self.improve_unavailable_reason = improve_unavailable_reason
         self.configure_provider = configure_provider
+        self.improvement_kwargs = dict(improvement_kwargs or {})
 
     def compose(self) -> ComposeResult:
         yield Input(id="console-native-composer")
@@ -170,9 +186,104 @@ class _Harness(App):
                 detail=self.backend.detail,
                 save=self.backend.save,
                 improve_unavailable_reason=self.improve_unavailable_reason,
+                **self.improvement_kwargs,
                 **kwargs,
             )
         )
+
+
+class _ImprovementDriver:
+    """Small captured-state driver for the Task 12 modal contract."""
+
+    def __init__(self, *outcomes: PromptImprovementOutcome) -> None:
+        composer = ConsoleComposerBar()
+        composer.insert_text("Draft question ")
+        composer.insert_file_segment("PRIVATE BODY", "/private/notes.txt · 12 B")
+        composer.insert_text(" tail")
+        self.composer = composer
+        self.snapshot = composer.capture_draft_snapshot()
+        self.preview = composer.project_snapshot_for_model(
+            self.snapshot,
+            request_nonce="preview-request",
+        )
+        self.outcomes = list(outcomes)
+        self.requests: list[Any] = []
+        self.applies: list[tuple[Any, Any]] = []
+        self.validate_calls: list[tuple[Any, str]] = []
+
+    @property
+    def context(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            session_id="session-1",
+            composer_snapshot=self.snapshot,
+            current_user_projection=self.preview,
+            current_system_prompt="Be accurate.",
+            current_system_fingerprint="system-fingerprint",
+            provider_label="OpenAI",
+            model_label="gpt-test",
+        )
+
+    async def build_snapshot(self, **values: Any) -> Any:
+        request_id = str(values["request_id"])
+        projection = self.composer.project_snapshot_for_model(
+            self.snapshot,
+            request_nonce=request_id,
+        )
+        snapshot = SimpleNamespace(
+            request_id=request_id,
+            mode=values["mode"],
+            composer_snapshot=self.snapshot,
+            projection=projection,
+            system_prompt=(
+                "Be accurate." if values.get("include_system", False) else None
+            ),
+            system_fingerprint=(
+                "system-fingerprint"
+                if values.get("include_system", False)
+                else None
+            ),
+            recipe_source_id=values.get("recipe_source_id"),
+            recipe_version=values.get("recipe_version"),
+            recipe_definition=values.get("recipe_definition"),
+            recipe_fingerprint=values.get("recipe_fingerprint"),
+        )
+        self.requests.append(snapshot)
+        return snapshot
+
+    async def improve(self, snapshot: Any) -> PromptImprovementOutcome:
+        if not self.outcomes:
+            raise AssertionError("Unexpected improvement call")
+        outcome = self.outcomes.pop(0)
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id,
+            kind=outcome.kind,
+            rewritten_prompt=outcome.rewritten_prompt,
+            filled_definition=outcome.filled_definition,
+            provider=outcome.provider,
+            model=outcome.model,
+            user_message=outcome.user_message,
+        )
+
+    def validate_candidate(self, snapshot: Any, text: str) -> None:
+        self.validate_calls.append((snapshot, text))
+        self.composer.validate_improvement(snapshot.composer_snapshot, text)
+
+    async def apply(self, result: Any, snapshot: Any) -> Any:
+        self.applies.append((result, snapshot))
+        return SimpleNamespace(kind="applied", user_message="")
+
+    async def retry_persistence(self, _result: Any) -> Any:
+        return SimpleNamespace(kind="applied", user_message="")
+
+    def kwargs(self) -> dict[str, Any]:
+        return {
+            "improvement_context": self.context,
+            "build_improvement_snapshot": self.build_snapshot,
+            "improve": self.improve,
+            "validate_improvement": self.validate_candidate,
+            "apply_improvement_result": self.apply,
+            "retry_improvement_persistence": self.retry_persistence,
+        }
 
 
 @pytest.mark.unit
@@ -1075,3 +1186,390 @@ async def test_source_switch_cancels_pending_query_debounce() -> None:
         await pilot.pause()
 
     assert backend.search_calls.count(("server", "alpha")) == 1
+
+
+@pytest.mark.asyncio
+async def test_improve_surface_names_exact_paths_and_shows_captured_context() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    app = _Harness(
+        backend,
+        improve_unavailable_reason="No active provider or model is configured.",
+        improvement_kwargs=driver.kwargs(),
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        await pilot.pause()
+
+        labels = [
+            str(app.screen.query_one(selector, Button).label)
+            for selector in (
+                "#console-prompts-auto-improve",
+                "#console-prompts-review-improve",
+                "#console-prompts-structured-recipe",
+            )
+        ]
+        assert labels == [
+            "Analyze and auto-improve",
+            "Analyze and user review",
+            "Create or follow a structured recipe",
+        ]
+        assert app.screen.query_one("#console-prompts-auto-improve", Button).disabled
+        assert app.screen.query_one("#console-prompts-review-improve", Button).disabled
+        assert not app.screen.query_one(
+            "#console-prompts-structured-recipe", Button
+        ).disabled
+        assert "Be accurate." in str(
+            app.screen.query_one("#console-prompts-current-system", TextArea).text
+        )
+        current_user = app.screen.query_one("#console-prompts-current-user", TextArea)
+        assert "PRIVATE BODY" not in current_user.text
+        assert "/private/notes.txt" not in current_user.text
+        assert "[[TLDW_PROTECTED:" in current_user.text
+        status = str(
+            app.screen.query_one("#console-prompts-provider-summary", Static).renderable
+        )
+        assert "OpenAI" in status and "gpt-test" in status
+
+
+@pytest.mark.asyncio
+async def test_system_analysis_opt_out_survives_recipe_path_replacement() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(request_id="ignored", kind="no_change"),
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            filled_definition=outcome_first_recipe(),
+        ),
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        include_system = app.screen.query_one(
+            "#console-prompts-include-system", Checkbox
+        )
+        include_system.value = False
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert driver.requests[-1].system_prompt is None
+        assert driver.requests[-1].system_fingerprint is None
+
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert driver.requests[-1].mode == "recipe"
+        assert driver.requests[-1].system_prompt is None
+        assert driver.requests[-1].system_fingerprint is None
+
+
+@pytest.mark.asyncio
+async def test_auto_success_returns_one_apply_transaction_and_closes() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt="Improved question [[TLDW_PROTECTED:kept]]",
+        )
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(driver.applies) == 1
+        result, captured = driver.applies[0]
+        assert result.kind == "apply"
+        assert result.apply_user is True
+        assert result.apply_system is False
+        assert result.user_text == "Improved question [[TLDW_PROTECTED:kept]]"
+        assert result.composer_snapshot == driver.snapshot
+        assert captured.mode == "auto"
+
+
+@pytest.mark.asyncio
+async def test_no_change_keeps_modal_open_without_apply_or_new_usage() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(request_id="ignored", kind="no_change")
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen.state.mode == "improve"
+        assert str(
+            app.screen.query_one("#console-prompts-improvement-status", Static).renderable
+        ) == "Prompt already looks good"
+        assert app.screen._active_request_id is None
+        assert driver.applies == []
+        assert backend.usage_mutations == 0
+
+
+@pytest.mark.asyncio
+async def test_active_improvement_disables_duplicate_model_launches() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    improve_calls: list[str] = []
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        improve_calls.append(snapshot.request_id)
+        started.set()
+        await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id,
+            kind="no_change",
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        auto = app.screen.query_one("#console-prompts-auto-improve", Button)
+        review = app.screen.query_one("#console-prompts-review-improve", Button)
+        auto.press()
+        await started.wait()
+        await pilot.pause()
+
+        assert auto.disabled is True
+        assert review.disabled is True
+        auto.press()
+        await pilot.pause()
+        assert improve_calls == ["prompt-improvement-1"]
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert auto.disabled is False
+        assert review.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_review_success_exposes_exactly_one_editable_user_area_then_applies() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    rewritten = driver.preview.text.replace("Draft question", "Rewritten user message")
+    driver.outcomes.append(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt=rewritten,
+        )
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-review-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        areas = [area for area in app.screen.query(TextArea) if not area.read_only]
+        assert len(areas) == 1
+        assert areas[0].id == "console-prompts-review-user"
+        assert areas[0].text == rewritten
+        app.screen.query_one("#console-prompts-review-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(driver.applies) == 1
+        result, _snapshot = driver.applies[0]
+        assert result.user_text == rewritten
+        assert result.system_text is None
+
+
+@pytest.mark.asyncio
+async def test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="preservation_veto",
+            rewritten_prompt="Candidate with protected token removed",
+        )
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-review-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert str(
+            app.screen.query_one("#console-prompts-improvement-status", Static).renderable
+        ) == "Review required before applying"
+        area = app.screen.query_one("#console-prompts-review-user", TextArea)
+        assert area.text == "Candidate with protected token removed"
+        app.screen.query_one("#console-prompts-review-apply", Button).press()
+        await pilot.pause()
+
+        assert driver.applies == []
+        assert "protected" in str(
+            app.screen.query_one("#console-prompts-improvement-status", Static).renderable
+        ).lower()
+
+
+@pytest.mark.asyncio
+async def test_typed_provider_error_keeps_state_and_exposes_retry() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="provider_error",
+            user_message="Provider request failed.",
+        ),
+        PromptImprovementOutcome(request_id="ignored", kind="no_change"),
+    )
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        retry = app.screen.query_one("#console-prompts-improvement-retry", Button)
+        assert retry.display and not retry.disabled
+        assert "Provider request failed" in str(
+            app.screen.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        retry.press()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(driver.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_invalidates_request_and_ignores_late_completion() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id,
+            kind="success",
+            rewritten_prompt="Late candidate",
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-auto-improve", Button).press()
+        await started.wait()
+        app.screen.query_one("#console-prompts-improvement-cancel", Button).press()
+        await pilot.pause()
+        assert str(
+            app.screen.query_one("#console-prompts-improvement-status", Static).renderable
+        ) == "Cancelling..."
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert driver.applies == []
+
+
+@pytest.mark.asyncio
+async def test_recipe_manual_paths_work_without_provider_and_lane_defaults_are_safe() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    app = _Harness(
+        backend,
+        improve_unavailable_reason="No active provider or model is configured.",
+        improvement_kwargs=driver.kwargs(),
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+
+        outcome = app.screen.query_one("#console-prompts-recipe-outcome-first", Button)
+        blank = app.screen.query_one("#console-prompts-recipe-blank", Button)
+        assert not outcome.disabled and not blank.disabled
+        assert app.screen.query_one("#console-prompts-recipe-fill", Button).disabled
+        outcome.press()
+        await pilot.pause()
+
+        editor = app.screen.query_one(PromptBlockEditor)
+        assert editor.state.definition == outcome_first_recipe()
+        assert not editor.query_one("#prompt-editor-apply-system", Checkbox).value
+        assert not editor.query_one("#prompt-editor-apply-user", Checkbox).value
+
+
+def test_composer_public_validation_seam_checks_without_mutating() -> None:
+    composer = ConsoleComposerBar()
+    composer.insert_text("Draft ")
+    composer.insert_file_segment("PRIVATE", "secret.txt")
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="validate-1")
+
+    assert composer.validate_improvement(before, projection.text) is None
+    assert composer.capture_draft_snapshot() == before
+    assert not composer.improvement_undo_available
+    with pytest.raises(ComposerTransactionValidationError, match="placeholder"):
+        composer.validate_improvement(
+            before,
+            projection.text.replace(projection.placeholder_ids[0], ""),
+        )
+    assert composer.capture_draft_snapshot() == before
+
+
+def test_captured_improvement_context_repr_hides_prompt_bytes() -> None:
+    driver = _ImprovementDriver()
+    context = ConsolePromptImprovementContext(
+        session_id="session-1",
+        composer_snapshot=driver.snapshot,
+        current_user_projection=driver.preview,
+        current_system_prompt="PRIVATE SYSTEM BYTES",
+        current_system_fingerprint="fingerprint",
+        provider_label="OpenAI",
+        model_label="gpt-test",
+    )
+
+    rendered = repr(context)
+    assert "PRIVATE BODY" not in rendered
+    assert "PRIVATE SYSTEM BYTES" not in rendered
