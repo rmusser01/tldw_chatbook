@@ -751,9 +751,16 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
 # untouched by this task) against a fake device stream and drives it
 # through the REAL `_register_live_sink` registry AND the REAL
 # `handle_tts_playback` -> `stop_live_sink()` -> `sink.stop()` chain --
-# proving the consumer's own opened sink actually reaches the live
-# registry and is what a stop interrupts, not just that the wiring call
-# happens against whatever is planted there.
+# proving the real registry/stop machinery interrupts a real sink
+# end-to-end (`stream.abort()`, not `.stop()`, which would drain).
+#
+# Corrected docstring (fix-round N4, re-review): this test opens the sink
+# ITSELF, in the test body -- it does NOT drive `_generate_tts`, so it does
+# NOT prove that the CONSUMER's own opened sink is what ends up in the
+# registry (an earlier version of this comment overclaimed exactly that).
+# What it proves is narrower and still real: a sink that IS registered as
+# `_LIVE_SINK`, by whatever means, is correctly interrupted by
+# `handle_tts_playback`'s stop wiring, for both stop shapes.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -770,3 +777,251 @@ async def test_real_sink_end_to_end_stop_wiring(handler, message_id):
 
     assert sink.terminal_reason == "stopped"
     assert sink_test_holder["s"].aborted is True
+
+
+# ---------------------------------------------------------------------------
+# Re-review N1: `stop_live_sink()` in the `play` branch must only fire when
+# a replacement is actually about to play -- a play request for a message
+# whose cached artifact is already gone (the 5s cache cleanup, or one that
+# was simply never generated) must not silence live streaming audio and
+# then play nothing back.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_play_for_a_missing_cached_file_does_not_stop_a_live_sink(handler):
+    stop_calls: list[bool] = []
+
+    class _FakeLiveSink:
+        def stop(self) -> None:
+            stop_calls.append(True)
+
+    with streaming_sink_module._LIVE_SINK_LOCK:
+        streaming_sink_module._LIVE_SINK = _FakeLiveSink()
+
+    # No `_audio_files` entry for this message -- nothing will actually play.
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(action="play", message_id="missing-msg")
+    )
+
+    assert stop_calls == [], (
+        "a play with nothing to actually play back must not stop a live sink"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Re-review N2: F3's fix was pinned only at the pure `_wants_wav_collection`
+# function -- a mutation reverting the CALL SITE back to an inline
+# format-only check (`wav_collect = [] if audio_format == "wav" else None`)
+# was invisible to the whole suite, since nothing asserted the seam actually
+# calls the gate. Spying on the gate itself closes that: any call site that
+# stops calling it fails this test regardless of whether any other
+# behavioral assertion happens to still pass.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generate_tts_calls_the_wav_collection_gate_at_its_call_site(
+    handler, monkeypatch,
+):
+    calls: list[str] = []
+    original = tts_events_module._wants_wav_collection
+
+    def _spy(audio_format: str) -> bool:
+        calls.append(audio_format)
+        return original(audio_format)
+
+    monkeypatch.setattr(tts_events_module, "_wants_wav_collection", _spy)
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: False)
+
+    chunks = [b"RIFFnotavalidatedwavbodyatall"]
+    response = _FakeResponse(chunks, audio_format="wav", sample_rate=None)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    try:
+        await handler._generate_tts("Nothing to read yet.", "adhoc", None)
+
+        assert calls == ["wav"], (
+            "_generate_tts must call _wants_wav_collection at its call "
+            "site, not inline the format-only check it wraps"
+        )
+        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        assert len(complete_events) == 1
+        artifact_path = complete_events[0].audio_file
+        assert artifact_path is not None and artifact_path.read_bytes() == chunks[0]
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+# ---------------------------------------------------------------------------
+# Re-review N3: `TTSPlaybackEvent(action="stop", message_id="")` is neither
+# `None` (the bare-stop branch) nor truthy (the message-scoped branch) --
+# it used to fall between both, silencing nothing. Both the sink and legacy
+# playback must be silenced, same as a bare/global stop.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stop_with_empty_string_message_id_is_treated_as_a_bare_stop(
+    handler, monkeypatch,
+):
+    sink_stop_calls: list[bool] = []
+
+    class _FakeLiveSink:
+        def stop(self) -> None:
+            sink_stop_calls.append(True)
+
+    with streaming_sink_module._LIVE_SINK_LOCK:
+        streaming_sink_module._LIVE_SINK = _FakeLiveSink()
+
+    player_stop_calls: list[bool] = []
+    clip = Path("clip.mp3")
+
+    class _FakePlayer:
+        def get_current_file(self):
+            return clip
+
+        def stop(self):
+            player_stop_calls.append(True)
+            return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: _FakePlayer()
+    )
+    async with handler._audio_files_lock:
+        handler._last_played = ("some-message", clip)
+
+    await handler.handle_tts_playback(TTSPlaybackEvent(action="stop", message_id=""))
+
+    assert sink_stop_calls == [True]
+    assert player_stop_calls == [True]
+    async with handler._audio_files_lock:
+        assert handler._last_played is None
+
+
+# ---------------------------------------------------------------------------
+# Re-review N5: the new "interrupted" outcome label (F8) had no test --
+# nothing in the suite reached the actual metric to check a regression that
+# folds it back into "success".
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_barged_in_utterance_reports_interrupted_not_success_in_metrics(
+    handler, monkeypatch,
+):
+    class _BargedInSink(_RecordingSink):
+        def feed(self, pcm: bytes) -> bool:
+            accepted = super().feed(pcm)
+            # Simulate an external stop() landing right after this piece
+            # was accepted -- e.g. a later utterance's one-voice
+            # displacement, or a barge-in.
+            self.state = "stopped"
+            self.terminal_reason = "stopped"
+            return accepted
+
+    chunks = [bytes([9, 0]) * 20]
+    response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
+    service = _FakeService(response)
+    handler._tts_service = service
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _BargedInSink)
+    monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
+
+    metric_calls: list[tuple[str, dict]] = []
+
+    def capture_counter(name, value=1, labels=None):
+        metric_calls.append((name, dict(labels or {})))
+
+    def capture_histogram(name, value, labels=None):
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter", capture_counter
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram", capture_histogram
+    )
+
+    await handler._generate_tts("Interrupted.", "adhoc", None)
+
+    outcome_codes = {
+        labels["outcome_code"] for _, labels in metric_calls if "outcome_code" in labels
+    }
+    assert outcome_codes == {"interrupted"}, (
+        "a displaced/interrupted utterance must not be labeled success"
+    )
+    complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+    assert len(complete_events) == 1
+    assert complete_events[0].error is None
+    assert complete_events[0].audio_file is None
+
+
+# ---------------------------------------------------------------------------
+# Re-review REQUIRED merge-gate item: `Tests/conftest.py`'s autouse
+# `_no_real_audio_device` fixture must neutralize the reproduced hazard --
+# an eligible response reaching `_generate_tts` with NEITHER
+# `StreamingPcmSink` NOR `sink_available` patched used to construct a real
+# `sounddevice.OutputStream` (confirmed by the reviewer: the unguarded test
+# still PASSED while doing so, a silent failure mode invisible to CI,
+# review, or the suite itself).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_real_audio_device_guard_blocks_the_reproduced_hazard(
+    handler, monkeypatch,
+):
+    """Deliberately reproduces the reviewer's exact hazard shape: the REAL
+    `StreamingPcmSink` class, the REAL `sink_available()` probe -- no
+    per-test mock of either. `Tests/conftest.py`'s autouse
+    `_no_real_audio_device` fixture is already active for every test in
+    this session, this one included, and must be what saves this one:
+    `sink.open()` reaches "failed" via the already-tested `_fail("audio
+    output unavailable ...")` path (driven by `_import_sounddevice()`
+    returning `None`, which is exactly the chokepoint that fixture
+    patches), never a real device, and generation falls through to the
+    legacy artifact path.
+    """
+    # Cheap, non-invasive precondition check: if the conftest guard were
+    # ever removed or broken, this fails loudly and immediately here,
+    # rather than the test instead falling through to the
+    # `_CountingOutputStream` subclass below actually opening a real
+    # device (which the guard being broken would otherwise let happen).
+    assert streaming_sink_module._import_sounddevice() is None, (
+        "Tests/conftest.py's autouse _no_real_audio_device guard is not "
+        "active -- this test cannot safely proceed"
+    )
+
+    import sounddevice
+
+    construction_count = 0
+    real_output_stream = sounddevice.OutputStream
+
+    class _CountingOutputStream(real_output_stream):
+        def __init__(self, *args, **kwargs):
+            nonlocal construction_count
+            construction_count += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(sounddevice, "OutputStream", _CountingOutputStream)
+
+    chunks = [bytes([1, 0]) * 10]
+    response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
+    service = _FakeService(response)
+    handler._tts_service = service
+    # Deliberately NOT patching StreamingPcmSink or sink_available here --
+    # that is the point of this test.
+
+    try:
+        await handler._generate_tts("Guard check.", "adhoc", None)
+
+        assert construction_count == 0, (
+            "the conftest _no_real_audio_device guard failed to prevent a "
+            "real sounddevice.OutputStream construction"
+        )
+        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        assert len(complete_events) == 1
+        assert complete_events[0].error is None
+        assert complete_events[0].audio_file is not None, (
+            "the open() failure must fall through to the legacy artifact "
+            "path, exactly like any other sink open failure"
+        )
+    finally:
+        await handler.cleanup_tts_resources()
