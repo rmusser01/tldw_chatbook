@@ -1,7 +1,7 @@
 ---
 id: TASK-1870
 title: 'Kept briefings: sync/chatbook-export coverage'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 00:16'
 labels:
@@ -49,3 +49,12 @@ somewhere a future reader will find it before assuming coverage that doesn't exi
 - [ ] #2 A user's kept briefings and their kept scripts participate in ChaChaNotes sync between devices, OR a recorded decision explains why they are deliberately excluded
 - [ ] #3 Whatever is decided for #1 and #2 is written down (spec, ADR, or equivalent) so the next reader does not have to reverse-engineer it from the absence of code
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. AC #1 first arm: add kept briefings/scripts as a chatbook content type — creator walks `kept_briefings`+`kept_scripts` into the bundle (readable markdown + structured payload, following the existing per-type conventions in `Chatbooks/chatbook_creator.py`/`chatbook_models.py`); selection surfaced wherever other types are chosen.
+2. Import: ride the house conflict machinery (`conflict_resolver.py`) if it fits kept rows' UNIQUE `source_briefing_id` (device-local id → cross-device collision is DIFFERENT content); otherwise import-when-free + honest per-item skip in the import summary. Re-import idempotent either way.
+3. AC #2 second arm: record sync exclusion as deliberate (extends the owner's 1780 "no sync columns" v1 ruling) — spec delivery-notes update + decision note per AC #3.
+4. Round-trip test (export → import into a fresh ChaChaNotes), collision test, and the recorded-decision docs.
+<!-- SECTION:PLAN:END -->
