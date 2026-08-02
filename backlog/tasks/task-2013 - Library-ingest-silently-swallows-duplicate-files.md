@@ -2,7 +2,7 @@
 id: TASK-2013
 title: >-
   Library ingest silently swallows duplicate files
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 21:30'
 labels:
@@ -33,6 +33,21 @@ anywhere. Found in the 2026-08-02 ingest UAT (critique snapshot
 - [ ] A duplicate ingest resolves the existing media item's id (content-hash
       fallback after the URL miss), so its done row carries "Open in
       Library" and opens that item.
-- [ ] The duplicate row's progress line states the file was already in the
+- [x] The duplicate row's progress line states the file was already in the
       Library instead of impersonating a fresh ingest.
-- [ ] A genuinely fresh ingest keeps its current "Ingested <path>" message.
+- [x] A genuinely fresh ingest keeps its current "Ingested <path>" message.
+
+## Implementation Notes
+
+The parse payload never carries `content_hash` — `add_media_with_keywords`
+computes `sha256(content)` internally — so the writer's fallback (and the
+`mark_done(content_hash=...)` stamp) had always been fed `None`. The writer
+now mirrors the DB's exact hash computation from `payload["content"]`, falls
+back from the URL lookup to `get_media_by_hash`, and labels the duplicate's
+progress "Already in Library — matched an existing item; nothing new was
+imported." Side effect: done jobs now carry a real `content_hash` stamp.
+Files: `tldw_chatbook/app.py` (`_run_library_ingest_queue`),
+`Tests/Library/test_library_ingest_runner.py`
+(`test_duplicate_content_at_different_path_resolves_existing_media_id`).
+Verified: new test red→green (red failed on exactly `None == 1`); full
+runner file 67/67.

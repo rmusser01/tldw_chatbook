@@ -19,6 +19,7 @@ if "TEXTUAL_LOG" not in os.environ:
 import concurrent.futures
 import contextlib
 import functools
+import hashlib
 import inspect
 import logging
 import logging.handlers
@@ -3236,20 +3237,51 @@ class LibraryIngestQueueMixin:
                     media_id, _media_uuid, _message = persist_parsed_media(
                         payload, self.media_db
                     )
+                    # ``add_media_with_keywords`` returns ``media_id=None`` on
+                    # exactly one success path: the duplicate skip ("already
+                    # exists. Overwrite not enabled."). A same-path re-ingest
+                    # resolves by canonical URL; a byte-identical file at a
+                    # DIFFERENT path has a different URL, so fall back to the
+                    # content hash -- otherwise the row is a done-without-
+                    # media_id husk with no "Open in Library" and nothing
+                    # telling the user the file was already there (task-2013).
+                    # ``self.media_db`` is unreachable-``None`` here in
+                    # practice (submit already fails the job before this point
+                    # when it's absent), but the guard is cheap insurance
+                    # against an ``AttributeError`` on a stale/racy reference.
+                    was_duplicate = media_id is None
+                    content_hash = payload.get("content_hash")
+                    if content_hash is None and isinstance(
+                        payload.get("content"), str
+                    ):
+                        # The parse payload carries no hash; the DB computes
+                        # sha256(content) itself inside
+                        # ``add_media_with_keywords``. Mirror that exact
+                        # computation so the duplicate fallback below looks
+                        # up the same value the DB deduped on.
+                        content_hash = hashlib.sha256(
+                            payload["content"].encode()
+                        ).hexdigest()
                     if media_id is None and self.media_db is not None:
-                        # Re-ingesting an unchanged file takes the DB's
-                        # update path, whose return carries no media id.
-                        # Resolve it by canonical URL so the done row keeps
-                        # its "Open in Library" action. ``self.media_db`` is
-                        # unreachable-``None`` here in practice (submit
-                        # already fails the job before this point when it's
-                        # absent), but this guard is cheap insurance against
-                        # an ``AttributeError`` on a stale/racy reference.
                         existing = self.media_db.get_media_by_url(payload["url"])
+                        if existing is None and content_hash:
+                            try:
+                                existing = self.media_db.get_media_by_hash(
+                                    content_hash
+                                )
+                            except Exception:
+                                existing = None
                         if existing is not None:
                             media_id = existing.get("id")
-                    content_hash = payload.get("content_hash")
-                    progress = {"message": f"Ingested {job.source_path}"}
+                    if was_duplicate:
+                        progress = {
+                            "message": (
+                                "Already in Library — matched an existing item; "
+                                "nothing new was imported."
+                            )
+                        }
+                    else:
+                        progress = {"message": f"Ingested {job.source_path}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
