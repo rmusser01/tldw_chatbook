@@ -57,6 +57,59 @@ class TestPromptChatbookClient:
         args, kwargs = mocked.await_args
         assert args[:2] == ("DELETE", "/api/v1/prompts/abc")
 
+    async def test_prompt_list_preserves_server_brief_artifact_and_lane_fields(
+        self, monkeypatch
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": 7,
+                        "uuid": "recipe-7",
+                        "name": "Recipe",
+                        "artifact_type": "recipe",
+                        "has_system_prompt": False,
+                        "has_user_prompt": True,
+                        "version": 9,
+                    }
+                ],
+                "total_pages": 1,
+                "current_page": 1,
+                "total_items": 1,
+            }
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        response = await client.list_prompts(page=1, per_page=25)
+
+        assert response.items[0].artifact_type == "recipe"
+        assert response.items[0].has_system_prompt is False
+        assert response.items[0].has_user_prompt is True
+        assert response.items[0].version == 9
+
+    async def test_create_prompt_sends_artifact_type_without_expected_version(
+        self, monkeypatch
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            return_value={
+                "id": 1,
+                "uuid": "abc",
+                "name": "Recipe",
+                "artifact_type": "recipe",
+            }
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.create_prompt(
+            PromptCreateRequest(name="Recipe", artifact_type="recipe")
+        )
+
+        payload = mocked.await_args.kwargs["json_data"]
+        assert payload["artifact_type"] == "recipe"
+        assert "expected_version" not in payload
+
     async def test_export_chatbook_posts_to_export_endpoint(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"success": True, "job_id": "job_123"})

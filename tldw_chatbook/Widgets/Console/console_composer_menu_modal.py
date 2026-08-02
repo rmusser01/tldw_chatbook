@@ -32,6 +32,8 @@ ACTION_ATTACH_CONTEXT = "attach-context"
 #: Matches the `EPHEMERAL_BLOCKED_ACTIONS` registry key, so the
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
+ACTION_PROMPTS = "prompts"
+ACTION_UNDO_PROMPT_IMPROVEMENT = "undo-prompt-improvement"
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ def build_composer_menu_entries(
     attachment_kind: str = "none",
     ephemeral: bool = False,
     can_save_chatbook: bool = False,
+    improvement_undo_available: bool = False,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -92,6 +95,11 @@ def build_composer_menu_entries(
     )
     entries = (
         ComposerMenuEntry(
+            ACTION_PROMPTS,
+            "Prompts",
+            "Browse, improve, or build reusable prompts",
+        ),
+        ComposerMenuEntry(
             ACTION_ATTACH_CONTEXT,
             "Attach",
             "Attach files or context to this session",
@@ -101,6 +109,17 @@ def build_composer_menu_entries(
             "Save Chatbook",
             chatbook_reason,
             enabled=chatbook_blocked is None and can_save_chatbook,
+        ),
+        *(
+            (
+                ComposerMenuEntry(
+                    ACTION_UNDO_PROMPT_IMPROVEMENT,
+                    "Undo prompt improvement",
+                    "Restore the draft captured before the latest prompt improvement",
+                ),
+            )
+            if improvement_undo_available
+            else ()
         ),
         ComposerMenuEntry(
             ACTION_GENERATE_IMAGE,
@@ -182,6 +201,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
         attachment_kind: str = "none",
         ephemeral: bool = False,
         can_save_chatbook: bool = False,
+        improvement_undo_available: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the menu.
@@ -201,6 +221,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
             attachment_kind=attachment_kind,
             ephemeral=ephemeral,
             can_save_chatbook=can_save_chatbook,
+            improvement_undo_available=improvement_undo_available,
         )
 
     def compose(self) -> ComposeResult:

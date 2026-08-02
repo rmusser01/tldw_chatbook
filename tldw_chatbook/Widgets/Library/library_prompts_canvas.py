@@ -8,17 +8,23 @@ the list shape (header count line, filter Input, single-row
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptsListState,
     prompt_editor_meta_line,
+)
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
+    PromptBlockEditorState,
 )
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
@@ -46,7 +52,7 @@ class LibraryPromptsListCanvas(Vertical):
         editor_state: The prompt to render in editor mode. Required when
             ``mode == "editor"``.
         conflict: When ``True`` (editor mode only), renders the save
-            conflict banner -- a quiet explanatory line plus Overwrite/
+            conflict banner -- a quiet explanatory line plus Save-as-new/
             Reload actions -- in place of the normal action row. Mirrors
             ``LibraryNotesCanvas.conflict``. ``editor_state`` must already
             reflect the user's kept text (never the stale server detail)
@@ -96,6 +102,8 @@ class LibraryPromptsListCanvas(Vertical):
         import_path: str = "",
         import_status: str = "",
         dirty: bool = False,
+        can_update_original: bool = False,
+        include_starter_content: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -111,6 +119,8 @@ class LibraryPromptsListCanvas(Vertical):
         self.import_path = import_path
         self.import_status = import_status
         self.dirty = dirty
+        self.can_update_original = can_update_original
+        self.include_starter_content = include_starter_content
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -182,8 +192,12 @@ class LibraryPromptsListCanvas(Vertical):
                 # description) and must be escaped too, not just the name.
                 name = escape_markup(row.name)
                 secondary = escape_markup(row.secondary) if row.secondary else ""
+                artifact_summary = escape_markup(
+                    f"{row.type_label} · {row.source_label} · {row.lane_summary}"
+                )
+                label_parts = (name, artifact_summary, secondary)
                 button = Button(
-                    f"{name}\n{secondary}" if secondary else name,
+                    "\n".join(part for part in label_parts if part),
                     id=f"library-prompt-row-{row.prompt_id}",
                     classes="library-prompt-row",
                     compact=True,
@@ -280,17 +294,81 @@ class LibraryPromptsListCanvas(Vertical):
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.details, id="library-prompt-details")
         yield Static(
-            "System prompt", classes="library-prompt-field-label", markup=False
+            (
+                f"{editor_state.artifact_type.title()} · "
+                f"{editor_state.source.title()} · "
+                f"{editor_state.definition_state.replace('_', ' ')}"
+            ),
+            id="library-prompt-artifact-status",
+            classes="destination-purpose",
+            markup=False,
+        )
+        block_state = editor_state.block_editor_state
+        if block_state is not None:
+            block_editor = PromptBlockEditor(
+                block_state,
+                can_update_original=self.can_update_original,
+                allow_apply_system=False,
+                apply_system_unavailable_reason=(
+                    "System apply is unavailable in Library; use the Console "
+                    "prompt workbench to apply it to the session."
+                ),
+                id="library-prompt-block-editor",
+            )
+            block_editor.styles.height = "1fr"
+            block_editor.styles.min_height = 12
+            yield block_editor
+            yield Checkbox(
+                "Include current text as starter content",
+                value=self.include_starter_content,
+                id="library-prompt-recipe-starter",
+            )
+        else:
+            yield Static(
+                editor_state.compatibility_reason,
+                id="library-prompt-compatibility",
+                classes="destination-purpose",
+                markup=False,
+            )
+            convert = Button(
+                "Convert and save as new Prompt",
+                id="library-prompt-convert",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=not editor_state.can_convert_as_new,
+            )
+            if convert.disabled:
+                convert.tooltip = (
+                    "Conversion unavailable — this artifact has no compatible "
+                    "System or User text."
+                )
+            yield convert
+        yield Static(
+            "Compiled System preview",
+            classes="library-prompt-field-label",
+            markup=False,
         )
         yield Static(
             _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
         )
-        yield TextArea(editor_state.system_prompt, id="library-prompt-system")
-        yield Static("User prompt", classes="library-prompt-field-label", markup=False)
+        yield TextArea(
+            editor_state.compiled_system_preview,
+            read_only=True,
+            id="library-prompt-system",
+        )
+        yield Static(
+            "Compiled User preview",
+            classes="library-prompt-field-label",
+            markup=False,
+        )
         yield Static(
             _USER_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
         )
-        yield TextArea(editor_state.user_prompt, id="library-prompt-user")
+        yield TextArea(
+            editor_state.compiled_user_preview,
+            read_only=True,
+            id="library-prompt-user",
+        )
         yield Input(
             value=editor_state.keywords_csv,
             placeholder="Keywords (comma-separated)",
@@ -305,8 +383,8 @@ class LibraryPromptsListCanvas(Vertical):
         )
         if self.conflict:
             yield Static(
-                "This prompt changed elsewhere — Overwrite saves your text; "
-                "Reload discards it.",
+                "This item changed elsewhere — Reload the current version or "
+                "save your kept blocks as a new item.",
                 id="library-prompt-conflict-copy",
                 classes="destination-purpose",
                 markup=False,
@@ -321,7 +399,7 @@ class LibraryPromptsListCanvas(Vertical):
                 # Task 8b D3: makes the status copy's "...or open the
                 # existing prompt" a real affordance -- only shown in the
                 # name-in-use state (never alongside the conflict banner
-                # above, which has its own Overwrite/Reload actions).
+                # above, which has its own Save-as-new/Reload actions).
                 yield Button(
                     "Open existing",
                     id="library-prompt-open-existing",
@@ -333,8 +411,8 @@ class LibraryPromptsListCanvas(Vertical):
         with toolbar:
             if self.conflict:
                 yield Button(
-                    "Overwrite",
-                    id="library-prompt-conflict-overwrite",
+                    "Save as new",
+                    id="library-prompt-conflict-save-new",
                     classes="library-canvas-action",
                     compact=True,
                 )
@@ -346,10 +424,18 @@ class LibraryPromptsListCanvas(Vertical):
                 )
             else:
                 yield Button(
-                    "Save",
+                    (
+                        f"Save {editor_state.artifact_type.title()}"
+                        if editor_state.prompt_id is None
+                        else "Update original"
+                    ),
                     id="library-prompt-save",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=(
+                        editor_state.prompt_id is not None
+                        and (block_state is None or not self.can_update_original)
+                    ),
                 )
                 yield Button(
                     "Use in Console",
@@ -385,3 +471,39 @@ class LibraryPromptsListCanvas(Vertical):
                     classes="library-canvas-action library-media-action-danger",
                     compact=True,
                 )
+
+    def on_prompt_block_editor_block_field_changed(
+        self, event: PromptBlockEditor.BlockFieldChanged
+    ) -> None:
+        """Patch compiled previews in place while the child editor stays mounted."""
+        self._sync_block_preview(event.state)
+
+    def on_prompt_block_editor_block_action_requested(
+        self, event: PromptBlockEditor.BlockActionRequested
+    ) -> None:
+        """Patch previews after add/move/duplicate/delete without recomposition."""
+        self._sync_block_preview(event.state)
+
+    def _sync_block_preview(self, state: PromptBlockEditorState) -> None:
+        current = self.editor_state
+        if current is not None:
+            self.editor_state = replace(
+                current,
+                block_editor_state=state,
+                artifact_type=state.artifact_type,
+                compiled_system_preview=state.compiled_system,
+                compiled_user_preview=state.compiled_user,
+                system_prompt=state.compiled_system,
+                user_prompt=state.compiled_user,
+            )
+        for selector, value in (
+            ("#library-prompt-system", state.compiled_system),
+            ("#library-prompt-user", state.compiled_user),
+        ):
+            try:
+                preview = self.query_one(selector, TextArea)
+            except NoMatches:
+                continue
+            if preview.text != value:
+                with preview.prevent(TextArea.Changed):
+                    preview.load_text(value)

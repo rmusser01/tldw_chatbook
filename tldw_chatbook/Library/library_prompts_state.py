@@ -10,9 +10,31 @@ Consumes record mappings shaped like ``PromptsDatabase.fetch_prompt_details``
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
+
+from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
+    ArtifactDefinitionState,
+    ArtifactType,
+    BlockArtifactDefinition,
+)
+from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
+    decode_prompt_artifact,
+)
+from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
+    decompose_legacy_lanes,
+)
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    CANONICAL_JSON_UTF8_V1,
+    PromptCapabilityError,
+    PromptSourceCapabilities,
+)
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
+    PromptBlockEditorState,
+    set_artifact_type,
+)
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -20,6 +42,172 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 _TIMESTAMP_KEYS = ("last_modified", "created_at")
+
+
+@dataclass(frozen=True)
+class PromptArtifactDraft:
+    """Exact structured payload measurements used by Library save gates."""
+
+    artifact_type: ArtifactType
+    definition: BlockArtifactDefinition
+    system_prompt: str
+    user_prompt: str
+    definition_bytes: bytes
+    request_bytes: bytes
+
+
+def _definition_mapping(definition: BlockArtifactDefinition) -> dict[str, Any]:
+    """Serialize one validated block definition without optional null fields."""
+    return {
+        "kind": definition.kind,
+        "schema_version": definition.schema_version,
+        "lanes": [
+            {
+                "id": lane.id,
+                "blocks": [
+                    {
+                        "id": block.id,
+                        "title": block.title,
+                        "syntax": block.syntax,
+                        "content": block.content,
+                        **(
+                            {"xml_tag": block.xml_tag}
+                            if block.xml_tag is not None
+                            else {}
+                        ),
+                        **(
+                            {"mapping_hint": block.mapping_hint}
+                            if block.mapping_hint is not None
+                            else {}
+                        ),
+                    }
+                    for block in lane.blocks
+                ],
+            }
+            for lane in definition.lanes
+        ],
+    }
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def prepare_prompt_artifact_save(
+    state: PromptBlockEditorState,
+    *,
+    artifact_type: ArtifactType,
+    include_recipe_starter_content: bool,
+    request_fields: Mapping[str, Any],
+) -> tuple[PromptArtifactDraft, dict[str, Any], PromptBlockEditorState]:
+    """Build the exact structured save mapping and its measured working copy.
+
+    Recipe starter content is opt-in. Turning it off clears only block content;
+    stable IDs, lane order, titles, syntax, XML tags, and mapping hints remain.
+    """
+    if state.issues:
+        raise ValueError("Fix block validation errors before saving.")
+    prepared = set_artifact_type(state, artifact_type)
+    if artifact_type == "recipe" and not include_recipe_starter_content:
+        definition = replace(
+            prepared.definition,
+            lanes=tuple(
+                replace(
+                    lane,
+                    blocks=tuple(replace(block, content="") for block in lane.blocks),
+                )
+                for lane in prepared.definition.lanes
+            ),
+        )
+        prepared = PromptBlockEditorState.from_definition(
+            artifact_type="recipe",
+            definition=definition,
+            dirty_block_ids=prepared.dirty_block_ids,
+        )
+
+    definition_mapping = _definition_mapping(prepared.definition)
+    payload = {key: value for key, value in request_fields.items() if value is not None}
+    payload.update(
+        {
+            "artifact_type": artifact_type,
+            "prompt_format": "structured",
+            "prompt_schema_version": prepared.definition.schema_version,
+            "prompt_definition": definition_mapping,
+            "system_prompt": prepared.compiled_system,
+            "user_prompt": prepared.compiled_user,
+        }
+    )
+    draft = PromptArtifactDraft(
+        artifact_type=artifact_type,
+        definition=prepared.definition,
+        system_prompt=prepared.compiled_system,
+        user_prompt=prepared.compiled_user,
+        definition_bytes=_canonical_json_bytes(definition_mapping),
+        request_bytes=_canonical_json_bytes(payload),
+    )
+    return draft, payload, prepared
+
+
+def require_artifact_save_supported(
+    draft: PromptArtifactDraft,
+    capabilities: PromptSourceCapabilities,
+    *,
+    update_original: bool = False,
+    expected_version: int | None = None,
+) -> None:
+    """Reject unsupported or oversized artifact saves without truncation."""
+    expected_kind = (
+        "block_prompt" if draft.artifact_type == "prompt" else "block_recipe"
+    )
+    if draft.definition.kind != expected_kind:
+        raise ValueError("artifact_type and prompt definition kind must agree.")
+
+    pair = (draft.definition.schema_version, draft.definition.kind)
+    if pair not in capabilities.structured_kinds:
+        raise PromptCapabilityError(capabilities.backend, f"structured kind {pair!r}")
+    if draft.artifact_type not in capabilities.artifact_types:
+        raise PromptCapabilityError(
+            capabilities.backend, f"artifact type {draft.artifact_type!r}"
+        )
+    if capabilities.json_byte_measurement != CANONICAL_JSON_UTF8_V1:
+        raise PromptCapabilityError(
+            capabilities.backend, "canonical JSON byte measurement"
+        )
+
+    for field, value in (
+        ("system_prompt", draft.system_prompt),
+        ("user_prompt", draft.user_prompt),
+    ):
+        if len(value) > capabilities.compiled_lane_limit:
+            raise ValueError(
+                f"{field} exceeds {capabilities.compiled_lane_limit} characters; "
+                "shorten this lane or choose a source with a larger limit."
+            )
+    for field, value, limit in (
+        ("prompt_definition", draft.definition_bytes, capabilities.definition_limit),
+        ("request", draft.request_bytes, capabilities.request_limit),
+    ):
+        if len(value) > limit:
+            raise ValueError(
+                f"{field} exceeds {limit} UTF-8 bytes; reduce that field or "
+                "choose a source with a larger limit."
+            )
+
+    if not update_original:
+        return
+    if not capabilities.conditional_update:
+        raise ValueError(
+            "This source does not support conditional update; save as new."
+        )
+    if type(expected_version) is not int or expected_version < 1:
+        raise ValueError(
+            "Update original requires the captured current version; Reload or save as new."
+        )
 
 
 @dataclass(frozen=True)
@@ -39,6 +227,10 @@ class PromptListRow:
     prompt_id: int
     name: str
     secondary: str
+    artifact_type: ArtifactType = "prompt"
+    type_label: str = "Prompt"
+    lane_summary: str = "Empty"
+    source_label: str = "Local"
 
 
 @dataclass(frozen=True)
@@ -88,6 +280,17 @@ class PromptEditorState:
     version: int | None
     created: str
     modified: str
+    artifact_type: ArtifactType = "prompt"
+    definition_state: ArtifactDefinitionState = "legacy"
+    block_editor_state: PromptBlockEditorState | None = None
+    compiled_system_preview: str = ""
+    compiled_user_preview: str = ""
+    compatibility_stale: bool = False
+    compatibility_reason: str = ""
+    can_convert_as_new: bool = False
+    source: str = "local"
+    source_identity: str | None = None
+    capabilities: PromptSourceCapabilities | None = None
 
 
 def _text(value: Any) -> str:
@@ -190,8 +393,32 @@ def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
     raw_timestamp = _timestamp_raw(record)
     age = format_console_relative_age(raw_timestamp, now=now) if raw_timestamp else ""
     secondary = " · ".join(part for part in (details, age) if part)
+    artifact_type: ArtifactType = (
+        "recipe" if record.get("artifact_type") == "recipe" else "prompt"
+    )
+    has_system = record.get("has_system_prompt")
+    if not isinstance(has_system, bool):
+        has_system = bool(_raw_text(record.get("system_prompt")).strip())
+    has_user = record.get("has_user_prompt")
+    if not isinstance(has_user, bool):
+        has_user = bool(_raw_text(record.get("user_prompt")).strip())
+    if has_system and has_user:
+        lane_summary = "System + User"
+    elif has_system:
+        lane_summary = "System only"
+    elif has_user:
+        lane_summary = "User only"
+    else:
+        lane_summary = "Empty"
+    source = _text(record.get("backend")) or "local"
     return PromptListRow(
-        prompt_id=prompt_id, name=_text(record.get("name")), secondary=secondary
+        prompt_id=prompt_id,
+        name=_text(record.get("name")),
+        secondary=secondary,
+        artifact_type=artifact_type,
+        type_label=artifact_type.title(),
+        lane_summary=lane_summary,
+        source_label=source.title(),
     )
 
 
@@ -238,7 +465,11 @@ def build_prompts_list_state(
     return PromptsListState(rows=rows, count=len(rows), sort=sort)
 
 
-def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
+def build_prompt_editor_state(
+    detail: Mapping[str, Any],
+    *,
+    capabilities: PromptSourceCapabilities | None = None,
+) -> PromptEditorState:
     """Build the prompt editor's display state from a prompt detail mapping.
 
     Args:
@@ -257,6 +488,63 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
     """
     if not isinstance(detail, Mapping):
         detail = {}
+    try:
+        decoded = decode_prompt_artifact(detail)
+    except (TypeError, ValueError):
+        decoded = None
+
+    artifact_type: ArtifactType = (
+        decoded.artifact_type
+        if decoded is not None
+        else cast(
+            ArtifactType,
+            "recipe" if detail.get("artifact_type") == "recipe" else "prompt",
+        )
+    )
+    definition_state: ArtifactDefinitionState = (
+        decoded.state if decoded is not None else "malformed"
+    )
+    compiled_system = (
+        decoded.compiled_system
+        if decoded is not None
+        else _raw_text(detail.get("system_prompt"))
+    )
+    compiled_user = (
+        decoded.compiled_user
+        if decoded is not None
+        else _raw_text(detail.get("user_prompt"))
+    )
+    block_state: PromptBlockEditorState | None = None
+    if decoded is not None and decoded.state == "supported_v2":
+        try:
+            block_state = PromptBlockEditorState.from_definition(
+                artifact_type=decoded.artifact_type,
+                definition=decoded.definition,
+            )
+        except (TypeError, ValueError):
+            definition_state = "malformed"
+    elif (
+        decoded is not None and decoded.state == "legacy" and artifact_type == "prompt"
+    ):
+        decomposition = decompose_legacy_lanes(compiled_system, compiled_user)
+        block_state = PromptBlockEditorState.from_definition(
+            artifact_type="prompt",
+            definition=decomposition.definition,
+            system_origin=decomposition.system_origin,
+            user_origin=decomposition.user_origin,
+        )
+
+    compatibility_reason = ""
+    if block_state is None:
+        compatibility_reason = (
+            f"{definition_state.replace('_', ' ')} artifact is read-only; "
+            "use compatibility text and convert only as a new Prompt."
+        )
+    source = _text(detail.get("backend")) or "local"
+    source_identity_value = detail.get("id", detail.get("uuid"))
+    source_identity = (
+        str(source_identity_value) if source_identity_value not in (None, "") else None
+    )
     return PromptEditorState(
         prompt_id=_resolve_editor_prompt_id(detail),
         name=_text(detail.get("name")),
@@ -268,6 +556,21 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
         version=_to_int(detail.get("version")),
         created=_text(detail.get("created_at")),
         modified=_timestamp_raw(detail),
+        artifact_type=artifact_type,
+        definition_state=definition_state,
+        block_editor_state=block_state,
+        compiled_system_preview=compiled_system,
+        compiled_user_preview=compiled_user,
+        compatibility_stale=bool(
+            decoded.compatibility_stale if decoded is not None else False
+        ),
+        compatibility_reason=compatibility_reason,
+        can_convert_as_new=bool(
+            block_state is None and (compiled_system or compiled_user)
+        ),
+        source=source,
+        source_identity=source_identity,
+        capabilities=capabilities,
     )
 
 

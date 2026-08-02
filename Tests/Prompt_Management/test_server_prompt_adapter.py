@@ -1,16 +1,24 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     add_prompt,
+    add_or_update_prompt_interop,
     apply_server_prompt_version,
     export_prompt_to_server_payload,
     fetch_prompt_details,
     import_prompt_from_server_payload,
+    import_prompts_from_files,
     initialize_interop,
+    parse_json_prompts_from_content,
+    parse_yaml_prompts_from_content,
     shutdown_interop,
 )
+import tldw_chatbook.Prompt_Management.Prompts_Interop as prompts_interop
+from tldw_chatbook.DB.Prompts_DB import InputError
 from tldw_chatbook.Prompt_Management.server_prompt_adapter import (
     local_prompt_to_preview_payload,
     local_prompt_to_server_payload,
@@ -45,6 +53,28 @@ def test_server_prompt_to_local_update_preserves_structured_fields():
     assert update["prompt_format"] == "structured"
     assert update["prompt_schema_version"] == 1
     assert update["prompt_definition"]["schema_version"] == 1
+
+
+def test_server_adapter_round_trips_artifact_type_without_definition_inference():
+    local_prompt = {
+        "name": "Recipe",
+        "artifact_type": "recipe",
+        "prompt_format": "legacy",
+        "system_prompt": "",
+        "user_prompt": "compiled recipe text",
+    }
+
+    payload = local_prompt_to_server_payload(local_prompt)
+    update = server_prompt_to_local_update(payload)
+
+    assert payload["artifact_type"] == "recipe"
+    assert update["artifact_type"] == "recipe"
+
+
+@pytest.mark.parametrize("artifact_type", ["invalid", 3])
+def test_server_adapter_rejects_invalid_artifact_type(artifact_type):
+    with pytest.raises(ValueError, match="artifact_type"):
+        local_prompt_to_server_payload({"name": "Bad", "artifact_type": artifact_type})
 
 
 def test_local_prompt_to_server_payload_keeps_legacy_snapshot():
@@ -89,6 +119,7 @@ def test_import_and_export_prompt_payload_round_trip_structured_fields():
             "keywords": ["sync", "structured"],
             "prompt_format": "structured",
             "prompt_schema_version": 1,
+            "artifact_type": "recipe",
             "prompt_definition": {
                 "schema_version": 1,
                 "messages": [{"role": "user", "content": "imported"}],
@@ -98,10 +129,12 @@ def test_import_and_export_prompt_payload_round_trip_structured_fields():
 
     prompt = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
     assert prompt["prompt_format"] == "structured"
+    assert prompt["artifact_type"] == "recipe"
     assert json.loads(prompt["prompt_definition"])["schema_version"] == 1
 
     exported = export_prompt_to_server_payload(result["prompt_uuid"])
     assert exported["prompt_format"] == "structured"
+    assert exported["artifact_type"] == "recipe"
     assert exported["prompt_definition"]["messages"][0]["content"] == "imported"
     assert exported["keywords"] == ["structured", "sync"]
 
@@ -132,3 +165,227 @@ def test_apply_server_prompt_version_updates_existing_prompt():
     assert updated["prompt_format"] == "structured"
     assert updated["prompt_schema_version"] == 2
     assert json.loads(updated["prompt_definition"])["schema_version"] == 2
+
+
+def test_json_yaml_import_normalization_and_overwrite_keep_recipe_type(tmp_path):
+    json_payload = json.dumps(
+        {
+            "name": "Imported Recipe",
+            "artifact_type": "recipe",
+            "user_prompt": "compiled recipe content",
+        }
+    )
+    json_recipe = parse_json_prompts_from_content(json_payload)[0]
+    yaml_recipe = parse_yaml_prompts_from_content(
+        "name: YAML Recipe\nartifact_type: recipe\nuser_prompt: yaml compiled\n"
+    )[0]
+    assert json_recipe["artifact_type"] == "recipe"
+    assert yaml_recipe["artifact_type"] == "recipe"
+
+    import_path = tmp_path / "recipes.json"
+    import_path.write_text(json_payload, encoding="utf-8")
+    result = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    assert result[0]["status"] == "success"
+
+    add_or_update_prompt_interop(
+        name="Imported Recipe",
+        author=None,
+        details="overwritten recipe",
+        user_prompt="updated compiled recipe content",
+        artifact_type="recipe",
+    )
+    detail = fetch_prompt_details("Imported Recipe")
+    assert detail["artifact_type"] == "recipe"
+    assert detail["details"] == "overwritten recipe"
+
+    with pytest.raises(InputError, match="artifact_type"):
+        add_or_update_prompt_interop(
+            name="Invalid Recipe",
+            author=None,
+            details=None,
+            artifact_type="invalid",
+        )
+
+
+def test_markdown_import_persists_future_structure_as_new_legacy_prompt(tmp_path):
+    """Unsupported Markdown structure must not persist its foreign metadata."""
+    import_path = tmp_path / "future-prompt.md"
+    import_path.write_text(
+        "### TITLE ###\nFuture Prompt\n### AUTHOR ###\nImporter\n"
+        "### SYSTEM ###\ncompiled system\n### USER ###\ncompiled user\n"
+        "### ARTIFACT_TYPE ###\nrecipe\n### STRUCTURE ###\n```json\n"
+        '{"kind":"future_recipe","schema_version":3}\n```\n',
+        encoding="utf-8",
+    )
+
+    [result] = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    prompt = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
+
+    assert result["status"] == "success"
+    assert prompt["artifact_type"] == "prompt"
+    assert prompt["prompt_format"] == "legacy"
+    assert prompt["prompt_schema_version"] is None
+    assert prompt["prompt_definition"] is None
+    assert prompt["system_prompt"] == "compiled system"
+    assert prompt["user_prompt"] == "compiled user"
+
+
+@pytest.mark.parametrize(
+    ("existing_artifact_type", "structure"),
+    [
+        ("prompt", '{"kind":'),
+        ("recipe", '{"schema_version":1,"messages":[]}'),
+        ("prompt", '{"kind":"future_prompt","schema_version":3}'),
+    ],
+    ids=["malformed", "foreign-v1", "future-version"],
+)
+def test_markdown_fallback_collision_creates_new_legacy_prompt_without_mutation(
+    tmp_path, existing_artifact_type, structure
+):
+    """Fallback imports never overwrite a same-named structured artifact."""
+    existing_definition = {
+        "kind": "block_prompt"
+        if existing_artifact_type == "prompt"
+        else "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {"id": "user", "blocks": []},
+        ],
+    }
+    _, existing_uuid, _ = add_prompt(
+        name="Collision Prompt",
+        author="Original author",
+        details="Original details",
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=existing_definition,
+        artifact_type=existing_artifact_type,
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "collision.md"
+    import_path.write_text(
+        "### TITLE ###\nCollision Prompt\n### AUTHOR ###\nImporter\n"
+        "### SYSTEM ###\ncompiled system\n### USER ###\ncompiled user\n"
+        "### ARTIFACT_TYPE ###\nrecipe\n### STRUCTURE ###\n```json\n"
+        f"{structure}\n```\n",
+        encoding="utf-8",
+    )
+
+    [result] = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    imported = fetch_prompt_details(result["prompt_uuid"], include_deleted=True)
+
+    assert result["status"] == "success"
+    assert result["prompt_uuid"] != existing_uuid
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    assert imported["name"] == "Collision Prompt (2)"
+    assert imported["artifact_type"] == "prompt"
+    assert imported["prompt_format"] == "legacy"
+    assert imported["prompt_schema_version"] is None
+    assert imported["prompt_definition"] is None
+    assert imported["system_prompt"] == "compiled system"
+    assert imported["user_prompt"] == "compiled user"
+
+
+def test_repeated_markdown_fallback_collisions_allocate_distinct_legacy_names(tmp_path):
+    """Each fallback import retries a fresh deterministic name after a collision."""
+    _, existing_uuid, _ = add_prompt(
+        name="Repeated Collision",
+        author=None,
+        details=None,
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {"id": "user", "blocks": []},
+            ],
+        },
+        artifact_type="prompt",
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "repeated-collision.md"
+    import_path.write_text(
+        "### TITLE ###\nRepeated Collision\n### SYSTEM ###\ncompiled system\n"
+        "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
+        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        encoding="utf-8",
+    )
+
+    first = import_prompts_from_files(import_path, base_directory=str(tmp_path))[0]
+    second = import_prompts_from_files(import_path, base_directory=str(tmp_path))[0]
+
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    assert fetch_prompt_details(first["prompt_uuid"], include_deleted=True)["name"] == (
+        "Repeated Collision (2)"
+    )
+    assert fetch_prompt_details(second["prompt_uuid"], include_deleted=True)["name"] == (
+        "Repeated Collision (3)"
+    )
+
+
+def test_concurrent_markdown_fallback_collisions_allocate_distinct_legacy_names(
+    tmp_path, monkeypatch
+):
+    """Concurrent structured fallbacks allocate separate legacy names."""
+    shutdown_interop()
+    initialize_interop(tmp_path / "concurrent-prompts.db", client_id="test-client")
+    _, existing_uuid, _ = add_prompt(
+        name="Concurrent Collision",
+        author=None,
+        details=None,
+        system_prompt="original system",
+        user_prompt="original user",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {"id": "user", "blocks": []},
+            ],
+        },
+        artifact_type="prompt",
+    )
+    original = fetch_prompt_details(existing_uuid, include_deleted=True)
+    import_path = tmp_path / "concurrent-collision.md"
+    import_path.write_text(
+        "### TITLE ###\nConcurrent Collision\n### SYSTEM ###\ncompiled system\n"
+        "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
+        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        encoding="utf-8",
+    )
+
+    same_candidate_started = threading.Barrier(2)
+    original_add_prompt = prompts_interop.add_prompt
+
+    def synchronize_same_candidate(*args, **kwargs):
+        if kwargs["name"] == "Concurrent Collision (2)":
+            same_candidate_started.wait(timeout=5)
+        return original_add_prompt(*args, **kwargs)
+
+    monkeypatch.setattr(prompts_interop, "add_prompt", synchronize_same_candidate)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda _: import_prompts_from_files(
+                    import_path, base_directory=str(tmp_path)
+                )[0],
+                range(2),
+            )
+        )
+
+    assert [result["status"] for result in results] == ["success", "success"]
+    assert fetch_prompt_details(existing_uuid, include_deleted=True) == original
+    imported_names = {
+        fetch_prompt_details(result["prompt_uuid"], include_deleted=True)["name"]
+        for result in results
+    }
+    assert imported_names == {"Concurrent Collision (2)", "Concurrent Collision (3)"}

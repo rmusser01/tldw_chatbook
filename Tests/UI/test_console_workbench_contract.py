@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -180,6 +180,19 @@ def _control_state() -> ConsoleControlState:
         tools_label="Tools: 0",
         approvals_label="Approvals: 0",
     )
+
+
+def test_prompt_improvement_has_no_top_bar_or_composer_row_button() -> None:
+    import inspect
+
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+    from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
+
+    control_source = inspect.getsource(ConsoleControlBar.compose)
+    composer_source = inspect.getsource(ConsoleComposerBar.compose)
+    assert "Prompt" not in control_source
+    assert "console-prompt" not in composer_source
+    assert "Undo prompt improvement" not in composer_source
 
 
 def test_console_control_summary_contains_one_persona_assistant_identity() -> None:
@@ -474,6 +487,50 @@ async def test_console_control_bar_exposes_compact_visible_actions():
         assert console.query_one("#console-control-attach-context").disabled is False
         assert console.query_one("#console-control-run-library-rag").disabled is False
         assert console.query_one("#console-control-help").disabled is False
+        assert not console.query("#console-control-prompts")
+
+
+def test_prompts_does_not_add_a_standalone_composer_or_top_action() -> None:
+    """Prompts belongs only to the existing composer hamburger menu."""
+    import inspect
+
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    source = inspect.getsource(ConsoleComposerBar.compose)
+    assert 'id="console-prompts"' not in source
+    assert 'id="console-composer-prompts"' not in source
+
+    state = build_console_workbench_state(control_state=_control_state())
+    assert "prompts" not in {action.id for action in state.actions}
+
+
+@pytest.mark.asyncio
+async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        recovery = AsyncMock()
+        console._open_console_provider_recovery = recovery
+        console._console_provider_blocker_copy = lambda: (
+            "No active provider or model is configured."
+        )
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        configure = modal.query_one("#console-prompts-configure-provider")
+        configure.focus()
+        await pilot.pause()
+        assert host.focused is configure
+
+        configure.press()
+        await pilot.pause()
+
+        recovery.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

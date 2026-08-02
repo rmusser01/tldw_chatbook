@@ -17,6 +17,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
+    MAX_AUXILIARY_OUTPUT_TOKENS,
+    AuxiliaryCompletionRequest,
+    AuxiliaryCompletionResult,
     GENERATION_READ_TIMEOUT_SECONDS,
     NO_PROVIDER_CONTENT_COPY,
     PROBE_TIMEOUT_SECONDS,
@@ -30,6 +33,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
+from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
@@ -621,7 +625,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> (
+async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_endpoint() -> (
     None
 ):
     gateway = ConsoleProviderGateway(
@@ -644,7 +648,114 @@ async def test_resolve_for_send_ignores_cloud_session_base_url_without_configure
     assert resolved.ready is True
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
+    assert resolved.base_url == "http://127.0.0.1:9999/v1"
     assert "save the endpoint in Settings" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_base_url"),
+    [
+        ("openai", "gpt-test", "https://api.openai.com/v1"),
+        ("anthropic", "claude-test", "https://api.anthropic.com/v1"),
+    ],
+)
+async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
+    provider: str,
+    model: str,
+    expected_base_url: str,
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {"api_key": "unit-test-key", "model": model}}
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, explicit_model=model)
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == expected_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_materializes_configured_huggingface_router() -> None:
+    router_base_url = "https://router.example.test/hf-inference"
+    api_base_url = "https://api-base.example.test/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                    "router_base_url": router_base_url,
+                    "api_base_url": api_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == router_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_nonrouter_huggingface_preserves_api_base_precedence() -> (
+    None
+):
+    api_base_url = "https://api-base.example.test/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": False,
+                    "router_base_url": "https://router.example.test/hf-inference",
+                    "api_base_url": api_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == api_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_router_huggingface_preserves_builtin_default() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "https://router.huggingface.co/hf-inference"
 
 
 @pytest.mark.asyncio
@@ -3055,3 +3166,390 @@ async def test_stream_without_usage_leaves_signals_none() -> None:
     ]
     assert signals.usage_payload is None
     assert signals.usage_payloads() == []
+
+
+def _auxiliary_resolution(**overrides) -> ConsoleProviderResolution:
+    values = {
+        "provider": "OpenAI",
+        "base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "model": "gpt-test",
+        "ready": True,
+        "readiness_key": "openai",
+        "execution_key": "openai",
+        "api_key": "API-KEY-CANARY",
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "min_p": 0.03,
+        "top_k": 17,
+        "max_tokens": 999,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "low",
+        "thinking_effort": "medium",
+        "thinking_budget_tokens": 2048,
+        "streaming": True,
+    }
+    values.update(overrides)
+    return ConsoleProviderResolution(**values)
+
+
+def _auxiliary_request(**overrides) -> AuxiliaryCompletionRequest:
+    values = {
+        "resolution": _auxiliary_resolution(),
+        "messages": (
+            {"role": "system", "content": "OPTIMIZER-CANARY"},
+            {"role": "user", "content": "USER-CANARY"},
+        ),
+        "response_format": {"type": "json_object"},
+        "max_output_tokens": 321,
+    }
+    values.update(overrides)
+    return AuxiliaryCompletionRequest(**values)
+
+
+def test_auxiliary_request_is_frozen_and_copies_nested_input() -> None:
+    message = {"role": "user", "content": "BLOCK-CANARY"}
+    required = ["rewritten_prompt"]
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"required": required},
+    }
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=(message,),
+        response_format=response_format,
+        max_output_tokens=10,
+    )
+    message["role"] = "assistant"
+    required.append("MUTATED")
+
+    assert request.messages[0]["role"] == "user"
+    assert request.messages[0]["content"] == "BLOCK-CANARY"
+    assert request.response_format == {
+        "type": "json_schema",
+        "json_schema": {"required": ("rewritten_prompt",)},
+    }
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        request.max_output_tokens = 11  # type: ignore[misc]
+
+
+def test_auxiliary_request_preserves_exact_text_and_freezes_json_sequences() -> None:
+    content = "\n  Preserve this spacing exactly.  \t"
+    enum_values = ["alpha", {"nested": [True, None, 3, 1.25]}]
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=({"role": "user", "content": content},),
+        response_format={"schema": {"enum": enum_values}},
+        max_output_tokens=10,
+    )
+    enum_values[1]["nested"].append("MUTATED")
+
+    assert request.messages[0]["content"] == content
+    assert request.response_format == {
+        "schema": {"enum": ("alpha", {"nested": (True, None, 3, 1.25)})}
+    }
+
+
+@pytest.mark.parametrize(
+    "response_format",
+    [
+        {"schema": {"bad": {"set-value"}}},
+        {"schema": {"bad": object()}},
+        {"schema": {"bad": b"bytes"}},
+        {"schema": {"bad": range(2)}},
+        {"schema": {"bad": float("nan")}},
+        {"schema": {"bad": float("inf")}},
+        {1: "non-string-key"},
+    ],
+)
+def test_auxiliary_request_rejects_nested_non_json_values(response_format) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        AuxiliaryCompletionRequest(
+            resolution=_auxiliary_resolution(),
+            messages=({"role": "user", "content": "x"},),
+            response_format=response_format,
+            max_output_tokens=10,
+        )
+
+
+def test_auxiliary_contract_repr_omits_sensitive_request_and_response_fields() -> None:
+    request = _auxiliary_request()
+    result = AuxiliaryCompletionResult(
+        provider="OpenAI",
+        model="gpt-test",
+        text="RESPONSE-CANARY",
+    )
+
+    rendered = repr((request, result))
+
+    assert "ENDPOINT-CANARY" not in rendered
+    assert "API-KEY-CANARY" not in rendered
+    assert "OPTIMIZER-CANARY" not in rendered
+    assert "USER-CANARY" not in rendered
+    assert "RESPONSE-CANARY" not in rendered
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"resolution": _auxiliary_resolution(ready=False)},
+        {"resolution": _auxiliary_resolution(model="")},
+        {"messages": []},
+        {"messages": ({"role": "user"},)},
+        {"messages": ({"role": "", "content": "x"},)},
+        {"messages": ({"role": "user", "content": ["image"]},)},
+        {"max_output_tokens": 0},
+        {"max_output_tokens": MAX_AUXILIARY_OUTPUT_TOKENS + 1},
+        {"sensitive": False},
+    ],
+)
+def test_auxiliary_request_rejects_invalid_contract(overrides) -> None:
+    values = {
+        "resolution": _auxiliary_resolution(),
+        "messages": ({"role": "user", "content": "x"},),
+        "response_format": None,
+        "max_output_tokens": 10,
+    }
+    values.update(overrides)
+
+    with pytest.raises((TypeError, ValueError)):
+        AuxiliaryCompletionRequest(**values)
+
+
+def test_auxiliary_output_cap_matches_prompt_improvement_application_limit() -> None:
+    assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
+
+
+def test_auxiliary_output_cap_accepts_boundary_and_rejects_one_over() -> None:
+    request = _auxiliary_request(max_output_tokens=16_384)
+
+    assert request.max_output_tokens == 16_384
+    with pytest.raises(ValueError, match="between 1 and 16384"):
+        _auxiliary_request(max_output_tokens=16_385)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> None:
+    calls: list[dict[str, object]] = []
+    sensitive_states: list[bool] = []
+
+    def fake_chat_api_call(**kwargs):
+        sensitive_states.append(is_sensitive_llm_request())
+        calls.append(kwargs)
+        return '  {"kind":"prompt_rewrite","rewritten_prompt":"Better"}\n'
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result == AuxiliaryCompletionResult(
+        provider="OpenAI",
+        model="gpt-test",
+        text='  {"kind":"prompt_rewrite","rewritten_prompt":"Better"}\n',
+    )
+    assert len(calls) == 1
+    assert sensitive_states == [True]
+    call = calls[0]
+    assert call == {
+        "api_endpoint": "openai",
+        "api_base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "system_message": "OPTIMIZER-CANARY",
+        "messages_payload": [{"role": "user", "content": "USER-CANARY"}],
+        "api_key": "API-KEY-CANARY",
+        "model": "gpt-test",
+        "streaming": False,
+        "temp": 0.2,
+        "topp": 0.8,
+        "maxp": 0.8,
+        "topk": 17,
+        "minp": 0.03,
+        "max_tokens": 321,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "low",
+        "thinking_effort": "medium",
+        "thinking_budget_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    assert not ({"tools", "tool_choice", "stop", "history", "images"} & call.keys())
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_preserves_exact_empty_string() -> None:
+    gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: "")
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result.text == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsupported",
+    [None, (), [], iter(["chunk"]), {"unexpected": "shape"}],
+)
+async def test_auxiliary_completion_rejects_unsupported_response_shapes(
+    unsupported,
+) -> None:
+    gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: unsupported)
+
+    with pytest.raises(ChatProviderError, match="unsupported auxiliary response"):
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_accepts_standard_provider_mapping_exactly() -> None:
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": " exact mapping text \n"}}]
+        }
+    )
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result.text == " exact mapping text \n"
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_redacts_provider_exception_and_resets_context() -> (
+    None
+):
+    def fail(**_kwargs):
+        assert is_sensitive_llm_request() is True
+        raise RuntimeError("EXCEPTION-CANARY")
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fail)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert "EXCEPTION-CANARY" not in str(exc_info.value)
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_ignores_injected_raw_error_formatter() -> None:
+    def fail(**_kwargs):
+        raise RuntimeError("EXCEPTION-CANARY")
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fail,
+        safe_error_copy=lambda _provider, exc: str(exc),
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert "EXCEPTION-CANARY" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_cancellation_starts_no_second_call_and_resets() -> (
+    None
+):
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+    observed: list[bool] = []
+
+    def blocking(**_kwargs):
+        nonlocal calls
+        calls += 1
+        observed.append(is_sensitive_llm_request())
+        started.set()
+        release.wait(timeout=2)
+        observed.append(is_sensitive_llm_request())
+        return "late"
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=blocking)
+    task = asyncio.create_task(gateway.complete_auxiliary(_auxiliary_request()))
+    await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.sleep(0.05)
+
+    assert calls == 1
+    assert observed == [True, True]
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> None:
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content)
+        captured["sensitive"] = is_sensitive_llm_request()
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": " llama exact \n"}}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(http_client=client)
+    request = _auxiliary_request(
+        resolution=_auxiliary_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            readiness_key="llama_cpp",
+            base_url="http://127.0.0.1:9099/v1",
+        )
+    )
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == " llama exact \n"
+    assert captured["url"] == "http://127.0.0.1:9099/v1/chat/completions"
+    assert captured["sensitive"] is True
+    assert captured["payload"] == {
+        "model": "gpt-test",
+        "messages": [
+            {"role": "system", "content": "OPTIMIZER-CANARY"},
+            {"role": "user", "content": "USER-CANARY"},
+        ],
+        "stream": False,
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "min_p": 0.03,
+        "top_k": 17,
+        "max_tokens": 321,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+    }
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_direct_llama_rejects_malformed_completion_shape() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"unexpected": "shape"})
+        )
+    )
+    gateway = ConsoleProviderGateway(http_client=client)
+    request = _auxiliary_request(
+        resolution=_auxiliary_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            readiness_key="llama_cpp",
+            base_url="http://127.0.0.1:9099/v1",
+        )
+    )
+
+    with pytest.raises(ChatProviderError):
+        await gateway.complete_auxiliary(request)
+
+    await client.aclose()

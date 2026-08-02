@@ -1106,7 +1106,7 @@ def test_console_paste_token_style_span_survives_crlf_before_token():
     )
 
 
-def test_console_literal_segments_merge_during_typing_and_small_pastes():
+def test_console_typing_and_small_paste_render_contiguously_with_explicit_origins():
     composer = ConsoleComposerBar()
 
     composer.insert_text("a")
@@ -1114,8 +1114,15 @@ def test_console_literal_segments_merge_during_typing_and_small_pastes():
     composer.insert_pasted_text("small paste")
 
     assert composer.draft_text() == "absmall paste"
-    assert len(composer._segments) == 1
-    assert composer._segments[0].collapse_state == "literal"
+    assert composer._display_draft_text() == "absmall paste"
+    assert [
+        (segment.text, segment.origin, segment.collapse_state)
+        for segment in composer._segments
+    ] == [
+        ("ab", "literal", "literal"),
+        ("small paste", "paste", "literal"),
+    ]
+    assert composer.has_paste_segments() is True
 
 
 def test_console_composer_empty_placeholder_is_task_oriented():

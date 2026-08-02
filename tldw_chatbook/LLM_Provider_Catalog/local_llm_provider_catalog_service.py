@@ -8,6 +8,10 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    effective_provider_endpoint,
+    first_configured_endpoint,
+)
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
@@ -57,15 +61,6 @@ from ..config import LOCAL_PROVIDERS, get_cli_providers_and_models, load_setting
 DiscoveryClient = Callable[..., Awaitable[ModelDiscoveryResult]]
 SettingsLoader = Callable[[], Mapping[str, Any]]
 
-_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
-_DEFAULT_OPENAI_COMPATIBLE_ENDPOINTS = {
-    "openai": "https://api.openai.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "mistralai": "https://api.mistral.ai/v1",
-    "moonshot": "https://api.moonshot.ai/v1",
-    "zai": "https://api.z.ai/api/paas/v4",
-}
 _PLACEHOLDER_KEYS = frozenset(
     {
         "",
@@ -225,11 +220,7 @@ class LocalLLMProviderCatalogService:
     def _endpoint_from_provider_settings(
         cls, provider_settings: Mapping[str, Any]
     ) -> str | None:
-        for endpoint_key in _ENDPOINT_KEYS:
-            endpoint = cls._valid_text(provider_settings.get(endpoint_key))
-            if endpoint:
-                return endpoint
-        return None
+        return first_configured_endpoint(provider_settings)
 
     def _resolve_endpoint(
         self,
@@ -250,8 +241,11 @@ class LocalLLMProviderCatalogService:
         saved_provider_settings = self._provider_settings_for_key(
             saved_settings, provider_key
         )
-        saved_endpoint = self._endpoint_from_provider_settings(saved_provider_settings)
-        return saved_endpoint or _DEFAULT_OPENAI_COMPATIBLE_ENDPOINTS.get(provider_key)
+        return effective_provider_endpoint(
+            provider_key,
+            staged_endpoint,
+            saved_provider_settings,
+        )
 
     def _api_key_from_provider_settings(
         self, provider_settings: Mapping[str, Any]
