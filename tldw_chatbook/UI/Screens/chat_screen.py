@@ -801,11 +801,11 @@ class _ConsoleHandsFreeSession:
             `controller.tick(now)` and the chip repaint. Stopped on
             teardown.
         reply_id: The outstanding reply's assistant-message id, or None
-            when no reply is outstanding. Set on the FIRST delta tap call
-            observed while `controller.state == "awaiting_reply"`; the
-            reply-identity guard (`_on_console_hands_free_delta`/
-            `_on_console_hands_free_terminal`) drops any tap call for a
-            DIFFERENT id -- see those methods' docstrings.
+            when no reply is outstanding. Claimed by the first delta/
+            completion tap call that passes the reply-identity guard (see
+            `pending_session_id`/`pending_existing_assistant_ids` below and
+            `_console_hands_free_try_claim_reply`'s docstring) while
+            `controller.state == "awaiting_reply"`.
         toast_shown_for_reply: Policy state for `speak_utterance`'s `quiet`
             parameter -- at most one failure toast per reply; every
             subsequent utterance in the same reply passes `quiet=True`
@@ -814,6 +814,20 @@ class _ConsoleHandsFreeSession:
             painted into the chip by the 0.1 s tick (see `_repaint_console_
             hands_free_chip`). Meaningless outside `controller.state ==
             "countdown"`.
+        pending_session_id: The Console session `RequestStopAndSend`
+            recorded this send as going into (`_console_dictation_origin_
+            session_id` at that moment -- the SAME value the existing V2
+            wrong-session-refusal already uses, not `store.active_session_
+            id` re-read later, which a tab switch could have moved on from
+            by dispatch time). `None` until the first send. Part of the
+            reply-identity guard (task-5 review B1/M7).
+        pending_existing_assistant_ids: A snapshot of every assistant
+            message id already present in `pending_session_id` at the
+            moment `RequestStopAndSend` fired -- taken BEFORE the send
+            creates its own new assistant row, so any id in this set can
+            only be a PRE-EXISTING (therefore stale/foreign) reply, never
+            the new one. Part of the reply-identity guard (task-5 review
+            B1).
     """
 
     controller: HandsFreeController
@@ -822,6 +836,8 @@ class _ConsoleHandsFreeSession:
     reply_id: str | None = None
     toast_shown_for_reply: bool = False
     countdown_remaining: float = 0.0
+    pending_session_id: str | None = None
+    pending_existing_assistant_ids: frozenset[str] = frozenset()
 
 
 def _join_segments(segments: list[str]) -> str:
@@ -1726,6 +1742,25 @@ class ChatScreen(BaseAppScreen):
             show=True,
         ),
         Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
+        # Task-5 review I2: Esc exits the hands-free loop from ANY point --
+        # a `priority=True` binding is what actually delivers "any point":
+        # `on_key`'s own hands-free branch (hoisted above the focus gate,
+        # see `on_key`) still only ever fires once a Key event bubbles up
+        # from the focused widget, and a widget with its OWN escape
+        # handling (the transcript's clear-selection, a modal's dismiss)
+        # can consume/stop it before it ever reaches that far. Priority
+        # bindings are resolved by the App BEFORE normal bubbling starts,
+        # so this wins regardless of what currently holds focus.
+        # `check_action` below gates it to hands-free-active only, so it
+        # never shadows `expand_collapsed_console_composer` (also
+        # priority=True, for the composer-collapsed case) outside the loop.
+        Binding(
+            "escape",
+            "exit_console_hands_free",
+            "Exit hands-free",
+            show=False,
+            priority=True,
+        ),
         Binding(
             "escape",
             "expand_collapsed_console_composer",
@@ -1768,7 +1803,18 @@ class ChatScreen(BaseAppScreen):
                 self._console_composer_collapsed
                 and not self._console_setup_modal_blocking()
             )
+        if action == "exit_console_hands_free":
+            return self._console_hands_free is not None
         return super().check_action(action, parameters)
+
+    def action_exit_console_hands_free(self) -> None:
+        """Priority Esc: exit the hands-free loop from any point (task-5
+        review I2) -- see `check_action`'s gate and the `BINDINGS` entry's
+        docstring-comment for why this needs to be `priority=True` rather
+        than relying on `on_key`'s own (bubbling-order) branch alone."""
+        hands_free = self._console_hands_free
+        if hands_free is not None:
+            hands_free.controller.on_exit_request()
 
     def action_expand_collapsed_console_composer(self) -> None:
         """Expand the hidden Console composer and return keyboard focus to it."""
@@ -3212,9 +3258,12 @@ class ChatScreen(BaseAppScreen):
         #: (`_ensure_console_chat_store`), so this only ever needs doing once.
         self._console_hands_free_store_tap_installed = False
         #: Set once (per app run) by a `VoiceVadUnavailable` event -- see that
-        #: dataclass's docstring. Read by `_repaint_console_hands_free_chip`
-        #: so the countdown/listening chip copy never promises auto-send
-        #: silence detection this capture cannot deliver in degraded mode.
+        #: dataclass's docstring. Read by `_enter_console_hands_free_loop`,
+        #: which shows a dedicated warning naming exactly what auto-send/
+        #: barge-in cannot do in degraded mode (task-5 review M1: this
+        #: comment used to claim the chip repaint reads it -- it does not;
+        #: the entry toast alone is what satisfies the "never promise
+        #: silence detection it can't deliver" constraint).
         self._console_hands_free_vad_degraded = False
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
@@ -5578,18 +5627,50 @@ class ChatScreen(BaseAppScreen):
                     self._request_console_dictation_stop()
             elif event.name == "discard":
                 self._request_console_dictation_cancel()
+                # Task-5 review I3: `_request_console_dictation_cancel()`
+                # sets `_console_dictation_state` to `idle` SYNCHRONOUSLY
+                # (only the actual device release is async), so by the time
+                # `on_exit_request()` runs here `_console_hands_free_close_
+                # capture`'s own `== "recording"` guard is already False --
+                # a clean, single no-op close, not a second stop. Without
+                # this the FSM stayed `listening` believing the mic was
+                # still open while it was not, with nothing left to reopen
+                # or exit it.
+                if self._console_hands_free is not None:
+                    self._console_hands_free.controller.on_exit_request()
             elif event.name == "hands-free":
                 # Task 5: unlike the capture-ending commands below, this one
                 # does NOT end the capture -- the still-open mic becomes the
                 # loop's first turn (`capture_live=True`), matching the key
                 # binding pressed mid-capture.
                 self._enter_console_hands_free_loop(capture_live=True)
+            elif event.name == "send" and self._console_hands_free is not None:
+                # Task-5 review I3: spoken "send" mid-loop must drive the
+                # SAME `RequestStopAndSend` semantics as a countdown expiry
+                # -- `awaiting_reply` is entered and the reply is actually
+                # spoken -- rather than the plain queue-and-stop below,
+                # which ended the capture without telling the controller:
+                # the FSM stayed `listening` (mic believed open, actually
+                # closed) while the reply streamed and the tap silently
+                # dropped every delta (`state != "awaiting_reply"`) -- the
+                # user asked hands-free to send, it sent, and the loop went
+                # quiet forever.
+                self._console_hands_free_force_immediate_send()
             elif event.name in ("send", "new-session", "read-that-back"):
                 # Queued, not acted on immediately: `_stop_console_dictation`
                 # runs it once the capture's own transcript has actually
                 # landed (see `_console_pending_voice_action`'s docstring).
                 self._console_pending_voice_action = event.name
                 self._request_console_dictation_stop()
+                # Task-5 review I3: `new-session`/`read-that-back` neither
+                # continue nor reopen this turn (a new tab / reading back an
+                # already-completed reply are not new conversational turns
+                # for THIS loop) -- ending the loop cleanly here is the
+                # honest outcome, matching `discard`'s fix immediately
+                # above and for the identical reason (the capture just
+                # ended out from under the FSM with nothing telling it).
+                if self._console_hands_free is not None:
+                    self._console_hands_free.controller.on_exit_request()
             return
         if isinstance(event, VoiceSpeechResumed):
             # Task 5: a mic-side fact (see the dataclass's own docstring),
@@ -5767,29 +5848,97 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
         if self._console_hands_free is not None:
-            # Task 5: `on_capture_ended(had_segments, limit_hit=True)` is
-            # called here, BEFORE the stop below, while the capture is
-            # still `recording` -- with segments pending it emits
-            # `RequestStopAndSend`, which (via `_console_hands_free_
-            # request_stop_and_send`'s "recording" branch) drives the real
-            # stop-and-send below itself, making the plain call that
-            # follows a harmless no-op (state has already moved on). With
-            # nothing captured it emits `OpenCapture`/`ExitLoop`; a same-tick
-            # `OpenCapture` reopen cannot succeed yet (the capture has not
-            # actually released the microphone at this point) and is a
-            # transient no-op in that narrow case -- bounded by the
-            # controller's own reopen-once/second-consecutive-empty-limit
-            # ExitLoop ceiling, so it self-heals within one more turn rather
-            # than looping forever.
+            # `had_segments` must be read NOW, while the capture is still
+            # `recording` (the segments live on the session object that is
+            # about to be released).
             had_segments = False
             session = self._console_dictation_session
             if session is not None:
                 with session._lock:
                     had_segments = bool(session._segments)
-            self._console_hands_free.controller.on_capture_ended(
-                had_segments=had_segments, limit_hit=True
-            )
+            if had_segments:
+                # WITH segments pending, `on_capture_ended` must fire
+                # synchronously, HERE, while still `recording` -- exactly
+                # like the original (pre-review) design: it emits
+                # `RequestStopAndSend`, which (via `_console_hands_free_
+                # request_stop_and_send`'s "recording" branch) drives the
+                # REAL stop-and-send itself, making the trailing, always-run
+                # `_request_console_dictation_stop()` call below a harmless
+                # no-op (state has already moved on to `transcribing`).
+                # Deferring this case the same way the empty case needs
+                # (see below) would let the trailing unconditional stop run
+                # FIRST and finish the capture on its own, ordinary
+                # (non-send) path -- by the time a deferred `on_capture_
+                # ended` then tried to retroactively queue a send,
+                # `_console_dictation_origin_session_id` would already be
+                # cleared to `None` and the draft could have moved on.
+                self._console_hands_free.controller.on_capture_ended(
+                    had_segments=True, limit_hit=True
+                )
+            else:
+                # Task-5 review B2: with NOTHING captured, `on_capture_
+                # ended` must NOT be delivered until the capture has
+                # actually reached `idle` (mic released). Delivering it
+                # synchronously here made an empty-capture `OpenCapture`
+                # reopen a same-tick no-op (`_console_hands_free_open_
+                # capture`'s own `state == "idle"` guard correctly refuses
+                # -- the mic is not free yet) while the FSM still recorded
+                # `capture_open = True` and burned the reopen-once ceiling
+                # regardless: permanently mic-dead, with no second
+                # `on_capture_ended` ever able to arrive to trigger the
+                # ceiling's own exit. See `_deliver_console_hands_free_
+                # capture_ended`, scheduled below instead of called
+                # directly -- unlike the had-segments branch above, there
+                # is no pending send whose session/draft state could go
+                # stale in the meantime, so deferring is safe here.
+                self.run_worker(
+                    self._deliver_console_hands_free_capture_ended(False),
+                    exclusive=False,
+                    group="console-hands-free-capture-ended",
+                    exit_on_error=False,
+                )
         self._request_console_dictation_stop()
+
+    #: Bound on how long `_deliver_console_hands_free_capture_ended` waits
+    #: for a limit-triggered stop to actually reach `idle` before giving up
+    #: -- generous relative to `dictation.stop_join_timeout_seconds`'s own
+    #: 30s default (that timeout is the transcription-thread join `_stop_
+    #: console_dictation` itself is bounded by; this only needs to exceed
+    #: it, not match it exactly). Giving up here is a safe failure mode: no
+    #: `on_capture_ended` is delivered at all, so the FSM's own bookkeeping
+    #: is never told something that did not (yet) happen, and the user can
+    #: still exit manually (Esc/mic/alt+h/spoken "stop").
+    _CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS: float = 40.0
+
+    async def _deliver_console_hands_free_capture_ended(
+        self, had_segments: bool
+    ) -> None:
+        """Wait for a limit-triggered stop to actually release the
+        microphone, THEN deliver `on_capture_ended` (task-5 review B2).
+
+        Polls `_console_dictation_state` rather than hooking `_stop_
+        console_dictation`'s own internals directly, so this stays a
+        self-contained addition next to the ONE call site that needs it
+        instead of threading a new "was this a limit stop" flag through
+        that already-delicate method.
+        """
+        deadline = (
+            time.monotonic() + self._CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS
+        )
+        while self._console_dictation_state != "idle":
+            if not self.is_mounted or time.monotonic() >= deadline:
+                logger.warning(
+                    "Console hands-free: capture-ended delivery gave up "
+                    "waiting for the limit-triggered stop to reach idle"
+                )
+                return
+            await asyncio.sleep(0.05)
+        session = self._console_hands_free
+        if session is None:
+            return
+        session.controller.on_capture_ended(
+            had_segments=had_segments, limit_hit=True
+        )
 
     def _create_console_dictation_session(self) -> Any:
         """Build a streaming dictation session bound to this screen.
@@ -7009,39 +7158,123 @@ class ChatScreen(BaseAppScreen):
         nothing left to stop. There is no second send path either way --
         both branches ultimately run `_run_pending_console_voice_action`,
         the same method a spoken "send" already uses.
+
+        Task-5 review B1/M7: records `pending_session_id` (from
+        `_console_dictation_origin_session_id` -- the SAME value V2's own
+        wrong-session-refusal already uses, NOT a fresh `store.active_
+        session_id` read, which a tab switch could have moved on from by
+        the time a deferred idle-branch dispatch actually runs) and a
+        snapshot of every assistant message id already in that session
+        (`pending_existing_assistant_ids`), both consumed by the
+        reply-identity guard (`_console_hands_free_try_claim_reply`) to
+        decide which later delta/completion tap call is really THIS send's
+        reply.
         """
+        session = self._console_hands_free
+        sending_session_id = self._console_dictation_origin_session_id
+        if session is not None:
+            session.pending_session_id = sending_session_id
+            session.pending_existing_assistant_ids = (
+                self._console_hands_free_assistant_ids(sending_session_id)
+            )
         self._console_pending_voice_action = "send"
         if self._console_dictation_state == "recording":
             self._request_console_dictation_stop()
             return
         if self._console_dictation_state == "idle":
-            store = self._ensure_console_chat_store()
             self.run_worker(
-                self._run_pending_console_voice_action(store.active_session_id),
+                self._run_pending_console_voice_action(sending_session_id),
                 exclusive=True,
                 group="console-hands-free-send",
+                exit_on_error=False,
             )
         # else ("starting"/"transcribing"): a stop is already in flight for
         # this same capture; its own tail will pick up the queued action.
 
-    def _console_hands_free_silence_speech(self) -> None:
-        """`SilenceSpeech`/`SuppressReplySpeech`: flush the sequencer.
+    def _console_hands_free_assistant_ids(self, session_id: str | None) -> frozenset[str]:
+        """Return every assistant message id currently in `session_id`.
 
-        One mechanism covers both intents: `SentenceSequencer.flush()`
-        clears the queue, calls `stop_speech()` (wired to the both-ways TTS
-        stop routine -- see `_stop_console_hands_free_speech`) exactly iff
-        an utterance is currently in flight, and latches suppression so
-        nothing from this reply speaks again. `SilenceSpeech` (a barge-in
-        mid-`speaking`, or re-`enter()` catching a still-speaking reply)
-        typically has something in flight to stop; `SuppressReplySpeech` (a
-        keypress during `awaiting_reply`, or `on_reply_failed()`'s
-        recovery) typically does not -- `flush()` is a safe no-op for
-        `stop_speech()` in that case, but the suppression latch still needs
-        setting either way, which is why both intents route here.
+        Used to snapshot "pre-existing" reply ids before a send, so the
+        reply-identity guard can tell a brand-new reply from a stale one
+        that already existed (task-5 review B1).
+        """
+        if not session_id:
+            return frozenset()
+        store = self._ensure_console_chat_store()
+        try:
+            messages = store.messages_for_session(session_id)
+        except KeyError:
+            return frozenset()
+        return frozenset(m.id for m in messages if m.role == "assistant")
+
+    def _console_hands_free_force_immediate_send(self) -> None:
+        """Spoken "send" mid-loop: drive the SAME countdown-expiry path
+        `RequestStopAndSend` uses, collapsed to (near) zero wall time
+        (task-5 review I3).
+
+        Only the controller's OWN public inputs are used here (`on_voice_
+        final()` then two `tick()` calls) -- no reach into its private
+        `_begin_awaiting_reply()`/`_send_delay_seconds` -- so this is
+        exactly the path a real countdown expiry takes, just compressed:
+        from `listening`, `on_voice_final()` arms the countdown; from
+        `countdown` already (a prior segment's own final already armed
+        one -- e.g. "hello there" dictated, then "Console, send." spoken
+        immediately after, before that countdown would have expired on its
+        own), the existing arming is reused as-is rather than re-armed.
+        Either way, the first `tick()` adopts/re-confirms `now` as the
+        anchor (elapsed 0 relative to a same-call anchor, never expires on
+        its own); the second, with `now` pushed far enough into the future
+        that `remaining` clamps to 0 regardless of the configured
+        `dictation.handsfree_send_delay_seconds`, expires it -- which is
+        what actually emits `RequestStopAndSend` and moves the controller
+        into `awaiting_reply`, so the reply that follows is genuinely
+        spoken instead of streaming into a `listening` loop that silently
+        drops it. A no-op in every other state (`awaiting_reply`/
+        `speaking`/`idle`) -- nothing to send yet, or a send is already
+        outstanding.
         """
         session = self._console_hands_free
         if session is None:
             return
+        controller = session.controller
+        if controller.state == "listening":
+            controller.on_voice_final()
+        elif controller.state != "countdown":
+            return
+        now = time.monotonic()
+        controller.tick(now)
+        controller.tick(now + 3600.0)
+
+    def _console_hands_free_silence_speech(self) -> None:
+        """`SilenceSpeech`/`SuppressReplySpeech`: stop any playing speech and
+        flush the sequencer.
+
+        Two things, unconditionally: (1) the both-ways TTS stop routine
+        (`TTSPlaybackEvent(action="stop")`) fires directly here too, not
+        only through `flush()`'s conditional `stop_speech()` -- a `_speak_
+        status` ack ("Sent.", "Discarded.", ...) bypasses the sequencer
+        entirely, so without this a barge-in mid-ack would leave it
+        playing (task-5 review M9); (2) `SentenceSequencer.flush()` clears
+        the queue, calls `stop_speech()` (redundant with (1) when
+        something is in flight -- harmless, matches the existing "post a
+        bare stop before every capture-open" idiom this file already
+        uses) exactly iff an utterance is in flight, and latches
+        suppression so nothing from this reply speaks again.
+        `SilenceSpeech` (a barge-in mid-`speaking`, or re-`enter()`
+        catching a still-speaking reply) typically has something in
+        flight to stop; `SuppressReplySpeech` (a keypress during
+        `awaiting_reply`, or `on_reply_failed()`'s recovery) typically
+        does not -- the suppression latch still needs setting either way,
+        which is why both intents route here.
+        """
+        session = self._console_hands_free
+        if session is None:
+            return
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSPlaybackEvent,
+        )
+
+        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
         session.sequencer.flush()
 
     def _console_hands_free_open_capture(self) -> None:
@@ -7162,22 +7395,30 @@ class ChatScreen(BaseAppScreen):
 
         def _append_stream_chunk(message_id: str, chunk: str):
             result = original_append(message_id, chunk)
-            self._on_console_hands_free_delta(message_id, chunk)
+            self._console_hands_free_marshal(
+                self._on_console_hands_free_delta, message_id, chunk
+            )
             return result
 
         def _mark_message_complete(message_id: str):
             result = original_complete(message_id)
-            self._on_console_hands_free_terminal(message_id, failed=False)
+            self._console_hands_free_marshal(
+                self._on_console_hands_free_terminal, message_id, False
+            )
             return result
 
         def _mark_message_failed(message_id: str):
             result = original_failed(message_id)
-            self._on_console_hands_free_terminal(message_id, failed=True)
+            self._console_hands_free_marshal(
+                self._on_console_hands_free_terminal, message_id, True
+            )
             return result
 
         def _mark_message_stopped(message_id: str):
             result = original_stopped(message_id)
-            self._on_console_hands_free_terminal(message_id, failed=True)
+            self._console_hands_free_marshal(
+                self._on_console_hands_free_terminal, message_id, True
+            )
             return result
 
         store.append_stream_chunk = _append_stream_chunk
@@ -7186,51 +7427,129 @@ class ChatScreen(BaseAppScreen):
         store.mark_message_stopped = _mark_message_stopped
         self._console_hands_free_store_tap_installed = True
 
+    def _console_hands_free_marshal(
+        self, callback: Callable[..., None], *args: Any
+    ) -> None:
+        """Run `callback(*args)` on the UI thread (task-5 review I1).
+
+        The tap wraps store methods reachable from TWO contexts: the
+        async, on-the-app-loop direct-provider send path, and -- the
+        DEFAULT production path, `[console] agent_runtime` on by default
+        -- a WORKER THREAD running its own event loop
+        (`ConsoleChatController._run_agent_reply` ->
+        `asyncio.to_thread(bridge.run_reply)` ->
+        `console_agent_bridge.py`'s `_StreamingModelAdapter.chat_call` ->
+        `store.append_stream_chunk`/etc, all on that thread). Everything
+        downstream of this tap touches widgets (`ConsoleComposerBar.set_
+        voice_status` via the chip repaint) or calls `run_worker`/`post_
+        message` (which themselves require -- or at least assume -- the
+        app's own thread), so every call must land back there. `self.app`
+        itself is UNSAFE to read off-thread (it resolves via a context
+        var with no active app on a bare worker thread -- `NoActiveAppError`)
+        -- `self.app_instance` (the stored `TldwCli` reference, plain
+        attribute access, safe from any thread) is used for both the
+        thread-identity check and the marshal call.
+        """
+        if threading.get_ident() == self.app_instance._thread_id:
+            callback(*args)
+            return
+        self.app_instance.call_from_thread(callback, *args)
+
+    def _console_hands_free_try_claim_reply(
+        self, session: "_ConsoleHandsFreeSession", message_id: str
+    ) -> bool:
+        """Claim `message_id` as the outstanding reply's id, if eligible.
+
+        REPLY IDENTITY (binding carrier, task-5 review B1): eligible means
+        ALL of:
+          (a) `controller.state == "awaiting_reply"` -- nothing has been
+              claimed yet, and a reply is genuinely outstanding;
+          (b) `message_id` belongs to the SAME session `RequestStopAndSend`
+              recorded this send as going into (`session.pending_session_
+              id`) -- rules out a concurrently-streaming BACKGROUND
+              session's reply (parallel per-session runs are a supported
+              feature, `console_chat_controller.py`'s `send_refusal_copy`
+              gates on `max_parallel_runs`, not "only one run app-wide");
+          (c) `message_id` was NOT already present in that session before
+              this send (`session.pending_existing_assistant_ids`) -- rules
+              out a STALE reply in the SAME session: a keyboard barge-in
+              during `awaiting_reply` suppresses speech but never cancels
+              generation, so that reply's message id already exists (and
+              keeps streaming) by the time the NEXT turn's send fires; without
+              this check the next turn would claim the OLD reply's id (it is
+              the first one still streaming) and speak its leftover sentences
+              into the new turn -- reopening exactly the hazard task-3's
+              `on_reply_started` docstring warns about
+              (`console_hands_free.py`'s `_reply_abandoned_by_watchdog`
+              framing is the same class of "a suppressed reply must not
+              resurrect" issue, one layer up).
+
+        There is still no independent ground truth beyond "new, in the
+        right session" -- there is no earlier synchronous "reply started,
+        here is its id" signal reachable without touching
+        `console_chat_controller.py` (out of this task's file list) -- but
+        that pair of checks is exactly what the brief's reply-identity
+        constraint requires: a wrong id can no longer win the slot.
+        """
+        if session.controller.state != "awaiting_reply":
+            return False
+        if session.pending_session_id is None:
+            return False
+        store = self._ensure_console_chat_store()
+        try:
+            owner_session_id = store.session_id_for_message(message_id)
+        except KeyError:
+            return False
+        if owner_session_id != session.pending_session_id:
+            return False
+        if message_id in session.pending_existing_assistant_ids:
+            return False
+        session.reply_id = message_id
+        return True
+
     def _on_console_hands_free_delta(self, message_id: str, chunk: str) -> None:
         """Delta tap: feed one streamed chunk into the loop's sentence sequencer.
 
-        REPLY IDENTITY (binding carrier): there is no earlier synchronous
-        "reply started, and here is its id" signal reachable from this file
-        alone (see the task-5 report), so the FIRST delta observed while
-        `controller.state == "awaiting_reply"` and no reply id is captured
-        yet claims `session.reply_id` for this turn, and doubles as the
-        earliest available `on_reply_started()` signal. Every later delta
-        is fed ONLY when its `message_id` matches `session.reply_id`; a
-        delta for any other id -- a stale stream from an abandoned turn, or
-        a DIFFERENT session/tab streaming in the background -- is dropped
-        before it can reach the sequencer.
+        UI-thread only -- always reached via `_console_hands_free_marshal`
+        (task-5 review I1). The FIRST delta that passes `_console_hands_
+        free_try_claim_reply` (see its docstring for the full reply-identity
+        contract) claims `session.reply_id` for this turn, and doubles as
+        the earliest available `on_reply_started()` signal. Every later
+        delta is fed ONLY when its `message_id` matches `session.reply_id`;
+        anything else is dropped before it can reach the sequencer.
         """
         session = self._console_hands_free
         if session is None:
             return
         if session.reply_id is None:
-            if session.controller.state != "awaiting_reply":
+            if not self._console_hands_free_try_claim_reply(session, message_id):
                 return
-            session.reply_id = message_id
             session.controller.on_reply_started()
         elif message_id != session.reply_id:
             return
         session.sequencer.feed(chunk)
 
-    def _on_console_hands_free_terminal(self, message_id: str, *, failed: bool) -> None:
+    def _on_console_hands_free_terminal(self, message_id: str, failed: bool) -> None:
         """Completion tap: `mark_message_complete`/`mark_message_failed`/
         `mark_message_stopped`.
 
-        Claims `session.reply_id` the same way `_on_console_hands_free_
-        delta` does (see its docstring) when it has not already been
-        claimed by a delta -- a reply that streams ZERO chunks (a
-        zero-speakable reply, or a failure before any content arrived)
-        still needs its completion recognized, or the loop hangs in
-        `awaiting_reply` until the 30s watchdog gives up on it. Dropped
-        when `message_id` does not match the outstanding reply.
+        UI-thread only -- always reached via `_console_hands_free_marshal`
+        (task-5 review I1; `failed` is positional here, not keyword-only,
+        for that same call site's benefit -- `call_from_thread`/direct
+        dispatch both pass it positionally). Claims `session.reply_id` via
+        `_console_hands_free_try_claim_reply` the same way the delta tap
+        does when it has not already been claimed -- a reply that streams
+        ZERO chunks (a zero-speakable reply, or a failure before any
+        content arrived) still needs its completion recognized, or the
+        loop hangs in `awaiting_reply` until the 30s watchdog gives up on
+        it. Dropped when `message_id` does not match the outstanding reply.
         """
         session = self._console_hands_free
         if session is None:
             return
         if session.reply_id is None:
-            if session.controller.state != "awaiting_reply":
+            if not self._console_hands_free_try_claim_reply(session, message_id):
                 return
-            session.reply_id = message_id
         elif session.reply_id != message_id:
             return
         if failed:
@@ -7260,6 +7579,7 @@ class ChatScreen(BaseAppScreen):
             self._speak_console_hands_free_utterance(text, token),
             exclusive=False,
             group="console-hands-free-speech",
+            exit_on_error=False,
         )
 
     async def _speak_console_hands_free_utterance(
@@ -20526,8 +20846,17 @@ class ChatScreen(BaseAppScreen):
             # Workbench is inert behind the first-run setup modal; never route
             # printable/edit keys into the covered composer.
             return
-        if not self._should_capture_console_input(composer):
-            return
+        # Task-5 review I2: this branch is deliberately ABOVE the
+        # `_should_capture_console_input` focus gate below -- keyboard
+        # barge-in and Esc are the loop's PRIMARY interruption/exit
+        # mechanism ("press any key"/"Esc from any point in the loop", per
+        # the docs), and must keep working even when focus has moved to,
+        # say, the transcript (clicking a message, scrolling with the
+        # mouse) rather than staying pinned to the composer. Byte-identical
+        # `on_key` outside the loop is unaffected -- this whole branch is
+        # gated on `hands_free is not None`, and it never touches the
+        # composer itself (typed input keeps its normal, focus-gated
+        # semantics via the unmoved checks below).
         hands_free = self._console_hands_free
         if hands_free is not None:
             if event.key == "escape":
@@ -20536,9 +20865,7 @@ class ChatScreen(BaseAppScreen):
                 # the screen's own `escape -> focus_console_composer_home`
                 # binding (below, :1627 pre-Task-5) so that binding's normal
                 # semantics are restored the instant the loop is not
-                # running (byte-identical `on_key` outside the loop -- this
-                # whole branch is new code, gated on `hands_free is not
-                # None`, so it changes nothing when it is None).
+                # running.
                 hands_free.controller.on_exit_request()
                 event.stop()
                 event.prevent_default()
@@ -20546,13 +20873,16 @@ class ChatScreen(BaseAppScreen):
             # Every other key barges in per the controller's own state
             # guards (a no-op in `listening`/`idle` -- see `on_composer_
             # key`'s docstring) and is NOT stopped here: it falls through to
-            # the ordinary handling below unchanged, so a countdown-
-            # cancelling Enter still sends the TYPED draft via the normal
-            # path afterward (this call runs first in the SAME keypress,
-            # cancelling any armed countdown/suppressing an awaiting reply
-            # BEFORE the Enter branch below presses Send) rather than
-            # double-firing hands-free's own voice-triggered send.
+            # the ordinary handling below (still focus-gated), so a
+            # countdown-cancelling Enter still sends the TYPED draft via the
+            # normal path afterward (this call runs first in the SAME
+            # keypress, cancelling any armed countdown/suppressing an
+            # awaiting reply BEFORE the Enter branch below presses Send)
+            # rather than double-firing hands-free's own voice-triggered
+            # send.
             hands_free.controller.on_composer_key()
+        if not self._should_capture_console_input(composer):
+            return
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             composer.select_all_draft()
             event.stop()

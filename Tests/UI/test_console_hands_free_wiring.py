@@ -12,6 +12,7 @@ two-stage send, the reply-identity guard, and the typed-Enter hazard. See
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Callable
 from unittest.mock import Mock
@@ -40,6 +41,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_hands_free import ExitLoop
 from tldw_chatbook.Chat.console_voice_input import (
     VoiceCommand,
@@ -49,6 +51,7 @@ from tldw_chatbook.Chat.console_voice_input import (
     acoustic_barge_in_enabled as real_acoustic_barge_in_enabled,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -76,59 +79,61 @@ def test_classify_hands_free_grammar_phrase_is_whole_segment_only():
 # ---------------------------------------------------------------------------
 
 
-def test_handsfree_send_delay_seconds_reader_default(monkeypatch):
+def _spy_get_cli_setting(monkeypatch, value):
+    """Task-5 review M5: record the EXACT call args `get_cli_setting` was
+    invoked with, so a reader misreading a typo'd/wrong key cannot pass
+    silently the way a bare `lambda *a, **k: value` would."""
+    calls: list[tuple] = []
+
+    def _fake(*args, **kwargs):
+        calls.append((args, kwargs))
+        return value
+
     monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: 1.5,
+        "tldw_chatbook.Chat.console_voice_input.get_cli_setting", _fake
     )
+    return calls
+
+
+def test_handsfree_send_delay_seconds_reader_reads_the_exact_key(monkeypatch):
+    calls = _spy_get_cli_setting(monkeypatch, 1.5)
     assert real_handsfree_send_delay_seconds() == 1.5
+    assert calls == [
+        (
+            ("dictation", "handsfree_send_delay_seconds", 1.5),
+            {},
+        )
+    ]
 
 
 def test_handsfree_send_delay_seconds_reader_rejects_non_numeric(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: "not-a-number",
-    )
+    _spy_get_cli_setting(monkeypatch, "not-a-number")
     assert real_handsfree_send_delay_seconds() == 1.5
 
 
 def test_handsfree_send_delay_seconds_reader_rejects_non_positive(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: -3,
-    )
+    _spy_get_cli_setting(monkeypatch, -3)
     assert real_handsfree_send_delay_seconds() == 1.5
 
 
 def test_handsfree_send_delay_seconds_reader_accepts_configured_value(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: 2.5,
-    )
+    _spy_get_cli_setting(monkeypatch, 2.5)
     assert real_handsfree_send_delay_seconds() == 2.5
 
 
-def test_acoustic_barge_in_enabled_reader_default_false(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: False,
-    )
+def test_acoustic_barge_in_enabled_reader_reads_the_exact_key(monkeypatch):
+    calls = _spy_get_cli_setting(monkeypatch, False)
     assert real_acoustic_barge_in_enabled() is False
+    assert calls == [(("dictation.acoustic_barge_in", False), {})]
 
 
 def test_acoustic_barge_in_enabled_reader_accepts_truthy_string(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: "true",
-    )
+    _spy_get_cli_setting(monkeypatch, "true")
     assert real_acoustic_barge_in_enabled() is True
 
 
 def test_acoustic_barge_in_enabled_reader_accepts_falsy_string(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting",
-        lambda *a, **k: "off",
-    )
+    _spy_get_cli_setting(monkeypatch, "off")
     assert real_acoustic_barge_in_enabled() is False
 
 
@@ -387,6 +392,217 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# At-most-one-failure-toast-per-reply (task-5 review M2) and the
+# multi-reply hazard (task-5 review M3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_at_most_one_failure_toast_per_reply():
+    """Task-5 review M2: the first failed utterance in a reply passes
+    `quiet=False` (a toast is allowed); every LATER failed utterance in
+    the SAME reply passes `quiet=True` (log only)."""
+    app = _build_test_app()
+    tts = _install_fake_tts_handler(app, mode="fail")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+        session = console._console_hands_free
+
+        session.sequencer.feed("First sentence fails. Second sentence too. ")
+        await _wait_for(lambda: len(tts.calls) >= 2, pilot)
+
+        assert [quiet for _text, quiet in tts.calls[:2]] == [False, True]
+        assert session.toast_shown_for_reply is True
+
+
+@pytest.mark.asyncio
+async def test_two_sequential_replies_both_drain_through_the_real_wiring(
+    monkeypatch,
+):
+    """Task-5 review M3: `begin_reply()` must run at EACH reply start
+    ("a reused sequencer without it never drains reply 2", per the brief)
+    -- pinned end to end by driving TWO full turns through the real
+    wiring, not just inspecting the call site."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=0.2)
+    gateway = _HandsFreeReplyGateway("Reply one sentence. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    tts = _install_fake_tts_handler(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        service.emit_final("turn one")
+        await _wait_for(lambda: len(gateway.sent_messages) >= 1, pilot)
+        await _wait_for(lambda: len(tts.calls) >= 1, pilot)
+        assert any("Reply one sentence" in text for text, _q in tts.calls)
+        await _wait_for(
+            lambda: console._console_hands_free is not None
+            and console._console_hands_free.controller.state == "listening",
+            pilot,
+        )
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        gateway.reply_text = "Reply two sentence. "
+        service.emit_final("turn two")
+        await _wait_for(lambda: len(gateway.sent_messages) >= 2, pilot)
+        await _wait_for(
+            lambda: any("Reply two sentence" in text for text, _q in tts.calls),
+            pilot,
+        )
+        await _wait_for(
+            lambda: console._console_hands_free is not None
+            and console._console_hands_free.controller.state == "listening",
+            pilot,
+        )
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert console._console_hands_free.sequencer.drained
+
+
+# ---------------------------------------------------------------------------
+# Capture-ending spoken commands other than "stop" (task-5 review I3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
+    monkeypatch,
+):
+    """Task-5 review I3: spoken "Console, send." mid-loop must drive the
+    SAME semantics as a countdown expiry -- `awaiting_reply` is entered and
+    the reply is actually spoken -- not just end the capture and leave the
+    FSM in `listening` silently dropping the reply the user just asked
+    hands-free to send."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    gateway = _HandsFreeReplyGateway("Spoken send reply. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    tts = _install_fake_tts_handler(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        assert console._console_hands_free.controller.state == "listening"
+
+        service.emit_final("hello from spoken send")
+        await pilot.pause()
+        service.emit_final("Console, send.")
+        await pilot.pause()
+
+        await _wait_for(lambda: bool(gateway.sent_messages), pilot)
+        sent_user_turns = [
+            m["content"]
+            for turn in gateway.sent_messages
+            for m in turn
+            if m.get("role") == "user"
+        ]
+        assert any("hello from spoken send" in t for t in sent_user_turns)
+
+        await _wait_for(lambda: bool(tts.calls), pilot)
+        assert any("Spoken send reply" in text for text, _q in tts.calls)
+
+        # Drains back to listening once the reply completes.
+        await _wait_for(
+            lambda: console._console_hands_free is not None
+            and console._console_hands_free.controller.state == "listening",
+            pilot,
+        )
+
+
+@pytest.mark.asyncio
+async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
+    """Task-5 review I3: spoken "Console, discard." mid-loop must not
+    leave the FSM `listening` with `capture_open=True` while the real mic
+    is closed (alive-but-inert forever) -- it must end the loop cleanly."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        assert console._console_hands_free is not None
+
+        service.emit_final("some words to discard")
+        await pilot.pause()
+        service.emit_final("Console, discard.")
+        await pilot.pause()
+
+        await _wait_for(lambda: console._console_hands_free is None, pilot)
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        # The loop is genuinely gone, not desynced -- pressing the mic
+        # button again does an ordinary one-shot start, proving the
+        # dictation state machine (and the hands-free bookkeeping) agree.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert console._console_hands_free is None
+
+
+def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight():
+    """Task-5 review M9: a `_speak_status` ack ("Sent.", "Discarded.", ...)
+    bypasses the sequencer entirely -- `SilenceSpeech`'s handler must post
+    the both-ways stop UNCONDITIONALLY, not only via `flush()`'s own
+    conditional `stop_speech()` (which only fires when an utterance is
+    actually in flight)."""
+    app = _build_test_app()
+    console = chat_screen_module.ChatScreen(app)
+    posted = Mock()
+    app.post_message = posted
+
+    class _FakeSequencer:
+        def __init__(self) -> None:
+            self.flush_calls = 0
+
+        def flush(self) -> None:
+            self.flush_calls += 1  # nothing in flight -> stop_speech() never called
+
+    fake_sequencer = _FakeSequencer()
+    console._console_hands_free = chat_screen_module._ConsoleHandsFreeSession(
+        controller=object(), sequencer=fake_sequencer
+    )
+
+    console._console_hands_free_silence_speech()
+
+    assert fake_sequencer.flush_calls == 1
+    posted.assert_called_once()
+    (event,), _kwargs = posted.call_args
+    assert getattr(event, "action", None) == "stop"
+
+
+# ---------------------------------------------------------------------------
 # Keypress barge-in / exit
 # ---------------------------------------------------------------------------
 
@@ -475,6 +691,130 @@ async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
         await pilot.press("escape")
         await pilot.pause()
         assert called == [True]
+
+
+@pytest.mark.asyncio
+async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
+    """Task-5 review I2: keyboard barge-in and Esc are the loop's PRIMARY
+    interruption/exit mechanism (the docs say "press any key"/"Esc from
+    any point in the loop") -- both must keep working when focus has moved
+    away from the composer (clicking/scrolling the transcript), not only
+    when it happens to still be focused."""
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        chat_screen_module.ChatScreen,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        console.action_toggle_console_hands_free()
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_hands_free
+        console._console_hands_free_request_stop_and_send = lambda: None
+
+        def _drive_to_speaking() -> None:
+            session.controller._begin_awaiting_reply()
+            session.controller.on_reply_started()
+            session.controller.on_first_utterance()
+            assert session.controller.state == "speaking"
+
+        transcript = console.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        transcript.focus()
+        await pilot.pause()
+        assert console.app.focused is transcript
+        assert console._should_capture_console_input(composer) is False
+
+        _drive_to_speaking()
+        await pilot.press("x")
+        await pilot.pause()
+        assert session.controller.state == "listening", (
+            "barge-in did nothing with focus off the composer"
+        )
+
+        _drive_to_speaking()
+        transcript.focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert console._console_hands_free is None, (
+            "Esc did not exit the loop with focus off the composer"
+        )
+
+
+# ---------------------------------------------------------------------------
+# On the DEFAULT production send path: worker-thread marshal (task-5
+# review I1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thread():
+    """On `[console] agent_runtime`'s DEFAULT production send path, the
+    delta/completion tap runs on a worker thread with its own event loop
+    (`ConsoleChatController._run_agent_reply` ->
+    `asyncio.to_thread(bridge.run_reply)` -> `console_agent_bridge.py`'s
+    streaming adapter -> `store.append_stream_chunk`/etc, all on that
+    thread). The harness cannot build the real agent bridge (in-memory DB
+    -> None per `_ensure_console_agent_bridge`), so this pins the tap
+    boundary directly: call `_console_hands_free_marshal` from a REAL
+    background thread and assert it routes through `app_instance.call_
+    from_thread` rather than running the callback in place."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        marshal_calls = Mock()
+        console.app_instance.call_from_thread = marshal_calls
+        direct_calls: list[tuple] = []
+        off_thread_id: dict[str, int] = {}
+
+        def _callback(a, b):
+            direct_calls.append((a, b))
+
+        def _from_background_thread() -> None:
+            off_thread_id["id"] = threading.get_ident()
+            console._console_hands_free_marshal(_callback, "x", "y")
+
+        worker = threading.Thread(target=_from_background_thread)
+        worker.start()
+        worker.join(timeout=5)
+
+        assert off_thread_id.get("id") is not None
+        assert off_thread_id["id"] != console.app_instance._thread_id
+        marshal_calls.assert_called_once_with(_callback, "x", "y")
+        assert direct_calls == []  # never invoked in place off-thread
+
+
+@pytest.mark.asyncio
+async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
+    """The same-thread half of I1's fix: the async, on-the-app-loop
+    direct-provider send path calls the tap from the UI thread already --
+    the callback must run immediately there, with no `call_from_thread`
+    round trip."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        marshal_calls = Mock()
+        console.app_instance.call_from_thread = marshal_calls
+        direct_calls: list[tuple] = []
+
+        console._console_hands_free_marshal(
+            lambda a, b: direct_calls.append((a, b)), "x", "y"
+        )
+
+        assert direct_calls == [("x", "y")]
+        marshal_calls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -619,60 +959,180 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Reply identity (binding carrier)
+# Reply identity (binding carrier) -- task-5 review B1/M7
 # ---------------------------------------------------------------------------
 
 
+def _prime_hands_free_send(
+    console, session, *, existing_assistant_ids: frozenset[str] = frozenset()
+) -> str:
+    """Set up `session` as if `_console_hands_free_request_stop_and_send`
+    had just recorded a real send into the CURRENTLY active session, then
+    force the controller into `awaiting_reply` -- without a real dictation
+    stop or a real network send. Returns the sending session's id.
+    """
+    store = console._ensure_console_chat_store()
+    sending_session_id = store.active_session_id
+    console._console_dictation_origin_session_id = sending_session_id
+    session.pending_session_id = sending_session_id
+    session.pending_existing_assistant_ids = existing_assistant_ids
+    session.controller._begin_awaiting_reply()
+    assert session.controller.state == "awaiting_reply"
+    return sending_session_id
+
+
 @pytest.mark.asyncio
-async def test_reply_identity_drops_deltas_and_completion_for_a_different_id():
+async def test_reply_identity_same_session_new_id_claims_and_feeds():
+    """Baseline happy path: a brand-new assistant id, in the recorded
+    sending session, claims and feeds; a later delta for any OTHER id is
+    dropped; the same real id keeps feeding."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-
-        # `capture_live=True` -- adopts an "already open" capture without
-        # touching real dictation machinery at all (no `OpenCapture` is
-        # emitted from `idle`), which is all these tests need: they drive
-        # the controller/sequencer/tap wiring directly, never a real mic.
         console._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         assert session is not None
-
-        # Force the controller into `awaiting_reply` without a real send.
-        session.controller._begin_awaiting_reply()
-        assert session.controller.state == "awaiting_reply"
+        sending_session_id = _prime_hands_free_send(console, session)
+        store = console._ensure_console_chat_store()
+        real = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
 
         fed: list[str] = []
         session.sequencer.feed = fed.append
 
-        # The FIRST delta observed while `awaiting_reply` claims `reply_id`
-        # -- there is no independent ground truth to validate it against
-        # (see `_on_console_hands_free_delta`'s own docstring); that is
-        # exactly what makes every LATER delta for a DIFFERENT id
-        # identifiable as stale/foreign and droppable.
-        console._on_console_hands_free_delta("real-id", "first chunk. ")
-        assert session.reply_id == "real-id"
+        console._on_console_hands_free_delta(real.id, "first chunk. ")
+        assert session.reply_id == real.id
         assert fed == ["first chunk. "]
 
-        # A delta for a DIFFERENT id, arriving mid-reply, must be dropped.
         console._on_console_hands_free_delta("stale-id", "must not feed")
         assert fed == ["first chunk. "]
 
-        # ...while a delta for the SAME id keeps feeding normally.
-        console._on_console_hands_free_delta("real-id", "second chunk. ")
+        console._on_console_hands_free_delta(real.id, "second chunk. ")
         assert fed == ["first chunk. ", "second chunk. "]
 
         finished: list[Any] = []
         session.sequencer.reply_completed = lambda: finished.append("sequencer")
         session.controller.on_reply_finished = lambda: finished.append("controller")
 
-        console._on_console_hands_free_terminal("stale-id", failed=False)
+        console._on_console_hands_free_terminal("stale-id", False)
         assert finished == []
 
-        console._on_console_hands_free_terminal("real-id", failed=False)
+        console._on_console_hands_free_terminal(real.id, False)
         assert finished == ["sequencer", "controller"]
+
+
+@pytest.mark.asyncio
+async def test_reply_identity_rejects_a_concurrent_background_session_reply():
+    """Task-5 review B1 probe 1 (cross-session): parallel per-session runs
+    are a first-class supported feature -- a DIFFERENT session's reply
+    streaming concurrently must never be claimed, spoken, or completed as
+    THIS turn's reply; the real, same-session reply must still work."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        sending_session_id = store.active_session_id
+
+        # A second, background session -- `create_session` activates it,
+        # so switch back to the sending session afterward.
+        background = store.create_session()
+        background_reply = store.append_message(
+            background.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        store.switch_session(sending_session_id)
+
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+        session = console._console_hands_free
+        _prime_hands_free_send(console, session)
+
+        fed: list[str] = []
+        session.sequencer.feed = fed.append
+
+        # The background session's reply id must not claim the slot.
+        console._on_console_hands_free_delta(
+            background_reply.id, "Background tab reply here."
+        )
+        assert session.reply_id is None
+        assert fed == []
+
+        # The turn's OWN reply, once it actually streams, is claimed fine.
+        real = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        console._on_console_hands_free_delta(real.id, "Real reply here.")
+        assert session.reply_id == real.id
+        assert fed == ["Real reply here."]
+
+        # The background reply's own completion must not resolve THIS turn.
+        finished: list[Any] = []
+        session.controller.on_reply_finished = lambda: finished.append("controller")
+        console._on_console_hands_free_terminal(background_reply.id, False)
+        assert finished == []
+        console._on_console_hands_free_terminal(real.id, False)
+        assert finished == ["controller"]
+
+
+@pytest.mark.asyncio
+async def test_reply_identity_rejects_a_stale_same_session_reply():
+    """Task-5 review B1 probe 2 (same session, no concurrency needed):
+    keyboard barge-in during `awaiting_reply` suppresses speech but never
+    cancels generation, so the suppressed reply's own message id already
+    exists (and keeps streaming) by the time the NEXT turn's send fires.
+    That id must never be re-claimed by the new turn."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+        session = console._console_hands_free
+        store = console._ensure_console_chat_store()
+        sending_session_id = store.active_session_id
+
+        # Turn 1: a reply starts, speaks one sentence, then the user
+        # barges in with a keypress -- suppressed, but generation (and the
+        # store append_stream_chunk tap calls) keeps going regardless.
+        _prime_hands_free_send(console, session)
+        old_reply = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        spoken: list[str] = []
+        session.sequencer.feed = lambda text: spoken.append(text)
+        console._on_console_hands_free_delta(old_reply.id, "Old reply first sentence.")
+        assert session.reply_id == old_reply.id
+        assert spoken == ["Old reply first sentence."]
+
+        session.controller.on_composer_key()  # barge-in during awaiting_reply
+        assert session.controller.state == "listening"
+
+        # Turn 2: a fresh send. The pending-send snapshot now includes the
+        # OLD reply's id (it already existed in the store by this point).
+        _prime_hands_free_send(
+            console, session, existing_assistant_ids=frozenset({old_reply.id})
+        )
+        assert session.reply_id is None  # begin_reply() cleared the claim
+
+        # The OLD reply's generation is still streaming its next sentence
+        # -- this must NOT be claimed as turn 2's reply.
+        console._on_console_hands_free_delta(old_reply.id, "Old reply second sentence.")
+        assert session.reply_id is None
+        assert spoken == ["Old reply first sentence."]
+
+        # Turn 2's OWN new reply claims correctly.
+        new_reply = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        console._on_console_hands_free_delta(new_reply.id, "New reply sentence.")
+        assert session.reply_id == new_reply.id
+        assert spoken == ["Old reply first sentence.", "New reply sentence."]
 
 
 @pytest.mark.asyncio
@@ -685,22 +1145,22 @@ async def test_zero_content_reply_completion_still_completes_the_turn():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        # `capture_live=True` -- adopts an "already open" capture without
-        # touching real dictation machinery at all (no `OpenCapture` is
-        # emitted from `idle`), which is all these tests need: they drive
-        # the controller/sequencer/tap wiring directly, never a real mic.
         console._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
-        session.controller._begin_awaiting_reply()
+        sending_session_id = _prime_hands_free_send(console, session)
+        store = console._ensure_console_chat_store()
+        real = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
 
         finished: list[Any] = []
         session.sequencer.reply_completed = lambda: finished.append("sequencer")
         session.controller.on_reply_finished = lambda: finished.append("controller")
 
-        console._on_console_hands_free_terminal("zero-content-id", failed=False)
+        console._on_console_hands_free_terminal(real.id, False)
 
-        assert session.reply_id == "zero-content-id"
+        assert session.reply_id == real.id
         assert finished == ["sequencer", "controller"]
 
 
@@ -790,6 +1250,117 @@ async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch
         console._console_hands_free_close_capture()
         await pilot.pause()
         assert fake.stop_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Empty-capture service limit: real reopen, then a real exit (task-5
+# review B2)
+# ---------------------------------------------------------------------------
+
+
+async def _wait_for(condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"condition never became true: {condition!r}")
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
+    monkeypatch,
+):
+    """End-to-end pin for B2: a wall-clock/buffer-limit ending with NOTHING
+    dictated must reopen the REAL microphone (not just the FSM's belief) --
+    and a SECOND consecutive empty ending must actually exit the loop.
+    Asserts on the dictation SERVICE's own `start_calls`, never the FSM's
+    `capture_open` property, since that is exactly what B1's probe showed
+    can lie.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        assert console._console_hands_free is not None
+        assert service.start_calls == 1
+
+        # First empty-limit ending: nothing was dictated (no `emit_final`
+        # call). Must reopen for one more turn.
+        console._handle_console_dictation_limit()
+        await _wait_for(lambda: service.start_calls == 2, pilot)
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert console._console_hands_free is not None
+        assert console._console_hands_free.controller.state == "listening"
+
+        # Second CONSECUTIVE empty-limit ending: must exit the loop, not
+        # reopen a third time.
+        console._handle_console_dictation_limit()
+        await _wait_for(lambda: console._console_hands_free is None, pilot)
+        await pilot.pause(0.2)
+        assert service.start_calls == 2  # no third reopen
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+
+@pytest.mark.asyncio
+async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
+    monkeypatch,
+):
+    """A limit-triggered ending WITH segments pending must still drive a
+    real send (the `RequestStopAndSend`-equivalent path) once the capture
+    has actually finished stopping -- deferring `on_capture_ended` to
+    after `idle` must not break the had-segments branch."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=0.2)
+    gateway = _HandsFreeReplyGateway("Limit triggered reply. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    tts = _install_fake_tts_handler(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        service.emit_final("dictated before the limit hit")
+        await pilot.pause()
+        # A real countdown may or may not have expired yet; force the
+        # limit path directly, matching what the 60s wall timer would do
+        # with a segment already finalized (state may be `listening` if
+        # the countdown drained, or `countdown` -- `_handle_console_
+        # dictation_limit` only cares that dictation is still `recording`).
+        console._handle_console_dictation_limit()
+
+        await _wait_for(lambda: bool(gateway.sent_messages), pilot)
+        sent_user_turns = [
+            m["content"]
+            for turn in gateway.sent_messages
+            for m in turn
+            if m.get("role") == "user"
+        ]
+        assert any("dictated before the limit hit" in t for t in sent_user_turns)
+        await _wait_for(lambda: bool(tts.calls), pilot)
+        assert any("Limit triggered reply" in text for text, _q in tts.calls)
 
 
 # ---------------------------------------------------------------------------
