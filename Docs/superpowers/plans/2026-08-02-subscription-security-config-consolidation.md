@@ -261,8 +261,10 @@ max_redirects = 5
 request_timeout = 30
 ```
 
-Do not remove or rename `[web_security]`, per-subscription `ssl_verify`, or
-other `[subscriptions]` settings in this task.
+Do not remove or rename `[web_security]`, the monitor-only optional
+`ssl_verify` mapping input (which defaults verification on), or other
+`[subscriptions]` settings in this task. `ssl_verify` is not a persisted
+subscriptions DB field or UI control.
 
 ### Step 2: Prove the template still parses
 
@@ -353,10 +355,14 @@ allowed_hosts = []
 
 State that:
 
-- `ssl_verify` is per subscription;
+- FeedMonitor and URLMonitor accept an optional `ssl_verify` mapping value and
+  default verification on; it is not a persisted subscriptions DB field or UI
+  control;
 - redirect bounds are code-owned by shared guarded-fetch helpers;
-- production subscription parser modules prefer optional `defusedxml`, with
-  their existing module-specific standard-library fallback behavior;
+- network feed monitor/scraper parser modules prefer optional `defusedxml`,
+  with their existing module-specific standard-library fallback behavior;
+- the active OPML import WatchlistOpmlService uses stdlib
+  `xml.etree.ElementTree` directly;
 - `SecurityValidator.validate_xml_content()` is not part of the active parsing
   path; and
 - legacy `[subscriptions.security]` tables are ignored and safe to delete.
@@ -438,6 +444,11 @@ claim a green full suite.
 ```
 
 ```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check --ignore E402 \
+  Tests/Utils/test_egress.py
+```
+
+```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check \
   tldw_chatbook/Subscriptions/security.py \
   Tests/Subscriptions/test_subscription_security_config_contract.py
@@ -445,15 +456,18 @@ claim a green full suite.
 
 `origin/dev` was verified before implementation to already report that
 `tldw_chatbook/config.py` and
-`Tests/Subscriptions/test_subscription_egress_wiring.py` would be reformatted.
-Do not reformat either whole file in this task; that would create unrelated
-churn. Ruff lint and diff hygiene still cover both modified files.
+`Tests/Subscriptions/test_subscription_egress_wiring.py` would be reformatted,
+and full-file E402 findings in `Tests/Utils/test_egress.py` are verified
+baseline debt. Do not reformat or mass-edit those files in this task; that
+would create unrelated churn. Ruff lint (with E402 ignored only for the
+baseline egress test file) and diff hygiene still cover the modified files.
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q \
   tldw_chatbook/config.py tldw_chatbook/Subscriptions/security.py \
   Tests/Subscriptions/test_subscription_egress_wiring.py \
-  Tests/Subscriptions/test_subscription_security_config_contract.py
+  Tests/Subscriptions/test_subscription_security_config_contract.py \
+  Tests/Utils/test_egress.py
 ```
 
 ```bash
@@ -524,5 +538,116 @@ git add \
   backlog/docs/lessons-testing-evidence.md \
   Docs/superpowers/specs/2026-08-02-subscription-security-config-consolidation-design.md \
   Docs/superpowers/plans/2026-08-02-subscription-security-config-consolidation.md
-git commit -m "docs(task-859): record verified completion"
+git commit -m "docs(task-859): record pre-closeout verification"
 ```
+
+## Pre-closeout verification evidence
+
+Recorded 2026-08-02 before final whole-branch review. This is deliberately
+pre-closeout evidence: TASK-859 remains In Progress, its acceptance criteria
+remain unchecked, and no implementation notes or Done transition have been
+added.
+
+### Factual correction and scope deviation
+
+The original task/design/plan overstated two existing implementation details.
+TLS verification is not a persisted subscriptions DB `ssl_verify` column or UI
+control: FeedMonitor and URLMonitor consume an optional mapping value and
+default verification to enabled. XML handling is not one module-wide
+optional-`defusedxml` policy: network feed monitor/scraper parser modules prefer
+that optional dependency with module-specific stdlib fallbacks, while active
+OPML import `WatchlistOpmlService` directly uses stdlib
+`xml.etree.ElementTree`; `SecurityValidator.validate_xml_content()` has no
+production callers. The task/design/plan now state these boundaries. This is a
+documentation correction only; it neither expands scope into `ssl_verify`
+persistence/UI work nor changes XML policy.
+
+### A. Focused security/configuration matrix
+
+Command:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Subscriptions/test_subscription_security_config_contract.py \
+  Tests/Subscriptions/test_subscription_egress_wiring.py \
+  Tests/Utils/test_egress.py \
+  Tests/test_config_console_defaults.py -q
+```
+
+Result: **111 passed, 1 warning in 5.71s**. The warning was
+`requests`' existing `RequestsDependencyWarning` for the installed urllib3 /
+chardet-or-charset_normalizer combination.
+
+### B. Broader subscription suite
+
+Command:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Subscriptions -q
+```
+
+Result: **549 passed, 1 warning in 42.18s** (the same
+`RequestsDependencyWarning`).
+
+### C. Full repository suite
+
+Command started:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q
+```
+
+Result: **interrupted and non-final** at 8% after approximately 12 minutes
+because `origin/dev` advanced during the run and the branch became two commits
+behind. The live output contained one unclassified `F` marker near 3%, but the
+process was stopped before pytest emitted its failure node ID or error summary.
+Do not treat this as a baseline failure or a full-suite result; rerun the full
+suite after rebasing and capture any final node IDs before an origin/dev
+comparison.
+
+### D. Static and source checks
+
+- Normal Ruff command for `config.py`, `Subscriptions/security.py`, the
+  subscription wiring test, and the new contract test: **passed** (`All checks
+  passed!`).
+- `python -m ruff check --ignore E402 Tests/Utils/test_egress.py`: **passed**
+  (`All checks passed!`). Full-file E402 findings remain verified baseline debt;
+  no mass-formatting was performed.
+- Ruff format check for `Subscriptions/security.py` and the new contract test:
+  **failed**: `Tests/Subscriptions/test_subscription_security_config_contract.py`
+  would be reformatted; `Subscriptions/security.py` was already formatted. This
+  test file is outside this documentation closeout's ownership and needs
+  controller follow-up before a final clean static claim.
+- `compileall -q` for `config.py`, `Subscriptions/security.py`, both
+  subscription test files, and `Tests/Utils/test_egress.py`: **passed**.
+- `git diff --check` and `git diff --check origin/dev...HEAD`: **passed** at
+  the time run.
+- Targeted stale-key scan over `config.py` and `Subscriptions/SUB-Arch.md`:
+  **no matches** (expected `rg` exit 1).
+
+### E. Packaging and licence
+
+Command:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Packaging/test_installed_distribution.py::test_built_artifacts_match_distribution_contract -q
+```
+
+Result: **1 passed in 11.52s**. This verifies the installed distribution's
+licence metadata and packaged notices.
+
+### F. Ancestry, branch surface, and bounded assessment
+
+`git merge-base --is-ancestor origin/dev HEAD` returned **exit 1** after
+`origin/dev` moved: the worktree status was ahead 14 and behind 2. Final
+whole-branch review and closure are therefore blocked pending rebase onto the
+current `origin/dev` and reruns of the necessary verification gates.
+
+The recorded `git diff --name-only origin/dev...HEAD` surface contained only
+the TASK-859 config/security/SUB-Arch production files, their three targeted
+tests, and this task's plan/design/task docs. It contains no dependency, vendor,
+or licence-metadata edits, and no hot-path algorithm, I/O, or concurrency
+changes. No performance benchmark is warranted for that deletion-only scope;
+the installed-distribution contract above is the licence/package evidence.

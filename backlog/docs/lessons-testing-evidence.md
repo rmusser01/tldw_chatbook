@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Deleting a duplicate guard requires tests for every bypass mode
+
+**TASK-859, 2026-08-02.** During specification review, deleting
+`SecurityValidator.ALLOWED_SCHEMES` looked like clean policy consolidation because
+`Utils.egress` also has scheme policy. Direct characterization disproved that:
+`Utils.egress` returns allowed immediately when `[web_security].enabled = false`,
+before evaluating its scheme policy. Without the subscription-local HTTP/HTTPS
+allowlist, disabled egress would therefore admit `ftp://` subscriptions. The
+regression test that disables egress and submits an FTP URL remains red without
+the local boundary and green with it.
+
+**What to do.** Before deleting an apparently duplicate guard, characterize every
+disabled or bypass mode of the surviving owner and test that owner's boundary in
+each mode. Consolidate only after evidence shows the remaining guard preserves
+the contract there.
+
+---
+
 ## A fake written to match your call site validates the mistake
 
 **The trap.** You write a test double to match how you are calling the real thing. If

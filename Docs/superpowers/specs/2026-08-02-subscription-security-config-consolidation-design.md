@@ -18,13 +18,15 @@ claim to control already has separate owners:
   `tldw_chatbook.Utils.egress`, configured by `[web_security]`. The
   subscription boundary independently retains its HTTP/HTTPS scheme allowlist.
 - Redirect bounds: `tldw_chatbook.Utils.egress.MAX_REDIRECT_HOPS`.
-- TLS certificate verification: the per-subscription `ssl_verify` database
-  field used by the monitoring engine.
-- XML parsing: production subscription parser modules prefer `defusedxml` when
-  installed and otherwise retain their existing module-specific standard-library
-  fallback behavior. The separate
-  `SecurityValidator.validate_xml_content()` helper has no production callers
-  and is not a runtime owner of this behavior.
+- TLS certificate verification: FeedMonitor and URLMonitor read an optional
+  `ssl_verify` mapping value and default verification to enabled. It is not a
+  persisted subscriptions DB column or UI control.
+- XML parsing: network feed monitor/scraper parser modules prefer `defusedxml`
+  when installed and otherwise retain their existing module-specific
+  standard-library fallback behavior. The active OPML import
+  `WatchlistOpmlService` uses stdlib `xml.etree.ElementTree` directly. The
+  separate `SecurityValidator.validate_xml_content()` helper has no production
+  callers and is not a runtime owner of this behavior.
 - Fetch timeout: the transport/monitor implementation, not the unread
   subscription-security value.
 
@@ -51,8 +53,10 @@ mutation of user-owned configuration; a startup warning would be noisy because
 the old table was generated for every existing installation.
 
 No replacement global subscription-security table is added. The surviving
-configuration contract is `[web_security]` for egress policy. Per-subscription
-TLS verification remains stored with the subscription record.
+configuration contract is `[web_security]` for egress policy. FeedMonitor and
+URLMonitor retain their optional `ssl_verify` mapping input, which defaults TLS
+verification to enabled and is neither persisted in the subscriptions DB nor
+exposed through a UI control.
 
 ### Security policy ownership
 
@@ -85,10 +89,10 @@ Replace the stale `[subscriptions.security]` example in
 prose explaining:
 
 - the global egress switch and allowlist;
-- the per-subscription `ssl_verify` control;
+- the monitor-only optional `ssl_verify` mapping input and its enabled default;
 - the code-owned redirect bound; and
-- the current dependency-controlled, module-specific optional-`defusedxml` XML
-  behavior.
+- the network parser modules' dependency-controlled, module-specific
+  optional-`defusedxml` behavior and the OPML importer's direct stdlib parser.
 
 The documentation will explicitly say that legacy `[subscriptions.security]`
 tables are ignored and safe to remove.
@@ -137,11 +141,13 @@ broader relevant subscription/config suite run before closeout.
 
 This task does not:
 
-- make `defusedxml` mandatory or change its fallback policy;
+- make `defusedxml` mandatory, alter network parser fallback policy, or change
+  the OPML importer's direct stdlib parser;
 - make redirect or timeout bounds newly configurable;
 - change the app-wide egress kill switch's ordering or meaning;
 - change subscription URL whitespace normalization or denial-reason mapping;
-- alter the per-subscription `ssl_verify` schema or behavior;
+- add persistence or a UI control for `ssl_verify`, or change its monitor
+  mapping behavior;
 - rewrite existing user configuration files; or
 - clean up other apparently unread `[subscriptions]`, rate-limit, or
   performance settings. Those require separate verification and task scope.
