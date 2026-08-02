@@ -28,10 +28,12 @@ playback-completion signal.
   live-verified in V2. No second send path.
 - **Countdown cancellation needs a signal that does not exist yet.** Mid-segment partials
   were deliberately removed; raw VAD frames never leave the recorder. New event:
-  **`VoiceSpeechResumed`**, emitted once per silence→speech transition — the transition
-  the recorder ALREADY detects (the VAD pre-roll flush keys on it,
-  `recording_service._process_audio_chunk`). Flows through the existing dictation event
-  plumbing with the capture-generation token. It is also the acoustic barge-in trigger.
+  **`VoiceSpeechResumed`**, emitted once per silence→speech transition. Detection lives at
+  the DICTATION SERVICE level, needing no recorder API change: the service's audio
+  callback receives only VAD-positive frames, so a frame arriving after finalization
+  reset `last_speech_time` (or after a >threshold delivery gap) IS the transition. Flows
+  through the existing dictation event plumbing with the capture-generation token. It is
+  also the acoustic barge-in trigger.
 - **Sequential reply speech must not ride the ad-hoc cooldown.**
   `handle_tts_request` runs `_enforce_cooldown_limit()`; sentence N+1 seconds after
   sentence N is exactly what it throttles. The sequencer uses a dedicated internal entry
@@ -80,8 +82,19 @@ Transition rules:
   → `SilenceSpeech` + sequencer flush → `LISTENING`. Generation is NOT cancelled — the
   reply finishes silently into the transcript; only audio stops. With acoustic opt-in the
   interrupting segment lands in the next draft as normal capture.
+- `AWAITING_REPLY` + composer keypress → suppress this reply's speech entirely (the
+  sequencer never starts), `OpenCapture` → `LISTENING`; generation continues silently
+  into the transcript.
+- **Capture ended by service-side limits** (the 60 s wall-clock cutoff
+  `_console_dictation_timer`, or the buffer cap) in `LISTENING`/`COUNTDOWN`: with
+  finalized segments pending → treat exactly as countdown expiry (`RequestStopAndSend`);
+  with nothing captured → reopen ONCE for a fresh turn, and `ExitLoop` if the limit
+  recurs with nothing captured (no infinite reopen churn; a silent room exits after
+  ~2 minutes, stated in docs).
 - V2 commands keep working mid-loop; `stop` (spoken), Esc, or mic press → `ExitLoop`
-  from any state, tearing down to today's idle behavior.
+  from any state, tearing down to today's idle behavior. The Esc binding is SCOPED to
+  hands-free-active and must not shadow existing Console Esc semantics — the plan pins
+  its precedence in `on_key` explicitly.
 - Precedence: Esc / mic press / spoken `stop` = exit; every other composer key =
   barge-in-and-listen (in `SPEAKING`/`COUNTDOWN`) or ordinary typing (the controller
   never swallows keys outside those states).
@@ -89,6 +102,14 @@ Transition rules:
 Entry: new grammar phrase `hands free` (→ command name `hands-free`) in
 `COMMAND_PHRASES`, plus a key binding on the screen. Entering from a live capture keeps
 that capture as the first turn; entering from idle opens one.
+
+Timing: the controller contains NO wall-clock — it exposes `tick()` driven by an
+injected scheduler seam (the screen's `set_interval`), which is what makes the
+countdown/resume races deterministically testable.
+
+Reply speech is intrinsic to the mode: it does NOT read `dictation.spoken_feedback`
+(that flag governs status acks only, and keeps governing them unchanged inside the
+loop).
 
 ### `Chat/reply_sentence_sequencer.py` — `SentenceSequencer` (headless)
 
@@ -105,13 +126,14 @@ that capture as the first turn; entering from idle opens one.
   speech entry's stop, emits drained.
 - On reply-completed: emits the final partial sentence (if any) as the last utterance.
 
-### Reply-delta tap
+### Reply-delta tap (verified)
 
-The transcript renders streamed replies live, so a delta seam exists; the spec requires
-the plan to NAME the verified seam (expected: the console agent bridge / store append
-path) and wire the sequencer as a read-only subscriber with the assistant message id as
-the correlation key. Fallback ONLY if live deltas are genuinely inaccessible: per-message
-speak-on-complete (explicitly a degradation, not the design).
+`Chat/console_agent_bridge.py` (:595-607) streams "every non-sealed primary turn live to
+the store as it arrives" through its chat_call-compatible streaming adapter — that
+store-append path is the seam. The sequencer subscribes read-only, keyed by the
+assistant message id; sealed/tool-gated turns that never stream simply produce their
+text at completion (the sequencer's reply-completed handling covers them). The plan
+names the exact store method and threading context.
 
 ### Utterance-completion signal (the one playback edit)
 
