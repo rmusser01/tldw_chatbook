@@ -21,22 +21,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from tldw_chatbook.STT.routing import RoutingPolicy, build_builtin_registry
+from tldw_chatbook.STT.routing import (
+    RoutingPolicy,
+    build_builtin_registry,
+    default_routing_policy,
+)
 
 TRANSCRIPTION_SECTION = "transcription"
 
-#: ADR-025's validated Parakeet v3 language set, English excluded --
-#: RoutingPolicy.__post_init__ rejects "en"/"auto" here on purpose (English
-#: is v2's language, not part of the "additional" v3 set).
-_V3_LANGUAGES: frozenset[str] = frozenset(
-    {
-        "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
-        "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
-    }
-)
-
 #: Display names for every language code the STT policy currently declares
-#: for Parakeet (v2's "en" plus the validated v3 set above).
+#: for Parakeet (v2's "en" plus ``tldw_chatbook.STT.routing``'s canonical
+#: ``VALIDATED_V3_LANGUAGES`` set).
 LANGUAGE_DISPLAY_NAMES: dict[str, str] = {
     "en": "English",
     "bg": "Bulgarian",
@@ -65,7 +60,7 @@ LANGUAGE_DISPLAY_NAMES: dict[str, str] = {
     "uk": "Ukrainian",
 }
 
-_ROUTING_POLICY = RoutingPolicy(validated_v3_languages=_V3_LANGUAGES)
+_ROUTING_POLICY = default_routing_policy()
 _REGISTRY = build_builtin_registry(_ROUTING_POLICY)
 
 
