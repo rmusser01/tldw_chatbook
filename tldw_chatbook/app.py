@@ -4714,11 +4714,29 @@ class TldwCli(
         )
         watchlist_projection = WatchlistProjection(subscriptions_db)
 
+        # `briefing_projection` is built here, BEFORE `SchedulingService`, so
+        # it can be passed straight into the constructor (task-1810) rather
+        # than after -- `SchedulingService.list_tasks` needs it live from the
+        # moment the service exists, unlike `briefing_handler` below (built
+        # later; only `SchedulerLoop`, constructed further down this method,
+        # consumes it). Constructing it earlier changes nothing about its
+        # behavior: it only depends on `subscriptions_db`, already created
+        # above.
+        briefing_schedules_enabled = get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", True
+        )
+        briefing_projection = (
+            BriefingProjection(subscriptions_db)
+            if briefing_schedules_enabled
+            else None
+        )
+
         self.scheduling_service = SchedulingService(
             db=ScheduledTasksDB(get_scheduled_tasks_db_path()),
             server_client=server_client,
             runtime_source="local",
             watchlist_projection=watchlist_projection,
+            briefing_projection=briefing_projection,
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -4735,13 +4753,8 @@ class TldwCli(
                 shadow_mode=watchlist_checks_shadow,
             )
 
-        briefing_schedules_enabled = get_cli_setting(
-            "scheduling", "briefing_schedules_enabled", True
-        )
-        briefing_projection = None
         briefing_handler = None
-        if briefing_schedules_enabled:
-            briefing_projection = BriefingProjection(subscriptions_db)
+        if briefing_projection is not None:
             # `self.chachanotes_db` is assigned later in `__init__`,
             # strictly AFTER `_wire_watchlists_and_notifications_services`
             # (this method, called earlier in `__init__`) returns -- so it

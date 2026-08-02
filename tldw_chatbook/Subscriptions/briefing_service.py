@@ -363,6 +363,22 @@ def _default_provider() -> str:
 
 _ACTIVE_BRIEFING_CLAIMS: set[int] = set()
 
+# Task-1812, AC #3: `watchlist_id -> briefings.id` for the SAME live claim
+# above, but scoped to the actual ROW a live generation is writing rather
+# than merely the watchlist it belongs to. `_ACTIVE_BRIEFING_CLAIMS` alone
+# cannot tell a fresh live row apart from a crash-zombie row left by a PRIOR
+# process for the SAME watchlist (the crash predates the claim) -- both
+# read `generating` and share one `watchlist_id`, so a watchlist-scoped
+# `exclude` incidentally shields the zombie too. An entry here is added
+# only once the row actually exists (`generate_briefing` records it right
+# after `_start_generation`'s `INSERT` returns -- see that call site's own
+# comment on timing), and popped in `_claim_briefing`'s `finally`, alongside
+# the watchlist-level claim itself, so it never outlives the claim it
+# belongs to. `fail_interrupted_briefings`'s `exclude` (via `active_
+# briefing_claim_row_ids` below) reads from THIS registry, not `_ACTIVE_
+# BRIEFING_CLAIMS`.
+_ACTIVE_BRIEFING_CLAIM_ROW_IDS: dict[int, int] = {}
+
 
 class GenerationInFlightError(RuntimeError):
     """Raised when a watchlist already has a briefing generation claimed.
@@ -382,17 +398,94 @@ def active_briefing_claims() -> frozenset[int]:
 
     A plain, already-copied `frozenset` -- safe to read from any thread,
     unlike `_ACTIVE_BRIEFING_CLAIMS` itself. Callers take this snapshot on
-    the event loop, before handing control to a thread, and pass it as
-    `fail_interrupted_briefings`'s `exclude` (Locked decision 2): that
-    function is sync and runs under `asyncio.to_thread`, while the claim set
-    is mutated only on the event loop, so a cross-thread read of the live
-    set would be racy in a way a snapshot taken beforehand never is.
+    the event loop, before handing control to a thread. Used for the "is
+    THIS watchlist already claimed" question -- the scheduler's own
+    duplicate-dispatch guard (`BriefingJobHandler`) and `_claim_briefing`'s
+    own check below both ask exactly that, watchlist-granular, question.
+
+    NOT what `fail_interrupted_briefings`'s `exclude` wants any more
+    (task-1812, AC #3): a watchlist-scoped snapshot cannot tell a fresh live
+    row apart from a crash-zombie row a PRIOR process left behind for the
+    SAME watchlist, so passing this here would incidentally shield the
+    zombie too. Callers of the sweep want `active_briefing_claim_row_ids()`
+    instead.
     """
     return frozenset(_ACTIVE_BRIEFING_CLAIMS)
 
 
+def active_briefing_claim_row_ids() -> frozenset[int]:
+    """Snapshot of `briefings.id`s a live `generate_briefing` call has
+    actually inserted (task-1812, AC #3).
+
+    A plain, already-copied `frozenset` -- safe to read from any thread,
+    unlike `_ACTIVE_BRIEFING_CLAIM_ROW_IDS` itself. Callers take this
+    snapshot on the event loop, before handing control to a thread, and
+    pass it as `fail_interrupted_briefings`'s `exclude`: that function is
+    sync and runs under `asyncio.to_thread`, while the registry is mutated
+    only on the event loop, so a cross-thread read of the live registry
+    would be racy in a way a snapshot taken beforehand never is.
+
+    Row-scoped, not watchlist-scoped -- see `active_briefing_claims`'s own
+    docstring for why that distinction is the whole point: a genuine crash
+    zombie and a fresh live claim can coexist for one watchlist, and only
+    naming the live row itself, rather than its whole watchlist, lets a
+    sweep tell them apart.
+
+    A watchlist whose claim has been taken but whose row has not been
+    recorded yet -- the window inside `_start_generation`'s own
+    `asyncio.to_thread` hop, from the moment its `INSERT` runs until
+    `generate_briefing`'s coroutine resumes on the event loop to record the
+    id -- is not represented here: there is no id for it to report until
+    `generate_briefing` records one. That window is not unprotected,
+    though (whole-branch review, `chore/briefings-residuals-1810-1812`,
+    Important 1): `pending_briefing_claim_watchlist_ids()` below names
+    exactly those watchlists, and `fail_interrupted_briefings`'s
+    `exclude_watchlists` closes the gap this function's row-scoping alone
+    cannot.
+    """
+    return frozenset(_ACTIVE_BRIEFING_CLAIM_ROW_IDS.values())
+
+
+def pending_briefing_claim_watchlist_ids() -> frozenset[int]:
+    """Snapshot of watchlist ids with a live claim whose row id is not yet
+    recorded (whole-branch review, `chore/briefings-residuals-1810-1812`,
+    Important 1).
+
+    `_claim_briefing` adds `watchlist_id` to `_ACTIVE_BRIEFING_CLAIMS` before
+    `generate_briefing` ever calls `_start_generation`, but `generate_
+    briefing` only records the row id
+    (`_ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id] = briefing_id`) once that
+    call's WHOLE `asyncio.to_thread` hop returns -- and the `INSERT` is that
+    hop's FIRST statement, with four more DB operations after it
+    (`_selection_mode`, `latest_completed_watermark`, `select_briefing_
+    items`, `get_briefing_preset`). For that whole span the watchlist is
+    claimed and its row exists and reads `generating`, but is named by
+    nothing: `active_briefing_claim_row_ids()` is empty (no id recorded
+    yet), and `active_briefing_claims()` is watchlist-scoped -- passing it
+    as `fail_interrupted_briefings`'s row-scoped `exclude` does not even
+    type-check, and passing it as `exclude_watchlists` unconditionally
+    would resurrect the exact over-protection task-1812 removed (shielding
+    a genuine same-watchlist crash zombie alongside the live row).
+
+    This is the set difference: claimed, but not yet recorded. Callers pass
+    it as `fail_interrupted_briefings`'s `exclude_watchlists`, ALONGSIDE
+    `exclude=active_briefing_claim_row_ids()`, never instead of it -- the
+    moment a watchlist's row id lands, it drops out of this set and the
+    row-scoped `exclude` alone protects it, which is exactly what keeps the
+    task-1812 coexistence fix (a zombie and a live claim on the SAME
+    watchlist, swept and spared respectively) intact.
+
+    A plain, already-copied `frozenset`, computed with no `await` between
+    reading the two registries -- safe only when called from the event
+    loop, same as the other two accessors in this section.
+    """
+    return frozenset(_ACTIVE_BRIEFING_CLAIMS) - frozenset(_ACTIVE_BRIEFING_CLAIM_ROW_IDS)
+
+
 @contextmanager
-def _claim_briefing(watchlist_id: int) -> Iterator[None]:
+def _claim_briefing(
+    watchlist_id: int, *, briefing_id: int | None = None
+) -> Iterator[None]:
     """Claim `watchlist_id` for the duration of one generation attempt.
 
     Raises before the caller does anything else -- in particular, before
@@ -407,8 +500,27 @@ def _claim_briefing(watchlist_id: int) -> Iterator[None]:
     to simulate another in-process caller already holding a watchlist (e.g.
     a scheduled run) without going through a real generation.
 
+    Task-1812, AC #3: this context manager's `finally` is also where
+    `_ACTIVE_BRIEFING_CLAIM_ROW_IDS`' entry for `watchlist_id` is cleared,
+    on every exit path, alongside the watchlist-level claim itself -- so
+    the row-id registry can never outlive the claim it belongs to. `.pop(...,
+    None)` is a safe no-op whenever no id was ever recorded (e.g. a
+    `GenerationInFlightError` refusal here, or a DB error inside `_start_
+    generation` before `generate_briefing` gets a chance to record one).
+
     Args:
         watchlist_id: The watchlist about to be generated for.
+        briefing_id: The `briefings.id` this claim protects, if already
+            known at entry. `generate_briefing` itself never passes this --
+            its own row does not exist until AFTER this context manager is
+            entered (`_start_generation`'s `INSERT` runs inside the `with`
+            block), so it records the id into `_ACTIVE_BRIEFING_CLAIM_
+            ROW_IDS` itself, mid-block, once `_start_generation` returns.
+            This parameter exists for the OTHER caller named above: a test
+            simulating another in-process claim against a row that already
+            exists (there is no "generation in progress" to run through) can
+            pass it here so `active_briefing_claim_row_ids()` reports the
+            row exactly as a real claim eventually would.
 
     Raises:
         GenerationInFlightError: If `watchlist_id` is already claimed.
@@ -418,10 +530,13 @@ def _claim_briefing(watchlist_id: int) -> Iterator[None]:
             f"a briefing is already being generated for watchlist {watchlist_id}"
         )
     _ACTIVE_BRIEFING_CLAIMS.add(watchlist_id)
+    if briefing_id is not None:
+        _ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id] = briefing_id
     try:
         yield
     finally:
         _ACTIVE_BRIEFING_CLAIMS.discard(watchlist_id)
+        _ACTIVE_BRIEFING_CLAIM_ROW_IDS.pop(watchlist_id, None)
 
 
 def _error_text(exc: BaseException) -> str:
@@ -692,6 +807,28 @@ async def generate_briefing(
         briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
             _start_generation, db, watchlist_id, preset_id, now
         )
+        # Task-1812, AC #3: record the row THIS claim is now writing, as the
+        # very next statement after the `to_thread` hop above returns (no
+        # `await` in between) -- so nothing else on this event loop can
+        # observe the claim without the row it now protects. From here
+        # until `_claim_briefing`'s `finally` pops it back out, `fail_
+        # interrupted_briefings`'s row-scoped `exclude` (`active_briefing_
+        # claim_row_ids`) can tell this row apart from any OTHER `generating`
+        # row on the same watchlist -- in particular a crash-zombie left by
+        # a prior process, which does not belong here and must still be
+        # swept.
+        #
+        # Whole-branch review (`chore/briefings-residuals-1810-1812`),
+        # Important 1: for the ENTIRE `to_thread` hop above -- from
+        # `_start_generation`'s `INSERT` through its three other DB reads --
+        # this watchlist's id sits in `_ACTIVE_BRIEFING_CLAIMS` with no
+        # corresponding entry here yet, so `active_briefing_claim_row_ids()`
+        # alone cannot protect the row this exact call just inserted. That
+        # window is what `pending_briefing_claim_watchlist_ids()` names and
+        # `fail_interrupted_briefings`'s `exclude_watchlists` closes -- both
+        # screen call sites pass it alongside `exclude=active_briefing_
+        # claim_row_ids()`.
+        _ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id] = briefing_id
         # The id actually recorded on the row: `None` for both "no preset was
         # requested" and "the requested preset no longer resolves" -- a stale
         # back-reference to a deleted preset is worse than no reference at all.
@@ -787,6 +924,7 @@ def fail_interrupted_briefings(
     watchlist_id: int | None = None,
     *,
     exclude: Collection[int] = (),
+    exclude_watchlists: Collection[int] = (),
 ) -> int:
     """Fail every `generating` briefing as `interrupted`; return the count.
 
@@ -799,16 +937,45 @@ def fail_interrupted_briefings(
         db: An open `SubscriptionsDB`.
         watchlist_id: Scope the sweep to one watchlist. `None` sweeps all,
             which is what a startup pass wants.
-        exclude: Watchlist ids to spare even though their row reads
-            `generating` -- phase 4's claim-aware sweep (Locked decision 2).
-            A `generating` row whose watchlist is in this collection is a
-            LIVE, in-process generation, not a crash zombie, and must
-            survive unconditionally, in every scope. Callers snapshot
-            `active_briefing_claims()` on the event loop and pass the
-            result here; this function is sync and runs under
-            `asyncio.to_thread`, so it never reads the live claim set
-            itself. Defaults to `()`, so every pre-phase-4 caller is
-            unchanged.
+        exclude: `briefings.id`s to spare even though their row reads
+            `generating` -- phase 4's claim-aware sweep (Locked decision 2),
+            row-scoped since task-1812 (AC #3). A `generating` row whose OWN
+            id is in this collection is a LIVE, in-process generation, not
+            a crash zombie, and must survive unconditionally, in every
+            scope. Callers snapshot `active_briefing_claim_row_ids()` on
+            the event loop and pass the result here; this function is sync
+            and runs under `asyncio.to_thread`, so it never reads the live
+            claim registry itself. Defaults to `()`, so every pre-phase-4
+            caller is unchanged.
+
+            Prior to task-1812 this was watchlist-scoped (`active_briefing_
+            claims()`), which over-protected: a genuine crash-zombie row
+            left by an earlier process can coexist with a freshly-claimed
+            live row for the SAME watchlist (the crash predates the claim),
+            and a watchlist-scoped `exclude` shielded both rows, not just
+            the live one. Scoping to the row's own id fixes that: only the
+            actual live row survives, and a same-watchlist zombie is swept
+            exactly as if no claim existed at all.
+        exclude_watchlists: Watchlist ids to spare even though a row reads
+            `generating`, regardless of that row's own id (whole-branch
+            review, `chore/briefings-residuals-1810-1812`, Important 1).
+            Closes a window row-scoped `exclude` alone cannot: between a
+            claim being taken and its row's id being recorded,
+            `generate_briefing` has already inserted the row (`_start_
+            generation`'s first statement) but has not yet resumed on the
+            event loop to record it (three more DB reads later) -- for that
+            whole span the row exists, reads `generating`, and is named by
+            no row id at all. Callers pass `pending_briefing_claim_
+            watchlist_ids()` here, snapshotted on the event loop exactly
+            like `exclude` -- NEVER `active_briefing_claims()` itself, which
+            would resurrect the pre-task-1812 over-protection `exclude` was
+            narrowed away from (shielding a same-watchlist crash zombie
+            alongside the live row). The set is empty for any watchlist
+            whose row id has already been recorded, so passing both
+            together preserves the task-1812 coexistence fix: only the
+            watchlist named here for the brief unrecorded window, and only
+            the row named in `exclude` once recorded. Defaults to `()`, so
+            every caller that predates this fix is unchanged.
 
     Returns:
         How many rows were failed.
@@ -823,8 +990,12 @@ def fail_interrupted_briefings(
         params.append(watchlist_id)
     if exclude:
         placeholders = ",".join("?" for _ in exclude)
-        sql += f" AND watchlist_id NOT IN ({placeholders})"
+        sql += f" AND id NOT IN ({placeholders})"
         params.extend(exclude)
+    if exclude_watchlists:
+        placeholders = ",".join("?" for _ in exclude_watchlists)
+        sql += f" AND watchlist_id NOT IN ({placeholders})"
+        params.extend(exclude_watchlists)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

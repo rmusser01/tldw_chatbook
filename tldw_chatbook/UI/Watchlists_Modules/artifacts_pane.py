@@ -352,7 +352,9 @@ _CADENCE_SCOPE_PHRASES: dict[int, str] = {
 }
 
 
-def cadence_scope_phrase(seconds: int | None) -> str | None:
+def cadence_scope_phrase(
+    seconds: int | None, *, schedules_enabled: bool = True
+) -> str | None:
     """What the Artifacts scope label should say a stored cadence means.
 
     Spec #2 phase 4, Task 4: `WatchlistsCollectionsScreen._briefing_scope_
@@ -365,14 +367,29 @@ def cadence_scope_phrase(seconds: int | None) -> str | None:
     own worker lifecycle) -- see `Docs/User_Guide/watchlists.md`'s
     "Scheduled briefings" note, which states the identical phrase.
 
+    Task-1812, AC #1: `schedules_enabled` retires a SECOND honesty gap the
+    same reasoning above missed -- `[scheduling] briefing_schedules_
+    enabled` (`app.py`'s `_wire_watchlists_and_notifications_services`)
+    gates whether anything in this process ever reads `briefing_cadence_
+    seconds` back at all. With the flag off, a stored cadence is data with
+    no reader: "scheduled ... while the app is open" would claim an active
+    schedule that cannot exist this run, exactly the same shape of lie
+    "on request" was before Task 2 gave the column a writer.
+
     Args:
         seconds: A watchlist's stored `briefing_cadence_seconds` -- `None`
             for "never scheduled".
+        schedules_enabled: Whether `[scheduling] briefing_schedules_
+            enabled` is on for this run. Defaults to `True` so every
+            pre-task-1812 caller reads unchanged. Irrelevant when `seconds`
+            is `None`: there is nothing stored to describe either way.
 
     Returns:
-        `None` for `None` (the caller falls back to "on request"); a
+        `None` for `None` seconds regardless of the flag (the caller falls
+        back to "on request"). For a stored cadence: a phrase stating it is
+        inert when `schedules_enabled` is `False`; otherwise the existing
         "scheduled <cadence> while the app is open" phrase for one of
-        `_CADENCE_OPTIONS`' three cadences; a generic every-N-seconds
+        `_CADENCE_OPTIONS`' three cadences, or a generic every-N-seconds
         phrase for any other positive value -- `set_watchlist_briefing_
         settings` (Task 2) accepts any positive int, so a value this
         picker never offered (hand-written, or a future option this pane
@@ -382,6 +399,11 @@ def cadence_scope_phrase(seconds: int | None) -> str | None:
     if seconds is None:
         return None
     phrase = _CADENCE_SCOPE_PHRASES.get(seconds, f"every {seconds}s")
+    if not schedules_enabled:
+        return (
+            f"stored to run {phrase}, but scheduled briefings are turned "
+            "off for this app -- this schedule will not fire"
+        )
     return f"scheduled {phrase} while the app is open"
 
 
@@ -629,6 +651,18 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: watchlist, off by default, since a schedule spends the user's LLM
     #: tokens unattended.
     briefing_cadence_seconds = reactive[int | None](None, recompose=True)
+    #: Task-1812, AC #1: whether `[scheduling] briefing_schedules_enabled`
+    #: is on for this run -- the flag that gates whether `app.py` ever
+    #: builds the `BriefingProjection`/`BriefingJobHandler` pair that makes
+    #: a stored cadence actually fire (there is no UI control for it, so
+    #: this pane cannot infer it from anything else it is given). Screen-
+    #: supplied, exactly like `chachanotes_available`/`has_audio_episodes`
+    #: above -- this widget has no config handle of its own and must not
+    #: read `get_cli_setting` itself (see `WatchlistsCollectionsScreen.
+    #: _briefing_schedules_enabled`, the one reader). Defaults to `True`,
+    #: the flag's own default, so a pane that has not yet heard from the
+    #: screen renders exactly as it did before this flag existed.
+    briefing_schedules_enabled = reactive(True, recompose=True)
     #: Task 5: every `briefing_scripts` row cast from the SELECTED briefing
     #: (newest first, per `list_briefing_scripts`) -- never every script
     #: across the whole watchlist, since a script belongs to exactly one
@@ -985,15 +1019,49 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                         "(LLM, model, and style notes)."
                     ),
                 )
+                # Task-1812, AC #1: disabled -- not merely mis-worded --
+                # when the app-level kill switch is off. A stored cadence
+                # showing as pickable/active while nothing in this process
+                # would ever dispatch it is the exact gap this fix closes;
+                # see `cadence_scope_phrase`'s own AC #1 note for the scope
+                # label's half of the same fix.
+                #
+                # Whole-branch review (`chore/briefings-residuals-1810-
+                # 1812`), Minor 4: the Select stays disabled ON PURPOSE --
+                # its "Off" option is unreachable too, so a stored cadence
+                # cannot be cleared from the UI while the flag is off. That
+                # is deliberate (a stored value is never silently cleared),
+                # but the disabled tooltip must say so plainly: a stored
+                # cadence is not merely inert here, it SURVIVES and will
+                # resume firing the moment the flag is turned back on.
+                schedules_disabled = not self.briefing_schedules_enabled
                 yield Select(
                     self._cadence_select_options(),
                     value=self.briefing_cadence_seconds,
                     id="artifacts-cadence-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=schedules_disabled,
                     tooltip=(
-                        "How often this watchlist writes a new briefing on "
-                        "its own, while the app is open. Off by default."
+                        "Scheduled briefings are turned off for this app "
+                        "([scheduling] briefing_schedules_enabled is "
+                        "false); a stored cadence stays saved here and "
+                        "cannot be changed while this control is disabled "
+                        "-- it will resume firing as soon as scheduling is "
+                        "turned back on."
+                        if schedules_disabled
+                        # Task-1812, AC #2: a freshly picked cadence is not
+                        # instant -- the running scheduler only re-reads
+                        # schedules every `queue_reload_interval_ticks`
+                        # (`Scheduling/scheduler/loop.py`, ~30 minutes by
+                        # default), so a pick made right now can sit inert
+                        # until the next reload. Stated here, and in
+                        # `Docs/User_Guide/watchlists.md`'s "Scheduled
+                        # briefings" section.
+                        else "How often this watchlist writes a new briefing "
+                        "on its own, while the app is open. Off by default. "
+                        "A freshly picked cadence can take up to ~30 minutes "
+                        "(one scheduler reload cycle) to start."
                     ),
                 )
                 yield Button(
