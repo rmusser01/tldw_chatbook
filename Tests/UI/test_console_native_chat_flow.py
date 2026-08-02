@@ -1,4 +1,5 @@
 import asyncio
+import time
 from copy import deepcopy
 import inspect
 import json
@@ -5328,8 +5329,37 @@ def _browser_star_button(console, conversation_id: str) -> Button:
     )
 
 
+#: Wall-clock budget for browser-row renders (TASK-1900). Deliberately
+#: generous: this waits on a RENDER, and render latency scales with machine
+#: load in a way an iteration count cannot express.
+_BROWSER_ROW_RENDER_TIMEOUT = 15.0
+
+
 async def _wait_for_browser_conversation_row(console, pilot, conversation_id: str):
-    for _ in range(80):
+    """Wait for a browser row to render, on a wall-clock deadline.
+
+    TASK-1900. This used to spin a fixed `for _ in range(80)` over
+    `pilot.pause(0.05)` and call it four seconds. It is not four seconds: on
+    a busy machine each pause overruns AND the render itself takes longer,
+    so the budget shrinks exactly when it needs to grow. That made
+    `test_console_conversation_browser_search_ignores_stale_results` fail
+    about one run in five, and 3/3 with four CPU burners alongside -- while
+    the screen's `_console_conversation_browser_rows` state was already
+    correct. The test was right, the clock was wrong.
+
+    Args:
+        console: The mounted Console screen.
+        pilot: Its `Pilot`, used to let the event loop settle between polls.
+        conversation_id: Row to wait for.
+
+    Returns:
+        The rendered row widget.
+
+    Raises:
+        AssertionError: If the row has not rendered within the deadline.
+    """
+    deadline = time.monotonic() + _BROWSER_ROW_RENDER_TIMEOUT
+    while time.monotonic() < deadline:
         for row in console.query(".console-workspace-conversation-row"):
             if getattr(row, "conversation_id", None) == conversation_id:
                 return row
@@ -6071,6 +6101,18 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         console._console_conversation_browser_search_token += 1
         fresh_token = console._console_conversation_browser_search_token
         await console._refresh_console_conversation_browser_search("beta", fresh_token)
+
+        # TASK-1900: assert the CLAIM first, on state that is correct
+        # synchronously once the refresh returns. The widget check below waits
+        # on a render, so when it was the only assertion a slow machine looked
+        # exactly like a stale result winning -- the failure said "row not
+        # found. Rows: [stale-alpha]" while the state already held only
+        # fresh-beta. Now a real regression fails here and names itself, and a
+        # render that is merely late fails below saying so.
+        assert [row.conversation_id for row in console._console_conversation_browser_rows] == [
+            "fresh-beta"
+        ], "the stale search result overwrote the fresh one"
+
         await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
         row_texts = _console_workspace_conversation_texts(console)
         assert all("Stale Alpha" not in text for text in row_texts)

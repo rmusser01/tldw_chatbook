@@ -1,7 +1,7 @@
 ---
 id: TASK-1900
 title: 'Console UI suites: one test fails per full-sweep run under random ordering'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-02 08:00'
 labels:
@@ -33,10 +33,11 @@ Cost: a full sweep is not currently a reliable signal — a single red test that
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The polluting test (or shared-state seam) is identified by name, not guessed at
-- [ ] #2 The sweep passes repeatedly under several different random seeds
-- [ ] #3 The shared state involved is reset per test rather than the victim test being made tolerant of dirt
-- [ ] #4 A regression test fails if that shared state leaks between tests again
+- [x] #1 REWRITTEN -- the premise was wrong. It is not pollution: the test fails ALONE. Cause characterised below.
+- [ ] #2 `test_console_conversation_browser_search_ignores_stale_results` passes 20 consecutive runs alone
+- [ ] #3 It also passes with four CPU burners alongside, which reproduces it 3/3 today
+- [ ] #4 The root cause is named -- why the rendered row list does not converge to a state that is provably already correct
+- [ ] #5 Whether this is reachable by a real user (a search whose results never repaint) is answered yes or no, with evidence
 <!-- AC:END -->
 
 ## Update: at least one test is intrinsically flaky, not order-dependent
@@ -50,6 +51,18 @@ run 1: 1 failed   run 2: 1 passed   run 3: 1 passed   run 4: 1 passed   run 5: 1
 Failure is always `Browser row 'fresh-beta' not found. Rows: [('stale-alpha', ...)]` -- the search result arrives after the assertion, so it is a missing await/settle, not pollution.
 
 This cost real time: it failed on a feature branch, passed on that branch's base in the same environment, and the obvious conclusion ("my change broke it") was wrong. Bisecting a diff against a coin-flip test is unfalsifiable -- **run a suspect test 5x before attributing a failure to a change.**
+
+## Investigation (2026-08-02): three hypotheses killed
+
+**Not pollution.** Fails run entirely alone, `-p no:randomly`, ~1 in 5.
+
+**Not a product race in the search guard.** `_refresh_console_conversation_browser_search` re-checks both the token and the query AFTER its await, before mutating. Verified by instrumenting the failing run: at the moment of failure `_console_conversation_browser_rows` holds exactly `['fresh-beta']` -- the correct, fresh result. The stale result does NOT win.
+
+**Not the wait budget.** The helper spun a fixed `for _ in range(80)` over `pilot.pause(0.05)` -- "four seconds" that shrinks precisely when the machine is busy. Replacing it with a 15-SECOND WALL-CLOCK deadline did not help: still fails, and the rendered list still shows only `stale-alpha` after the full 15s. An explicit `_sync_console_workspace_context()` + pause before the wait fixed it only 1 run in 3.
+
+**What is left, and it is the interesting part:** the screen's row STATE is correct and the RENDERED row list never converges to it, given 15 seconds. That is either a missed refresh/recompose trigger on the browser row list, or something in the harness that stops pumping -- not yet distinguished, which is AC#4. AC#5 matters because if it is the former, a real user's conversation search can show stale rows indefinitely.
+
+Reproducer: run the test with four busy-loop processes alongside -- 3/3 failures. Alone, ~1 in 5.
 
 ## Implementation Notes
 
