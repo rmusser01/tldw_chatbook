@@ -318,9 +318,12 @@ graph LR
    - Private IP range blocking
 
 2. **XML Parsing**:
-   - Subscription parser modules prefer optional `defusedxml` when it is installed.
-   - Standard-library fallback behavior is module-specific and does not provide an
-     equivalent unconditional protection guarantee.
+   - Network feed monitor and scraper parser modules prefer optional `defusedxml`
+     when it is installed; their standard-library fallback behavior is
+     module-specific and does not provide an equivalent unconditional protection
+     guarantee.
+   - The active OPML import path, `WatchlistOpmlService`, uses
+     `xml.etree.ElementTree` directly.
    - Parser selection is dependency-controlled; no configuration setting,
      including a legacy subscriptions security table, controls it.
 
@@ -391,15 +394,20 @@ allowed_hosts = []
 ```
 
 `[web_security]` controls shared egress/SSRF enforcement; `allowed_hosts` is
-the explicit override. TLS verification is configured per subscription with
-`ssl_verify`, not through a global subscriptions security key. Redirect bounds
-are owned by the shared guarded-fetch helpers, not by a configuration setting.
+the explicit override. `FeedMonitor` and `URLMonitor` read an optional
+`ssl_verify` value from the subscription mapping and default certificate
+verification on. The current persisted subscriptions schema and UI do not store
+or expose that value, and a legacy subscriptions security table does not control
+it. Redirect bounds are owned by the shared guarded-fetch helpers, not by a
+configuration setting.
 
-Production subscription parser modules prefer optional `defusedxml`; their
-existing, module-specific fallback behavior uses the standard-library XML parser
-when it is unavailable. `SecurityValidator.validate_xml_content` is not on the
-active parsing path. Legacy subscriptions security tables in existing user
-configuration files are ignored and may be safely deleted.
+Network feed monitor and scraper parser modules prefer optional `defusedxml`;
+their existing, module-specific fallback behavior uses the standard-library XML
+parser when it is unavailable. The active OPML import path,
+`WatchlistOpmlService`, uses `xml.etree.ElementTree` directly.
+`SecurityValidator.validate_xml_content` is not on the active parsing path.
+Legacy subscriptions security tables in existing user configuration files are
+ignored and may be safely deleted.
 
 ## Performance Considerations
 
