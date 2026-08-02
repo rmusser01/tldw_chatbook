@@ -2,6 +2,7 @@
 
 import pytest
 
+from tldw_chatbook.Subscriptions.security import SSRFError
 from tldw_chatbook.Utils import egress
 from tldw_chatbook.Utils.egress import EgressBlockedError
 
@@ -47,6 +48,67 @@ def test_validate_feed_url_cross_origin_private_item_blocked(monkeypatch):
     monkeypatch.setattr(egress, "_resolve", lambda host: ["192.168.1.10"])
     with pytest.raises(SSRFError):
         SecurityValidator.validate_feed_url("http://other.internal/item")
+
+
+def test_validate_feed_url_web_security_switch_changes_private_host_behavior(
+    monkeypatch,
+):
+    """The live web-security setting controls subscription egress enforcement."""
+    from tldw_chatbook.Subscriptions.security import SecurityValidator, SSRFError
+
+    state = {"enabled": True}
+    monkeypatch.setattr(egress, "_resolve", lambda host: ["192.168.1.10"])
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            state["enabled"]
+            if (section, key) == ("web_security", "enabled")
+            else default
+        ),
+    )
+
+    with pytest.raises(SSRFError, match="private"):
+        SecurityValidator.validate_feed_url("http://private.example/feed")
+
+    state["enabled"] = False
+    assert (
+        SecurityValidator.validate_feed_url("http://private.example/feed")
+        == "http://private.example/feed"
+    )
+
+
+def test_validate_feed_url_rejects_ftp_when_web_security_disabled(monkeypatch):
+    """Subscription's local scheme allowlist remains active when egress is off."""
+    from tldw_chatbook.Subscriptions.security import SecurityValidator, SSRFError
+
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if (section, key) == ("web_security", "enabled") else default
+        ),
+    )
+
+    with pytest.raises(SSRFError, match="not allowed"):
+        SecurityValidator.validate_feed_url("ftp://example.com/feed")
+
+
+@pytest.mark.parametrize(
+    ("url", "exception"),
+    [
+        ("", ValueError),
+        ("example.com/feed", ValueError),
+        ("https:///feed", ValueError),
+        ("file:///etc/passwd", SSRFError),
+    ],
+)
+def test_validate_feed_url_rejects_invalid_or_unsupported_urls(url, exception):
+    """Input validation distinguishes malformed URLs from unsupported schemes."""
+    from tldw_chatbook.Subscriptions.security import SecurityValidator
+
+    with pytest.raises(exception):
+        SecurityValidator.validate_feed_url(url)
 
 
 def test_warn_insecure_ssl_once_per_host(monkeypatch):
