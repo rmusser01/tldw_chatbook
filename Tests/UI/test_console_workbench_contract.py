@@ -446,11 +446,15 @@ async def test_console_control_bar_exposes_compact_visible_actions():
             "#console-control-settings",
             "#console-control-attach-context",
             "#console-control-run-library-rag",
-            "#console-control-save-chatbook",
             "#console-control-help",
         ):
             action = console.query_one(selector)
             assert _is_displayed(action), selector
+        # Save Chatbook left the top strip (user request 2026-08-01): it was
+        # disabled at rest for most sessions, spending an always-visible
+        # slot on an almost-always-inert control. The ☰ composer menu and
+        # the Inspector's Artifacts row are the surviving surfaces.
+        assert not list(console.query("#console-control-save-chatbook"))
         assert console.query_one("#console-control-settings").disabled is False
         assert console.query_one("#console-control-attach-context").disabled is False
         assert console.query_one("#console-control-run-library-rag").disabled is False
@@ -859,7 +863,6 @@ def test_console_workbench_state_exposes_core_actions_visibly():
         provider_blocker_copy="",
         can_send=True,
         can_stop=False,
-        can_save_chatbook=True,
     )
 
     actions = {action.id: action for action in state.actions}
@@ -869,20 +872,20 @@ def test_console_workbench_state_exposes_core_actions_visibly():
         "Settings",
         "Attach context",
         "Run Library RAG",
-        "Save Chatbook",
         "Help",
     } <= action_labels
+    # Save Chatbook is deliberately absent: it left the top strip for the
+    # ☰ composer menu and the Inspector's Artifacts row.
+    assert "Save Chatbook" not in action_labels
     assert tuple(actions) == (
         "new-tab",
         "settings",
         "attach-context",
         "run-library-rag",
-        "save-chatbook",
         "send",
         "stop",
         "help",
     )
-    assert actions["save-chatbook"].disabled is False
     assert actions["send"].disabled is False
     assert actions["send"].primary is True
     assert actions["stop"].disabled is True
@@ -926,7 +929,6 @@ def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
         provider_action_label="Choose model",
         can_send=False,
         can_stop=False,
-        can_save_chatbook=False,
     )
 
     assert state.recovery is None
@@ -1027,7 +1029,6 @@ def test_console_workbench_state_disables_send_when_provider_is_blocked():
         provider_blocker_copy="Provider setup needed: choose a model",
         can_send=True,
         can_stop=True,
-        can_save_chatbook=True,
         density="compact",
     )
 

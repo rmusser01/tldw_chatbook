@@ -361,9 +361,14 @@ from ...Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from ...Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
+    ConsoleRagSettingsResult,
+)
 from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
+    ConsoleRagChip,
     ConsoleScopeChip,
     ConsoleStatusChips,
     ConsoleTemporaryChip,
@@ -1899,8 +1904,6 @@ class ChatScreen(BaseAppScreen):
             self._set_console_rail_preference(left_open=True)
         elif action_id == "run-library-rag":
             self._run_console_library_rag_from_visible_action()
-        elif action_id == "save-chatbook":
-            self._save_console_chatbook_from_visible_action()
         elif action_id == "send":
             await self._send_console_message_from_visible_action()
         elif action_id == "stop":
@@ -7086,6 +7089,71 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         await self._open_console_character_picker()
 
+    @on(ConsoleRagChip.OpenRequested)
+    def _console_rag_chip_activated(
+        self, event: ConsoleRagChip.OpenRequested
+    ) -> None:
+        """Open Library RAG settings from the RAG chip."""
+        event.stop()
+        self._open_console_rag_settings()
+
+    def _open_console_rag_settings(self) -> None:
+        """Open the Library RAG settings modal, prefilled with the best query.
+
+        The prefill prefers the query already set through any RAG surface;
+        with none set, it falls back to the composer draft -- the text the
+        user is about to send is usually exactly what retrieval should look
+        for, and it was the missing link when "Run Library RAG" demanded a
+        query while the composer visibly held one.
+        """
+        prefill = self._console_library_rag_query
+        if not prefill:
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                prefill = _sanitize_console_library_rag_query(composer.draft_text())
+        pending = self._pending_console_launch_context
+        self.app.push_screen(
+            ConsoleRagSettingsModal(
+                query=prefill,
+                scope_label=self._console_library_rag_scope_label(),
+                # Matches the chip exactly: the chip's "RAG: on" derives from
+                # this same pending-launch source test.
+                rag_active=_source_mentions_rag(
+                    pending.source if pending else None
+                ),
+                staged_title=(pending.title if pending else ""),
+            ),
+            callback=self._apply_console_rag_settings_choice,
+        )
+
+    def _apply_console_rag_settings_choice(
+        self, result: ConsoleRagSettingsResult | None
+    ) -> None:
+        """Store the modal's query and optionally run retrieval now.
+
+        Mirrors the query into the Inspector's readiness-card input when it
+        is mounted, so the two surfaces cannot disagree about what will be
+        retrieved.
+        """
+        if result is None:
+            return
+        query = _sanitize_console_library_rag_query(result.query)
+        self._console_library_rag_query = query
+        try:
+            rail_input = self.query_one("#console-library-rag-query-input", Input)
+        except QueryError:
+            pass
+        else:
+            rail_input.value = query
+        try:
+            run_button = self.query_one("#console-run-library-rag", Button)
+        except QueryError:
+            pass
+        else:
+            run_button.disabled = not query
+        if result.run:
+            self._run_console_library_rag_from_visible_action()
+
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
         options = await asyncio.to_thread(self._console_character_picker_options)
@@ -11665,7 +11733,6 @@ class ChatScreen(BaseAppScreen):
             provider_action_label=action_label,
             can_send=can_send,
             can_stop=can_stop,
-            can_save_chatbook=self._console_chatbook_action_available(),
             density=self._console_workbench_density(),
             run_active=self._console_run_active(),
             ephemeral=self._console_active_session_is_ephemeral(),

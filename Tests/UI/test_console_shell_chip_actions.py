@@ -17,6 +17,7 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleChip,
     ConsoleModelChip,
+    ConsoleRagChip,
 )
 
 _CSS = (
@@ -44,6 +45,19 @@ def test_assistant_chip_is_an_action_chip():
             binding.key == action for binding in ConsoleAssistantChip.BINDINGS
         ), action
     assert hasattr(ConsoleAssistantChip, "OpenRequested")
+
+
+@pytest.mark.unit
+def test_rag_chip_is_an_action_chip():
+    """The RAG chip opens the Library RAG settings modal (user request
+    2026-08-01): "RAG: off" must be an entry point into enabling it, not
+    an inert status label."""
+    for action in ("enter", "space"):
+        assert any(
+            binding.key == action for binding in ConsoleRagChip.BINDINGS
+        ), action
+    assert issubclass(ConsoleRagChip, ConsoleChip)
+    assert hasattr(ConsoleRagChip, "OpenRequested")
 
 
 @pytest.mark.unit
@@ -98,6 +112,7 @@ def test_screen_subscribes_to_both_new_chip_messages():
     for handler_name, chip in (
         ("_console_model_chip_activated", ConsoleModelChip),
         ("_console_assistant_chip_activated", ConsoleAssistantChip),
+        ("_console_rag_chip_activated", ConsoleRagChip),
     ):
         handler = getattr(ChatScreen, handler_name, None)
         assert handler is not None, handler_name

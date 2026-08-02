@@ -22,7 +22,6 @@ TOP_ACTION_IDS = {
     "settings",
     "attach-context",
     "run-library-rag",
-    "save-chatbook",
     "help",
 }
 CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
@@ -30,7 +29,6 @@ CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
     "settings": "console-control-settings",
     "attach-context": "console-control-attach-context",
     "run-library-rag": "console-control-run-library-rag",
-    "save-chatbook": "console-control-save-chatbook",
     "help": "console-control-help",
 }
 FALLBACK_ACTIONS = (

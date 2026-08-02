@@ -1065,10 +1065,6 @@ def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
     proves nothing unless the same call proves it is enabled otherwise.
     """
     from tldw_chatbook.Chat.console_ephemeral import blocked_reason
-    from tldw_chatbook.Widgets.Console.console_workbench_state import (
-        build_console_workbench_state,
-    )
-    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 
     menu = {
         e.action_id: e
@@ -1081,27 +1077,13 @@ def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
     normal = {e.action_id: e for e in build_composer_menu_entries()}
     assert normal[ACTION_GENERATE_IMAGE].enabled is True
 
-    # ConsoleControlState has seven required label fields and no defaults.
-    control_state = ConsoleControlState(
-        provider_label="Provider: stub",
-        model_label="Model: stub",
-        assistant_label="Assistant: General",
-        rag_label="RAG: off",
-        sources_label="Sources: 0",
-        tools_label="Tools: 0",
-        approvals_label="Approvals: 0",
-    )
-
-    def chatbook_action(**kwargs):
-        state = build_console_workbench_state(
-            control_state=control_state, can_save_chatbook=True, **kwargs
-        )
-        return {a.id: a for a in state.actions}["save-chatbook"]
-
-    blocked = chatbook_action(ephemeral=True)
-    assert blocked.disabled is True
-    assert blocked.tooltip == blocked_reason("save-chatbook", ephemeral=True)
-    assert chatbook_action().disabled is False
+    # Save Chatbook's temporary-chat block used to be asserted here on the
+    # top control strip's action too; that button left the strip entirely
+    # (the ☰ menu row above and the Inspector's Artifacts row are the
+    # surviving surfaces, each with its own block coverage).
+    chatbook = menu[ACTION_SAVE_CHATBOOK]
+    assert chatbook.enabled is False
+    assert chatbook.description == blocked_reason("save-chatbook", ephemeral=True)
 
 
 @pytest.mark.integration
