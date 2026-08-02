@@ -40,8 +40,22 @@ beside it by name, never by absolute path, so you can copy, sync, or zip the
 whole directory and it keeps working on another machine.
 
 Some podcast clients accept a local folder or a `file://` URL directly. For
-clients that require HTTP, serve the folder yourself — from a terminal, in
-the exported directory:
+clients that require HTTP, the Artifacts toolbar has two more buttons next
+to Export Feed:
+
+- **Serve Feed** starts a small, built-in server for the directory you most
+  recently exported, and shows a toast with the URL to point your podcast
+  client at (e.g. `http://127.0.0.1:54231/feed.xml`). It is disabled until
+  you have exported a feed, and disabled again while a feed is already
+  being served.
+- **Stop Serving** stops it. Switching away from Watchlists, or closing the
+  app, also stops it — serving never outlives the screen it started on.
+
+This is unrelated to the app's `[web_server]` setting: that runs the whole
+chatbook UI in a browser instead of your terminal, and it has no way to
+serve a directory you choose at all. If you would rather not use the
+built-in server, serving the folder yourself works exactly as before — from
+a terminal, in the exported directory:
 
 ```bash
 python3 -m http.server 8000
@@ -51,9 +65,31 @@ Then point the client at `http://localhost:8000/feed.xml` (or your machine's
 LAN address, if the client runs on another device). Stop the server with
 Ctrl+C when you are done.
 
-The app does not serve the folder for you. Its `[web_server]` setting is
-unrelated — that runs the whole chatbook UI in a browser instead of your
-terminal, and it is not a way to publish a feed.
+#### Security posture
+
+The built-in Serve Feed server is opt-in and session-only: nothing is ever
+served until you press **Serve Feed**, and it stops the moment you press
+**Stop Serving**, switch away from Watchlists, or close the app — it never
+starts on its own, and no setting can make it start on its own.
+
+- **No authentication.** Anyone who can reach the served address can read
+  every file in the exported directory for as long as it is running. The
+  toast that appears when you press Serve Feed states this every time, not
+  just here.
+- **Loopback by default.** The server binds `127.0.0.1` (this machine
+  only) unless you change `bind` under `[briefings_feed_server]` in
+  `config.toml` to something wider (e.g. `0.0.0.0`, to reach it from
+  another device on your network). Only widen this if you understand that
+  doing so removes the one thing standing between "only this machine" and
+  "anyone who can reach it" — there is still no authentication either way.
+- **Confined to the exported directory.** The server refuses (with a plain
+  404) any request that would read a file outside the directory you
+  exported to, including through a symlink planted inside it that points
+  elsewhere on disk.
+- **One directory at a time.** Serve Feed refuses (naming the URL already
+  in use) rather than switching directories out from under a client that
+  might still be connected. Press Stop Serving first to serve a different
+  export.
 
 ## Scheduled briefings
 

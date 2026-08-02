@@ -3682,6 +3682,20 @@ max_export_size_mb = 100  # Maximum size for exports in MB
 # Selection profiles directory
 profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store selection profiles
 
+[briefings_feed_server]
+# Opt-in, session-only static file server for ONE exported briefings podcast
+# feed directory at a time (task-1760). This is its own section on purpose --
+# it is unrelated to [web_server] below: that runs the whole chatbook UI in a
+# browser instead of a terminal (a separate, mutually exclusive process mode)
+# and has no route that serves a directory you choose. Nothing here ever
+# auto-starts anything -- these are only the defaults the Watchlists
+# Artifacts pane's Serve action uses when you press it; serving always
+# requires that explicit action. See Docs/User_Guide/watchlists.md's
+# "Serving an exported feed" section for the full security posture
+# (no authentication, localhost-only unless you widen bind).
+bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -- there is no authentication.
+port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
+
 [web_server]
 # Web server configuration for running tldw_chatbook in a browser
 enabled = true  # Enable web server functionality

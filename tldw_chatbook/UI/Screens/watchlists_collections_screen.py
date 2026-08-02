@@ -67,6 +67,11 @@ from ...Subscriptions.briefing_service import (
     generate_briefing,
     pending_briefing_claim_watchlist_ids,
 )
+from ...Subscriptions.feed_server import (
+    FeedDirectoryServer,
+    FeedServerError,
+    configured_bind_and_port,
+)
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
@@ -109,7 +114,9 @@ from ..Watchlists_Modules.artifacts_pane import (
     PlayAudioRequested,
     RefreshBriefingsRequested,
     ScriptSelected,
+    ServeFeedRequested,
     StopAudioRequested,
+    StopFeedServerRequested,
     SynthesizeAudioRequested,
     audio_file_path_is_safe,
     cadence_scope_phrase,
@@ -610,6 +617,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # selected briefing's status: the button's disabled state and the
         # message it posts are two different frames.
         self._watchlist_has_audio_episodes = False
+        # task-1760: this screen's own feed server, and the directory it
+        # would serve. `FeedDirectoryServer` is not a module singleton --
+        # each screen instance owns exactly one (this instance's `stop()`
+        # is called from `on_unmount`, so a second screen instance never
+        # needs to know about the first's server at all). `_last_feed_
+        # export_directory` is set by `_export_feed_directory` on every
+        # SUCCESSFUL export (full or partial -- both leave a valid,
+        # servable `feed.xml` on disk) and read by `handle_serve_feed_
+        # requested`'s own re-check, mirroring `_watchlist_has_audio_
+        # episodes`'s own "button disabled state and the message it posts
+        # are two different frames" reasoning immediately above.
+        self._feed_server = FeedDirectoryServer()
+        self._last_feed_export_directory: Path | None = None
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1575,6 +1595,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.citations = self._loaded_citations
             artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
             artifacts_pane.chachanotes_available = self._chachanotes_db() is not None
+            artifacts_pane.can_serve_feed = self._last_feed_export_directory is not None
+            artifacts_pane.feed_server_running = self._feed_server.is_running
+            artifacts_pane.feed_server_url = self._feed_server.url
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -4687,6 +4710,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     markup=False,
                 )
                 return
+            # task-1760: a successful export (partial or full -- either way
+            # `result.directory` holds a real, just-written `feed.xml`) is
+            # now something the Serve button can act on. Recorded here,
+            # not only inside the two toast branches below, so it applies
+            # to both outcomes -- and patched onto the mounted pane
+            # directly (the same "patch it in place" idiom `_sync_feed_
+            # server_pane_state` uses elsewhere), since a fresh export can
+            # arrive while Artifacts is already on screen.
+            self._last_feed_export_directory = result.directory
+            self._sync_feed_server_pane_state()
             total = result.episode_count + len(result.skipped)
             if result.skipped:
                 # Honest, not a success toast: this is Task 4's own named
@@ -4727,6 +4760,137 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
         finally:
             self._feed_export_in_flight = False
+
+    # --- Serving the exported feed directory over localhost (task-1760) -----
+    #
+    # `Subscriptions.feed_server.FeedDirectoryServer` does the actual work
+    # (a `ThreadingHTTPServer` on a daemon thread); this screen only owns
+    # ONE instance of it (`self._feed_server`, constructed in `__init__`)
+    # and decides when to start/stop it. No `run_worker` here, unlike every
+    # other action on this screen: `start()`/`stop()` bind/release a socket
+    # and spawn/join a thread, which are fast, synchronous stdlib calls --
+    # there is no `await` boundary that would make dispatching a worker
+    # meaningful, and no filesystem/database I/O of the kind the OTHER
+    # handlers move off the UI thread with `asyncio.to_thread`. Both
+    # handlers re-check state before acting, the same "the button's
+    # disabled state and the message it posts are two different frames"
+    # reasoning `handle_export_feed_requested` already states for its own
+    # re-check.
+
+    def _sync_feed_server_pane_state(self) -> None:
+        """Patch the mounted `ArtifactsPane`'s feed-server reactives from
+        this screen's own state, if the pane is currently mounted.
+
+        Called after every state change (a fresh export, Serve, Stop) --
+        the same "patch it in place, never rebuild via `self.refresh
+        (recompose=True)`" idiom the picker writers use (see
+        `handle_briefing_mode_changed`'s own comment), for the identical
+        reason: a full workbench rebuild is a much bigger hammer than one
+        widget's reactive assignment, and `_build_detail_pane` already
+        seeds a FRESH pane from this same state on every rebuild anyway,
+        so nothing is lost if this screen is not showing Artifacts (or not
+        attached) when this is called.
+        """
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.can_serve_feed = self._last_feed_export_directory is not None
+        pane.feed_server_running = self._feed_server.is_running
+        pane.feed_server_url = self._feed_server.url
+
+    @on(ServeFeedRequested)
+    def handle_serve_feed_requested(self, event: ServeFeedRequested) -> None:
+        """Re-check both requirements, then start the server.
+
+        Refuses (names the running URL) rather than restarting when a
+        server is already running -- `FeedDirectoryServer.start`'s own
+        docstring states why refusing was chosen as the simpler of the two
+        options task-1760's plan allowed: a caller that wants to serve a
+        DIFFERENT directory presses Stop first. `ArtifactsPane.compose`
+        already disables the button in both refusal cases, but this
+        re-checks anyway, for the identical reason every other handler on
+        this screen does.
+        """
+        event.stop()
+        if self._last_feed_export_directory is None:
+            self._notify_watchlists(
+                "Export a feed directory first, then serve it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._feed_server.is_running:
+            self._notify_watchlists(
+                f"A feed is already being served at {self._feed_server.url}. "
+                "Stop it before serving a different directory.",
+                severity="warning",
+                markup=False,
+            )
+            return
+
+        bind, port = configured_bind_and_port()
+        try:
+            url = self._feed_server.start(
+                self._last_feed_export_directory, bind=bind, port=port
+            )
+        except (FeedServerError, OSError) as exc:
+            logger.warning(f"Could not start the feed server: {type(exc).__name__}")
+            self._notify_watchlists(
+                "Could not start the feed server. Nothing is being served.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self._sync_feed_server_pane_state()
+        # AC #4's posture, restated at the moment it matters most: every
+        # time serving actually starts, not merely in a docstring or the
+        # user guide. `markup=False` -- this interpolates a URL this
+        # process itself built (bind/port), never model or remote content,
+        # but every toast on this screen that is not a hand-written
+        # literal already takes this same posture.
+        self._notify_watchlists(
+            f"Serving the exported feed at {url}. No authentication — "
+            "anyone who can reach this address can read the feed while "
+            "it is serving.",
+            severity="warning",
+            markup=False,
+        )
+
+    @on(StopFeedServerRequested)
+    def handle_stop_feed_server_requested(
+        self, event: StopFeedServerRequested
+    ) -> None:
+        event.stop()
+        if not self._feed_server.is_running:
+            self._notify_watchlists(
+                "Nothing is being served.", severity="warning", markup=False
+            )
+            return
+        self._feed_server.stop()
+        self._sync_feed_server_pane_state()
+        self._notify_watchlists(
+            "Stopped serving the feed.", severity="information", markup=False
+        )
+
+    def on_unmount(self) -> None:
+        """Stop the feed server so a running listening socket never
+        outlives this screen.
+
+        The server's own thread is a daemon (`FeedDirectoryServer.start`),
+        so it would not by itself block the app from exiting -- but
+        leaving it running is still a wedged, forgotten listening socket
+        for as long as the app process stays up otherwise (switching away
+        from Watchlists, or closing this screen, must not silently keep
+        serving). `is_running` guards a redundant `stop()` on a screen that
+        never served anything, exactly like `ArtifactsScreen.on_unmount`'s
+        own guard around its worker cancellation.
+        """
+        if self._feed_server.is_running:
+            self._feed_server.stop()
+        super().on_unmount()
 
     # --- Briefing selection-mode, default-preset, and cadence pickers -------
     # (Task 4, phase 2a; cadence added by Task 4, phase 4)
