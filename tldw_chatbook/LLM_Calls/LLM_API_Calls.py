@@ -321,6 +321,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                     "model": model,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
+                completed_usage = (event.get("response") or {}).get("usage")
+                if isinstance(completed_usage, dict):
+                    chunk["usage"] = completed_usage
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
@@ -606,6 +609,8 @@ def chat_with_openai(
         payload["input"] = api_messages
     else:
         payload["messages"] = api_messages
+    if final_streaming and not use_responses_api:
+        payload["stream_options"] = {"include_usage": True}
     # Add optional parameters if they have a value. Reasoning-family models
     # (and therefore every Responses-API request, which this handler only
     # builds for reasoning params) reject temperature/top_p with HTTP 400,
@@ -710,6 +715,24 @@ def chat_with_openai(
                     response = session.post(
                         api_url, headers=headers, json=payload, stream=True, timeout=180
                     )
+                    if (
+                        response.status_code == 400
+                        and "stream_options" in payload
+                        and "stream_options" in (response.text or "")
+                    ):
+                        logger.warning(
+                            "OpenAI: endpoint rejected stream_options; retrying without usage reporting."
+                        )
+                        retry_payload = {
+                            k: v for k, v in payload.items() if k != "stream_options"
+                        }
+                        response = session.post(
+                            api_url,
+                            headers=headers,
+                            json=retry_payload,
+                            stream=True,
+                            timeout=180,
+                        )
                     response.raise_for_status()
                     if use_responses_api:
                         yield from _responses_stream_to_chat_sse(
