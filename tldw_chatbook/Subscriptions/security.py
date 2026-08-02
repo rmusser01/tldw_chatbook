@@ -75,18 +75,8 @@ class XXEError(SecurityError):
 class SecurityValidator:
     """Comprehensive security validation for subscriptions."""
 
-    # Blocked URL schemes
-    BLOCKED_SCHEMES = {"file", "ftp", "gopher", "javascript", "data"}
-
     # Allowed URL schemes
     ALLOWED_SCHEMES = {"http", "https"}
-
-    # Common cloud metadata endpoints to block
-    METADATA_ENDPOINTS = {
-        "169.254.169.254",  # AWS/GCP/Azure
-        "metadata.google.internal",  # GCP
-        "metadata.azure.com",  # Azure
-    }
 
     @classmethod
     def validate_feed_url(cls, url: str, trusted_origins=frozenset()) -> str:

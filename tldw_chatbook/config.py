@@ -3588,14 +3588,6 @@ auto_pause_after_failures = 10
 enable_background_checking = true
 default_priority = 3  # 1-5, higher is more important
 
-# Security settings
-[subscriptions.security]
-enable_xxe_protection = true
-enable_ssrf_protection = true
-verify_ssl_certificates = true
-max_redirects = 5
-request_timeout = 30
-
 # Rate limiting
 [subscriptions.rate_limiting]
 global_requests_per_minute = 60
