@@ -23,6 +23,52 @@ def _as_count(value: Any) -> int:
 
 @dataclass(frozen=True, slots=True)
 class ProviderUsage:
+    """Normalized, disjoint token-usage buckets for one Console turn.
+
+    Every provider reports token usage differently (some fold cached tokens
+    into the input total, some report them separately, some omit cache
+    entirely). ``from_provider_payload`` normalizes each provider's raw
+    shape into these four buckets so downstream code -- pricing, display,
+    persistence -- never has to know which provider produced them.
+
+    Disjoint-bucket contract:
+        ``uncached_input``, ``cache_read``, ``cache_write``, and ``output``
+        never double-count the same tokens. Anthropic's native
+        ``input_tokens`` already excludes cached tokens, so it is stored
+        as-is; OpenAI's ``prompt_tokens``/``input_tokens`` INCLUDES cached
+        tokens, so the adapter subtracts the cached count before storing
+        ``uncached_input``. Summing the four buckets (``total_tokens``)
+        therefore always yields a correct, non-inflated total.
+
+    Never-store-dollars contract:
+        Instances only ever hold token counts and provider/model
+        identifiers -- never a computed price. Cost is derived at READ time
+        by looking up ``provider``/``model`` in the pricing catalog against
+        these buckets, so a later price-list correction re-prices every
+        historical record instead of requiring a backfill.
+
+    Captured-if-present contract:
+        ``provider``, ``model``, and ``partial`` are best-effort metadata,
+        not guaranteed on every instance. ``plus()`` (used to fold multiple
+        provider calls from one agent turn into a single record) keeps
+        whichever operand actually supplied a non-empty ``provider``/
+        ``model`` rather than requiring both legs to agree, and treats
+        ``partial`` as sticky: any incomplete leg marks the whole merged
+        record partial, even if a later leg completed normally.
+
+    Attributes:
+        uncached_input: Input tokens NOT served from a prompt cache.
+        cache_read: Input tokens served from an existing prompt cache.
+        cache_write: Input tokens newly written to a prompt cache.
+        output: Generated (completion) tokens.
+        provider: Provider identifier the usage was captured against, or
+            ``""`` when unknown.
+        model: Model identifier the usage was captured against, or ``""``
+            when unknown.
+        partial: True when this record reflects an incomplete call (e.g. a
+            stream stopped mid-generation) rather than a final usage report.
+    """
+
     uncached_input: int = 0
     cache_read: int = 0
     cache_write: int = 0
@@ -43,6 +89,19 @@ class ProviderUsage:
         stale ``cached_tokens`` beside another's ``prompt_tokens`` fabricates
         a cache read) and the disjoint buckets are summed here. ``partial``
         is sticky: any incomplete leg makes the whole turn's record partial.
+
+        Args:
+            other: The next provider call's normalized usage to fold into
+                this one. Order does not matter for the token buckets (sum
+                is commutative); for ``provider``/``model`` this instance's
+                value wins when non-empty, otherwise ``other``'s does.
+
+        Returns:
+            A new ``ProviderUsage`` whose four token buckets are the
+            element-wise sum of ``self`` and ``other``, whose ``provider``/
+            ``model`` are the first non-empty value between the two (this
+            instance preferred), and whose ``partial`` is True if either
+            operand is partial.
         """
         return ProviderUsage(
             uncached_input=self.uncached_input + other.uncached_input,

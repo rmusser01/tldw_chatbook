@@ -344,6 +344,34 @@ DEFAULT_PRICING_PATTERNS: Dict[str, List[Dict[str, Any]]] = {
 #
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
+    """Per-million-token USD rates for one resolved provider/model pair.
+
+    Returned by :meth:`PricingCatalog.get_pricing`, which resolves a
+    provider/model pair through direct mappings, then per-provider regex
+    patterns, then a local-provider zero-rate fallback (see that method's
+    own docstring for the full order). ``cache_read_per_mtok``/
+    ``cache_write_per_mtok`` are ``None`` rather than ``0.0`` when a
+    provider does not publish a cache rate at all, so
+    :meth:`PricingCatalog.cost_for_usage` can distinguish "no cache
+    discount published" (bill at $0 for that bucket) from "explicitly
+    free" -- both currently price the bucket at zero, but keeping the
+    distinction lets a future catalog update tell the two cases apart.
+
+    Attributes:
+        input_per_mtok: USD cost per 1,000,000 uncached input tokens.
+        output_per_mtok: USD cost per 1,000,000 output tokens.
+        cache_read_per_mtok: USD cost per 1,000,000 cache-read input
+            tokens, or ``None`` when this provider/model has no published
+            cache-read rate.
+        cache_write_per_mtok: USD cost per 1,000,000 cache-write input
+            tokens, or ``None`` when this provider/model has no published
+            cache-write rate.
+        as_of: Human-readable date/label for when this rate was last
+            verified against the provider's published pricing, surfaced to
+            the user so a stale rate is visibly stale rather than silently
+            trusted.
+    """
+
     input_per_mtok: float
     output_per_mtok: float
     cache_read_per_mtok: Optional[float]
@@ -353,6 +381,27 @@ class ModelPricing:
 
 @dataclass(frozen=True, slots=True)
 class CostBreakdown:
+    """Dollar cost of one :class:`ProviderUsage` record, bucket by bucket.
+
+    Returned by :meth:`PricingCatalog.cost_for_usage`, which multiplies each
+    of a ``ProviderUsage``'s disjoint token buckets by the matching
+    :class:`ModelPricing` rate (dividing by 1,000,000 since rates are
+    per-million-token) and rounds every field -- including ``total`` -- to
+    6 decimal places independently, so a UI reading only ``total`` never
+    has to re-derive it from the per-bucket costs to get a consistent
+    figure.
+
+    Attributes:
+        input_cost: USD cost of the uncached input tokens.
+        cache_read_cost: USD cost of the cache-read input tokens.
+        cache_write_cost: USD cost of the cache-write input tokens.
+        output_cost: USD cost of the output tokens.
+        total: Sum of the four cost fields above.
+        as_of: The ``ModelPricing.as_of`` label the rates were resolved
+            from, carried through so a displayed cost can show how current
+            its pricing basis is.
+    """
+
     input_cost: float
     cache_read_cost: float
     cache_write_cost: float
