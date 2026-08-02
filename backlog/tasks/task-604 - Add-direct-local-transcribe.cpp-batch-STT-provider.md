@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-02 22:51'
+updated_date: '2026-08-02 23:05'
 labels:
   - stt
   - gguf
@@ -62,4 +62,6 @@ Implemented the direct-local transcribe.cpp Library batch provider without addin
 Review hardening added Vulkan provenance for the default Linux/Windows backend, CPU-accelerator aliases, token-to-word timestamp capability normalization, admission-before-runtime failure ordering, missing-config recovery, and traceback-level native path redaction. Existing ADR-025 and ADR-041 remain authoritative; no new ADR was required.
 
 Focused verification: 307 TASK-604/shared-contract cases passed. Ruff passed for modified scope (legacy FirstRun E402/F401 and two unrelated Library-runner F841/F401 findings were isolated and not changed); py_compile, TOML parsing, and git diff --check passed. Published 0.1.3 package metadata was checked for macOS arm64/x86_64, Linux aarch64/x86_64 manylinux, and Windows x86_64 wheels. Windows/Linux native execution was unavailable locally, so that platform gate remains preserved and is not claimed as executed.
+
+Post-review remediation: rebased cleanly onto origin/dev at c53880843; aligned inference_seconds and total_seconds to the same wall-clock basis, completed Google-style public API docstrings, and documented why the worker-local native import intentionally bypasses optional_deps so ABI/backend failures remain sanitized. Re-ran the focused TASK-604 suite after the rebase: 307 passed; scoped Ruff, py_compile, TOML parsing, and diff checks passed.
 <!-- SECTION:NOTES:END -->
