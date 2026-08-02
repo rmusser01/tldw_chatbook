@@ -149,6 +149,31 @@ The palette is semantic and restrained: dark terminal surfaces by default, brigh
 
 **The Rare Neon Rule.** Bright accent color is earned by state or action. It must not become decoration, background wash, or page mood.
 
+**The Legible Disabled Rule (TASK-1801).** A disabled control's label must render at **at least 3:1 against its own background**, measured in a running terminal — not inferred from token names. Disabled is a state to *read*, not a state to *guess at*: several surfaces communicate a restriction only through the disabled control's own label ("writes a file to disk — not available in a temporary chat"), so an illegible disabled label silently voids that explanation.
+
+Two dimmers compound here and neither is visible in the stylesheet:
+
+1. the theme sets `text-disabled: auto 38%` — alpha over the panel, ~3.4:1 on its own;
+2. Textual's `Button:disabled` adds `text-style: bold dim` *and* `color: auto 50%` (`textual/widgets/_button.py`), roughly halving the result again.
+
+Together these put **all 58 shipped themes below 3:1**, including `high_contrast_yellow_black`. Measured live, the composer menu's disabled rows rendered at **1.05:1 and 1.25:1**.
+
+Two consequences for anyone touching disabled styling:
+
+- **`text-style: none` does not clear Textual's `dim`.** Verified by measuring the running app; a rule that relies on it will still render at roughly half the colour it declares. State the colour bright enough to survive the halving.
+- **Widget `DEFAULT_CSS` cannot override it.** Both a screen's `DEFAULT_CSS` and `Button`'s sit in the same tier, where `Button` wins for a `Button`. Disabled overrides belong in the app stylesheet.
+
+A third layer exists on some surfaces: the shared Workbench action bar also carries `.is-disabled { opacity: 0.55 }`, stacking **three** dimmers and measuring 1.45:1. Note the class — that bar uses `is-disabled`, not `console-action-disabled`; editing the wrong one measures no change at all.
+
+Measured results after applying this rule:
+
+| surface | before | after |
+| --- | --- | --- |
+| composer menu rows | 1.25:1 | 4.80:1 |
+| Workbench action bar | 1.45:1 | 6.74:1 |
+
+Disabled must still read as clearly dimmer than enabled — enabled controls measure 10.6:1 to 12.6:1, so these targets leave the states obviously distinct.
+
 ## 3. Typography
 
 **Display Font:** terminal emulator monospace
