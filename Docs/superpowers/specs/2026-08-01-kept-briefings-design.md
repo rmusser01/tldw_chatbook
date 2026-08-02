@@ -126,3 +126,54 @@ all checked. Four things worth recording for anyone re-reading this design later
   same bug shape the wider program has caught more than once: a `finally`/recompose path that
   rebuilds the UI from scratch will silently discard any state set moments earlier unless that
   state is threaded through `compose()` rather than assumed to survive it.
+
+## Follow-up decision (2026-08-02, task-1870): sync excluded, chatbook export included
+
+Task-1870 was filed at this spec's close-out (see "Non-goals (v1)" above) to close the silent gap
+on both of this design's deferred fronts — ChaChaNotes sync coverage and chatbook-export coverage
+of `kept_briefings`/`kept_scripts`. Both are now resolved, asymmetrically:
+
+- **ChaChaNotes sync: still excluded, by extension of this spec's original ruling.** The "Schema"
+  section above already decided `kept_briefings`/`kept_scripts` carry no sync columns
+  (`client_id`/`version`/`deleted`) and do not participate in ChaChaNotes's bidirectional sync
+  machinery. Task-1870 does not revisit that call — it stays a deliberate v1 decision, not an
+  oversight. The reason it holds up under the "should a follow-up close this?" question: the sync
+  engine's unit of replication is a row with a `client_id`/`version`/tombstone lineage, and kept
+  rows were designed from the start (this spec's "Schema" section) to be self-interpreting,
+  hard-deleted, denormalized copies with no such lineage. Retrofitting sync columns would be a
+  schema change with its own migration and conflict-resolution design, not a small follow-up: if a
+  future task wants cross-device sync of kept content, it should treat that as a new schema
+  proposal against this spec, not an extension of task-1870.
+- **Chatbook export: now included.** `ContentType.KEPT_BRIEFING` (`Chatbooks/chatbook_models.py`)
+  is a new chatbook content type. `ChatbookCreator._collect_kept_briefings`
+  (`Chatbooks/chatbook_creator.py`) walks a user's selected kept briefings, and — mirroring how a
+  conversation's messages are nested inside the conversation's own exported JSON rather than being
+  independently selectable — nests each briefing's kept scripts inside its own payload. Every
+  provenance column denormalized onto the kept rows by this spec's original schema (source ids,
+  coverage window, model/preset identifiers, origin, original/kept timestamps) is carried into the
+  export unchanged, so an exported kept briefing remains self-interpreting even without the source
+  ChaChaNotes database, matching this spec's "self-interpreting with the subscriptions DB gone
+  entirely" principle. Each briefing exports as both a JSON file (machine-round-trippable) and a
+  companion Markdown file (human-readable), the same split already used for conversations
+  (JSON + citation report) and notes (frontmatter + body).
+
+  Import policy: `source_briefing_id`/`source_script_id` are device-local ids (this spec's
+  "Schema" section is explicit that they are "kept only for tracing", never cross-DB foreign
+  keys), so an incoming row can collide with an unrelated local row that happens to reuse the same
+  source id on a different device. `ChatbookImporter._import_kept_briefings` handles this by
+  trying the insert and catching `ConflictError` — the same "raced keep" pattern this spec's
+  delivery notes already documented for `briefing_keep.py` — then comparing content: byte-identical
+  is treated as an ordinary already-imported row (skipped silently, since re-importing the same
+  chatbook must never duplicate it); differing content is reported as a named conflict in the
+  import summary and the existing local row is never overwritten. `ConflictResolver`'s existing
+  ask/skip/rename/replace machinery (built for display-name-keyed conversations/notes/characters)
+  was deliberately not extended to kept rows — a UNIQUE source-id-keyed idempotent artifact doesn't
+  fit "rename" or "ask per item" semantics, and this codebase already had a working precedent for
+  the right shape in the keep service itself. NULL-source kept scripts (cast directly from a kept
+  briefing, no subscriptions-side source) have no identity to key a `ConflictError` off of, so they
+  are deduped by content match against the parent's pre-existing scripts instead, one-for-one
+  (a matched candidate is consumed so it cannot absorb a second, different incoming script).
+
+  Chatbooks created before this task have no `kept_briefings` section at all; importing one is
+  unaffected — the new code path never runs when `ContentType.KEPT_BRIEFING` is absent from the
+  manifest, and `ChatbookManifest.from_dict` defaults `total_kept_briefings` to 0 for old bundles.
