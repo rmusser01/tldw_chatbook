@@ -1,4 +1,4 @@
-# TASK-1698 — Truthful Speech Status and Navigation Plan
+# TASK-1987 — Truthful Speech Status and Navigation Plan
 
 **Goal:** Give global Speech & TTS Settings and the Speech Lab the same
 revision-aware operational picture while preserving drafts and completed
@@ -12,7 +12,7 @@ storage.
 
 ADR required: yes
 ADR path: `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`
-Reason: TASK-1698 implements ADR-039's accepted revisioned status,
+Reason: TASK-1987 implements ADR-039's accepted revisioned status,
 independent capability-row, artifact-independence, and bounded Settings/Lab
 navigation contract; it introduces no new storage, provider, or runtime
 boundary.

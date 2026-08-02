@@ -1,5 +1,5 @@
 ---
-id: TASK-1692
+id: TASK-1981
 title: Establish Speech and TTS settings ownership contracts
 status: Done
 assignee: []
@@ -39,9 +39,9 @@ Create a single testable contract for which scope owns every existing Speech and
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md
-Reason: TASK-1692 directly implements the accepted ownership, state, runtime-status, and bounded-navigation contracts; no new ADR is needed.
+Reason: TASK-1981 directly implements the accepted ownership, state, runtime-status, and bounded-navigation contracts; no new ADR is needed.
 
-Detailed plan: Docs/superpowers/plans/2026-07-31-task-1692-speech-tts-settings-ownership-contracts.md
+Detailed plan: Docs/superpowers/plans/2026-07-31-task-1981-speech-tts-settings-ownership-contracts.md
 
 1. Add failing completeness and ADR-039 scope-partition tests for every current built-in Speech control.
 2. Add the explicit immutable ownership manifest and strict validator without wiring it into live UI behavior.

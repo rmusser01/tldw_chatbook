@@ -1,5 +1,5 @@
 ---
-id: TASK-1698
+id: TASK-1987
 title: Make Speech runtime status and Settings Lab navigation truthful
 status: Done
 assignee: []
@@ -11,10 +11,10 @@ labels:
   - status
   - navigation
 dependencies:
-  - TASK-1692
-  - TASK-1695
-  - TASK-1696
-  - TASK-1697
+  - TASK-1981
+  - TASK-1984
+  - TASK-1985
+  - TASK-1986
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -29,7 +29,7 @@ Give users one reliable operational picture and recovery path between global Set
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Speech surfaces report selected-provider configuration, selected-provider runtime, catalog or voice freshness, and STT or local dependency availability as independent rows using the exact configuration and runtime vocabularies from TASK-1692 (STATE-010 through STATE-012).
+- [x] #1 Speech surfaces report selected-provider configuration, selected-provider runtime, catalog or voice freshness, and STT or local dependency availability as independent rows using the exact configuration and runtime vocabularies from TASK-1981 (STATE-010 through STATE-012).
 - [x] #2 Never checked is never rendered as Ready, stale evidence is rendered Stale, and missing Kokoro, Chatterbox, Higgs, or STT dependencies cannot mark an independently reachable external audio.cpp provider Unavailable; the converse also holds (STATE-011 and STATE-012).
 - [x] #3 Every displayed runtime observation is matched by canonical provider ID, saved configuration revision, optional runtime and catalog revisions, model where relevant, observation time, and freshness; an older result cannot overwrite newer Settings, Lab status, or artifacts (STATE-013 and CAT-005).
 - [x] #4 A configuration can remain Saved while runtime is Not checked, Stale, Unavailable, or Reconfiguring, and a post-persistence reconfiguration failure keeps the saved values visible with an actionable unavailable state instead of rolling back or selecting another provider (CFG-007, CFG-009, STATE-021, and STATE-022).
@@ -46,7 +46,7 @@ Give users one reliable operational picture and recovery path between global Set
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md
-Reason: TASK-1698 implements ADR-039's accepted revisioned status, independent capability-row, artifact-independence, and bounded Settings/Lab navigation contract; it introduces no new storage, provider, or runtime boundary.
+Reason: TASK-1987 implements ADR-039's accepted revisioned status, independent capability-row, artifact-independence, and bounded Settings/Lab navigation contract; it introduces no new storage, provider, or runtime boundary.
 
 1. Add failing pure tests for revision-bound status projection, safe diagnostics, independent provider/catalog/local-dependency rows, and bounded provider/intent navigation context.
 2. Implement the minimal shared Speech status/navigation projection over existing provider configuration revisions and accepted capability observations, rejecting stale or mismatched provider, revision, catalog, model, and request results.

@@ -1,6 +1,6 @@
 # Speech Lab Current-result UX Design
 
-**Status:** Approved during TASK-1700 UAT
+**Status:** Approved during TASK-1989 UAT
 **Date:** 2026-08-02
 **Canonical decisions:** [ADR-039](../../../backlog/decisions/039-global-and-studio-tts-settings-ownership.md) and [ADR-040](../../../backlog/decisions/040-speech-lab-current-result-and-auto-play.md)
 

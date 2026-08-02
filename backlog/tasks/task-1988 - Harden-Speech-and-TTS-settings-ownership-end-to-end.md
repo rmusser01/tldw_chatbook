@@ -1,5 +1,5 @@
 ---
-id: TASK-1699
+id: TASK-1988
 title: Harden Speech and TTS settings ownership end to end
 status: Done
 assignee: []
@@ -11,12 +11,12 @@ labels:
   - accessibility
   - testing
 dependencies:
-  - TASK-1693
-  - TASK-1694
-  - TASK-1695
-  - TASK-1696
-  - TASK-1697
-  - TASK-1698
+  - TASK-1982
+  - TASK-1983
+  - TASK-1984
+  - TASK-1985
+  - TASK-1986
+  - TASK-1987
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -55,9 +55,9 @@ Reason: This closeout verifies ADR-039 ownership, persistence, precedence, revis
 3. Add one deterministic fake first-time Settings → Lab → complete-WAV → Console/Roleplay playback-handoff journey.
 4. Add focused cross-owner, privacy, migration/rollback, approximate-catalog, and legacy request-shape regressions.
 5. Exercise out-of-order global save/reconfiguration, Studio save, refresh, navigation, generation, and playback publication.
-6. Run the complete fake-only closeout gate, finalize evidence, independently review, and record live audible UAT as TASK-1700.
+6. Run the complete fake-only closeout gate, finalize evidence, independently review, and record live audible UAT as TASK-1989.
 
-Detailed plan: Docs/superpowers/plans/2026-08-01-task-1699-speech-tts-settings-ownership-closeout.md
+Detailed plan: Docs/superpowers/plans/2026-08-01-task-1988-speech-tts-settings-ownership-closeout.md
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -74,7 +74,7 @@ Detailed plan: Docs/superpowers/plans/2026-08-01-task-1699-speech-tts-settings-o
   disclosure's semantic focus token.
 - Kept audio.cpp external-only and complete-WAV-only. No process management,
   provider network, model download, new adapter, or audible-output claim was
-  added; live audible acceptance remains TASK-1700.
+  added; live audible acceptance remains TASK-1989.
 - ADR check: existing
   `backlog/decisions/039-global-and-studio-tts-settings-ownership.md` applies;
   no new ADR was required.

@@ -1,8 +1,8 @@
 # Live External audio.cpp UAT
 
 Date: 2026-08-01
-Task: TASK-1700
-Branch: `codex/task-1696-audio-cpp-settings-experience`
+Task: TASK-1989
+Branch: `codex/task-1985-audio-cpp-settings-experience`
 Starting product commit: `f2251128a`
 Tested repository origin: `https://github.com/rmusser01/tldw_chatbook.git`
 Tested working-tree base: `f2251128acfceb4b81edd397a66a85db0a4e1dd2`
@@ -43,13 +43,13 @@ Speech Lab remediation: [ADR-040](../../../../backlog/decisions/040-speech-lab-c
 | UAT-06 character roleplay precedence | Passed after two P1 fixes | Created exact profile `Amber Watch F1` (`audio_cpp` / `supertonic-3` / `F1` / WAV), assigned it only to canonical character `Amber Warden`, and left `Quiet Cartographer` visibly on `Use global default`; the isolated assignment row maps only character ID 2 to the profile while character ID 3 has no assignment; assigned and unassigned response controls produced non-empty RIFF/WAVE artifacts of 883,538 and 303,394 bytes respectively; the Studio config SHA-256 remained `845f9cf434f46c7b62cc3b6bc1ebccd75e0aef778c6ef996b72d3a095a90f7dd`; `uat-06-profile-saved.png`, `uat-06-assigned-profile.png`, `uat-06-assigned-response-selected.png`, `uat-06-unassigned-global-default.png`, and `uat-06-unassigned-response-selected.png` |
 | UAT-07 character preview safety | Passed | Previewing `Amber Watch F1` loaded its exact persisted selection, generated `Ready · WAV · 0:11`, and entered `Playing current result…`; leaving without adoption kept the config byte-for-byte identical at SHA-256 `845f9cf434f46c7b62cc3b6bc1ebccd75e0aef778c6ef996b72d3a095a90f7dd`; a second preview plus explicit Adopt remained unsaved until Save, then changed only `[speech_studio]` from revision 4 to 5 and added the exact audio.cpp selection; the profile and one-character assignment stayed at revision/count 1; `uat-07-profile-preview-loaded.png`, `uat-07-unadopted-preview-ready.png`, `uat-07-unadopted-preview-playing.png`, `uat-07-adopted-unsaved.png`, and `uat-07-adopted-saved.png` |
 | UAT-08 environment-managed credential | Passed after P1 fix | OpenAI showed only `Environment (OPENAI_API_KEY, read-only)` after restart and explicit local-fallback Clear; the action returned to `Set credential` with no shadowed-local or Clear state; ordinary Save added only the synthetic Base URL and Organization ID, and a structural scan found zero credential-key entries in the isolated TOML; `uat-08-environment-only-after-clear.png` |
-| UAT-09 retained legacy providers | Passed for compatibility; provider live smoke unavailable/not live-tested | Visited OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk global setup forms and observed their retained connection/init fields; Studio exposed the supported ElevenLabs model, Chatterbox exaggeration/CFG, and AllTalk voice/format controls; passive visits left config SHA-256 `24acfb78c9f8b071de7f7554ad834c78f98ba7350cd76f0f7c1e6f7ada3e3d2a`; the six-provider TASK-1699 bridge fixture passed; no credential or local runtime was configured for a safe provider live smoke; detailed artifact names are enumerated in the UAT-09 section below |
+| UAT-09 retained legacy providers | Passed for compatibility; provider live smoke unavailable/not live-tested | Visited OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk global setup forms and observed their retained connection/init fields; Studio exposed the supported ElevenLabs model, Chatterbox exaggeration/CFG, and AllTalk voice/format controls; passive visits left config SHA-256 `24acfb78c9f8b071de7f7554ad834c78f98ba7350cd76f0f7c1e6f7ada3e3d2a`; the six-provider TASK-1988 bridge fixture passed; no credential or local runtime was configured for a safe provider live smoke; detailed artifact names are enumerated in the UAT-09 section below |
 | UAT-10 independent dependency status | Passed | The Settings inspector simultaneously showed audio.cpp runtime/catalog `Ready`, local STT `Ready`, and Kokoro, Chatterbox, and Higgs independently `Unavailable`; the same live process then generated `Ready · WAV · 0:11` through audio.cpp and entered `Playing current result…`; `uat-10-independent-dependency-status.png`, `uat-10-audio-cpp-ready-wav.png`, and `uat-10-audio-cpp-playing.png` |
 
 ## Evidence privacy review
 
 - Passed visual review of all 50 curated PNG artifacts under
-  `output/playwright/task-1700/`; every retained artifact is referenced by
+  `output/playwright/task-1989/`; every retained artifact is referenced by
   exact basename in this record.
 - The screenshots contain only synthetic prompts and characters, permitted
   model and voice identifiers, loopback origins, bounded revisions, and safe
@@ -422,7 +422,7 @@ banner `Profile preview — exact saved selection.` and exact
 `audio.cpp` / `supertonic-3` / `F1` / WAV controls. Generating the synthetic
 Playground sentence produced `Ready · WAV · 0:11`; the documented Play action
 then entered `Playing current result…`. Navigating away without selecting
-Adopt left `/tmp/tldw-task-1700-uat/config.toml` byte-for-byte identical to its
+Adopt left `/tmp/tldw-task-1989-uat/config.toml` byte-for-byte identical to its
 pre-preview copy at SHA-256
 `845f9cf434f46c7b62cc3b6bc1ebccd75e0aef778c6ef996b72d3a095a90f7dd`.
 This is deterministic complete-WAV and playback-handoff evidence; no separate

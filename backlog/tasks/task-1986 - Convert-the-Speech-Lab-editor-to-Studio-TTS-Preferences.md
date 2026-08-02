@@ -1,5 +1,5 @@
 ---
-id: TASK-1697
+id: TASK-1986
 title: Convert the Speech Lab editor to Studio TTS Preferences
 status: Done
 assignee: []
@@ -10,10 +10,10 @@ labels:
   - studio
   - ui
 dependencies:
-  - TASK-1693
-  - TASK-1694
-  - TASK-1695
-  - TASK-1696
+  - TASK-1982
+  - TASK-1983
+  - TASK-1984
+  - TASK-1985
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -30,7 +30,7 @@ Make the Lab Speech editor an explicitly Studio-only workspace backed by the sep
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The Lab subview is named Studio TTS Preferences, persistently states that edits affect only Studio, and links to global Speech & TTS Settings with the canonical selected-provider context (IA-004).
-- [x] #2 The Studio editor exposes shared provider, model, voice, format, and speed overrides plus only the request-scoped provider tuning classified by TASK-1692; credentials, endpoints, initialization resources, safety limits, and unsupported runtime-global options are absent or read-only links to their owner (OWN-002, CFG-022, and CFG-026).
+- [x] #2 The Studio editor exposes shared provider, model, voice, format, and speed overrides plus only the request-scoped provider tuning classified by TASK-1981; credentials, endpoints, initialization resources, safety limits, and unsupported runtime-global options are absent or read-only links to their owner (OWN-002, CFG-022, and CFG-026).
 - [x] #3 On mount and provider switch, saved Studio overrides are restored for that canonical provider while absent values visibly inherit the current global source without copying it into Studio storage (CFG-021 and CFG-022).
 - [x] #4 Current validated Studio controls take precedence for the next Studio generation without saving automatically, and generation failure or cancellation does not persist the draft (CFG-024).
 - [x] #5 Save Studio Preferences changes only the Studio store and triggers no global mutation, credential operation, character mutation, catalog refresh, or provider reconfiguration; Revert reloads the last saved Studio snapshot and Reset to Global deletes all Studio overrides (CFG-020, CFG-021, and CFG-023).
@@ -46,7 +46,7 @@ Make the Lab Speech editor an explicitly Studio-only workspace backed by the sep
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md and backlog/decisions/028-character-tts-generation-profile-ownership.md
-Reason: TASK-1697 implements the accepted Studio persistence/editor, request-precedence, and character-preview ownership boundaries without changing their architecture.
+Reason: TASK-1986 implements the accepted Studio persistence/editor, request-precedence, and character-preview ownership boundaries without changing their architecture.
 
 1. Add failing pure and Textual tests for sparse inherited Studio fields, supported provider tuning, validation, scope copy, action inventory, and the absence of global connection/credential controls.
 2. Replace the transitional mixed Lab settings pane with a compact Studio TTS Preferences editor backed only by `StudioTTSPreferenceStore`, including Save, Revert, Reset to Global, corrupt-record recovery, and per-provider restoration.

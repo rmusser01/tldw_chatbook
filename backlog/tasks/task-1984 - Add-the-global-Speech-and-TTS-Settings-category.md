@@ -1,5 +1,5 @@
 ---
-id: TASK-1695
+id: TASK-1984
 title: Add the global Speech and TTS Settings category
 status: Done
 assignee: []
@@ -10,8 +10,8 @@ labels:
   - settings
   - ui
 dependencies:
-  - TASK-1692
-  - TASK-1694
+  - TASK-1981
+  - TASK-1983
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -30,7 +30,7 @@ Make application-wide TTS defaults and provider setup discoverable in the primar
 - [x] #1 Main Settings contains a keyboard-reachable Speech & TTS category whose search index matches speech, TTS, voice, audio.cpp, audio_cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk and opens the named provider when applicable (IA-001 and IA-002).
 - [x] #2 The category persistently states that it edits application-wide defaults, explains that Studio preferences are separate, and provides an Open Speech Lab action without running a test or refresh (IA-003 and OWN-001).
 - [x] #3 Global defaults expose provider, model policy and value, voice policy and value, format, and speed; Default TTS Provider and Configure Provider are separate, and only the selected configuration form is mounted or expanded (CFG-001 through CFG-003 and OWN-006).
-- [x] #4 The selected-provider forms expose every globally owned field from TASK-1692: all external audio.cpp connection, timeout, and safety fields; OpenAI key, base URL, and organization; ElevenLabs key; Kokoro device and ONNX resources; Chatterbox device and voice resources; Higgs model and voice resources, device, flash attention, and dtype; and AllTalk URL. Path-picker affordances remain beside their global path fields (OWN-005).
+- [x] #4 The selected-provider forms expose every globally owned field from TASK-1981: all external audio.cpp connection, timeout, and safety fields; OpenAI key, base URL, and organization; ElevenLabs key; Kokoro device and ONNX resources; Chatterbox device and voice resources; Higgs model and voice resources, device, flash attention, and dtype; and AllTalk URL. Path-picker affordances remain beside their global path fields (OWN-005).
 - [x] #5 Credential Set, Replace, and Clear saved credential are explicit operations outside ordinary Save; environment sources are read-only, masked placeholders are never payloads, shadowed local fallbacks are explained, and local secret storage is labeled (CFG-008, SEC-001, and SEC-002).
 - [x] #6 Save performs local shape, range, constraint, URL, and path-syntax validation and atomic persistence without connecting, discovering, initializing a model, or synthesizing; Revert and Restore Non-secret Defaults have the approved non-secret draft semantics (CFG-005, CFG-006, and CFG-010).
 - [x] #7 A successful save reconfigures only providers whose effective adapter-affecting global inputs changed, while selection-only and unrelated changes avoid adapter recreation; persistence success and runtime reconfiguration results remain distinct and no fallback provider is selected (CFG-007, CFG-009, STATE-021, and STATE-022).
@@ -44,9 +44,9 @@ Make application-wide TTS defaults and provider setup discoverable in the primar
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md and backlog/decisions/012-provider-credential-settings-boundary.md
-Reason: TASK-1695 directly implements the accepted durable global owner, credential mutation boundary, and provider-runtime handoff; no new decision is introduced.
+Reason: TASK-1984 directly implements the accepted durable global owner, credential mutation boundary, and provider-runtime handoff; no new decision is introduced.
 
-Detailed plan: Docs/superpowers/plans/2026-08-01-task-1695-global-speech-tts-settings.md
+Detailed plan: Docs/superpowers/plans/2026-08-01-task-1984-global-speech-tts-settings.md
 
 1. Add failing pure tests for inventory, validation, non-secret defaults, credential intent, and affected-provider classification.
 2. Implement the bounded global Speech & TTS settings model and atomic mutation proposals.

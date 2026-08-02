@@ -1,5 +1,5 @@
 ---
-id: TASK-1700
+id: TASK-1989
 title: Run live external audio.cpp Settings Studio and roleplay UAT
 status: Done
 assignee: []
@@ -10,7 +10,7 @@ labels:
   - audio-cpp
   - uat
 dependencies:
-  - TASK-1699
+  - TASK-1988
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - Docs/superpowers/specs/2026-08-02-speech-lab-current-result-ux-design.md
@@ -55,9 +55,9 @@ Reason: This live UAT verifies the accepted external-only runtime and four-owner
 4. Run UAT-03 through UAT-07 for exact/dynamic selection, Studio isolation/reset, character precedence, and preview/adoption safety.
 5. Run UAT-08 through UAT-10 for environment credentials, retained legacy providers, and independent dependency status.
 6. Replace the unusable Speech Lab result area with one responsive current-result audition flow, add optional Studio-only auto-play, and regress the exact UAT failure before repeating the live journey.
-7. Privacy-review all evidence, address release-blocking findings, update the TASK-1699 evidence matrix, independently review, and close the task only when every criterion is proven.
+7. Privacy-review all evidence, address release-blocking findings, update the TASK-1988 evidence matrix, independently review, and close the task only when every criterion is proven.
 
-Detailed plan: Docs/superpowers/plans/2026-08-01-task-1700-live-external-audio-cpp-uat.md
+Detailed plan: Docs/superpowers/plans/2026-08-01-task-1989-live-external-audio-cpp-uat.md
 Speech Lab remediation plan: Docs/superpowers/plans/2026-08-02-speech-lab-current-result-ux.md
 <!-- SECTION:PLAN:END -->
 

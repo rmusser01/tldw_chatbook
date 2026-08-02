@@ -162,7 +162,7 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
     (Settings > Image Gen task 4) brought it to 21; adding Workspaces
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
-    (TASK-1695) brought it to 23. This pins
+    (TASK-1984) brought it to 23. This pins
     the literal count so the next addition must touch this assertion
     deliberately, and cross-checks that summaries neither miss nor duplicate
     an enum member.

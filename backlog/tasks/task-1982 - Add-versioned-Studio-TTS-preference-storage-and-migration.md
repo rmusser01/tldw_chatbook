@@ -1,5 +1,5 @@
 ---
-id: TASK-1693
+id: TASK-1982
 title: Add versioned Studio TTS preference storage and migration
 status: Done
 assignee: []
@@ -10,7 +10,7 @@ labels:
   - settings
   - persistence
 dependencies:
-  - TASK-1692
+  - TASK-1981
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -27,7 +27,7 @@ Give the Speech Studio a durable preference scope that can remember provider-spe
 <!-- AC:BEGIN -->
 - [x] #1 Studio preferences persist through the existing atomic configuration owner under schema-versioned speech_studio selection and canonical-provider option namespaces, with every selection and option represented as an optional override (CFG-020 and MIG-001).
 - [x] #2 An absent Studio value means inherit at resolution time; Reset to Global deletes all Studio selection and provider-option overrides instead of copying global values, while retaining only the schema envelope (CFG-021).
-- [x] #3 Studio persistence accepts only canonical provider IDs and options proven request-scoped by the TASK-1692 ownership contract; unknown providers, unknown options, and runtime-global values fail closed (CFG-022 and CFG-026).
+- [x] #3 Studio persistence accepts only canonical provider IDs and options proven request-scoped by the TASK-1981 ownership contract; unknown providers, unknown options, and runtime-global values fail closed (CFG-022 and CFG-026).
 - [x] #4 The Studio store cannot persist credentials, endpoints, environment-derived values, masked placeholders, runtime initialization paths, provider safety limits, character assignments, or submitted synthesis text (SEC-001 through SEC-003).
 - [x] #5 A versioned idempotent migration copies only legacy values proven to be request-scoped Studio tuning, performs no startup write when unnecessary, preserves every existing global and legacy key, and never copies secrets, endpoints, or initialization resources (MIG-002, MIG-003, and MIG-006).
 - [x] #6 Malformed fields recover independently, and an unrecoverable Studio record can be reset or quarantined without changing global settings, character profiles or assignments, credentials, or legacy-provider behavior (MIG-004 and STATE-024).
@@ -41,9 +41,9 @@ Give the Speech Studio a durable preference scope that can remember provider-spe
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md
-Reason: TASK-1693 implements ADR-039's accepted additive Studio persistence, sparse inheritance, migration, corruption-isolation, and compare-before-publish boundary; no new ADR is required.
+Reason: TASK-1982 implements ADR-039's accepted additive Studio persistence, sparse inheritance, migration, corruption-isolation, and compare-before-publish boundary; no new ADR is required.
 
-Detailed plan: Docs/superpowers/plans/2026-08-01-task-1693-studio-tts-preference-storage.md
+Detailed plan: Docs/superpowers/plans/2026-08-01-task-1982-studio-tts-preference-storage.md
 
 1. Add failing tests for immutable sparse Studio snapshots, canonical provider and request-option admission, round-trip persistence, reset-by-deletion, and provider isolation.
 2. Add failing tests for revision conflicts and extend the existing atomic configuration owner with the smallest revision-guarded whole-section replacement primitive.

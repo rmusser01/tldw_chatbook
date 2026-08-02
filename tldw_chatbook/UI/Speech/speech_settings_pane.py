@@ -2,7 +2,7 @@
 
 The global Speech & TTS category owns credentials, endpoints, initialization,
 and application defaults.  This pane owns only sparse Studio overrides plus
-the two Chatterbox values proven request-local by TASK-1692.
+the two Chatterbox values proven request-local by TASK-1981.
 """
 
 from __future__ import annotations

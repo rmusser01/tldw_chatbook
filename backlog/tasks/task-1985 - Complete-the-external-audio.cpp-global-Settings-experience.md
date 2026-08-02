@@ -1,5 +1,5 @@
 ---
-id: TASK-1696
+id: TASK-1985
 title: Complete the external audio.cpp global Settings experience
 status: Done
 assignee: []
@@ -11,7 +11,7 @@ labels:
   - audio-cpp
   - ui
 dependencies:
-  - TASK-1695
+  - TASK-1984
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -44,7 +44,7 @@ Turn audio.cpp into the complete redesigned provider experience inside global Sp
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md and backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md
-Reason: TASK-1696 implements the accepted external-only audio.cpp Settings, cached capability, exact-selection, and no-fallback boundaries without introducing a new provider or runtime contract.
+Reason: TASK-1985 implements the accepted external-only audio.cpp Settings, cached capability, exact-selection, and no-fallback boundaries without introducing a new provider or runtime contract.
 
 1. Add failing pure tests for strict external-form inventory, canonical-origin and transport-warning projection, managed-key rejection, and missing/fresh/stale/Unverified exact-choice presentation.
 2. Add a bounded in-memory native capability observation to `TTSService`; publish only revision-coherent results produced by existing explicit Lab/runtime operations, expose a synchronous read-only snapshot, and reject stale catalog or model-scoped voice results without materializing or contacting an adapter.
@@ -59,7 +59,7 @@ Reason: TASK-1696 implements the accepted external-only audio.cpp Settings, cach
 <!-- SECTION:NOTES:BEGIN -->
 - Added a bounded, read-only in-memory audio.cpp capability observation in `TTSService`, populated only by explicit Lab/runtime catalog and voice operations and guarded by provider configuration, catalog, model, and request generations.
 - Completed the external-server-only audio.cpp Settings form with canonical-origin validation, timeout and safety limits, transport/privacy disclosure, fixed WAV/1.0 controls, strict rejection of managed/authentication values, and no Settings-side provider work.
-- Added truthful cached exact-choice projection for first-run, pinned Unverified, Fresh, Stale, and Missing states; model-scoped voices; dirty-draft attribution; and scoped Speech Lab recovery without implementing the broader TASK-1698 deep-link contract.
+- Added truthful cached exact-choice projection for first-run, pinned Unverified, Fresh, Stale, and Missing states; model-scoped voices; dirty-draft attribution; and scoped Speech Lab recovery without implementing the broader TASK-1987 deep-link contract.
 - Updated both Lab playground paths to publish structured audio.cpp voice observations and reject mismatched catalog revisions. First-time provider transitions now discard foreign exact IDs while preserving exact values actually persisted for audio.cpp.
 - ADRs `backlog/decisions/039-global-and-studio-tts-settings-ownership.md` and `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md` apply; no new architectural decision was introduced.
 - Verification: 1,002 relevant TTS, Settings, Lab, privacy, race, and playback tests passed with one known unrelated package-export baseline deselected; Ruff checks, Python compilation, `git diff --check`, Impeccable UI detection, and independent review passed.

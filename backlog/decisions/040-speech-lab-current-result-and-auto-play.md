@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-02
-Related Task: TASK-1700
+Related Task: TASK-1989
 Extends: [ADR-039 Global and Studio TTS Settings Ownership](039-global-and-studio-tts-settings-ownership.md)
 
 ## Context

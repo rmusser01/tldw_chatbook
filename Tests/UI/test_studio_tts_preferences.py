@@ -1,4 +1,4 @@
-"""Studio-only Speech preference editor contracts (TASK-1697)."""
+"""Studio-only Speech preference editor contracts (TASK-1986)."""
 
 from __future__ import annotations
 

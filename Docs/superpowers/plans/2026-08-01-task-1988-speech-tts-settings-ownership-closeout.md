@@ -1,4 +1,4 @@
-# TASK-1699 — Speech & TTS Ownership Closeout Plan
+# TASK-1988 — Speech & TTS Ownership Closeout Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` to implement this plan task by task.
@@ -25,7 +25,7 @@ loopback/example endpoints only.
 
 ADR required: yes
 ADR path: `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`
-Reason: TASK-1699 verifies the accepted global/Studio ownership, persistence,
+Reason: TASK-1988 verifies the accepted global/Studio ownership, persistence,
 precedence, revision, privacy, migration, and navigation boundaries. No new
 ADR is needed because this closeout must not introduce a new architecture or
 product boundary.
@@ -42,8 +42,8 @@ product boundary.
 2. Require the release-evidence document to contain exactly one row per
    requirement ID, at least one repository-relative automated test node or
    explicit UAT journey per row, and no missing, duplicate, or unknown IDs.
-3. Seed the document from the focused TASK-1692 through TASK-1698 coverage and
-   mark TASK-1700 live audible playback as pending rather than claiming it was
+3. Seed the document from the focused TASK-1981 through TASK-1987 coverage and
+   mark TASK-1989 live audible playback as pending rather than claiming it was
    automated.
 4. Run:
 
@@ -158,25 +158,25 @@ product boundary.
 3. Assert a completed WAV remains playable after newer configuration, Studio,
    status, and navigation changes.
 4. Repeat the focused race tests enough times to catch order dependence, then
-   run the neighboring TASK-1695 through TASK-1698 race suites.
+   run the neighboring TASK-1984 through TASK-1987 race suites.
 
 ## Task 6: Finish the evidence record and verification gate
 
 **Files:**
 
 - Modify: `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/release-evidence.md`
-- Modify: `backlog/tasks/task-1699 - Harden-Speech-and-TTS-settings-ownership-end-to-end.md`
+- Modify: `backlog/tasks/task-1988 - Harden-Speech-and-TTS-settings-ownership-end-to-end.md`
 
 1. Replace every provisional evidence row with the exact passing test node or
-   TASK-1700 manual UAT journey. Record that CI used fakes only and distinguish
+   TASK-1989 manual UAT journey. Record that CI used fakes only and distinguish
    complete-WAV/playback-handoff proof from pending human audible proof.
-2. Run the new closeout suites, all focused TASK-1692 through TASK-1698 suites,
+2. Run the new closeout suites, all focused TASK-1981 through TASK-1987 suites,
    legacy-provider and Console/playback regressions, Ruff, compileall, and
    `git diff --check`.
 3. Self-review for PRD coverage, secret/synthesis-text leakage, managed-server
    scope creep, placeholders, path accuracy, and type/interface consistency.
 4. Request an independent code review. Address every priority-zero/one issue
    and any priority-two issue that violates acceptance criteria.
-5. Check all TASK-1699 acceptance criteria, add concise Implementation Notes
+5. Check all TASK-1988 acceptance criteria, add concise Implementation Notes
    with the ADR and verification commands, and mark the task Done only after
    the complete gate passes.

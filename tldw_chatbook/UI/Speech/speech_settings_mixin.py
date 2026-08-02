@@ -691,7 +691,7 @@ class SpeechSettingsMixin:
         """Publish only the request-scoped controls retained in the Lab.
 
         Global-owned controls remain mounted as effective readouts during the
-        transition, but Settings is their only write owner. TASK-1697 replaces
+        transition, but Settings is their only write owner. TASK-1986 replaces
         this compatibility publication with the separate Studio store.
         """
         try:

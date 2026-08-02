@@ -1,8 +1,8 @@
-# TASK-1693 Studio TTS Preference Storage Implementation Plan
+# TASK-1982 Studio TTS Preference Storage Implementation Plan
 
 **Goal:** Add an isolated, versioned, sparse Studio TTS preference store with safe legacy migration, corruption isolation, and stale-writer protection.
 
-**Architecture:** A pure immutable Studio snapshot validates the bounded selection and provider-option surface established by TASK-1692. A small repository reads and writes only the additive `speech_studio` TOML section. Writes replace that one section atomically through the existing configuration owner and use its persisted revision as an optimistic concurrency guard. First-read migration inspects raw saved config only, copies non-default values from the exact proven request-scoped allowlist, and never deletes or rewrites legacy/global keys.
+**Architecture:** A pure immutable Studio snapshot validates the bounded selection and provider-option surface established by TASK-1981. A small repository reads and writes only the additive `speech_studio` TOML section. Writes replace that one section atomically through the existing configuration owner and use its persisted revision as an optimistic concurrency guard. First-read migration inspects raw saved config only, copies non-default values from the exact proven request-scoped allowlist, and never deletes or rewrites legacy/global keys.
 
 **ADR required:** yes
 **ADR path:** `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`
@@ -20,7 +20,7 @@ Add deterministic tests that require:
 
 - all selection axes to be optional overrides;
 - the seven canonical provider IDs and no others;
-- only the TASK-1692-proven provider option keys;
+- only the TASK-1981-proven provider option keys;
 - immutable, defensively copied snapshots;
 - bounded model/voice IDs, formats, speeds, and option values;
 - unknown keys, endpoints, masked placeholders, credential-shaped fields, runtime paths, character fields, and synthesis text to fail closed;
@@ -92,7 +92,7 @@ Implement first-read migration from raw saved legacy values only:
 - make repeated reads idempotent and keep absent/no-op reads write-free;
 - treat invalid structural schema/revision data as Studio-only corruption and permit a revision-safe reset without touching other scopes.
 
-## 6. Verify and close TASK-1693
+## 6. Verify and close TASK-1982
 
 Run:
 
@@ -102,4 +102,4 @@ python -m ruff check tldw_chatbook/TTS/studio_preferences.py tldw_chatbook/TTS/p
 git diff --check
 ```
 
-Request independent code review, address every supported finding, and rerun the final gates. Then update TASK-1693 acceptance criteria and Implementation Notes, document the known repository baseline separately if reproduced, mark the task Done, and commit the atomic slice.
+Request independent code review, address every supported finding, and rerun the final gates. Then update TASK-1982 acceptance criteria and Implementation Notes, document the known repository baseline separately if reproduced, mark the task Done, and commit the atomic slice.

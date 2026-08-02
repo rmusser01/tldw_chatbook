@@ -55,7 +55,7 @@ def test_release_evidence_maps_every_approved_requirement_once() -> None:
 
     requirements = _requirement_ids()
     assert len(requirements) == len(set(requirements))
-    assert EVIDENCE_PATH.is_file(), "TASK-1699 release evidence has not been created"
+    assert EVIDENCE_PATH.is_file(), "TASK-1988 release evidence has not been created"
 
     evidence = EVIDENCE_PATH.read_text(encoding="utf-8")
     rows = EVIDENCE_ROW.findall(evidence)
@@ -91,8 +91,8 @@ def test_release_evidence_maps_every_approved_requirement_once() -> None:
         for relative_path, test_name in test_nodes:
             _assert_test_node_exists(relative_path, test_name)
 
-    assert "UAT pending TASK-1700" not in evidence
-    assert "TASK-1700 has passed UAT-01 through UAT-10" in evidence
+    assert "UAT pending TASK-1989" not in evidence
+    assert "TASK-1989 has passed UAT-01 through UAT-10" in evidence
     assert "`pocket-tts-en` and\n`supertonic-3`" in evidence
     assert "literal multi-model clause remains blocked" not in evidence
 
@@ -103,7 +103,7 @@ def test_release_evidence_keeps_headless_and_audible_claims_separate() -> None:
     evidence = EVIDENCE_PATH.read_text(encoding="utf-8")
     assert "Headless complete-WAV and playback-handoff proof: Passing" in evidence
     assert (
-        "Human audible playback proof: Passed in TASK-1700 with explicit user"
+        "Human audible playback proof: Passed in TASK-1989 with explicit user"
         in evidence
     )
     assert "separately identified" in evidence

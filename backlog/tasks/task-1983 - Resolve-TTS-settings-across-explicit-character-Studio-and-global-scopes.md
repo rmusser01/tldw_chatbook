@@ -1,5 +1,5 @@
 ---
-id: TASK-1694
+id: TASK-1983
 title: Resolve TTS settings across explicit character Studio and global scopes
 status: Done
 assignee: []
@@ -10,8 +10,8 @@ labels:
   - settings
   - roleplay
 dependencies:
-  - TASK-1692
-  - TASK-1693
+  - TASK-1981
+  - TASK-1982
 references:
   - Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md
   - backlog/decisions/039-global-and-studio-tts-settings-ownership.md
@@ -42,9 +42,9 @@ Make every admitted TTS request use one coherent and explainable selection acros
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/039-global-and-studio-tts-settings-ownership.md
-Reason: TASK-1694 implements ADR-039's accepted precedence, dynamic-selection, revision, preview, and fail-closed admission boundary; no new ADR is required.
+Reason: TASK-1983 implements ADR-039's accepted precedence, dynamic-selection, revision, preview, and fail-closed admission boundary; no new ADR is required.
 
-Detailed plan: Docs/superpowers/plans/2026-08-01-task-1694-effective-tts-resolution.md
+Detailed plan: Docs/superpowers/plans/2026-08-01-task-1983-effective-tts-resolution.md
 
 1. Add failing tests for immutable text-free snapshots, source metadata, canonical providers, and provider constraints.
 2. Implement normal explicit/character/global/fallback resolution with provider isolation and bounded failures.

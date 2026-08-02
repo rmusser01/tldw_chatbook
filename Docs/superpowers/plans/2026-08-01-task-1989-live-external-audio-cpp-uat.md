@@ -1,4 +1,4 @@
-# TASK-1700 Live External audio.cpp UAT Execution Plan
+# TASK-1989 Live External audio.cpp UAT Execution Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` to execute this plan task-by-task. Steps use
@@ -31,7 +31,7 @@ event path.
 - Keep complete WAV responses behind the existing asynchronous adapter
   interface; do not claim incremental streaming.
 - Do not silently pass an unavailable legacy provider. Record it as unavailable
-  and retain the deterministic request-shape evidence from TASK-1699.
+  and retain the deterministic request-shape evidence from TASK-1988.
 - Preserve the user's normal Chatbook config and data by using task-specific
   temporary XDG roots.
 - Stop only Chatbook/test harness processes created by this task. Never stop or
@@ -50,12 +50,12 @@ navigation, and playback contracts. It makes no new architecture decision.
 **Files:**
 
 - Create: `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/live-uat.md`
-- Runtime-only: `/tmp/tldw-task-1700-uat/`
-- Create (privacy-reviewed evidence only): `output/playwright/task-1700/`
+- Runtime-only: `/tmp/tldw-task-1989-uat/`
+- Create (privacy-reviewed evidence only): `output/playwright/task-1989/`
 
 **Interfaces:**
 
-- Consumes: user-owned external audio.cpp listener and the TASK-1699 release
+- Consumes: user-owned external audio.cpp listener and the TASK-1988 release
   evidence contract.
 - Produces: one isolated Chatbook process, one browser session, redacted
   baseline hashes, and an evidence ledger with no live secret/model path.
@@ -70,11 +70,11 @@ navigation, and playback contracts. It makes no new architecture decision.
 
   ```bash
   /usr/bin/env \
-    TLDW_CONFIG_PATH=/tmp/tldw-task-1700-uat/config.toml \
-    XDG_CONFIG_HOME=/tmp/tldw-task-1700-uat/config \
-    XDG_DATA_HOME=/tmp/tldw-task-1700-uat/data \
-    XDG_CACHE_HOME=/tmp/tldw-task-1700-uat/cache \
-    OPENAI_API_KEY=task-1700-synthetic-not-a-secret \
+    TLDW_CONFIG_PATH=/tmp/tldw-task-1989-uat/config.toml \
+    XDG_CONFIG_HOME=/tmp/tldw-task-1989-uat/config \
+    XDG_DATA_HOME=/tmp/tldw-task-1989-uat/data \
+    XDG_CACHE_HOME=/tmp/tldw-task-1989-uat/cache \
+    OPENAI_API_KEY=task-1989-synthetic-not-a-secret \
     PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-slice4-portability \
     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/tldw-serve \
       --host 127.0.0.1 --port 8768
@@ -82,7 +82,7 @@ navigation, and playback contracts. It makes no new architecture decision.
 
 - [x] Open the browser-served app with Playwright, snapshot before every
   interaction, re-snapshot after every state change, and store captures only
-  under `output/playwright/task-1700/` until privacy review.
+  under `output/playwright/task-1989/` until privacy review.
 - [x] Record starting config/store hashes and prove the isolated config has no
   audio.cpp values or Studio overrides.
 
@@ -221,7 +221,7 @@ navigation, and playback contracts. It makes no new architecture decision.
 - [x] Visit OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk global
   forms; verify retained saved/init fields and Studio-supported tuning. Run
   available live smoke only when already configured; otherwise record
-  `Unavailable/not live-tested` and cite the passing TASK-1699 request-shape
+  `Unavailable/not live-tested` and cite the passing TASK-1988 request-shape
   fixture rather than claiming a live pass.
 - [x] With absent unrelated local TTS/STT dependencies, verify their truthful
   independent rows while audio.cpp remains Ready, generates, and plays.
@@ -232,7 +232,7 @@ navigation, and playback contracts. It makes no new architecture decision.
 
 - Modify: `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/release-evidence.md`
 - Modify: `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/live-uat.md`
-- Modify: `backlog/tasks/task-1700 - Run-live-external-audio.cpp-Settings-Studio-and-roleplay-UAT.md`
+- Modify: `backlog/tasks/task-1989 - Run-live-external-audio.cpp-Settings-Studio-and-roleplay-UAT.md`
 
 **Interfaces:**
 
@@ -250,10 +250,10 @@ navigation, and playback contracts. It makes no new architecture decision.
 - [x] Classify every finding. Fix P0/P1 in scope with a failing regression and
   rerun the affected live journey; reject a P1 only with technical evidence and
   explicit user approval. Defer a non-AC P2 only after creating a Backlog task.
-- [x] Update the release-evidence rows from `UAT pending TASK-1700` to the exact
+- [x] Update the release-evidence rows from `UAT pending TASK-1989` to the exact
   result, preserving separate automated vs human evidence labels.
 - [x] Run focused regressions, Ruff, compileall, evidence checks, and
   `git diff --check`; request independent review.
-- [x] Check all TASK-1700 acceptance criteria, add concise Implementation Notes,
+- [x] Check all TASK-1989 acceptance criteria, add concise Implementation Notes,
   mark Done through Backlog CLI, and commit the UAT evidence. Stop only the
   task-owned Chatbook/browser harness.

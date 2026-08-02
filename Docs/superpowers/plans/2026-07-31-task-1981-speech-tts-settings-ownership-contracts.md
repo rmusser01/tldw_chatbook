@@ -1,4 +1,4 @@
-# TASK-1692 Speech and TTS Settings Ownership Contracts Implementation Plan
+# TASK-1981 Speech and TTS Settings Ownership Contracts Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -12,7 +12,7 @@
 
 **ADR path:** `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`.
 
-**Reason:** TASK-1692 directly implements ADR-039's accepted ownership, state, runtime-status, and bounded-navigation contracts. It makes no new architectural decision and therefore does not create another ADR.
+**Reason:** TASK-1981 directly implements ADR-039's accepted ownership, state, runtime-status, and bounded-navigation contracts. It makes no new architectural decision and therefore does not create another ADR.
 
 **Deliberate boundary:** The current mixed-scope Lab editor remains mounted and functional. This task describes future ownership without moving a field, changing a save path, introducing Studio persistence, contacting a provider, or adding managed audio.cpp behavior.
 
@@ -40,7 +40,7 @@ Add focused tests that require:
 Run:
 
 ```bash
-PYTHONPYCACHEPREFIX=/tmp/task-1692-pycache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_speech_settings_contracts.py -q
+PYTHONPYCACHEPREFIX=/tmp/task-1981-pycache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_speech_settings_contracts.py -q
 ```
 
 Expected: collection fails because the contract module does not exist.
@@ -88,16 +88,16 @@ Do not integrate the DTOs into `NavigateToScreen`, Settings, Lab status polling,
 **Step 3: Run focused and neighboring regression tests**
 
 ```bash
-PYTHONPYCACHEPREFIX=/tmp/task-1692-pycache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_speech_settings_contracts.py Tests/UI/test_speech_settings_model.py Tests/TTS/test_adapter_types.py -q
+PYTHONPYCACHEPREFIX=/tmp/task-1981-pycache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_speech_settings_contracts.py Tests/UI/test_speech_settings_model.py Tests/TTS/test_adapter_types.py -q
 ```
 
 Expected: all focused and neighboring tests pass.
 
-### Task 3: Verify the non-behavioral boundary and finish TASK-1692
+### Task 3: Verify the non-behavioral boundary and finish TASK-1981
 
 **Files:**
 
-- Modify: `backlog/tasks/task-1692 - Establish-Speech-and-TTS-settings-ownership-contracts.md`
+- Modify: `backlog/tasks/task-1981 - Establish-Speech-and-TTS-settings-ownership-contracts.md`
 
 **Step 1: Run static and diff checks**
 
@@ -110,15 +110,15 @@ Expected: both commands pass.
 
 **Step 2: Audit scope**
 
-Confirm the diff contains only the pure contract, its tests, this plan, and TASK-1692 metadata. Verify no configuration writer, UI compose path, network collaborator, adapter route, character store, or managed audio.cpp path changed.
+Confirm the diff contains only the pure contract, its tests, this plan, and TASK-1981 metadata. Verify no configuration writer, UI compose path, network collaborator, adapter route, character store, or managed audio.cpp path changed.
 
 **Step 3: Complete task documentation**
 
-Check all acceptance criteria, add concise implementation notes including the ADR-039 conformance statement and exact verification commands, then set TASK-1692 to Done only after every Definition-of-Done gate applicable to this contract slice passes.
+Check all acceptance criteria, add concise implementation notes including the ADR-039 conformance statement and exact verification commands, then set TASK-1981 to Done only after every Definition-of-Done gate applicable to this contract slice passes.
 
 **Step 4: Commit**
 
 ```bash
-git add Docs/superpowers/plans/2026-07-31-task-1692-speech-tts-settings-ownership-contracts.md "backlog/tasks/task-1692 - Establish-Speech-and-TTS-settings-ownership-contracts.md" tldw_chatbook/UI/Speech/speech_settings_contracts.py Tests/UI/test_speech_settings_contracts.py
+git add Docs/superpowers/plans/2026-07-31-task-1981-speech-tts-settings-ownership-contracts.md "backlog/tasks/task-1981 - Establish-Speech-and-TTS-settings-ownership-contracts.md" tldw_chatbook/UI/Speech/speech_settings_contracts.py Tests/UI/test_speech_settings_contracts.py
 git commit -m "feat(tts): establish settings ownership contracts"
 ```

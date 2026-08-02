@@ -1,13 +1,13 @@
 # Speech & TTS Settings Ownership Release Evidence
 
 Date: 2026-08-01
-Task: TASK-1699
+Task: TASK-1988
 Decision: [ADR-039](../../../../backlog/decisions/039-global-and-studio-tts-settings-ownership.md)
 
 ## Evidence boundary
 
 - Headless complete-WAV and playback-handoff proof: Passing
-- Human audible playback proof: Passed in TASK-1700 with explicit user
+- Human audible playback proof: Passed in TASK-1989 with explicit user
   confirmation; deterministic WAV and playback-handoff evidence remains
   separately identified.
 - No provider process, provider network, model download, or audio hardware is
@@ -15,7 +15,7 @@ Decision: [ADR-039](../../../../backlog/decisions/039-global-and-studio-tts-sett
 - Automated evidence validates complete responses and playback handoff. It
   does not claim audible output or incremental streaming.
 - Live acceptance uses the user-supplied external server and model only in
-  TASK-1700. It must not download, launch, supervise, or stop audio.cpp.
+  TASK-1989. It must not download, launch, supervise, or stop audio.cpp.
 
 ## Requirement evidence
 
@@ -96,10 +96,10 @@ automated test node still exists.
 
 ## Manual journey ownership
 
-TASK-1700 owns live UAT-01 through UAT-10 from the approved PRD. TASK-1699
+TASK-1989 owns live UAT-01 through UAT-10 from the approved PRD. TASK-1988
 provides deterministic fake coverage and the exact live script boundary; it
 does not convert headless playback-control handoff into an audible claim.
-TASK-1700 has passed UAT-01 through UAT-10. The final UAT-03 retest used the
+TASK-1989 has passed UAT-01 through UAT-10. The final UAT-03 retest used the
 user-supplied listener's two advertised TTS models, `pocket-tts-en` and
 `supertonic-3`, and generated then entered playback for one distinct WAV from
 each model in the same Chatbook session without changing or restarting the

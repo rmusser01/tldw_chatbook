@@ -1,4 +1,4 @@
-# TASK-1700 Speech Lab Current-result UX Implementation Plan
+# TASK-1989 Speech Lab Current-result UX Implementation Plan
 
 **Goal:** Make the complete-WAV result immediately playable and understandable,
 with optional Studio-only auto-play, without changing adapter or provider

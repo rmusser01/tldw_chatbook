@@ -1,4 +1,4 @@
-# TASK-1694 Effective TTS Resolution Implementation Plan
+# TASK-1983 Effective TTS Resolution Implementation Plan
 
 **Goal:** Resolve every supported TTS selection into one immutable, text-free snapshot with explicit precedence, source metadata, provider constraints, and admission revisions.
 
@@ -6,7 +6,7 @@
 
 **ADR required:** yes
 **ADR path:** `backlog/decisions/039-global-and-studio-tts-settings-ownership.md`
-**Reason:** TASK-1694 directly implements ADR-039's accepted precedence, dynamic-selection, revision, preview, and fail-closed admission boundary; it makes no new architectural decision.
+**Reason:** TASK-1983 directly implements ADR-039's accepted precedence, dynamic-selection, revision, preview, and fail-closed admission boundary; it makes no new architectural decision.
 
 **Scope constraints:** No visible Settings or Lab changes, no new persistence, no profile or assignment mutation, no provider discovery outside request admission, no native legacy-provider migration, and no managed audio.cpp behavior.
 
