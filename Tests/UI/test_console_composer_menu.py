@@ -1101,3 +1101,47 @@ def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
     assert blocked.disabled is True
     assert blocked.tooltip == blocked_reason("save-chatbook", ephemeral=True)
     assert chatbook_action().disabled is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
+    """A click outside the menu box closes it with no action selected.
+
+    Escape already offered a no-action exit, but mouse-first users reach
+    for the backdrop. A click INSIDE the menu chrome (header, padding)
+    must not dismiss -- only the backdrop is an exit surface.
+    """
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+        ConsoleComposerMenuModal,
+    )
+
+    class _Host(App):
+        pass
+
+    received: list[str | None] = []
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleComposerMenuModal(attachment_kind="none"), callback=received.append
+        )
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, ConsoleComposerMenuModal)
+
+        # Inside the menu box (its header line) -- stays open.
+        menu = modal.query_one("#console-composer-menu")
+        await pilot.click(offset=(menu.region.x + 2, menu.region.y + 1))
+        await pilot.pause()
+        assert app.screen is modal
+        assert received == []
+
+        # On the backdrop -- dismisses with no action.
+        await pilot.click(offset=(1, 1))
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is not modal
+
+    assert received == [None]

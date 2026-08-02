@@ -12,6 +12,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -239,6 +240,24 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
             return
         event.stop()
         self.dismiss(button_id[len(prefix) :])
+
+    def on_click(self, event: Click) -> None:
+        """Dismiss with no action when a click lands on the backdrop.
+
+        Mouse-first users expect a click outside a popup to close it, the
+        same no-action exit Escape already provides. Clicks anywhere inside
+        the menu box (rows, header, padding, the disabled-reason lines) are
+        not exits, so containment is tested against the box's region rather
+        than the clicked widget's identity.
+
+        Args:
+            event: The screen-level click, carrying absolute coordinates.
+        """
+        menu = self.query_one("#console-composer-menu")
+        if menu.region.contains(event.screen_x, event.screen_y):
+            return
+        event.stop()
+        self.dismiss(None)
 
     def action_dismiss_menu(self) -> None:
         self.dismiss(None)
