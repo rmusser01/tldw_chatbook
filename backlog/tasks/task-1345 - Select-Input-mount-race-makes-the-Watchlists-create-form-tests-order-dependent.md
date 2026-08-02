@@ -1,7 +1,7 @@
 ---
 id: TASK-1345
 title: Select/Input mount race makes the Watchlists create-form tests order-dependent
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
@@ -50,3 +50,23 @@ pattern generalised) or a focus API that survives remount.
 - [ ] #2 The create-form tests pass regardless of the order the UI suite runs in, demonstrated by running them immediately after the content-pane suite
 - [ ] #3 A deliberately re-introduced form of the race fails the tests, proving they discriminate it
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Root cause (confirmed in `sources_pane.py:recompose` :638-652): `_pending_create_focus` is READ
+and CLEARED before `.focus()` (which only SCHEDULES focus via `call_later`) has landed. A second
+`recompose=True` assignment (`sources` from `_load_sources`) firing in that gap remounts the field
+— the scheduled callback fires on a detached widget and is dropped — and since the intent was
+already cleared, the interleaving recompose recovers nothing (`_focused_create_field_id()` returns
+None because focus never landed). Intent lost.
+1. Durable fix: make the create-focus intent STICKY until focus is CONFIRMED on a mounted target.
+   `recompose` re-applies `_pending_create_focus` without clearing it; a `call_after_refresh`
+   confirmation clears it only once `screen.focused.id == target`. Whichever recompose is LAST in a
+   burst wins; nothing eagerly discards the intent. Case-2 (user-moved focus, external rebuild)
+   still uses `_focused_create_field_id()` and must NOT be yanked back to field 0 — the confirm-clear
+   is what prevents that.
+2. Deterministic test (AC#2/#3): FORCE the interleave — open the form then assign `sources` in the
+   same pump so both recomposes queue, and assert field 0 is focused after settle; run it
+   immediately after the content-pane suite. AC#3: reverting to eager-clear reds it.
+<!-- SECTION:PLAN:END -->
