@@ -60,9 +60,7 @@ class PromptBlockEditorState:
     ) -> PromptBlockEditorState:
         """Build validated editor state and deterministic compiled previews."""
         _validate_artifact_pair(artifact_type, definition)
-        for lane in definition.lanes:
-            for block in lane.blocks:
-                _reject_reserved_id(block.id)
+        _validate_mounted_reserved_ids(artifact_type, definition)
         issues = validate_block_artifact(definition)
         compiled_system = _compile_editor_lane(
             definition.lanes[0], origin=system_origin
@@ -397,11 +395,36 @@ def _next_id(base: str, existing_ids: set[str]) -> str:
     return f"{base}-{suffix}"
 
 
-def _reject_reserved_id(block_id: str) -> None:
+def _validate_mounted_reserved_ids(
+    artifact_type: ArtifactType,
+    definition: BlockArtifactDefinition,
+) -> None:
+    """Allow only the one mapped Additional-context block a filled Prompt owns."""
+    mapped_user_block_seen = False
+    for lane in definition.lanes:
+        for block in lane.blocks:
+            if not _is_reserved_id(block.id):
+                continue
+            if (
+                block.id == ADDITIONAL_CONTEXT_RESERVED_PREFIX
+                and artifact_type == "prompt"
+                and lane.id == "user"
+                and not mapped_user_block_seen
+            ):
+                mapped_user_block_seen = True
+                continue
+            _reject_reserved_id(block.id)
+
+
+def _is_reserved_id(block_id: str) -> bool:
     normalized = block_id.casefold().replace("_", "-")
-    if normalized == ADDITIONAL_CONTEXT_RESERVED_PREFIX or normalized.startswith(
+    return normalized == ADDITIONAL_CONTEXT_RESERVED_PREFIX or normalized.startswith(
         f"{ADDITIONAL_CONTEXT_RESERVED_PREFIX}-"
-    ):
+    )
+
+
+def _reject_reserved_id(block_id: str) -> None:
+    if _is_reserved_id(block_id):
         raise ValueError(
             f"Block ID {block_id!r} is reserved for mapped Additional context."
         )

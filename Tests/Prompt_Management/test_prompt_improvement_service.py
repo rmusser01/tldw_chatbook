@@ -41,6 +41,9 @@ from tldw_chatbook.Prompt_Management.prompt_improvement_service import (
     _merge_recipe,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
+    PromptBlockEditorState,
+)
 
 
 class FakeAuxiliaryGateway:
@@ -769,6 +772,31 @@ async def test_recipe_fill_merges_content_only_into_detached_prompt_copy() -> No
     compile_block_artifact(filled)
     assert snapshot.recipe_definition.kind == "block_recipe"
     assert snapshot.recipe_definition.lanes[0].blocks[0].content == "Keep role starter"
+
+
+@pytest.mark.asyncio
+async def test_recipe_fill_with_additional_context_mounts_in_prompt_editor() -> None:
+    snapshot = _snapshot(mode="recipe", recipe_definition=_recipe_definition())
+    gateway = FakeAuxiliaryGateway(
+        [
+            _recipe_response(
+                snapshot,
+                _all_fills(goal="Ship the report"),
+                additional_context="Unmatched evidence: Ω",
+            )
+        ]
+    )
+
+    outcome = await _service(gateway).improve(snapshot)
+
+    assert outcome.kind == "success"
+    assert outcome.filled_definition is not None
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=outcome.filled_definition,
+    )
+    assert state.definition.lanes[1].blocks[-1].id == "additional-context"
+    assert state.compiled_user.endswith("# Additional context\n\nUnmatched evidence: Ω")
 
 
 @pytest.mark.asyncio

@@ -61,6 +61,61 @@ def _definition() -> BlockArtifactDefinition:
     )
 
 
+def _definition_with_additional_context(
+    *,
+    kind: str = "block_prompt",
+    lane_id: str = "user",
+    block_id: str = ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+) -> BlockArtifactDefinition:
+    definition = _definition()
+    lanes = list(definition.lanes)
+    lane_index = 0 if lane_id == "system" else 1
+    lane = lanes[lane_index]
+    lanes[lane_index] = PromptLane(
+        id=lane.id,
+        blocks=lane.blocks
+        + (
+            PromptBlock(
+                id=block_id,
+                title="Additional context",
+                syntax="markdown",
+                content="Unmatched evidence.",
+            ),
+        ),
+    )
+    return BlockArtifactDefinition(
+        kind=kind,  # type: ignore[arg-type]
+        schema_version=2,
+        lanes=tuple(lanes),  # type: ignore[arg-type]
+    )
+
+
+def _definition_with_duplicate_additional_context() -> BlockArtifactDefinition:
+    definition = _definition_with_additional_context()
+    user_lane = definition.lanes[1]
+    duplicate_lane = PromptLane(
+        id="user",
+        blocks=user_lane.blocks
+        + (
+            PromptBlock(
+                id=ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+                title="Second mapped context",
+                syntax="freeform",
+                content="Duplicate evidence.",
+            ),
+        ),
+    )
+    malformed = object.__new__(BlockArtifactDefinition)
+    object.__setattr__(malformed, "kind", "block_prompt")
+    object.__setattr__(malformed, "schema_version", 2)
+    object.__setattr__(
+        malformed,
+        "lanes",
+        (definition.lanes[0], duplicate_lane),
+    )
+    return malformed
+
+
 def _origin(text: str) -> LegacyLaneOrigin:
     return LegacyLaneOrigin(
         text=text,
@@ -116,6 +171,100 @@ def test_add_and_rename_reject_reserved_additional_context_ids() -> None:
             _state(),
             "goal",
             id=f"{ADDITIONAL_CONTEXT_RESERVED_PREFIX}-2",
+        )
+
+
+def test_prompt_mount_accepts_one_canonical_user_additional_context_block() -> None:
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=_definition_with_additional_context(),
+    )
+
+    mapped = state.definition.lanes[1].blocks[-1]
+    assert mapped.id == ADDITIONAL_CONTEXT_RESERVED_PREFIX
+    assert mapped.content == "Unmatched evidence."
+    assert state.compiled_user.endswith("# Additional context\n\nUnmatched evidence.")
+
+
+def test_mapped_additional_context_edits_and_reorder_survive_rebuild() -> None:
+    state = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=_definition_with_additional_context(),
+    )
+    state = update_block(
+        state,
+        ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+        title="Evidence appendix",
+        syntax="xml",
+        xml_tag="evidence_appendix",
+        content="Edited unmatched evidence.",
+    )
+    state = move_block(state, ADDITIONAL_CONTEXT_RESERVED_PREFIX, -1)
+    state = move_block(state, ADDITIONAL_CONTEXT_RESERVED_PREFIX, -1)
+
+    rebuilt = PromptBlockEditorState.from_definition(
+        artifact_type="prompt",
+        definition=state.definition,
+    )
+
+    mapped = rebuilt.definition.lanes[1].blocks[0]
+    assert (
+        mapped.id,
+        mapped.title,
+        mapped.syntax,
+        mapped.xml_tag,
+        mapped.content,
+    ) == (
+        ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+        "Evidence appendix",
+        "xml",
+        "evidence_appendix",
+        "Edited unmatched evidence.",
+    )
+    assert rebuilt.compiled_user.startswith(
+        "<evidence_appendix>Edited unmatched evidence.</evidence_appendix>"
+    )
+
+
+def test_recipe_mount_rejects_exact_additional_context_id() -> None:
+    with pytest.raises(ValueError, match="reserved for mapped Additional context"):
+        PromptBlockEditorState.from_definition(
+            artifact_type="recipe",
+            definition=_definition_with_additional_context(kind="block_recipe"),
+        )
+
+
+def test_prompt_system_lane_rejects_exact_additional_context_id() -> None:
+    with pytest.raises(ValueError, match="reserved for mapped Additional context"):
+        PromptBlockEditorState.from_definition(
+            artifact_type="prompt",
+            definition=_definition_with_additional_context(lane_id="system"),
+        )
+
+
+def test_prompt_mount_rejects_duplicate_exact_additional_context_ids() -> None:
+    with pytest.raises(ValueError, match="reserved for mapped Additional context"):
+        PromptBlockEditorState.from_definition(
+            artifact_type="prompt",
+            definition=_definition_with_duplicate_additional_context(),
+        )
+
+
+@pytest.mark.parametrize(
+    "block_id",
+    [
+        "additional_context",
+        "additional-context-2",
+        "Additional-Context",
+    ],
+)
+def test_prompt_user_lane_rejects_other_reserved_namespace_spellings(
+    block_id: str,
+) -> None:
+    with pytest.raises(ValueError, match="reserved for mapped Additional context"):
+        PromptBlockEditorState.from_definition(
+            artifact_type="prompt",
+            definition=_definition_with_additional_context(block_id=block_id),
         )
 
 

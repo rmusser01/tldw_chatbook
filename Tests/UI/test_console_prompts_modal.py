@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,11 +14,21 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
+    AuxiliaryCompletionResult,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     outcome_first_recipe,
 )
 from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
     PromptImprovementOutcome,
+    PromptImprovementRequestSnapshot,
+    fingerprint_block_definition,
+)
+from tldw_chatbook.Prompt_Management.prompt_improvement_service import (
+    PromptImprovementService,
 )
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
@@ -41,6 +52,9 @@ from tldw_chatbook.Widgets.Console.console_prompts_state import (
     PromptBrowseResult,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
+    ADDITIONAL_CONTEXT_RESERVED_PREFIX,
+)
 
 
 def _definition(kind: str = "block_prompt") -> dict[str, Any]:
@@ -322,6 +336,88 @@ class _ImprovementDriver:
             "apply_improvement_result": self.apply,
             "retry_improvement_persistence": self.retry_persistence,
         }
+
+
+class _OneShotAuxiliaryGateway:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.requests: list[AuxiliaryCompletionRequest] = []
+
+    async def complete_auxiliary(
+        self, request: AuxiliaryCompletionRequest
+    ) -> AuxiliaryCompletionResult:
+        self.requests.append(request)
+        return AuxiliaryCompletionResult(
+            provider=request.resolution.provider,
+            model=str(request.resolution.model),
+            text=self.response,
+        )
+
+
+async def _real_additional_context_recipe_outcome(
+    driver: _ImprovementDriver,
+) -> PromptImprovementOutcome:
+    recipe = outcome_first_recipe()
+    request_id = "real-recipe-fill"
+    projection = driver.composer.project_snapshot_for_model(
+        driver.snapshot,
+        request_nonce=request_id,
+    )
+    recipe_fingerprint = fingerprint_block_definition(recipe)
+    response = json.dumps(
+        {
+            "kind": "recipe_fill",
+            "recipe_fingerprint": recipe_fingerprint,
+            "fills": [
+                {
+                    "block_id": block.id,
+                    "content": (
+                        "Deliver a checked answer." if block.id == "goal" else ""
+                    ),
+                }
+                for lane in recipe.lanes
+                for block in lane.blocks
+            ],
+            "additional_context": (
+                f"Unmatched evidence: {projection.placeholder_ids[0]}"
+            ),
+        }
+    )
+    gateway = _OneShotAuxiliaryGateway(response)
+    resolution = ConsoleProviderResolution(
+        provider="OpenAI",
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        max_tokens=777,
+        streaming=True,
+    )
+    snapshot = PromptImprovementRequestSnapshot(
+        request_id=request_id,
+        mode="recipe",
+        session_id="session-1",
+        composer_snapshot=driver.snapshot,
+        projection=projection,
+        system_prompt=None,
+        system_fingerprint=None,
+        resolution=resolution,
+        provider_label="OpenAI",
+        model_label="gpt-test",
+        recipe_source=None,
+        recipe_source_id="builtin:outcome-first",
+        recipe_version=0,
+        recipe_definition=recipe,
+        recipe_fingerprint=recipe_fingerprint,
+    )
+
+    outcome = await PromptImprovementService(gateway=gateway).improve(snapshot)
+
+    assert gateway.requests
+    assert outcome.kind == "success"
+    assert outcome.filled_definition is not None
+    return outcome
 
 
 @pytest.mark.unit
@@ -2136,6 +2232,35 @@ async def test_recipe_fill_mounts_service_block_prompt_as_unsaved_prompt_review(
 
 
 @pytest.mark.asyncio
+async def test_real_recipe_fill_with_additional_context_reaches_block_review() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    outcome = await _real_additional_context_recipe_outcome(driver)
+    driver.outcomes.append(outcome)
+    app = _Harness(backend, improvement_kwargs=driver.kwargs())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.screen.enter_mode("improve")
+        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+
+        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        editor = app.screen.query_one(PromptBlockEditor)
+        mapped = editor.state.definition.lanes[1].blocks[-1]
+        assert editor.state.artifact_type == "prompt"
+        assert mapped.id == ADDITIONAL_CONTEXT_RESERVED_PREFIX
+        assert mapped.content.startswith("Unmatched evidence:")
+        assert app.screen.state.working_copy_unsaved is True
+        assert len(app.screen.query("#console-prompts-recipe-fill")) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("recipe_kind", ["outcome", "blank"])
 async def test_recipe_fill_snapshots_current_editor_definition(
     recipe_kind: str,
@@ -2185,7 +2310,9 @@ async def test_recipe_fill_snapshots_current_editor_definition(
 
 
 @pytest.mark.asyncio
-async def test_saved_recipe_ai_fill_snapshots_accepted_source_with_raw_identity() -> None:
+async def test_saved_recipe_ai_fill_snapshots_accepted_source_with_raw_identity() -> (
+    None
+):
     source_id = "saved-recipe-source"
     composite_id = f"local:prompt:{source_id}"
     backend = _PromptBackend(
