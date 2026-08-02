@@ -112,10 +112,10 @@ CANONICAL_METADATA_ENDPOINTS = {
     "metadata.google.internal",
     "metadata.azure.com",
 }
-CANONICAL_EGRESS_PATH = Path("Utils/egress.py")
+EGRESS_POLICY_PATH = Path("Utils/egress.py")
 ```
 
-Assert every endpoint has exactly `{CANONICAL_EGRESS_PATH}` as its production
+Assert every endpoint has exactly `{EGRESS_POLICY_PATH}` as its production
 owner. Also derive additional current endpoints from the top-level
 `Assign`/`AnnAssign` declarations of `_METADATA_IPS` and
 `METADATA_HOSTNAMES` in `Utils/egress.py`, and apply the same single-owner check
@@ -705,7 +705,7 @@ worktree at the pinned base; both produced the identical result: **6 failed and
 
 The six deterministic failures were the persistent-diagnostic inventory, LLM
 destination-action census, unified-shell worker-count census, watchlists source
-form `size0`, watchlists frequency control `size1`, and monochrome mosaic-color
+form `size0`, watchlists source form `size1`, and monochrome mosaic-color
 contracts. The other seven nodes passed in isolation on both revisions and are
 order-dependent full-suite flakes. No failure reproduced only on the TASK-859
 branch, so the comparison found no branch-specific full-suite regression.
