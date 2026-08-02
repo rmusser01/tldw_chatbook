@@ -180,6 +180,18 @@ class LazyLiveDictationService:
     #: built via `__new__` without going through `start_dictation()` needs
     #: this class-level default too.
     on_segment_transcribing: Optional[Callable[[bool], None]] = None
+    #: Same `__new__`-safety reasoning again: `_audio_callback` reads both of
+    #: these unconditionally on every frame, so a service built via `__new__`
+    #: without going through `start_dictation()` needs class-level defaults
+    #: for both, or the very first delivered frame raises `AttributeError`.
+    on_speech_resumed: Optional[Callable[[], None]] = None
+    #: Per-capture flag distinguishing "first frame of a fresh capture"
+    #: (`last_speech_time` is 0 from `__init__`/`start_dictation()`, but that
+    #: is capture *start*, not a resume) from "a frame after the silence gate
+    #: zeroed `last_speech_time` mid-capture" (a genuine resume). See
+    #: `_audio_callback`'s inline comment for the exact rule. Reset to
+    #: `False` in `start_dictation()` for each new capture.
+    _capture_saw_first_frame: bool = False
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -241,6 +253,7 @@ class LazyLiveDictationService:
         self.buffer_lock = threading.Lock()
         self.last_speech_time = 0
         self._current_audio_level = 0.0
+        self._capture_saw_first_frame = False
 
         # Transcription management
         self.transcript_segments = []
@@ -257,6 +270,7 @@ class LazyLiveDictationService:
         self.on_error = None
         self.on_command = None
         self.on_segment_transcribing = None
+        self.on_speech_resumed = None
 
         # Processing thread
         self.processing_thread = None
@@ -540,12 +554,22 @@ class LazyLiveDictationService:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_command: Optional[Callable[[str], None]] = None,
         on_segment_transcribing: Optional[Callable[[bool], None]] = None,
+        on_speech_resumed: Optional[Callable[[], None]] = None,
         save_audio: bool = False,
     ) -> bool:
         """
         Start live dictation with improved initialization.
 
         Args:
+            on_speech_resumed: Fired from `_audio_callback`, on the recorder's
+                own callback thread, the moment a frame arrives with
+                `last_speech_time == 0` for any reason OTHER than this being
+                the very first frame of the capture -- i.e. right after
+                `_processing_loop`'s silence gate has zeroed it mid-capture.
+                Carries no payload; see `_audio_callback`'s inline comment for
+                the exact rule. A mic-side fact, not recognizer output -- it
+                says nothing about what the recognizer will eventually
+                produce from this speech.
             on_segment_transcribing: Fired from `_transcribe_segment_audio`,
                 on the processing thread, TWICE per segment, symmetrically --
                 both at the mid-capture silence gate and at the stop-path
@@ -583,6 +607,7 @@ class LazyLiveDictationService:
             self.on_error = on_error
             self.on_command = on_command
             self.on_segment_transcribing = on_segment_transcribing
+            self.on_speech_resumed = on_speech_resumed
 
             self._notify_state_change()
 
@@ -606,6 +631,10 @@ class LazyLiveDictationService:
             self.current_transcript = ""
             self.audio_buffer = []
             self.captured_bytes = 0
+            # A repeat capture on a reused service instance must not inherit
+            # the previous capture's "already saw a first frame" state -- its
+            # own very first frame is capture start again, not a resume.
+            self._capture_saw_first_frame = False
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
@@ -762,6 +791,26 @@ class LazyLiveDictationService:
             # unconditionally and finals fire only at stop, as before.
             # Queue for processing
             self.processing_queue.put(("audio", audio_chunk))
+
+            # Speech-resumed detection. `last_speech_time == 0` happens for
+            # two different reasons: the very first frame of a fresh capture
+            # (set by `__init__`/`start_dictation()` -- capture start, not a
+            # resume), or a frame arriving after `_processing_loop`'s silence
+            # gate zeroed it mid-capture (a genuine resume).
+            # `_capture_saw_first_frame` is False only for that first frame,
+            # so this fires on every LATER zero -- exactly the post-silence
+            # case -- and never on capture start. Deliberately not derived
+            # from a delivery-gap time delta: without `webrtcvad` the recorder
+            # forwards every chunk unconditionally, so `last_speech_time` only
+            # ever advances and a mere gap (no finalize in between) can never
+            # make it 0.
+            resumed = self.last_speech_time == 0 and self._capture_saw_first_frame
+            self._capture_saw_first_frame = True
+            if resumed and self.on_speech_resumed:
+                try:
+                    self.on_speech_resumed()
+                except Exception as e:
+                    logger.error(f"Speech resumed callback error: {e}")
 
             # Update last speech time
             self.last_speech_time = time.time()

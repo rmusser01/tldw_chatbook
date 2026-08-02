@@ -676,8 +676,8 @@ class ConsoleDictationEvent(Message):
             session: The session that emitted it, so the screen can drop
                 events from a session it has already discarded.
             event: The `VoicePartial` / `VoiceSegmentTranscribing` /
-                `VoiceFinal` / `VoiceFailed` / `VoiceStateChanged` /
-                `VoiceProviderOverridden` instance.
+                `VoiceSpeechResumed` / `VoiceFinal` / `VoiceFailed` /
+                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
         """
         super().__init__()
         self.session = session

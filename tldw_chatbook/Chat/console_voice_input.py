@@ -457,6 +457,33 @@ class VoiceSegmentTranscribing:
 
 
 @dataclass(frozen=True)
+class VoiceSpeechResumed:
+    """The microphone is delivering speech again after a silence-gated pause.
+
+    Fired from `LazyLiveDictationService._audio_callback` the instant a frame
+    arrives with `last_speech_time == 0` for any reason other than being the
+    capture's very first frame -- which only happens right after
+    `_processing_loop`'s silence gate has zeroed it mid-capture (see
+    `SILENCE_THRESHOLD_SECONDS`). Capture start itself never fires this: that
+    is `_capture_saw_first_frame`'s whole job (see `_audio_callback`'s inline
+    comment for the exact rule).
+
+    A mic-side fact, not recognizer output: it says only that the recorder is
+    receiving audio again, nothing about what the recognizer will eventually
+    produce from it. `ConsoleStreamingDictationSession._handle_event`
+    (chat_screen.py) forwards it like any other unhandled event -- generation
+    gated, same as `VoicePartial` -- and deliberately does NOT set
+    `_heard_recognizer_output` and does NOT touch `_segments` for it, for the
+    same reason `VoiceSegmentTranscribing`'s docstring gives, one step further
+    upstream: even a `VoiceSegmentTranscribing` proves the silence gate fired
+    on real accumulated audio, but this event proves nothing more than "a
+    frame arrived."
+
+    Carries no payload -- there is nothing else to say.
+    """
+
+
+@dataclass(frozen=True)
 class VoiceCommand:
     """A finalized segment that matched the spoken-command grammar.
 
@@ -1185,6 +1212,9 @@ class ConsoleVoiceInputController:
                 ),
                 on_segment_transcribing=lambda done, _gen=capture_generation: (
                     self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
+                ),
+                on_speech_resumed=lambda _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSpeechResumed(), _gen)
                 ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=lambda error, _gen=capture_generation: self._report_service_error(
