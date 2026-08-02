@@ -189,3 +189,56 @@ def test_item_is_typed_from_its_kind_not_its_shape():
 # covered by `test_opening_an_item_marks_it_read` in
 # `Tests/UI/test_watchlists_read_status.py`, exercising the path that
 # actually writes that status today.
+
+
+@pytest.mark.asyncio
+async def test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity():
+    """Fix wave, F3 (Minor).
+
+    `handle_ingest_requested`/`handle_ignore_requested` derive their per-item
+    worker group as `f"{_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX}{item_id}"`
+    from `entity.get("id")`. An entity with no "id" at all would derive the
+    literal group `"...:None"`, shared by every OTHER id-less dispatch --
+    collapsing exactly the per-item isolation TASK-1541 introduced this group
+    for. Believed unreachable through the real item pipeline:
+    `normalize_watchlist_item` (see `REAL_ITEM` above) unconditionally sets
+    "id" via `build_watchlist_item_id(source, "watchlist_item", row["id"])`,
+    backed by the `subscription_items` table's own `INTEGER PRIMARY KEY`
+    column, which SQLite never lets be NULL. So this drives the handlers
+    directly with a synthetic id-less entity -- pinning the guard itself
+    rather than trying to construct an unreachable real one.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+        IngestRequested,
+        IgnoreRequested,
+    )
+
+    app = _build_test_app()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        no_id_entity = {"entity_kind": "watchlist_item", "item_id": 999, "status": "new"}
+        assert "id" not in no_id_entity, "the fixture must actually lack the key under test"
+
+        calls: list[tuple[object, str]] = []
+        real_update_item_status = screen._update_item_status
+
+        async def _spy_update_item_status(item_id, status, **kwargs):
+            calls.append((item_id, status))
+            return await real_update_item_status(item_id, status, **kwargs)
+
+        screen._update_item_status = _spy_update_item_status
+
+        screen.post_message(IngestRequested(no_id_entity))
+        screen.post_message(IgnoreRequested(no_id_entity))
+        for _ in range(20):
+            await pilot.pause()
+
+        assert calls == [], (
+            "an id-less entity must never reach _update_item_status at all -- "
+            "the None guard must refuse the dispatch before the worker group "
+            "is even derived"
+        )

@@ -1,7 +1,7 @@
 ---
 id: TASK-1541
 title: 'Watchlists screen: item-status writes never leave the event loop'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 15:53'
 labels:
@@ -38,7 +38,7 @@ screen-wide version of the same bug across every other item-status write path.
 <!-- AC:BEGIN -->
 - [x] #1 `_update_item_status`'s DB write runs off the event loop thread, verified by a thread-identity test following the shape of `test_the_queue_write_runs_off_the_event_loop_thread` (`Tests/UI/test_watchlists_inspector.py`)
 - [x] #2 The fix does not add `exclusive=True` cancellation that would abort one in-flight item-status write because another item's write started
-- [ ] #3 Existing Ingest/Ignore/unread-toggle/mark-read-on-open item-action tests still pass unchanged -- see Implementation Notes: one pre-existing test is now measurably flakier, root-caused to an adjacent, out-of-scope hazard, left unchecked pending a decision on the follow-up
+- [x] #3 Existing Ingest/Ignore/unread-toggle/mark-read-on-open item-action tests still pass unchanged -- see Implementation Notes: closed by a test-side determinism fix (added waits, zero assertions weakened) rather than by touching the production recompose
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -120,3 +120,98 @@ and status stays In Progress pending a decision on that follow-up, rather than s
 `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX` constant, `_update_item_status_off_loop`, Ingest/Ignore
 dispatch groups); `Tests/UI/test_watchlists_inspector.py` (new
 `test_the_item_status_write_runs_off_the_event_loop_thread`, mirroring the queue-write precedent).
+
+---
+
+## Fix wave (whole-branch review, `.superpowers/sdd/briefings-residuals/task-1541-verdict.md`)
+
+A whole-branch review found the flake above was test-side (not inherent, contra the note above) and,
+separately, that this task's own change newly enabled a reachable data-loss path on the
+mark-read-on-open route. Both are fixed here; AC #3 is now genuinely satisfiable rather than
+worked around, and its checkbox above reflects that -- **no assertion in any existing test was
+weakened or removed**, only waits were added.
+
+**F1 -- the flake, closed test-side (AC #3).** The implementer's ~8%→~35-40% flakiness measurement
+was right about direction and wrong about "inherent to any off-thread yield": the repo's own sibling
+test 60 lines below the flaky one already drives the identical `IngestRequested` → `refresh=True`
+recompose and waits it out with `wait_for_selector`; the flaky test simply polled the DB and queried a
+widget with no intervening await. Fix:
+`test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture`
+(`Tests/UI/test_watchlists_content_pane.py`) now imports and calls the same
+`wait_for_selector(screen, pilot, ..., timeout=4.0)` helper at the two race sites (after the Ingest
+precondition, before the Mark-unread button press) -- every existing assertion, including the
+load-bearing staleness check, is byte-identical. Measured 20/20 sequential (`-p no:randomly`) after
+the fix, versus the pre-fix flake.
+
+**F2 -- cross-item-supersede cancellation newly reaches a write with no backend guard (Important,
+data loss).** The per-item `_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX` reasoning applied to Ingest/Ignore
+above is correct but incomplete: `_ITEM_STATUS_WORKER_GROUP` (the read/unread pair, including
+mark-read-on-open) is cross-item *by design*, and that design was safe only because the write it
+guarded was inert for cancellation before this task. Once the write got a genuine
+`asyncio.to_thread` suspension point, a fast `j`/`k` run's cross-item supersede became able to
+actually cancel item A's in-flight mark-read-on-open write while item B's fires -- and because
+`asyncio.to_thread`'s underlying OS thread is not itself cancellable, A's write still completes in
+the database while A's continuation (the `patch_item`/cache-repaint step) never runs, leaving the
+cached dict stale. If A is then Ingested (no `patch_item=` there either) and re-opened,
+`_mark_item_read_on_open` previously gated ONLY on that stale cached dict -- "new" -- and would
+write "reviewed" straight over the ingest. Fixed two ways, both required:
+- `_update_item_status` now catches `asyncio.CancelledError` around the write and applies the same
+  `patch_item`/repaint the normal continuation would have, synchronously, before re-raising --
+  because the write is durable regardless of the cancellation, the cache must not be allowed to
+  diverge from it.
+- `_mark_item_read_on_open`'s worker body (split out as
+  `_confirm_new_then_mark_item_read_on_open`) now re-asks the backend (`_blocking_status_for`,
+  the same guard `_mark_item_unread` already uses) immediately before the write, instead of trusting
+  the cached "new" alone -- closing the hole for every cause of cache staleness, not just this one.
+
+Pinned by two new tests in `Tests/UI/test_watchlists_read_status.py`:
+`test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent` (slows item A's write via a
+monkeypatched `WatchlistsBackendController.update_item_status`, dispatches A then supersedes with B in
+the same group, asserts the database lands on "reviewed" AND the cached dict is patched to match) and
+`test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_cache` (moves the database to
+"ingested" directly while the cached dict still reads stale "new", re-opens the item, asserts the
+ingest survives). Mutation-verified in both directions: removing the `CancelledError` patch reds only
+the first test; removing the backend gate reds only the second; both restored and reverified green.
+
+**F3 (Minor) -- `item_id=None` would collapse every id-less Ingest/Ignore into one shared group.**
+`handle_ingest_requested`/`handle_ignore_requested` derive their per-item group from
+`entity.get("id")` with no None guard, unlike `_mark_item_read_on_open` and
+`handle_unread_toggle_requested`, which both already refuse on a missing id. Added the identical
+`if item_id is None: return` guard to both handlers. Believed unreachable through the real item
+pipeline -- `normalize_watchlist_item` unconditionally sets `"id"` via
+`build_watchlist_item_id(source, "watchlist_item", row["id"])`, backed by the table's own
+`INTEGER PRIMARY KEY`, which SQLite never lets be NULL -- so pinned directly rather than via a
+real-feeling fixture: `test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity`
+(`Tests/UI/test_watchlists_item_actions.py`) posts a synthetic id-less entity and asserts
+`_update_item_status` is never called at all. Mutation-verified: removing either guard reds this
+test.
+
+**F4 (Minor, docs-only) -- "last press wins" is not a guaranteed database order.** The per-item
+group's docstring claimed a repeat Ingest/Ignore on the same item "supersedes its own earlier write"
+the same way `_toggle_briefing_queue` accepts for the briefing-queue flag -- but that flag's write has
+no genuine suspension point, while this one now does, and `asyncio.to_thread` threads are zombies:
+the superseded write's thread and its replacement's thread are two independent, unordered writes to
+the same row, and either can commit last. Corrected the constant's docstring and added the same
+caveat to `_update_item_status_off_loop`'s docstring (two racing durable writes may land in either
+order; the per-item group bounds what the UI settles on, not what order the database sees them in).
+No code change; no test claim to weaken, since none existed.
+
+**Files changed (fix wave):** `Tests/UI/test_watchlists_content_pane.py` (F1, three-line
+`wait_for_selector` addition, no assertions touched); `tldw_chatbook/UI/Screens/
+watchlists_collections_screen.py` (F2: `CancelledError` handling in `_update_item_status`, new
+`_confirm_new_then_mark_item_read_on_open`; F3: None guards in `handle_ingest_requested`/
+`handle_ignore_requested`; F4: docstring corrections only); `Tests/UI/test_watchlists_read_status.py`
+(two new F2 tests); `Tests/UI/test_watchlists_item_actions.py` (one new F3 test).
+
+**Verification.** `Tests/Watchlists/ Tests/UI/test_watchlists_inspector.py
+Tests/UI/test_watchlists_content_pane.py Tests/UI/test_watchlists_item_actions.py
+Tests/UI/test_watchlists_read_status.py` — 452 passed, 1 failed in 525.74s. The one failure
+(`Tests/Watchlists/test_watchlists_artifacts_pane.py::test_a_claimed_watchlist_survives_an_artifacts_open`)
+is unrelated to this fix wave: its traceback is a Textual-internal `NoMatches: No nodes match
+'#label' on SelectCurrent` raised from `Select._on_mount` → `_init_selected_option` during app
+mount, in a test file this fix wave never touches (briefings/artifacts claim logic, not item
+status). Passed 5/5 in isolation; only reproduces under full-suite ordering/load, the same class
+of Textual widget-mount race the verdict separately noted as a "bonus datum" teardown crash
+elsewhere in this review. Not investigated further as out of scope for task-1541.
+`test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture` (F1's target): 20/20
+sequential (`-p no:randomly`), confirming the flake is closed.

@@ -1300,6 +1300,7 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.full_app_destination_context import wait_for_selector
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
 
@@ -1330,6 +1331,15 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
             row["id"] for row in db.get_new_items(status="ingested", limit=10)
         }, "the precondition: the real Ingest gesture really did write `ingested`"
 
+        # Ingest's `refresh=True` tail sets `overview_data`
+        # (`reactive({}, recompose=True)`), which unmounts and remounts the
+        # whole screen; querying immediately after the DB write races that
+        # recompose. Wait for the pane to resettle before querying it -- the
+        # sibling test at :1631 does the same for the identical reason.
+        await wait_for_selector(
+            screen, pilot, "#watchlists-content-pane", timeout=4.0
+        )
+
         # The staleness this fix exists for -- assert it, do not assume it.
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         assert str(content_pane.item.get("status")).lower() != "ingested", (
@@ -1338,6 +1348,9 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
         )
 
         # 3. Press the real button.
+        await wait_for_selector(
+            screen, pilot, "#content-mark-unread-button", timeout=4.0
+        )
         screen.query_one("#content-mark-unread-button", Button).press()
         await pilot.pause(0.8)
 

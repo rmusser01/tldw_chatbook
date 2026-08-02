@@ -218,10 +218,12 @@ _ITEM_STATUS_WORKER_GROUP = "wl-item-status"
 #: SQLite's default lock wait while the user is free to select a different
 #: item in the meantime. Formatting the group per item id (rather than one
 #: shared group, or `_ITEM_STATUS_WORKER_GROUP` itself) means only a REPEAT
-#: Ingest/Ignore on the SAME item supersedes its own earlier write -- the
-#: same "last press wins" contract `_toggle_briefing_queue` already accepts
-#: for the briefing-queue flag -- while two DIFFERENT items' writes can never
-#: cancel each other.
+#: Ingest/Ignore on the SAME item supersedes its own earlier write -- while
+#: two DIFFERENT items' writes can never cancel each other. Fix wave (F4,
+#: Minor): this is NOT the same guaranteed "last press wins" contract
+#: `_toggle_briefing_queue` names for the briefing-queue flag -- see
+#: `_update_item_status_off_loop`'s docstring for why not, now that the
+#: write has a genuine off-thread suspension point.
 _ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX = "wl-item-status-action:"
 
 #: Item statuses the reader's "Mark unread" button must never overwrite: they
@@ -6069,6 +6071,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         item's own row id, not by any (watchlist, item) pair -- so it is
         global by construction: the same article read from "All sources" is
         read in every watchlist whose sources include it.
+
+        The "new" check above is a cheap pre-filter against the CACHED dict
+        only, so a plain non-"new" selection dispatches no worker at all --
+        but the write itself is gated again, against the BACKEND, inside
+        `_confirm_new_then_mark_item_read_on_open` below (fix wave, F2b,
+        Important). Once TASK-1541 gave this write a real suspension point,
+        the pre-existing cross-item `exclusive=True` supersede on
+        `_ITEM_STATUS_WORKER_GROUP` became able to cancel an in-flight write
+        for a DIFFERENT item (a fast `j`/`k` run), and a cancelled write's
+        continuation not running left the cached dict stale -- e.g. still
+        "new" after the database had already moved to "reviewed" (see F2a in
+        `_update_item_status`'s docstring). If that item is then Ingested
+        (which never patches this dict either) and re-opened, gating on the
+        stale cached dict alone would write "reviewed" straight over the
+        ingest. Asking the backend right before the write -- mirroring
+        `_mark_item_unread`'s existing `_blocking_status_for` guard -- closes
+        that regardless of why the cache went stale, not just for this one
+        cause.
         """
         if item is None:
             return
@@ -6078,13 +6098,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self.run_worker(
-            self._update_item_status(
-                item_id,
-                "reviewed",
-                notify_toast=False,
-                refresh=False,
-                patch_item=item,
-            ),
+            self._confirm_new_then_mark_item_read_on_open(item_id, item),
             exclusive=True,
             # Whole-branch review (Important): `exclusive=True` with no
             # `group=` lands in the DEFAULT group, which ~25 call sites on
@@ -6095,6 +6109,45 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # item-status writes their own group so they only ever supersede
             # each other.
             group=_ITEM_STATUS_WORKER_GROUP,
+        )
+
+    async def _confirm_new_then_mark_item_read_on_open(
+        self, item_id: Any, item: dict[str, Any]
+    ) -> None:
+        """Backend-gated body dispatched by `_mark_item_read_on_open` (F2b).
+
+        Re-asks the backend for this item's real status -- exactly the
+        `_blocking_status_for` check `_mark_item_unread` already performs --
+        immediately before the write, rather than trusting `item`'s cached
+        "new" (already checked by the caller, but only against the cache).
+        This is what closes F2's cross-item-cancellation data-loss hole: if a
+        superseded, cancelled sibling write already patched the DB to
+        "reviewed"/"ingested"/etc. behind this dict's back, or any other
+        writer moved it, the backend read below sees the truth and this
+        method declines rather than clobbering it back to "reviewed".
+
+        Runs inside the SAME `_ITEM_STATUS_WORKER_GROUP` worker
+        `_mark_item_read_on_open` dispatches, so a fast `j`/`k` still
+        supersedes this check itself exactly as it superseded the write
+        before this fix -- the added backend read costs one query on the
+        selection path, not one per keystroke that gets cancelled anyway.
+        """
+        try:
+            blocking = await self._blocking_status_for(item_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not confirm an item's status before marking it read "
+                "on open; leaving it unchanged."
+            )
+            return
+        if blocking is not None:
+            return
+        await self._update_item_status(
+            item_id,
+            "reviewed",
+            notify_toast=False,
+            refresh=False,
+            patch_item=item,
         )
 
     @on(UnreadToggleRequested)
@@ -6424,6 +6477,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if entity is None:
             return
         item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): an id-less entity would otherwise
+            # derive the group below as
+            # f"{_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX}None", collapsing
+            # EVERY id-less Ingest/Ignore into one shared group -- exactly
+            # the cross-item cancellation the per-item grouping exists to
+            # avoid. Believed unreachable in practice:
+            # `normalize_watchlist_item` unconditionally sets "id" via
+            # `build_watchlist_item_id(source, "watchlist_item", row["id"])`
+            # for every item this screen's own Items pane produces, and
+            # `row["id"]` is the table's `INTEGER PRIMARY KEY`, never NULL --
+            # so `event.entity` reaching here without an "id" would mean
+            # something other than this screen's own item pipeline
+            # constructed it. Refusing the dispatch (rather than falling back
+            # to a unique per-dispatch suffix) also matches
+            # `_mark_item_read_on_open`'s and `handle_unread_toggle_
+            # requested`'s existing `item_id is None: return` guards.
+            return
         self.run_worker(
             self._update_item_status(item_id, "ingested"),
             exclusive=True,
@@ -6439,6 +6510,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if entity is None:
             return
         item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): see the identical guard and comment in
+            # `handle_ingest_requested` just above -- same hazard, same
+            # reachability analysis, same refusal.
+            return
         self.run_worker(
             self._update_item_status(item_id, "ignored"),
             exclusive=True,
@@ -6637,6 +6713,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ran the transactional `SubscriptionsDB.mark_item_status` UPDATE on
         the event-loop thread despite this coroutine already being dispatched
         through `run_worker`.
+
+        Fix wave (F2a, whole-branch review, Important): this coroutine can be
+        cancelled (both status-writing worker groups are `exclusive=True`,
+        superseding a same-group in-flight write) while suspended at the
+        genuine `await asyncio.to_thread(...)` inside `_update_item_status_
+        off_loop`. That suspension is the one place a cancellation is
+        actually delivered, and by the time it is, the OS thread doing the
+        write is NOT itself cancellable -- see that method's docstring -- so
+        the transactional UPDATE completes and the database WILL land on
+        `status` regardless. If the cancellation is left to propagate
+        unpatched, the cached dict (`ItemsPane.items`/`_selected_content_
+        item`/`ContentPane.item`) is stranded reading the pre-write value
+        forever, diverged from a database the app itself just wrote -- the
+        same stale-cache data-loss shape `_mark_item_read_on_open` and
+        `_mark_item_unread` already guard the read side of. So the
+        `CancelledError` handler below applies the SAME patch the normal
+        continuation would have, synchronously (no `await`, so it cannot
+        itself be suspended or re-cancelled), before re-raising so the
+        cancellation still propagates as normal and the `refresh` tail below
+        correctly does not run for a superseded write.
         """
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -6652,6 +6748,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if notify_toast and callable(notify):
                 label = "unread" if status == "new" else status
                 notify(f"Item marked {label}.", severity="information")
+        except asyncio.CancelledError:
+            # F2a: the write is durable even though this coroutine is not --
+            # see the docstring above. Patch the cache to match the database
+            # write that is happening (or has already happened) regardless.
+            if patch_item is not None:
+                patch_item["status"] = status
+                self._repaint_item_status_cell(patch_item.get("id"), status)
+            raise
         except Exception:
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
             if notify_toast and callable(notify):
@@ -6691,6 +6795,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the calling (event-loop) thread, and passed into the thread body as a
         plain string -- the worker body itself must never read a screen
         reactive directly.
+
+        Fix wave (F4, Minor, docs-only): this OS thread is not cancellable --
+        `asyncio.to_thread`'s underlying executor future can only be
+        cancelled before it starts running, and by the time an
+        `exclusive=True` supersede on either status-writing worker group
+        actually delivers a `CancelledError` (at the `await` on the last line
+        below), this thread already has started. So a "last press wins"
+        contract for repeat Ingest/Ignore-then-Ignore/Ingest on the SAME item
+        (`_ITEM_STATUS_ACTION_WORKER_GROUP_PREFIX`'s per-item group) is NOT
+        guaranteed at the database: the superseded write's thread and its
+        replacement's thread are two independent, un-ordered zombies racing
+        each other to the same row, and either can land last. The per-item
+        group bounds what the UI settles on (whichever write's continuation
+        runs last patches the cache and repaints the cell), not what order
+        the two durable writes commit in.
 
         Returns:
             The controller's result dict, unused by the only current caller

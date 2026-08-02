@@ -28,6 +28,8 @@ reloading and recomposing.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, DataTable
 
@@ -343,3 +345,175 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
         )
         assert pane.selected_item is not None
         assert pane.selected_item.get("title") == "Item 2"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
+    """Fix wave, F2a (whole-branch review, Important).
+
+    `_ITEM_STATUS_WORKER_GROUP` deliberately lets a repeat mark-read-on-open
+    supersede its own in-flight sibling, so a fast `j`/`k` run does not queue
+    one write per keystroke. Once TASK-1541 moved the write onto a genuine
+    `asyncio.to_thread` suspension point, that same supersede became able to
+    actually deliver `CancelledError` to a DIFFERENT item's write in flight
+    -- but the OS thread underneath `asyncio.to_thread` is not itself
+    cancellable, so item A's write still lands in the database regardless.
+
+    Reproduces that directly: item A's write is slowed (monkeypatched
+    `WatchlistsBackendController.update_item_status`, mirroring how the
+    reviewer's scaffold widened a contended SQLite lock), A is opened
+    (dispatching its mark-read-on-open worker), and -- before that slow
+    write can possibly finish -- B is opened too, in the SAME worker group,
+    simulating the fast `j`/`k` cross-item supersede. A's write is left to
+    land, then the cached dict for A must read "reviewed", not the stale
+    "new" that would leak through if `_update_item_status`'s continuation
+    only patched the cache on the (never-reached, here) non-cancelled path.
+
+    Mutation: removing the `except asyncio.CancelledError` patch block in
+    `_update_item_status` reds this on the final assertion -- the database
+    reaches "reviewed" but the cached dict stays stranded at "new".
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    source_id, item_a_id = _seed_one_new_item(db, content_hash="hash-cancel-coherence-a")
+    with db.transaction() as conn:
+        item_b_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://summitroute.com/blog/2024/cancel-coherence-b/",
+                "title": "Item B",
+                "content_hash": "hash-cancel-coherence-b",
+                "status": "new",
+            },
+            run_id=None,
+            now="2026-07-28T09:00:01+00:00",
+        )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(40):
+            await pilot.pause()
+            if len(pane.items) >= 2:
+                break
+        assert len(pane.items) == 2, "both seeded items must reach the Items pane"
+
+        item_a = next(item for item in pane.items if item["item_id"] == item_a_id)
+        item_b = next(item for item in pane.items if item["item_id"] == item_b_id)
+
+        real_update_item_status = screen._controller.update_item_status
+
+        async def _slow_for_a(*, runtime_backend=None, item_id, status):
+            if item_id == item_a["id"]:
+                await asyncio.sleep(0.4)
+            return await real_update_item_status(
+                runtime_backend=runtime_backend, item_id=item_id, status=status
+            )
+
+        screen._controller.update_item_status = _slow_for_a
+
+        # Dispatch A's mark-read-on-open. Its write is now slowed to 0.4s, so
+        # it is still suspended on the genuine `await asyncio.to_thread(...)`
+        # boundary well past the couple of pauses below.
+        screen._mark_item_read_on_open(item_a)
+        await pilot.pause(0.05)
+        await pilot.pause(0.05)
+
+        # Simulate the fast `j`/`k` cross-item supersede: B's dispatch lands
+        # in the SAME `_ITEM_STATUS_WORKER_GROUP`, `exclusive=True`, so it
+        # cancels A's still-suspended worker.
+        screen._mark_item_read_on_open(item_b)
+
+        # Let A's slowed write actually land -- the OS thread cannot be
+        # cancelled, so this must eventually succeed regardless of the
+        # supersede above.
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if db.get_item_status(item_a_id) == "reviewed":
+                break
+        assert db.get_item_status(item_a_id) == "reviewed", (
+            "the OS thread under asyncio.to_thread is not cancellable -- A's "
+            "write must complete in the database even though its coroutine "
+            "was cancelled by B's supersede"
+        )
+
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if item_a.get("status") == "reviewed":
+                break
+        assert item_a.get("status") == "reviewed", (
+            "the cached dict must be patched to match the database even "
+            "though A's coroutine was cancelled mid-flight -- otherwise it "
+            "is left reading a stale 'new' forever, diverged from a "
+            "database the app itself just wrote"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_cache():
+    """Fix wave, F2b (whole-branch review, Important) -- the other half of F2.
+
+    `_mark_item_read_on_open` only ever declines its write when the CACHED
+    dict already disagrees with "new" -- and nothing patches that cache when
+    an item is ingested through the Inspector's `Ingest` button (no
+    `patch_item=` there, by design -- see `handle_ingest_requested`). So a
+    cache that goes stale for ANY reason (this test moves the database
+    directly, "behind the cache's back", rather than reproducing the F2a
+    cancellation race) must not let a subsequent open of that same item
+    overwrite the real, backend-held status.
+
+    Mutation: removing the `_blocking_status_for` backend gate in
+    `_confirm_new_then_mark_item_read_on_open` (falling back to trusting the
+    cached "new" alone, as `_mark_item_read_on_open` did before this fix)
+    reds this on the final assertion -- the ingest gets overwritten with
+    "reviewed".
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, item_id = _seed_one_new_item(db, content_hash="hash-stale-cache-overwrite")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(40):
+            await pilot.pause()
+            if pane.items:
+                break
+        assert pane.items, "the seeded item must reach the Items pane"
+
+        item = pane.items[0]
+        assert item["item_id"] == item_id
+        assert item.get("status") == "new", "precondition: the cached dict starts at 'new'"
+
+        # Ingest it directly through the database -- "behind the cache's
+        # back" -- exactly what the real Ingest gesture also does, since
+        # `handle_ingest_requested` passes no `patch_item=`. The cached
+        # dict above is a separate object and is NOT touched by this.
+        db.mark_item_status(item_id, "ingested")
+        assert item.get("status") == "new", (
+            "the cached dict must still read stale 'new' -- otherwise this "
+            "test is not exercising a stale cache at all"
+        )
+
+        # Re-open the item: the cache still says "new", so without the
+        # backend gate this fires the write unconditionally.
+        screen._mark_item_read_on_open(item)
+        for _ in range(40):
+            await pilot.pause(0.05)
+
+        assert db.get_item_status(item_id) == "ingested", (
+            "opening an item whose cache is stale must not overwrite a real "
+            "backend status the cache does not know about -- the ingest "
+            "must survive"
+        )
