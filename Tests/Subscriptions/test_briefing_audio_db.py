@@ -209,10 +209,11 @@ def test_list_briefing_audio_offset_pages_through_every_row_without_gaps_or_repe
 
     limit = 3
     seen: list[int] = []
-    # 7 rows / limit 3 -> 3 pages + the empty terminator; cap far above so
-    # an offset-ignoring regression fails fast instead of spinning to the
-    # global timeout (task-1761).
-    max_pages = 10
+    # Pages of seeded data + the empty terminator, derived from the data so
+    # the cap can never lag a future reseeding; exceeding it means offset is
+    # genuinely not advancing, and the walk fails fast instead of spinning
+    # to the global timeout (task-1761).
+    max_pages = len(expected_newest_first) // limit + 2
     for page_number in range(max_pages):
         page = db.list_briefing_audio(
             script_id, limit=limit, offset=page_number * limit
