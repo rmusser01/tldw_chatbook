@@ -10903,6 +10903,13 @@ class ChatScreen(BaseAppScreen):
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
             scope_item_count=self._console_retrieval_scope_run_recipe_count(),
+            change_review_available=(
+                getattr(
+                    self._console_agent_bridge, "change_tracking_enabled", False
+                )
+                if self._console_agent_bridge is not None
+                else False
+            ),
             ephemeral=self._console_active_session_is_ephemeral(),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
@@ -17511,6 +17518,58 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    def _open_change_review(self, run_id: str | None = None) -> None:
+        """Push the Change Review screen for the active conversation.
+
+        TASK-1972. Honest empty states are the SCREEN's job: opening with no
+        recorded turns shows "No file changes recorded", so this opener only
+        needs a provider -- absent (no tracker / no git / no persisted
+        conversation) it explains instead of silently no-oping.
+
+        Args:
+            run_id: Turn to select on open; ``None`` opens the latest.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        conversation_id = None
+        controller = self._console_chat_controller
+        if controller is not None:
+            try:
+                # The SAME id the run store keys by (persisted id when set,
+                # session id otherwise) -- change_snapshots joins agent_runs
+                # on it, so any other spelling shows an empty history.
+                active = controller.store.active_session_id
+                if active:
+                    conversation_id = controller._agent_conversation_id(active)
+            except Exception:  # noqa: BLE001 -- opener must degrade, not raise
+                conversation_id = None
+        provider = (
+            bridge.change_review_provider(conversation_id)
+            if bridge is not None and conversation_id
+            else None
+        )
+        if provider is None:
+            self.app_instance.notify(
+                "Change review needs git and a saved conversation.",
+                severity="warning",
+            )
+            return
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            ChangeReviewScreen,
+        )
+
+        # initial_run_id rides the constructor: a post-push select_turn call
+        # raced the screen's own compose (NoMatches) -- caught by the opener
+        # wiring test.
+        self.app.push_screen(ChangeReviewScreen(provider, initial_run_id=run_id))
+
+    @on(Button.Pressed, "#console-inspector-review-changes")
+    def handle_console_inspector_review_changes(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open the Change Review screen from the run inspector (TASK-1972)."""
+        event.stop()
+        self._open_change_review()
+
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
         """Focus the pending approval card from the Console inspector seam."""
@@ -17569,6 +17628,11 @@ class ChatScreen(BaseAppScreen):
 
         if action_id != "delete":
             self._pending_console_delete_message_id = None
+
+        if action_id == "review-changes":
+            run_id = getattr(message, "change_review_run_id", None)
+            self._open_change_review(run_id)
+            return True
 
         if action_id == "save-as":
             destinations = self._console_save_as_destinations(message)
@@ -18404,6 +18468,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
             ("console-message-action-keep-", "keep"),
+            ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
