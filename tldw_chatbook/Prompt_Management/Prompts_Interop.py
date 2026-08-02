@@ -409,6 +409,7 @@ def add_or_update_prompt_interop(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
@@ -427,6 +428,7 @@ def add_or_update_prompt_interop(
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
 
@@ -499,6 +501,7 @@ PROMPT_FIELDS = [
     "prompt_format",
     "prompt_schema_version",
     "prompt_definition",
+    "artifact_type",
 ]
 
 
@@ -533,6 +536,15 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
             "Defaulting to legacy."
         )
         normalized["prompt_format"] = "legacy"
+
+    artifact_type = normalized["artifact_type"]
+    if artifact_type is None:
+        normalized["artifact_type"] = "prompt"
+    elif not isinstance(artifact_type, str) or artifact_type not in {
+        "prompt",
+        "recipe",
+    }:
+        raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
 
     if normalized["prompt_schema_version"] is not None and not isinstance(
         normalized["prompt_schema_version"], int
@@ -922,6 +934,7 @@ def import_prompts_from_files(
                     prompt_format=prompt_data.get("prompt_format"),
                     prompt_schema_version=prompt_data.get("prompt_schema_version"),
                     prompt_definition=prompt_data.get("prompt_definition"),
+                    artifact_type=prompt_data.get("artifact_type"),
                 )
                 logger.info(
                     f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}"

@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import InputError, PromptsDatabase, add_or_update_prompt
 
 
 def seed_v2_prompt_database(database_path, *, name, user_prompt):
@@ -261,5 +261,44 @@ def test_fresh_v3_database_has_prompt_artifact_default():
         }
         assert columns["artifact_type"]["notnull"] == 1
         assert columns["artifact_type"]["dflt_value"] == "'prompt'"
+    finally:
+        database.close_connection()
+
+
+def test_standalone_overwrite_helper_preserves_recipe_artifact_type():
+    database = PromptsDatabase(":memory:", client_id="standalone-overwrite")
+    try:
+        add_or_update_prompt(
+            database,
+            name="Reusable Recipe",
+            author="Author",
+            details="initial",
+            user_prompt="initial compiled text",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition={"kind": "block_recipe", "schema_version": 2, "lanes": []},
+            artifact_type="recipe",
+        )
+        add_or_update_prompt(
+            database,
+            name="Reusable Recipe",
+            author="Author",
+            details="overwritten",
+            user_prompt="updated compiled text",
+            artifact_type="recipe",
+        )
+
+        detail = database.fetch_prompt_details("Reusable Recipe")
+        assert detail["artifact_type"] == "recipe"
+        assert detail["details"] == "overwritten"
+
+        with pytest.raises(InputError, match="artifact_type"):
+            add_or_update_prompt(
+                database,
+                name="Invalid artifact",
+                author=None,
+                details=None,
+                artifact_type="invalid",
+            )
     finally:
         database.close_connection()

@@ -859,6 +859,15 @@ class PromptsDatabase:
             raise InputError("expected_version must be a positive integer or None.")
         return expected_version
 
+    @staticmethod
+    def _is_busy_snapshot_error(error: BaseException) -> bool:
+        """Identify SQLite's WAL stale-snapshot error without masking other I/O errors."""
+        return (
+            isinstance(error, sqlite3.OperationalError)
+            and getattr(error, "sqlite_errorcode", None)
+            == getattr(sqlite3, "SQLITE_BUSY_SNAPSHOT", 517)
+        )
+
     def _serialize_prompt_definition(self, prompt_definition: Any) -> Optional[str]:
         if prompt_definition is None:
             return None
@@ -1830,6 +1839,10 @@ class PromptsDatabase:
                 )
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            if self._is_busy_snapshot_error(e):
+                e = ConflictError(
+                    "Prompt update lost a version race.", "Prompts", prompt_id
+                )
             # Log error metrics
             duration = time.time() - start_time
             error_type = (
@@ -3038,6 +3051,10 @@ def add_or_update_prompt(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     keywords: Optional[List[str]] = None,
+    prompt_format: Optional[str] = None,
+    prompt_schema_version: Optional[int] = None,
+    prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
@@ -3054,6 +3071,10 @@ def add_or_update_prompt(
         user_prompt=user_prompt,
         keywords=keywords,
         overwrite=True,  # Key change: always overwrite/update if exists
+        prompt_format=prompt_format,
+        prompt_schema_version=prompt_schema_version,
+        prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
 

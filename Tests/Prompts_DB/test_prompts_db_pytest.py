@@ -286,6 +286,56 @@ class TestPromptOperations:
             first.close_connection()
             second.close_connection()
 
+    def test_busy_snapshot_from_a_second_writer_is_reported_as_conflict(
+        self, temp_db_path
+    ):
+        """A WAL snapshot race raises ConflictError and leaves the winner intact."""
+        first = PromptsDatabase(temp_db_path, client_id="writer-one")
+        second = PromptsDatabase(temp_db_path, client_id="writer-two")
+        try:
+            prompt_id, prompt_uuid, _ = first.add_prompt(
+                name="WAL Race Prompt",
+                author="Author",
+                details="original details",
+                system_prompt="original system",
+                user_prompt="original user",
+            )
+            expected_version = first.fetch_prompt_details(prompt_uuid)["version"]
+            raced = False
+
+            def commit_second_writer_before_first_update(statement):
+                nonlocal raced
+                if raced or not statement.startswith("UPDATE Prompts SET"):
+                    return
+                raced = True
+                second.update_prompt_by_id(
+                    prompt_id,
+                    {"details": "winning writer"},
+                    expected_version=expected_version,
+                )
+
+            first.get_connection().set_trace_callback(
+                commit_second_writer_before_first_update
+            )
+            try:
+                with pytest.raises(ConflictError, match="version race"):
+                    first.update_prompt_by_id(
+                        prompt_id,
+                        {"details": "stale writer", "user_prompt": "must not persist"},
+                        expected_version=expected_version,
+                    )
+            finally:
+                first.get_connection().set_trace_callback(None)
+
+            assert raced
+            stored = first.fetch_prompt_details(prompt_uuid, include_deleted=True)
+            assert stored["details"] == "winning writer"
+            assert stored["user_prompt"] == "original user"
+            assert stored["version"] == expected_version + 1
+        finally:
+            first.close_connection()
+            second.close_connection()
+
 
 class TestKeywordOperations:
     """Test keyword management."""

@@ -4,13 +4,18 @@ import pytest
 
 from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     add_prompt,
+    add_or_update_prompt_interop,
     apply_server_prompt_version,
     export_prompt_to_server_payload,
     fetch_prompt_details,
     import_prompt_from_server_payload,
+    import_prompts_from_files,
     initialize_interop,
+    parse_json_prompts_from_content,
+    parse_yaml_prompts_from_content,
     shutdown_interop,
 )
+from tldw_chatbook.DB.Prompts_DB import InputError
 from tldw_chatbook.Prompt_Management.server_prompt_adapter import (
     local_prompt_to_preview_payload,
     local_prompt_to_server_payload,
@@ -157,3 +162,43 @@ def test_apply_server_prompt_version_updates_existing_prompt():
     assert updated["prompt_format"] == "structured"
     assert updated["prompt_schema_version"] == 2
     assert json.loads(updated["prompt_definition"])["schema_version"] == 2
+
+
+def test_json_yaml_import_normalization_and_overwrite_keep_recipe_type(tmp_path):
+    json_payload = json.dumps(
+        {
+            "name": "Imported Recipe",
+            "artifact_type": "recipe",
+            "user_prompt": "compiled recipe content",
+        }
+    )
+    json_recipe = parse_json_prompts_from_content(json_payload)[0]
+    yaml_recipe = parse_yaml_prompts_from_content(
+        "name: YAML Recipe\nartifact_type: recipe\nuser_prompt: yaml compiled\n"
+    )[0]
+    assert json_recipe["artifact_type"] == "recipe"
+    assert yaml_recipe["artifact_type"] == "recipe"
+
+    import_path = tmp_path / "recipes.json"
+    import_path.write_text(json_payload, encoding="utf-8")
+    result = import_prompts_from_files(import_path, base_directory=str(tmp_path))
+    assert result[0]["status"] == "success"
+
+    add_or_update_prompt_interop(
+        name="Imported Recipe",
+        author=None,
+        details="overwritten recipe",
+        user_prompt="updated compiled recipe content",
+        artifact_type="recipe",
+    )
+    detail = fetch_prompt_details("Imported Recipe")
+    assert detail["artifact_type"] == "recipe"
+    assert detail["details"] == "overwritten recipe"
+
+    with pytest.raises(InputError, match="artifact_type"):
+        add_or_update_prompt_interop(
+            name="Invalid Recipe",
+            author=None,
+            details=None,
+            artifact_type="invalid",
+        )
