@@ -1,7 +1,7 @@
 ---
 id: TASK-1541
 title: 'Watchlists screen: item-status writes never leave the event loop'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 15:53'
 labels:
@@ -40,3 +40,11 @@ screen-wide version of the same bug across every other item-status write path.
 - [ ] #2 The fix does not add `exclusive=True` cancellation that would abort one in-flight item-status write because another item's write started
 - [ ] #3 Existing Ingest/Ignore/unread-toggle/mark-read-on-open item-action tests still pass unchanged
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Mirror `_toggle_briefing_queue`'s (`c43f0f840`) `asyncio.to_thread` shape in `_update_item_status`: the controller call wrapped so the transactional write leaves the event loop; keep `run_worker` dispatch but audit its `exclusive=True` per AC #2 (per-item writes must not cancel each other).
+2. Thread-identity test following `test_the_queue_write_runs_off_the_event_loop_thread`; run the existing Ingest/Ignore/unread/mark-read tests unchanged (AC #3).
+3. Mutation: revert the to_thread wrap → thread-identity test REDs.
+<!-- SECTION:PLAN:END -->
