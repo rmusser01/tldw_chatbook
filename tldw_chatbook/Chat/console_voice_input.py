@@ -641,6 +641,7 @@ COMMAND_PHRASES: dict[str, str] = {
     "discard": "discard",
     "read that back": "read-that-back",
     "new session": "new-session",
+    "hands free": "hands-free",
 }
 
 #: Recognizer mis-hearings observed on real hardware, mapped to the phrase
@@ -837,6 +838,59 @@ def warm_before_capture_enabled() -> bool:
         True when the warm-up should run.
     """
     raw = get_cli_setting("dictation.warm_model_before_capture", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "no", "0", "off"}
+    return bool(raw)
+
+
+#: Default seconds a finalized segment sits in `countdown` before the
+#: hands-free loop auto-sends it (`HandsFreeController`'s own default is
+#: identical -- this is the config-resolved value the screen passes in as
+#: `send_delay_seconds`). See `Docs/superpowers/specs/2026-08-02-hands-free-
+#: loop-design.md`'s honest pause-to-send arithmetic.
+DEFAULT_HANDSFREE_SEND_DELAY_SECONDS = 1.5
+
+
+def handsfree_send_delay_seconds() -> float:
+    """Countdown duration from `dictation.handsfree_send_delay_seconds`.
+
+    Sibling validation shape to `Chat/attachment_core.py`'s numeric config
+    readers (e.g. `max_image_bytes`): a non-numeric or non-positive
+    configured value is invalid, logged, and falls back to the default
+    rather than arming a zero/negative/broken countdown.
+
+    Returns:
+        The countdown duration in seconds, always positive.
+    """
+    raw = get_cli_setting(
+        "dictation", "handsfree_send_delay_seconds", DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        logger.warning(
+            "dictation.handsfree_send_delay_seconds invalid ({!r}); using {}",
+            raw,
+            DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
+        )
+        return DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    return value
+
+
+def acoustic_barge_in_enabled() -> bool:
+    """Return whether acoustic (voice) barge-in is enabled for hands-free.
+
+    `dictation.acoustic_barge_in`, default False -- opt-in, "headphones
+    recommended" (see the design doc): without echo cancellation, a spoken
+    barge-in on speakers would have the recognizer transcribe the reply's
+    own voice. Sibling validation shape to `warm_before_capture_enabled`.
+
+    Returns:
+        True when acoustic barge-in should be enabled.
+    """
+    raw = get_cli_setting("dictation.acoustic_barge_in", False)
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
