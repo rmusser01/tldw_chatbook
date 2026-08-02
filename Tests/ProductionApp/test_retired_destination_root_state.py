@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, TabbedContent
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
@@ -11,10 +10,10 @@ from tldw_chatbook.Constants import (
     TAB_EVALS,
     TAB_LIBRARY,
     TAB_MCP,
-    TAB_SEARCH,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -22,7 +21,6 @@ from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
-from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 
 
 REMOVED_ROOT_NAMES = (
@@ -96,11 +94,8 @@ async def _drive_affected_routes(
     app: TldwCli,
     pilot,
     *,
-    query: str,
-    search_tab: str,
     mcp_mode: str,
     eval_id: str,
-    expected_initial_search: tuple[str, str] | None = None,
 ) -> None:
     app.post_message(NavigateToScreen("library"))
     library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
@@ -121,23 +116,29 @@ async def _drive_affected_routes(
     assert notes._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
     _assert_removed_root_state_absent(app)
 
+    # The standalone Search screen is retired (RAG UX v2 PR-1, Task 1): the
+    # legacy "search" route now aliases to Library's Search/RAG canvas, same
+    # as "notes"/"ingest" above.
     app.post_message(NavigateToScreen("search"))
-    search = await _wait_for_screen(app, pilot, SearchScreen, TAB_SEARCH)
-    search_query = search.query_one("#search-query-input", Input)
-    search_tabs = search.query_one("#search-tabs", TabbedContent)
-    if expected_initial_search is not None:
-        expected_query, expected_tab = expected_initial_search
-        assert search_query.value == expected_query
-        assert search_tabs.active == expected_tab
-    search_query.value = query
-    search_tabs.active = search_tab
-    await pilot.pause()
-    assert search_query.value == query
-    assert search_tabs.active == search_tab
+    search = await _wait_for_screen(
+        app,
+        pilot,
+        LibraryScreen,
+        TAB_LIBRARY,
+        previous_screen=notes,
+    )
+    assert search is not notes
+    assert search._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
     _assert_removed_root_state_absent(app)
 
     app.post_message(NavigateToScreen("ingest"))
-    ingest = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
+    ingest = await _wait_for_screen(
+        app,
+        pilot,
+        LibraryScreen,
+        TAB_LIBRARY,
+        previous_screen=search,
+    )
     ingest.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
     await pilot.pause()
     assert ingest._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
@@ -176,11 +177,13 @@ async def _drive_affected_routes(
     assert evals._selection.id == eval_id
     _assert_removed_root_state_absent(app)
 
+    # Revisit the alias to prove it isn't just a first-navigation fluke: the
+    # rail selection lands on the Search/RAG row again after other screens
+    # have been visited in between.
     app.post_message(NavigateToScreen("search"))
-    restored_search = await _wait_for_screen(app, pilot, SearchScreen, TAB_SEARCH)
+    restored_search = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
     assert restored_search is not search
-    assert restored_search.query_one("#search-query-input", Input).value == query
-    assert restored_search.query_one("#search-tabs", TabbedContent).active == search_tab
+    assert restored_search._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
     _assert_removed_root_state_absent(app)
 
 
@@ -191,7 +194,7 @@ async def test_registered_destinations_own_state_without_retired_root_mirrors(
     expected_routes = {
         "library": ("library", TAB_LIBRARY, LibraryScreen),
         "notes": ("library", TAB_LIBRARY, LibraryScreen),
-        "search": ("search", TAB_SEARCH, SearchScreen),
+        "search": ("library", TAB_LIBRARY, LibraryScreen),
         "ingest": ("library", TAB_LIBRARY, LibraryScreen),
         "mcp": ("mcp", TAB_MCP, MCPScreen),
         "tools_settings": ("tools_settings", TAB_MCP, MCPScreen),
@@ -206,8 +209,6 @@ async def test_registered_destinations_own_state_without_retired_root_mirrors(
         await _drive_affected_routes(
             app,
             pilot,
-            query="TASK-904 destination-owned query",
-            search_tab="saved-tab",
             mcp_mode="tools",
             eval_id="task-904-destination-owned",
         )
@@ -218,9 +219,6 @@ async def test_registered_destinations_own_state_without_retired_root_mirrors(
         await _drive_affected_routes(
             fresh_app,
             fresh_pilot,
-            query="TASK-904 fresh destination query",
-            search_tab="history-tab",
             mcp_mode="permissions",
             eval_id="task-904-fresh-destination-owned",
-            expected_initial_search=("", "search-tab"),
         )

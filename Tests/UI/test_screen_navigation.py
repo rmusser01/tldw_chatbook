@@ -2158,6 +2158,39 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
 
 
 @pytest.mark.asyncio
+async def test_search_route_lands_on_library_rag_canvas():
+    """``NavigateToScreen("search")`` must land on Library with the
+    Search/RAG rail row selected. The standalone Search screen is retired
+    (RAG UX v2 PR-1, Task 1) and the legacy "search" route now re-points into
+    Library, mirroring ``test_prompts_route_lands_on_library_with_prompts_row_selected``
+    /``test_skills_route_lands_on_library_with_skills_row_selected`` exactly --
+    "search" has no dedicated re-entry action to carry a nav-context, so the
+    bare alias route itself must supply it via
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
 async def test_media_screen_round_trip_restores_type_filter_and_search_term():
     """Regression lock for the bug this task fixes: nothing seeds
     ``MediaWindow.active_media_type`` on a screen-navigated visit except a
@@ -2240,12 +2273,19 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
 
 
 @pytest.mark.asyncio
-async def test_search_screen_round_trip_restores_query_input():
-    """SearchScreen wraps ``SearchRAGWindow`` directly with no app-owned
-    runtime-state seam of its own (unlike Media's shared
-    ``MediaRuntimeState``), so its query input is entirely at the mercy of
-    ``_screen_states``.
+async def test_search_route_round_trips_to_the_library_rag_row():
+    """The retired standalone Search screen is folded into Library (RAG UX
+    v2 PR-1, Task 1): the "search" route no longer has a runtime-state seam
+    of its own, so this locks that the alias's rail-row selection survives a
+    round trip through another screen and is not just a first-navigation
+    fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``. Unlike the "library" +
+    click entry point exercised by
+    ``test_library_screen_round_trip_restores_rag_query_and_rail_selection``,
+    entering via the bare "search" alias re-applies that legacy nav context
+    on every visit rather than relying solely on restored screen state.
     """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
@@ -2257,15 +2297,12 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
-        assert type(app.screen).__name__ == "SearchScreen"
-
-        query_input = app.screen.query_one("#search-query-input", Input)
-        query_input.value = "quantum encryption notes"
-        await pilot.pause()
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
         for _ in range(150):
@@ -2277,15 +2314,14 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
 
         restored_screen = app.screen
-        assert type(restored_screen).__name__ == "SearchScreen"
-        restored_input = restored_screen.query_one("#search-query-input", Input)
-        assert restored_input.value == "quantum encryption notes"
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
 
 # --- Media/Search unit-style save_state/restore_state contracts -----------

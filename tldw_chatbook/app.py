@@ -6013,13 +6013,15 @@ class TldwCli(
     # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
     # Notes tab -- except "prompts" (the retired Personas "prompts" mode
-    # chip, Task 7) and "skills" (the retired standalone Skills tab, Skills
-    # sub-project Task 5) have no dedicated re-entry action to carry that
-    # context, so the bare alias route itself must supply it here.
+    # chip, Task 7), "skills" (the retired standalone Skills tab, Skills
+    # sub-project Task 5), and "search" (the retired standalone Search
+    # screen, RAG UX v2 PR-1 Task 1) have no dedicated re-entry action to
+    # carry that context, so the bare alias route itself must supply it here.
     # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+        "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
         "customize": {"category": "theme"},
     }
 

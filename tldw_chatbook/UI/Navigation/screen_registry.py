@@ -116,9 +116,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "media": ScreenRoute(
         "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
     ),
-    "search": ScreenRoute(
-        "search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"
-    ),
     "evals": ScreenRoute(
         "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
     ),
@@ -200,6 +197,15 @@ _SCREEN_ALIASES = {
     # ``Research_Modules/`` are intentionally NOT deleted here; that is a
     # separate, larger decision.
     "research": "library",
+    # The standalone Search screen is retired (RAG UX v2 PR-1, critique
+    # 2026-08-02T21-11-50Z): search/RAG now lives entirely inside Library's
+    # Search / RAG canvas (rail row "browse-search"), with Console staging
+    # via the RAG modal. Existing startup configs / callers using the
+    # legacy "search" route id resolve to Library instead of dead-ending --
+    # mirrors the "notes"/"prompts"/"skills"/"ingest" aliases above. The
+    # route inventory already declared search -> library
+    # (UI/Workbench/route_inventory.py).
+    "search": "library",
     # The standalone Coding screen is retired (merged into Console). Legacy
     # "coding" route ids still resolve to a real screen (Console) instead of
     # erroring; the shell destination model owns the same fold.
