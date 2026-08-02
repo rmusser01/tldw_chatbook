@@ -14,13 +14,15 @@ The shipped configuration advertises five settings under
 None of these settings is read by the subscription runtime. The behavior they
 claim to control already has separate owners:
 
-- SSRF and URL-scheme policy: `tldw_chatbook.Utils.egress`, configured by
-  `[web_security]`.
+- SSRF, DNS, private-address, and metadata policy:
+  `tldw_chatbook.Utils.egress`, configured by `[web_security]`. The
+  subscription boundary independently retains its HTTP/HTTPS scheme allowlist.
 - Redirect bounds: `tldw_chatbook.Utils.egress.MAX_REDIRECT_HOPS`.
 - TLS certificate verification: the per-subscription `ssl_verify` database
   field used by the monitoring engine.
-- XML parsing: production subscription parsers use `defusedxml` when installed
-  and the existing warned standard-library fallback otherwise. The separate
+- XML parsing: production subscription parser modules prefer `defusedxml` when
+  installed and otherwise retain their existing module-specific standard-library
+  fallback behavior. The separate
   `SecurityValidator.validate_xml_content()` helper has no production callers
   and is not a runtime owner of this behavior.
 - Fetch timeout: the transport/monitor implementation, not the unread
@@ -65,22 +67,12 @@ whenever SSRF checking is disabled. The allowlist therefore preserves the
 subscription input contract independently of the optional SSRF policy; it is
 not a second blocked-scheme denylist.
 
-`SecurityValidator.validate_feed_url()` retains only subscription-boundary
-shape handling and normalized output. It will:
-
-1. reject empty input;
-2. strip leading and trailing whitespace once;
-3. parse that stripped candidate;
-4. preserve the existing `ValueError` contract for a missing scheme or host;
-5. preserve `SSRFError` for any scheme outside HTTP/HTTPS, even when the egress
-   kill switch is disabled;
-6. pass the same stripped candidate to `Utils.egress.evaluate_url_policy()`;
-7. map every denied decision to `SSRFError`; and
-8. return the existing fragment-free normalized URL.
-
-The special `decision.reason != "disabled"` condition is removed because a
-disabled egress decision is already allowed. Treating every denied decision as
-an error is simpler and fail-closed.
+`SecurityValidator.validate_feed_url()` otherwise remains behaviorally
+unchanged: it preserves the existing empty-input and shape errors, the
+HTTP/HTTPS allowlist, delegation call shape, denial mapping, and fragment-free
+normalization. Changing whitespace handling or denial-reason interpretation is
+outside TASK-859's acceptance criteria and is not required to remove the dead
+policy data.
 
 This keeps the public method and exception surface intact while making egress
 the only runtime owner of DNS, private-address, and cloud-metadata policy. The
@@ -95,7 +87,8 @@ prose explaining:
 - the global egress switch and allowlist;
 - the per-subscription `ssl_verify` control;
 - the code-owned redirect bound; and
-- the current optional-`defusedxml` XML behavior.
+- the current dependency-controlled, module-specific optional-`defusedxml` XML
+  behavior.
 
 The documentation will explicitly say that legacy `[subscriptions.security]`
 tables are ignored and safe to remove.
@@ -114,10 +107,6 @@ The intended externally observable contracts remain:
 | `[web_security].enabled = false` and HTTP/HTTPS input | Normalized URL with no DNS policy check |
 | `[web_security].enabled = false` and unsupported scheme | `SSRFError` |
 
-The one deliberate correction is whitespace consistency: a URL accepted for
-parsing after `.strip()` is now the same value evaluated by egress and returned
-normalized.
-
 ## Verification strategy
 
 Tests use direct functions and production modules only; no reduced application
@@ -130,8 +119,7 @@ or test-only application is introduced.
    states, proving the surviving switch changes runtime behavior.
 3. URL-boundary tests preserve missing-scheme/host and unsupported-scheme
    exception contracts, explicitly prove an unsupported scheme stays rejected
-   while `[web_security].enabled` is false, and cover the stripped-candidate
-   correction.
+   while `[web_security].enabled` is false.
 4. Metadata tests cover every canonical egress endpoint, including
    `100.100.100.200` and `fd00:ec2::254`.
 5. An AST-based architecture sentinel scans production Python string constants
@@ -152,6 +140,7 @@ This task does not:
 - make `defusedxml` mandatory or change its fallback policy;
 - make redirect or timeout bounds newly configurable;
 - change the app-wide egress kill switch's ordering or meaning;
+- change subscription URL whitespace normalization or denial-reason mapping;
 - alter the per-subscription `ssl_verify` schema or behavior;
 - rewrite existing user configuration files; or
 - clean up other apparently unread `[subscriptions]`, rate-limit, or
