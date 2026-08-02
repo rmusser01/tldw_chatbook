@@ -1,6 +1,6 @@
 # Active Credential Redaction and Display Validation (TASK-856)
 
-**Status:** Revised after user-requested audit; pending independent re-review
+**Status:** Third-review issue corrected; awaiting user approval
 
 **Task:** TASK-856
 
@@ -201,6 +201,32 @@ The normative matching contract is:
    `sk-` rule is considered. This prevents partial `sk-proj`/`sk-ant` matches.
    No rule recognizes `claude-*`.
 
+Scanner progress is explicit and monotonic:
+
+- after a non-sensitive candidate, the cursor resumes at the end of its
+  separator;
+- after a closed quoted sensitive value, it resumes immediately after the
+  closing quote;
+- after an empty sensitive assignment, it resumes after the CR/LF when present
+  or terminates at end of string;
+- after an unterminated quoted or unquoted sensitive value, it resumes after
+  the CR/LF that bounded the replacement or terminates at end of string; and
+- every iteration advances at least past a separator or line boundary, and
+  scanning continues until no candidate remains.
+
+This permits multiple quoted sensitive assignments on one line and sensitive
+assignments on later lines to be redacted independently. An unquoted sensitive
+assignment intentionally consumes the rest of its own line, so later values on
+that line are removed as part of the same fail-closed replacement rather than
+individually parsed.
+
+After the assignment scanner builds its output, standalone transformations run
+against that output in this exact order: URL userinfo, independent Bearer, then
+the case-sensitive credential families from rule 9. They do not participate in
+the assignment span set. Consequently a standalone-shaped token already
+removed as part of a labeled value cannot create an overlapping replacement;
+subsequent passes only see `***REDACTED***`.
+
 For quoted assignment values, surrounding label syntax, separators, and quotes
 are preserved; only the scalar contents become `***REDACTED***`. For unquoted
 values, the label and separator are preserved and the remainder of the line is
@@ -315,6 +341,12 @@ Focused tests will prove:
   assignment before a sensitive assignment, standalone `Bearer` boundaries,
   including hyphenated larger identifiers, and ordinary standalone `Basic`
   prose;
+- multiple quoted sensitive assignments on one line, sensitive assignments on
+  later lines, empty assignments followed by later secrets, and an unquoted
+  sensitive assignment that fail-closes over the remainder of its line;
+- a standalone-format token inside a labeled sensitive value, proving the
+  assignment scan and subsequent standalone passes do not overlap and remain
+  idempotent;
 - no leakage of fixed sentinel values or credential fragments;
 - preservation of `claude-*`, `max_tokens`, `api_key_env_var`, and ordinary
   identifiers;
