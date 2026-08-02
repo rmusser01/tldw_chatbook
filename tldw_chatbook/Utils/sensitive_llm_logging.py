@@ -58,7 +58,15 @@ def safe_llm_error_detail(value: object) -> object:
 
 
 def safe_llm_url_host(value: object) -> str:
-    """Return only a URL host while sensitive; preserve ordinary diagnostics."""
+    """Return only a URL host while sensitive.
+
+    Args:
+        value: URL-like diagnostic value to sanitize.
+
+    Returns:
+        The original diagnostic outside sensitive requests, otherwise only
+        its hostname or ``"unknown"`` when no safe hostname can be parsed.
+    """
 
     raw = str(value or "")
     if not is_sensitive_llm_request():

@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Tuple, Dict, Any, Iterator, Optional, Union
 
 #
 # Third-Party Libraries
@@ -550,8 +550,18 @@ class PromptsDatabase:
 
     # --- Transaction Context ---
     @contextmanager
-    def transaction(self, immediate: bool = False):
-        """Run database work in a transaction, optionally reserving the writer slot."""
+    def transaction(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Run database work in a transaction.
+
+        Args:
+            immediate: Reserve SQLite's writer slot before yielding when true.
+
+        Yields:
+            The active SQLite connection.
+
+        Raises:
+            Exception: Re-raises the database operation error after rollback.
+        """
         conn = self.get_connection()
         in_outer = conn.in_transaction
         try:
@@ -2281,12 +2291,15 @@ class PromptsDatabase:
             raise ValueError("Per page must be >= 1")
         offset = (page - 1) * per_page
 
-        where_clause = "WHERE deleted = 0" if not include_deleted else ""
+        include_deleted_flag = 1 if include_deleted else 0
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                cursor.execute(f"SELECT COUNT(*) FROM Prompts {where_clause}")
+                cursor.execute(
+                    "SELECT COUNT(*) FROM Prompts WHERE ? = 1 OR deleted = 0",
+                    (include_deleted_flag,),
+                )
                 total_items = cursor.fetchone()[0]
 
                 results_data = []
@@ -2296,16 +2309,17 @@ class PromptsDatabase:
                     # without an N+1 per-row `fetch_keywords_for_prompt`-
                     # style fetch for a whole page -- this is a single extra
                     # TEXT column on the same query, not a second query.
-                    query = f"""SELECT id, name, uuid, author, details, last_modified,
+                    query = """SELECT id, name, uuid, author, details, last_modified,
                                 version, artifact_type,
                                 CASE WHEN length(trim(coalesce(system_prompt, ''))) > 0 THEN 1 ELSE 0 END
                                     AS has_system_prompt,
                                 CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
                                     AS has_user_prompt
                                 FROM Prompts
-                                {where_clause} ORDER BY last_modified DESC, id DESC
+                                WHERE ? = 1 OR deleted = 0
+                                ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
-                    cursor.execute(query, (per_page, offset))
+                    cursor.execute(query, (include_deleted_flag, per_page, offset))
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0

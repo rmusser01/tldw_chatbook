@@ -8,6 +8,7 @@ These tests verify the complete functionality of the PromptsDatabase class
 including schema creation, CRUD operations, and data integrity.
 """
 
+import inspect
 import sqlite3
 import json
 
@@ -48,6 +49,22 @@ def file_db(temp_db_path):
     db = PromptsDatabase(temp_db_path, client_id="test_client")
     yield db
     db.close_connection()
+
+
+def test_transaction_declares_connection_iterator_return_type():
+    """The public transaction context manager exposes its yielded type."""
+    annotation = inspect.signature(PromptsDatabase.transaction).return_annotation
+
+    assert annotation is not inspect.Signature.empty
+    assert "Iterator" in str(annotation)
+    assert "sqlite3.Connection" in str(annotation)
+
+
+def test_list_prompts_does_not_interpolate_sql_fragments():
+    """Prompt listing keeps every SQL statement static for future safety."""
+    source = inspect.getsource(PromptsDatabase.list_prompts)
+
+    assert "{where_clause}" not in source
 
 
 class TestPromptsDBInitialization:

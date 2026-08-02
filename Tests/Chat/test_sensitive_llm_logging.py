@@ -53,6 +53,13 @@ CANARIES = (
 )
 
 
+def test_safe_llm_url_host_public_docstring_is_google_style() -> None:
+    docstring = inspect.getdoc(safe_llm_url_host) or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
 class _ListHandler(logging.Handler):
     def __init__(self, messages: list[str]) -> None:
         super().__init__(level=logging.DEBUG)

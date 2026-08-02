@@ -422,6 +422,53 @@ def test_prompt_scope_lane_flags_accept_only_boolean_or_sqlite_boolean_values(
     ) == expected
 
 
+def test_prompt_scope_unknown_remote_artifact_remains_browsable_but_unsupported():
+    normalized = PromptScopeService._normalize_prompt_list(
+        {
+            "items": [
+                {
+                    "id": 9,
+                    "uuid": "known-prompt",
+                    "name": "Known Prompt",
+                    "artifact_type": "prompt",
+                },
+                {
+                    "id": 10,
+                    "uuid": "future-artifact",
+                    "name": "Future Artifact",
+                    "artifact_type": "workflow",
+                    "system_prompt": "Compatibility system",
+                    "user_prompt": "Compatibility user",
+                },
+                {
+                    "id": 11,
+                    "uuid": "known-recipe",
+                    "name": "Known Recipe",
+                    "artifact_type": "recipe",
+                },
+            ],
+            "total_pages": 1,
+            "current_page": 1,
+            "total_items": 3,
+        },
+        backend="server",
+        page=1,
+        per_page=10,
+    )
+
+    assert [item["name"] for item in normalized["items"]] == [
+        "Known Prompt",
+        "Future Artifact",
+        "Known Recipe",
+    ]
+    future = normalized["items"][1]
+    assert future["artifact_type"] == "unsupported"
+    assert future["artifact_type_raw"] == "workflow"
+    assert future["definition_state"] == "unsupported"
+    assert future["system_prompt"] == "Compatibility system"
+    assert future["user_prompt"] == "Compatibility user"
+
+
 @pytest.mark.asyncio
 async def test_prompt_scope_saves_and_deletes_against_selected_backend():
     policy = FakePolicyEnforcer()
@@ -678,6 +725,27 @@ async def test_prompt_scope_refuses_to_record_recipe_usage_after_authoritative_r
     )
 
     with pytest.raises(ValueError, match="Recipes cannot be used directly"):
+        await service.record_prompt_usage(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == [("get_prompt", "server-uuid-9", False)]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_refuses_to_record_unknown_artifact_usage():
+    server = FakeServerPromptService()
+    server.prompt = {
+        **server.prompt.model_dump(mode="json"),
+        "artifact_type": "workflow",
+    }
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Only Prompt artifacts can be used directly"):
         await service.record_prompt_usage(
             mode="server", prompt_identifier="server-uuid-9"
         )

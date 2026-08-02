@@ -78,6 +78,10 @@ RECIPE_NOT_EXECUTABLE_REASON = (
     "Recipes are reusable structures, not executable prompts. Open Prompts, "
     "edit this Recipe as an unsaved Prompt copy, then save or apply the Prompt."
 )
+UNSUPPORTED_ARTIFACT_REASON = (
+    "This artifact type is unsupported and cannot be used as a Prompt. "
+    "Inspect it in Prompts and convert a supported copy first."
+)
 
 _MODE_TITLES = {
     MODE_INSERT: "Insert prompt",
@@ -229,7 +233,7 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         if token != self._search_token:
             return  # A newer filter change superseded this in-flight search.
         self._results = [
-            record for record in (results or []) if not self._is_recipe(record)
+            record for record in (results or []) if self._is_executable_prompt(record)
         ]
         self._highlighted_index = 0
         await self._render_results()
@@ -300,6 +304,10 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         return str(record.get("artifact_type") or "prompt").casefold() == "recipe"
 
     @staticmethod
+    def _is_executable_prompt(record: Mapping[str, object]) -> bool:
+        return str(record.get("artifact_type") or "prompt").casefold() == "prompt"
+
+    @staticmethod
     def _has_system_part(record: Mapping[str, object]) -> bool:
         return bool(str(record.get("system_prompt") or "").strip())
 
@@ -327,6 +335,10 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
     def _select_record(self, record: Mapping[str, object]) -> None:
         if self._is_recipe(record):
             self._show_reason(RECIPE_NOT_EXECUTABLE_REASON)
+            self._focus_filter_input()
+            return
+        if not self._is_executable_prompt(record):
+            self._show_reason(UNSUPPORTED_ARTIFACT_REASON)
             self._focus_filter_input()
             return
         if self._is_blocked(record):

@@ -679,9 +679,6 @@ class PromptScopeService:
         """Keep new artifact fields while retaining the established normalizer shape."""
         normalized = normalize_prompt_record(record, backend=backend)
         source = cls._source_record(record)
-        normalized["artifact_type"] = normalize_artifact_type(
-            source.get("artifact_type")
-        )
         system_flag = source.get("has_system_prompt")
         user_flag = source.get("has_user_prompt")
         normalized["has_system_prompt"] = (
@@ -958,6 +955,11 @@ class PromptScopeService:
         if normalized_current.get("artifact_type") == "recipe":
             raise ValueError(
                 "Recipes cannot be used directly. Save a Prompt copy before use."
+            )
+        if normalized_current.get("artifact_type") != "prompt":
+            raise ValueError(
+                "Only Prompt artifacts can be used directly. Save a supported "
+                "Prompt copy before use."
             )
         response = await self._maybe_await(
             service.record_prompt_usage(prompt_identifier)

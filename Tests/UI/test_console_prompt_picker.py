@@ -209,6 +209,34 @@ async def test_recipe_detail_slipping_past_search_is_rejected_before_dismiss() -
 
 
 @pytest.mark.asyncio
+async def test_unknown_artifact_detail_is_rejected_before_dismiss() -> None:
+    app = ModalHarness()
+    unknown = _record(
+        local_id=13,
+        name="Future artifact",
+        artifact_type="unsupported",
+    )
+    fake_search = FakePromptSearch([])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        picker = ConsolePromptPickerModal(
+            mode=MODE_INSERT,
+            initial_query="",
+            prompt_search=fake_search,
+        )
+        await app.push_screen(picker, callback=app.capture)
+        await pilot.pause()
+
+        picker._select_record(unknown)
+        await pilot.pause()
+
+        assert app.dismissed_with == "not-called"
+        reason = app.screen.query_one(f"#{REASON_STATIC_ID}", Static)
+        assert reason.display is True
+        assert "unsupported" in str(reason.renderable).lower()
+
+
+@pytest.mark.asyncio
 async def test_apply_system_mode_blocks_empty_system_row_without_dismissing() -> None:
     app = ModalHarness()
     record = _record(local_id=3, name="No System", system_prompt="")
