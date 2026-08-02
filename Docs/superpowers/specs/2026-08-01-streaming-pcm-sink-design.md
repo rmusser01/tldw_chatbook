@@ -22,10 +22,13 @@ playback in tens of milliseconds. V4 (realtime API) cannot exist without the sam
   mono int16 LE.
 - `TTS/backends/kokoro.py` already yields int16 PCM chunks with an explicit sample rate
   (:551-582, `np.int16(samples * 32767).tobytes()`).
-- audio.cpp is NOT a `TTS/backends/` backend: it lives in the newer adapter layer
-  (`TTS/adapters/audio_cpp.py` via `adapter_bootstrap.py`) and is absent from the backend
-  registry the shared TTS generation path uses -- so the proving consumer cannot reach it
-  today. It is therefore OUT of this phase's seam (see Out of scope).
+- The shared TTS generation path now routes through the ADAPTER layer
+  (`TTS_Generation.py` :332, `lease.adapter.synthesize(...)`), and the adapter contract
+  already returns a stream: `TTSAudioResponse` (adapter_types.py :352) carries
+  `byte_stream: AsyncIterator[bytes]`, `audio_format`, and `sample_rate`. audio.cpp is a
+  first-class adapter whose response is a VALIDATED PCM16 WAV delivered as a
+  complete-WAV stream (`TTS/adapters/audio_cpp.py` :42/:498-:508). (An earlier draft of
+  this spec excluded audio.cpp on stale evidence -- a pre-merge boot log; corrected.)
 - Console spoken feedback (`ChatScreen._speak_status`, chat_screen.py :5219) posts
   `TTSRequestEvent(text)`; capture-start silencing posts `TTSPlaybackEvent(action="stop")`
   (:6395). The conversion point is therefore the `TTSRequestEvent` consumer and the existing
@@ -36,10 +39,11 @@ playback in tens of milliseconds. V4 (realtime API) cannot exist without the sam
 One new headless module and one new seam module; one consumer converted.
 
 ```
-TTS backends ──► TTS/pcm_stream.py (seam) ──► Audio/streaming_sink.py ──► speakers
-   (async chunk      "can provider X stream       StreamingPcmSink
-    generators)       PCM? at what rate?"         (sounddevice OutputStream)
-                          │ None → legacy whole-file path unchanged
+shared TTS path ──► TTSAudioResponse ──► TTS/pcm_stream.py (seam) ──► Audio/streaming_sink.py
+ (adapters and        byte_stream +        "is THIS RESPONSE sink-        StreamingPcmSink
+  backends, the        audio_format +       eligible PCM? at what          (sounddevice
+  normal request       sample_rate          rate/offset?"                   OutputStream)
+  path, untouched)                              │ not eligible → legacy whole-file path
 ```
 
 ### `Audio/streaming_sink.py` — `StreamingPcmSink`
@@ -93,28 +97,36 @@ sink.stop()                                 # immediate; emits SinkStopped
 - No pause, no ducking, no resampling this phase (loop spec decides whether barge-in wants
   duck; the seam supplies the true provider rate so resampling has no caller).
 
-### `TTS/pcm_stream.py` — the provider seam
+### `TTS/pcm_stream.py` — the response-eligibility seam
 
 ```python
-info = pcm_stream_info(provider)     # PcmStreamInfo(sample_rate, channels) | None
-aiter = pcm_reply_stream(text=..., provider=..., voice=..., ...)  # async chunks
+plan = sink_plan(response)   # SinkPlan(sample_rate, channels, skip_bytes) | None
 ```
 
-- Implements exactly two providers this phase: **openai** (`response_format="pcm"`,
-  24 kHz) and **kokoro** (native int16 chunks, rate from the backend). Every other
-  provider returns `None` from `pcm_stream_info` and the caller takes the legacy path.
-  The future decode adapter (mp3/opus providers) and the audio.cpp adapter-layer bridge
-  both slot in behind this seam; the sink never changes for either.
-- The seam owns any format normalization (e.g. float32→int16 stays inside the kokoro
-  backend where it already lives; the seam only asserts int16 out).
+- The seam inspects the RESPONSE the normal generation path already produced, never the
+  provider: a `TTSAudioResponse` (or the backend path's equivalent stream + format
+  metadata) is sink-eligible when its audio is raw PCM int16 (`audio_format == "pcm"`,
+  e.g. openai with `response_format="pcm"` at 24 kHz; kokoro's native int16 chunks) or a
+  validated PCM16 WAV (audio.cpp's complete-WAV delivery -- `skip_bytes` covers the
+  44-byte header; rate/channels come from the response metadata). Anything else --
+  mp3/opus/aac, unknown formats, missing sample rate -- returns `None` and the caller
+  takes the legacy whole-file path unchanged.
+- Branching AFTER synthesis means the request path (voice/character resolution,
+  admission, cooldowns) is byte-identical for both branches, and providers are never
+  enumerated: a future decode adapter extends `sink_plan`, and any adapter that starts
+  returning PCM becomes sink-eligible with zero seam changes.
+- The one request-side change: when the configured provider ADVERTISES pcm as a valid
+  response format (openai does, :184), the spoken-feedback request asks for it --
+  otherwise the request is what it always was.
 
 ## Proving consumer: Console spoken feedback
 
 The `TTSRequestEvent` consumer (`handle_tts_request`, an async `@on` handler on the App
--- tts_events.py :392/:1477, app.py :6490) gains a streaming branch: if `sink_available()`
-and `pcm_stream_info(configured_provider)` is not `None`, the branch first silences any
-legacy file playback through the existing stop routine (closing one-voice's opening-side
-hole), then opens a sink and `pump`s the reply stream through it. The whole branch --
+-- tts_events.py :392/:1477, app.py :6490) gains a streaming branch: after the shared
+path produces its response, if `sink_available()` and `sink_plan(response)` is not
+`None`, the branch first silences any legacy file playback through the existing stop
+routine (closing one-voice's opening-side hole), then opens a sink at the plan's
+rate/channels and `pump`s `byte_stream` through it (skipping `skip_bytes`). The whole branch --
 `open()` included (device init costs tens of ms) -- runs INSIDE the same shared
 TTS-generation worker the legacy path already uses, never inline in the handler: this
 repo has already been burned by App-handler work holding the message pump. Otherwise the
@@ -144,8 +156,9 @@ No new config keys. `dictation.spoken_feedback` semantics unchanged.
   ordering, callback-never-raises (fault-injecting fake), buffer cap + `SinkBufferFull`
   once, event sequences, one-voice displacement. Mutation-checked per repo discipline.
 - **`pump` tests**: backpressure retry, cancel-on-stop mid-iteration, iterator-raise path.
-- **Seam tests** with fake backends: per-provider info/stream correctness, WAV header strip,
-  `None` for non-PCM providers.
+- **Seam tests** with fake responses: pcm eligibility, PCM16-WAV eligibility with header
+  skip, `None` for compressed/unknown formats and missing rates -- no provider names
+  anywhere in the seam tests.
 - **Consumer tests**: spoken feedback through a fake sink (streaming branch), fallback
   branch byte-identical to today, capture-start stops the sink. Existing spoken-feedback
   suites keep passing unmodified where they pin the legacy path.
@@ -154,8 +167,6 @@ No new config keys. `dictation.spoken_feedback` semantics unchanged.
 
 ## Out of scope (this phase)
 
-Streaming decode for compressed-format providers; the audio.cpp adapter-layer bridge
-(unreachable from the proving consumer today, and its single-WAV response is one chunk --
-no streaming benefit until the loop needs it); the hands-free loop itself (VAD
+Streaming decode for compressed-format providers; the hands-free loop itself (VAD
 turn-taking, auto-send, barge-in — next spec, builds on this sink); briefings/other
 playback adoption; pause/duck; resampling; any settings UI.
