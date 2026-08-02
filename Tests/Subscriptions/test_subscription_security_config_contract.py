@@ -45,7 +45,9 @@ def _source_tree(source_path: Path) -> ast.Module:
     """Parse one production source file without reading comments as policy."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
-        return ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        return ast.parse(
+            source_path.read_text(encoding="utf-8"), filename=str(source_path)
+        )
 
 
 def _literal_collection_values(node: ast.AST) -> set[str] | None:
@@ -54,9 +56,7 @@ def _literal_collection_values(node: ast.AST) -> set[str] | None:
         if not all(isinstance(element, ast.Constant) for element in node.elts):
             return None
         return {
-            element.value
-            for element in node.elts
-            if isinstance(element.value, str)
+            element.value for element in node.elts if isinstance(element.value, str)
         }
     if (
         isinstance(node, ast.Call)
@@ -155,8 +155,7 @@ def test_disallowed_url_scheme_collections_are_not_duplicated(
 ) -> None:
     """The egress allowlist, rather than blocked-scheme tables, owns scheme policy."""
     assert not _policy_inventory.scheme_violations, (
-        "duplicate disallowed URL-scheme policy: "
-        f"{_policy_inventory.scheme_violations}"
+        f"duplicate disallowed URL-scheme policy: {_policy_inventory.scheme_violations}"
     )
 
 
