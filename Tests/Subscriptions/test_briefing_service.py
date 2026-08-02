@@ -46,6 +46,7 @@ from tldw_chatbook.Subscriptions.briefing_service import (
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
+    pending_briefing_claim_watchlist_ids,
 )
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
@@ -1042,6 +1043,139 @@ async def test_row_scoped_exclude_sweeps_a_same_watchlist_zombie_while_sparing_t
     assert db.get_briefing(live_id)["status"] == "generating", (
         "row-scoped exclude must not falsify the row a live claim is "
         "actually writing"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == "complete"
+
+
+# --- The unrecorded-claim sweep window (whole-branch review, ----------------
+# chore/briefings-residuals-1810-1812, Important 1) -------------------------
+#
+# `generate_briefing` records `_ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id]`
+# only after the ENTIRE `_start_generation` `to_thread` hop returns, but that
+# hop's `INSERT` is its FIRST statement -- for the rest of the hop (three more
+# DB reads) the live row exists, reads `generating`, and `active_briefing_
+# claim_row_ids()` alone names nothing that protects it. A sweep at that exact
+# instant used to falsify the row. `pending_briefing_claim_watchlist_ids()`
+# closes the window: `_claim_briefing(watchlist_id)` with no `briefing_id`
+# reproduces the registry state mid-window directly, with no need to block
+# inside `_start_generation` itself.
+
+
+def test_pending_briefing_claim_watchlist_ids_is_an_empty_snapshot_by_default():
+    assert pending_briefing_claim_watchlist_ids() == frozenset()
+
+
+def test_a_claim_with_no_recorded_row_id_yet_is_named_pending(tmp_path):
+    """Direct pin of the accessor: a claim taken via `_claim_briefing`
+    without a `briefing_id` (exactly the registry state for the span inside
+    `_start_generation`'s `to_thread` hop, before `generate_briefing`
+    resumes to record one) must appear in `pending_briefing_claim_
+    watchlist_ids()`, and must disappear the instant a row id IS recorded.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+
+    with briefing_service._claim_briefing(watchlist):
+        assert active_briefing_claim_row_ids() == frozenset(), (
+            "no row id has been recorded yet -- this is the window itself"
+        )
+        assert watchlist in pending_briefing_claim_watchlist_ids()
+
+    assert watchlist not in pending_briefing_claim_watchlist_ids(), (
+        "the claim released -- nothing should still read as pending"
+    )
+
+    live_row = db.insert_briefing(watchlist)
+    with briefing_service._claim_briefing(watchlist, briefing_id=live_row):
+        assert watchlist not in pending_briefing_claim_watchlist_ids(), (
+            "a claim whose row id IS recorded is no longer pending"
+        )
+
+
+def test_a_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
+    tmp_path,
+):
+    """The window itself, closed: a `generating` row for a watchlist whose
+    claim exists but whose row id is not yet recorded (mid-`_start_
+    generation`, before `generate_briefing` resumes to record it) must
+    survive a sweep run at that exact instant -- reproducing what the
+    reviewer's throwaway probe proved reachable (`swept == 1` against the
+    live row) before this fix.
+
+    Without `exclude_watchlists`, `active_briefing_claim_row_ids()` alone is
+    empty here (nothing recorded yet) and the row would be swept as a false
+    zombie -- exactly the regression this pins.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    # Stands in for the row `_start_generation`'s `INSERT` just wrote, before
+    # `generate_briefing` resumes on the event loop to record its id.
+    live_row = db.insert_briefing(watchlist)
+
+    with briefing_service._claim_briefing(watchlist):
+        row_ids = active_briefing_claim_row_ids()
+        pending = pending_briefing_claim_watchlist_ids()
+        assert row_ids == frozenset(), "the row id is not recorded in this window"
+        assert watchlist in pending
+
+        swept = fail_interrupted_briefings(
+            db, exclude=row_ids, exclude_watchlists=pending
+        )
+
+    assert swept == 0
+    assert db.get_briefing(live_row)["status"] == "generating", (
+        "a claim whose row id has not been recorded yet must still spare "
+        "its own row from a concurrent sweep"
+    )
+
+
+@pytest.mark.asyncio
+async def test_row_scoped_exclude_still_sweeps_a_same_watchlist_zombie_once_the_id_lands(
+    tmp_path,
+):
+    """The task-1812 coexistence fix, re-asserted alongside the new guard:
+    once a claim's row id IS recorded, `pending_briefing_claim_watchlist_
+    ids()` no longer names its watchlist, so `exclude_watchlists` goes back
+    to being a no-op for it and row-scoped `exclude` alone decides -- a
+    same-watchlist crash zombie is still swept even though the watchlist
+    itself has a live claim.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    zombie_id = db.insert_briefing(watchlist)
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_chat(**kwargs):
+        entered.set()
+        await release.wait()
+        return CANNED_BODY
+
+    first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
+    await entered.wait()
+
+    row_ids = active_briefing_claim_row_ids()
+    pending = pending_briefing_claim_watchlist_ids()
+    assert row_ids, "the live claim's row id must be recorded by the time chat runs"
+    assert watchlist not in pending, (
+        "once the row id lands, the watchlist is no longer 'pending'"
+    )
+
+    swept = fail_interrupted_briefings(db, exclude=row_ids, exclude_watchlists=pending)
+
+    assert swept == 1
+    assert db.get_briefing(zombie_id)["status"] == "failed"
+    live_id = next(iter(row_ids))
+    assert db.get_briefing(live_id)["status"] == "generating", (
+        "the live row must survive even with exclude_watchlists passed "
+        "alongside row-scoped exclude"
     )
 
     release.set()

@@ -102,13 +102,22 @@ open`, `test_generate_during_a_claimed_watchlist_refuses_without_falsifying_the_
 were updated to pass it, since row-scoped exclusion made their bare watchlist-only claim
 insufficient to protect the row they assert on.
 
-Residual (documented, not fixed): a narrow window exists between `_start_generation`'s
-`INSERT` committing (inside its `to_thread` hop) and `generate_briefing`'s coroutine
-resuming to record the row id -- during that window a concurrent sweep on the same
-watchlist could theoretically fail the fresh row. Narrowing further would require
-splitting `_start_generation` into two `to_thread` hops, which whole-branch review fix 1
-explicitly rejected (one hop, not one per statement) for an unrelated reason; left as-is,
-matching the task's own suggested shape ("set right after the INSERT").
+Residual (documented at the time, since fixed): a window existed between `_start_
+generation`'s `INSERT` (its FIRST statement, inside its `to_thread` hop) and `generate_
+briefing`'s coroutine resuming to record the row id -- not "right after the INSERT" as
+this note originally (inaccurately) claimed, but after the WHOLE hop, three more DB reads
+later. A whole-branch review of `chore/briefings-residuals-1810-1812` (verdict:
+`.superpowers/sdd/briefings-residuals/whole-branch-verdict.md`, Important 1) proved the
+window reachable -- a probe blocking inside `select_briefing_items` measured `swept == 1`
+against the live row at that exact instant, confirming this was not theoretical. Closed
+in the same branch's fix wave without splitting the `to_thread` hop: `fail_interrupted_
+briefings` gained a second `exclude_watchlists` parameter, fed by a new
+`pending_briefing_claim_watchlist_ids()` accessor (`active_briefing_claims() -
+_ACTIVE_BRIEFING_CLAIM_ROW_IDS.keys()`) -- watchlists claimed but not yet row-recorded.
+The set empties the instant the row id lands, so this task's own AC #3 coexistence fix
+is untouched. See `tldw_chatbook/Subscriptions/briefing_service.py` and the fix-wave
+section of `.superpowers/sdd/briefings-residuals/task-1812-report.md` for the mutation-
+tested detail.
 
 Testing: new tests in Tests/Subscriptions/test_briefing_service.py (row-id snapshot
 default, and the zombie+live-claim coexistence case: zombie swept, live row untouched)

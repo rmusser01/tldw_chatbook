@@ -83,7 +83,20 @@ A few things worth knowing before turning it on:
   running scheduler only re-reads watchlists' cadences periodically, not
   the instant you change one, so a cadence you just picked can sit inert
   for up to one reload cycle before the schedule actually takes effect.
+- **An app-level setting can turn scheduling off entirely.** The
+  `[scheduling] briefing_schedules_enabled` setting in `config.toml` (`true`
+  by default, hand-edit only today — there is no in-app control for it)
+  gates whether this app ever fires ANY scheduled briefing, for every
+  watchlist at once. Turning it off does not clear a watchlist's stored
+  cadence: the cadence picker in Artifacts still shows what is stored, but
+  greys out, and the schedule resumes exactly where it left off the moment
+  the setting is turned back on.
 
 The Artifacts section's scope line states plainly which of these applies:
-"on request" when scheduling is off, or the actual cadence — "scheduled
-daily while the app is open", for example — when it is on.
+"on request" when no cadence is stored, the actual cadence — "scheduled
+daily while the app is open", for example — when one is stored and
+scheduling is enabled for the app, or, when a cadence is stored but
+`briefing_schedules_enabled` is off, a third line naming the stored cadence
+and stating plainly that it will not fire — "stored to run daily, but
+scheduled briefings are turned off for this app — this schedule will not
+fire", for example.

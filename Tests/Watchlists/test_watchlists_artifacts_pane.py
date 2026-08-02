@@ -505,9 +505,11 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_fail = screen_module.fail_interrupted_briefings
 
-        def _recording_fail(db, watchlist_id=None, *, exclude=()):
+        def _recording_fail(db, watchlist_id=None, *, exclude=(), exclude_watchlists=()):
             in_flight_at_call.append(bool(screen._briefing_in_flight))
-            return real_fail(db, watchlist_id, exclude=exclude)
+            return real_fail(
+                db, watchlist_id, exclude=exclude, exclude_watchlists=exclude_watchlists
+            )
 
         monkeypatch.setattr(
             screen_module, "fail_interrupted_briefings", _recording_fail
@@ -1802,6 +1804,12 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
     look pickable while nothing would ever act on it: the Select is
     disabled, and the scope label states scheduling is off at the app
     level instead of implying an active schedule.
+
+    Whole-branch review (`chore/briefings-residuals-1810-1812`), Minor 4:
+    the Select's own tooltip must also say plainly that a stored cadence
+    survives disablement and will resume firing once the flag is turned
+    back on -- not merely that it "will not fire", which by itself reads
+    as a dead end rather than a paused one.
     """
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
@@ -1831,6 +1839,14 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
         )
         assert "off for this app" in pane.scope_label
         assert "scheduled every 12h while the app is open" not in pane.scope_label
+
+        tooltip = str(cadence_select.tooltip)
+        assert "briefing_schedules_enabled is false" in tooltip
+        assert "stays saved" in tooltip
+        assert "resume firing" in tooltip and "turned back on" in tooltip, (
+            "the disabled tooltip must state plainly that a stored cadence "
+            "survives and will resume, not merely that it is inert"
+        )
 
 
 @pytest.mark.asyncio

@@ -63,6 +63,7 @@ from ...Subscriptions.briefing_service import (
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
+    pending_briefing_claim_watchlist_ids,
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
@@ -3274,12 +3275,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         directly via `get_cli_setting` (the "queries config helper"
         convention several other screens/windows already use, e.g.
         `Tools_Settings_Window`/`STTS_Window`) rather than through a live
-        handle on `self.app_instance`: unlike `chachanotes_db`, nothing on
-        the app instance currently mirrors this decision back, because there
-        is no UI control for the flag today and so no prior seam existed to
-        reuse. Defaults to `True`, matching `app.py`'s own default, so a
-        watchlist with a stored cadence still reads as scheduled unless an
-        operator has explicitly turned the flag off.
+        handle on `self.app_instance`, even though one now exists:
+        `self.app_instance.scheduling_service.briefing_projection is not
+        None` is `app.py`'s own live reflection of this identical decision
+        (non-`None` iff the flag is truthy), added by task-1810 -- the
+        first commit on this same branch, two commits before this function
+        -- and asserted by `Tests/Scheduling/test_scheduling_service.py::
+        test_app_wiring_briefing_projection_is_live_not_a_frozen_none`. Kept
+        as a direct config read rather than switched to that mirror: today
+        both resolve identically, but a config reload mid-run (or a future
+        UI control this docstring anticipated) could make them diverge, so
+        a caller that cares about liveness rather than configuration should
+        read the mirror instead. Defaults to `True`, matching `app.py`'s own
+        default, so a watchlist with a stored cadence still reads as
+        scheduled unless an operator has explicitly turned the flag off.
         """
         return bool(
             get_cli_setting("scheduling", "briefing_schedules_enabled", True)
@@ -5069,16 +5078,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         row from a prior process for this SAME watchlist must still be
         swept even while a fresh claim is live, and only naming the live
         row itself (not its whole watchlist) lets that happen.
+
+        `pending_briefing_claim_watchlist_ids()` is snapshotted here too,
+        same thread, same instant (whole-branch review, `chore/briefings-
+        residuals-1810-1812`, Important 1): it closes the window `exclude`
+        alone cannot -- a claim taken but whose row id has not yet been
+        recorded, still inside `_start_generation`'s own `to_thread` hop.
+        Passed as `exclude_watchlists`, never in place of `exclude`.
         """
         if not self._zombie_sweep_is_safe():
             return 0
         claims = active_briefing_claim_row_ids()
+        pending = pending_briefing_claim_watchlist_ids()
         return await asyncio.to_thread(
-            fail_interrupted_briefings, db, watchlist_id, exclude=claims
+            fail_interrupted_briefings,
+            db,
+            watchlist_id,
+            exclude=claims,
+            exclude_watchlists=pending,
         )
 
     def _sweep_and_guard(
-        self, db: Any, watchlist_id: int, exclude: Collection[int]
+        self,
+        db: Any,
+        watchlist_id: int,
+        exclude: Collection[int],
+        exclude_watchlists: Collection[int] = (),
     ) -> tuple[list[str], list[str]]:
         """Zombie sweep, then the generating-check. Runs off the UI thread.
 
@@ -5103,6 +5128,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         left by a prior process is swept here even while that other live
         row survives, rather than the whole watchlist being spared.
 
+        `exclude_watchlists` -- the caller's `pending_briefing_claim_
+        watchlist_ids()` snapshot, taken at the same instant as `exclude`
+        (whole-branch review, `chore/briefings-residuals-1810-1812`,
+        Important 1) -- closes the same window `exclude` alone cannot for
+        THAT other in-process caller too: if it is still inside `_start_
+        generation`'s own `to_thread` hop, its row exists and reads
+        `generating` but has no id recorded yet, so only naming its
+        watchlist (not yet its row) spares it here.
+
         Returns:
             `(recovered, blocking)` -- labels for the rows this sweep failed
             as interrupted, and labels for any row still `generating`
@@ -5114,7 +5148,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             for row in db.list_briefings(watchlist_id)
             if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
         ]
-        fail_interrupted_briefings(db, watchlist_id, exclude=exclude)
+        fail_interrupted_briefings(
+            db, watchlist_id, exclude=exclude, exclude_watchlists=exclude_watchlists
+        )
         blocking = [
             self._briefing_row_label(row)
             for row in db.list_briefings(watchlist_id)
@@ -5159,6 +5195,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     db,
                     watchlist_id,
                     active_briefing_claim_row_ids(),
+                    pending_briefing_claim_watchlist_ids(),
                 )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 logger.warning(

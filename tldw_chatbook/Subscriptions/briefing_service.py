@@ -432,13 +432,54 @@ def active_briefing_claim_row_ids() -> frozenset[int]:
     sweep tell them apart.
 
     A watchlist whose claim has been taken but whose row has not been
-    inserted yet -- the brief window inside `_start_generation`'s own
-    `asyncio.to_thread` hop, before `generate_briefing`'s coroutine resumes
-    on the event loop to record the id -- is not represented here yet:
-    there is no row for it to protect until the `INSERT` itself has
-    happened and been reported back.
+    recorded yet -- the window inside `_start_generation`'s own
+    `asyncio.to_thread` hop, from the moment its `INSERT` runs until
+    `generate_briefing`'s coroutine resumes on the event loop to record the
+    id -- is not represented here: there is no id for it to report until
+    `generate_briefing` records one. That window is not unprotected,
+    though (whole-branch review, `chore/briefings-residuals-1810-1812`,
+    Important 1): `pending_briefing_claim_watchlist_ids()` below names
+    exactly those watchlists, and `fail_interrupted_briefings`'s
+    `exclude_watchlists` closes the gap this function's row-scoping alone
+    cannot.
     """
     return frozenset(_ACTIVE_BRIEFING_CLAIM_ROW_IDS.values())
+
+
+def pending_briefing_claim_watchlist_ids() -> frozenset[int]:
+    """Snapshot of watchlist ids with a live claim whose row id is not yet
+    recorded (whole-branch review, `chore/briefings-residuals-1810-1812`,
+    Important 1).
+
+    `_claim_briefing` adds `watchlist_id` to `_ACTIVE_BRIEFING_CLAIMS` before
+    `generate_briefing` ever calls `_start_generation`, but `generate_
+    briefing` only records the row id
+    (`_ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id] = briefing_id`) once that
+    call's WHOLE `asyncio.to_thread` hop returns -- and the `INSERT` is that
+    hop's FIRST statement, with four more DB operations after it
+    (`_selection_mode`, `latest_completed_watermark`, `select_briefing_
+    items`, `get_briefing_preset`). For that whole span the watchlist is
+    claimed and its row exists and reads `generating`, but is named by
+    nothing: `active_briefing_claim_row_ids()` is empty (no id recorded
+    yet), and `active_briefing_claims()` is watchlist-scoped -- passing it
+    as `fail_interrupted_briefings`'s row-scoped `exclude` does not even
+    type-check, and passing it as `exclude_watchlists` unconditionally
+    would resurrect the exact over-protection task-1812 removed (shielding
+    a genuine same-watchlist crash zombie alongside the live row).
+
+    This is the set difference: claimed, but not yet recorded. Callers pass
+    it as `fail_interrupted_briefings`'s `exclude_watchlists`, ALONGSIDE
+    `exclude=active_briefing_claim_row_ids()`, never instead of it -- the
+    moment a watchlist's row id lands, it drops out of this set and the
+    row-scoped `exclude` alone protects it, which is exactly what keeps the
+    task-1812 coexistence fix (a zombie and a live claim on the SAME
+    watchlist, swept and spared respectively) intact.
+
+    A plain, already-copied `frozenset`, computed with no `await` between
+    reading the two registries -- safe only when called from the event
+    loop, same as the other two accessors in this section.
+    """
+    return frozenset(_ACTIVE_BRIEFING_CLAIMS) - frozenset(_ACTIVE_BRIEFING_CLAIM_ROW_IDS)
 
 
 @contextmanager
@@ -776,6 +817,17 @@ async def generate_briefing(
         # row on the same watchlist -- in particular a crash-zombie left by
         # a prior process, which does not belong here and must still be
         # swept.
+        #
+        # Whole-branch review (`chore/briefings-residuals-1810-1812`),
+        # Important 1: for the ENTIRE `to_thread` hop above -- from
+        # `_start_generation`'s `INSERT` through its three other DB reads --
+        # this watchlist's id sits in `_ACTIVE_BRIEFING_CLAIMS` with no
+        # corresponding entry here yet, so `active_briefing_claim_row_ids()`
+        # alone cannot protect the row this exact call just inserted. That
+        # window is what `pending_briefing_claim_watchlist_ids()` names and
+        # `fail_interrupted_briefings`'s `exclude_watchlists` closes -- both
+        # screen call sites pass it alongside `exclude=active_briefing_
+        # claim_row_ids()`.
         _ACTIVE_BRIEFING_CLAIM_ROW_IDS[watchlist_id] = briefing_id
         # The id actually recorded on the row: `None` for both "no preset was
         # requested" and "the requested preset no longer resolves" -- a stale
@@ -872,6 +924,7 @@ def fail_interrupted_briefings(
     watchlist_id: int | None = None,
     *,
     exclude: Collection[int] = (),
+    exclude_watchlists: Collection[int] = (),
 ) -> int:
     """Fail every `generating` briefing as `interrupted`; return the count.
 
@@ -903,6 +956,26 @@ def fail_interrupted_briefings(
             the live one. Scoping to the row's own id fixes that: only the
             actual live row survives, and a same-watchlist zombie is swept
             exactly as if no claim existed at all.
+        exclude_watchlists: Watchlist ids to spare even though a row reads
+            `generating`, regardless of that row's own id (whole-branch
+            review, `chore/briefings-residuals-1810-1812`, Important 1).
+            Closes a window row-scoped `exclude` alone cannot: between a
+            claim being taken and its row's id being recorded,
+            `generate_briefing` has already inserted the row (`_start_
+            generation`'s first statement) but has not yet resumed on the
+            event loop to record it (three more DB reads later) -- for that
+            whole span the row exists, reads `generating`, and is named by
+            no row id at all. Callers pass `pending_briefing_claim_
+            watchlist_ids()` here, snapshotted on the event loop exactly
+            like `exclude` -- NEVER `active_briefing_claims()` itself, which
+            would resurrect the pre-task-1812 over-protection `exclude` was
+            narrowed away from (shielding a same-watchlist crash zombie
+            alongside the live row). The set is empty for any watchlist
+            whose row id has already been recorded, so passing both
+            together preserves the task-1812 coexistence fix: only the
+            watchlist named here for the brief unrecorded window, and only
+            the row named in `exclude` once recorded. Defaults to `()`, so
+            every caller that predates this fix is unchanged.
 
     Returns:
         How many rows were failed.
@@ -919,6 +992,10 @@ def fail_interrupted_briefings(
         placeholders = ",".join("?" for _ in exclude)
         sql += f" AND id NOT IN ({placeholders})"
         params.extend(exclude)
+    if exclude_watchlists:
+        placeholders = ",".join("?" for _ in exclude_watchlists)
+        sql += f" AND watchlist_id NOT IN ({placeholders})"
+        params.extend(exclude_watchlists)
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

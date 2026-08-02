@@ -1025,6 +1025,15 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 # would ever dispatch it is the exact gap this fix closes;
                 # see `cadence_scope_phrase`'s own AC #1 note for the scope
                 # label's half of the same fix.
+                #
+                # Whole-branch review (`chore/briefings-residuals-1810-
+                # 1812`), Minor 4: the Select stays disabled ON PURPOSE --
+                # its "Off" option is unreachable too, so a stored cadence
+                # cannot be cleared from the UI while the flag is off. That
+                # is deliberate (a stored value is never silently cleared),
+                # but the disabled tooltip must say so plainly: a stored
+                # cadence is not merely inert here, it SURVIVES and will
+                # resume firing the moment the flag is turned back on.
                 schedules_disabled = not self.briefing_schedules_enabled
                 yield Select(
                     self._cadence_select_options(),
@@ -1036,7 +1045,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     tooltip=(
                         "Scheduled briefings are turned off for this app "
                         "([scheduling] briefing_schedules_enabled is "
-                        "false); any cadence stored here will not fire."
+                        "false); a stored cadence stays saved here and "
+                        "cannot be changed while this control is disabled "
+                        "-- it will resume firing as soon as scheduling is "
+                        "turned back on."
                         if schedules_disabled
                         # Task-1812, AC #2: a freshly picked cadence is not
                         # instant -- the running scheduler only re-reads
