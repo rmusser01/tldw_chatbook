@@ -762,7 +762,7 @@
     },
     {
       "call_count": 155,
-      "diagnostic_digest": "cadebedf760420875418",
+      "diagnostic_digest": "6baa1015ff3baccb24bd",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

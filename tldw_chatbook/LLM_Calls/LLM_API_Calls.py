@@ -552,7 +552,13 @@ def chat_with_openai(
         dict(legacy_openai_config) if isinstance(legacy_openai_config, Mapping) else {}
     )
     if isinstance(canonical_openai_config, Mapping):
-        openai_config.update(canonical_openai_config)
+        # Speech Settings owns the canonical credential, while the canonical
+        # provider table may also contain defaults for unrelated chat axes.
+        # Overlay only connection-owned values so moving the credential does
+        # not silently change established model or sampling behavior.
+        for key in ("api_key", "api_base_url"):
+            if key in canonical_openai_config:
+                openai_config[key] = canonical_openai_config[key]
     if not openai_config.get("api_key") and isinstance(legacy_openai_config, Mapping):
         # The legacy projection resolves environment-backed credentials.
         # Keep that resolved value when the canonical table intentionally
