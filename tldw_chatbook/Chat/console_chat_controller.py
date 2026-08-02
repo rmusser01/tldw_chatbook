@@ -146,6 +146,14 @@ _LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
 #: the same whether it was stopped here or at the gate.
 USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
 
+#: TASK-631: the result every tool call gets while the kill switch is on.
+#: Enforced at the review hook -- the one place EVERY parsed call passes,
+#: including the families neither provider claims (skills, spawn_subagent,
+#: find_tools, load_tools) that previously ran normally with the switch on.
+#: Deliberately names the switch so the model (and a user reading the
+#: transcript) can tell this from a per-call denial.
+KILL_SWITCH_REFUSAL = "tool call blocked: chat tool calls are disabled (kill switch)"
+
 #: TASK-1861: how broad each approval scope is. A session/always grant is
 #: recorded against a tool NAME, so when per-call rows of one tool are
 #: approved at different scopes only one can be stamped -- and it must be the
@@ -333,8 +341,21 @@ def build_tool_review_hook(
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
     *,
     workspace_id: str | None = None,
+    kill_switch: Callable[[], bool] | None = None,
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
     """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
+
+    TASK-631: when ``kill_switch`` reports on, EVERY call in the batch is
+    refused here, without prompting -- the runtime turns any non-"proceed"
+    verdict into the call's result and skips dispatch. MCP composition is
+    already skipped and ``BuiltinToolGate.check`` already refuses with the
+    switch on, but names neither provider claims (skills,
+    ``spawn_subagent``, ``find_tools``, ``load_tools``) used to pass
+    through unreviewed and RUN NORMALLY -- the switch's label promises
+    "block tool calls in chat", and this hook is the one place every
+    parsed call passes, so this is where the promise is kept. Read fresh
+    per turn (a callable, not a bool) so flipping the switch mid-run takes
+    effect on the next batch.
 
     Unlike `build_mcp_review_hook`, this is wired UNCONDITIONALLY -- every
     run gets one, even a user with no MCP servers configured at all --
@@ -411,11 +432,11 @@ def build_tool_review_hook(
     owner. Decisions are then applied back to each owner separately:
     `mcp_provider.apply_batch_decisions(...)` for MCP rows,
     `builtin_gate.stamp(name, decision)` for built-in rows. The returned
-    verdict map is `{name: "proceed"}` for every call this hook gated this
-    turn (MCP or built-in), purely documentary like
-    `build_mcp_review_hook`'s own -- the actual allow/deny outcome is left
-    to `invoke()`'s gate on dispatch, which is the single place that
-    produces refusal copy and records the audit decision.
+    verdict map carries "proceed" for approved calls and REFUSAL STRINGS
+    for per-call denials (TASK-1861) and kill-switch blocks (TASK-631) --
+    the runtime enforces those directly, skipping dispatch. Approvals are
+    still left to `invoke()`'s gate on dispatch, which records the audit
+    decision.
 
     Args:
         builtin_gate: THIS run's `BuiltinToolGate` -- the SAME instance
@@ -461,6 +482,29 @@ def build_tool_review_hook(
 
     def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
         builtin_gate.begin_turn()
+        # TASK-631: the kill switch outranks everything -- no prompting, no
+        # stamps, every call refused. Per-call keys where the runtime can
+        # address them; an id-less (fence-path) call is refused by NAME,
+        # which stops every same-name call -- fail-closed, same reasoning
+        # as TASK-1861's refusal fallback.
+        if kill_switch is not None:
+            try:
+                switch_on = bool(kill_switch())
+            except Exception:  # noqa: BLE001 -- an unreadable switch fails CLOSED
+                logger.opt(exception=True).warning(
+                    "build_tool_review_hook: kill-switch read failed; "
+                    "refusing this turn's tool calls"
+                )
+                switch_on = True
+            if switch_on:
+                if mcp_provider is not None:
+                    mcp_provider.apply_batch_decisions({})
+                return {
+                    (str(getattr(call, "call_id", "") or "") or call.name): (
+                        KILL_SWITCH_REFUSAL
+                    )
+                    for call in calls
+                }
         if mcp_provider is not None:
             mcp_provider.apply_batch_decisions({})
 
@@ -2274,7 +2318,18 @@ class ConsoleChatController:
     def request_mcp_approvals(
         self, pending: list[MCPPendingCall], *, session_id: str | None = None
     ) -> dict[str, str]:
-        """Bridge one batch of pending MCP tool calls to the Console UI and back.
+        """Bridge one batch of pending tool-approval rows to the Console UI and back.
+
+        TASK-630: OWNER-AGNOSTIC, despite the legacy ``mcp`` in the name.
+        Since TASK-545/P1's run-level ``build_tool_review_hook``, the rows
+        handed here may come from MCP tools OR from built-in agent-runtime
+        tools (``server_key="agent:builtin"``); every row is marshalled to
+        the same ``ChatApprovalCard`` and resolved through the same
+        Event-polling loop below. There is no separate approval path for
+        built-ins -- a reader assuming "MCP-only" here would go looking for
+        one that does not exist. (The name is kept: it is the wire between
+        this method, ``resolve_pending_approval``, and the round-id
+        plumbing, and renaming it is churn without a defect.)
 
         WORKER THREAD. Bound (via a ``functools.partial`` binding this
         run's ``session_id``, Task 9) as ``MCPToolProvider``'s
@@ -2780,12 +2835,30 @@ class ConsoleChatController:
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
 
+    def _console_tool_kill_switch_reader(self) -> Callable[[], bool] | None:
+        """Return a fresh-per-call kill-switch reader, or ``None`` without a service.
+
+        TASK-631. A callable rather than a bool so `build_tool_review_hook`
+        observes a mid-run flip on the next batch; reading raises -> the
+        hook fails CLOSED (refuses the turn), which is the only safe answer
+        for a security control that cannot be read.
+
+        Returns:
+            A zero-arg callable returning the switch state, or ``None``
+            when the app has no ``unified_mcp_service`` (nothing to honor).
+        """
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return None
+        getter = getattr(service, "get_kill_switch", None)
+        if not callable(getter):
+            return None
+        return lambda: bool(getter())
+
     async def _compose_mcp_provider(
         self,
         session_id: str | None = None,
-    ) -> tuple[
-        MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
-    ]:
+    ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
         MUST be awaited from an async caller with the real Textual main
@@ -2796,7 +2869,13 @@ class ConsoleChatController:
         (``local_external_catalog()``) that is documented to run on the
         main loop at registration time.
 
-        Returns ``(None, None)`` whenever MCP tools should not be offered
+        TASK-632: returns the provider ALONE. It used to also build and
+        return a per-run `build_mcp_review_hook` closure, but TASK-545's
+        run-level `build_tool_review_hook` made that second element dead --
+        the production call site unpacked it into `_unused_...` and threw it
+        away, while the closure was still constructed on every run.
+
+        Returns ``None`` whenever MCP tools should not be offered
         this run: no ``unified_mcp_service`` on the app, the kill switch
         is on, ``get_kill_switch``/``compose_catalog`` raised, or the
         composed catalog is empty (nothing to register, and -- since
@@ -2820,15 +2899,14 @@ class ConsoleChatController:
                 ``request_mcp_approvals``' legacy no-session behavior.
 
         Returns:
-            ``(provider, review_tool_calls)`` when eligible -- a composed
-            ``MCPToolProvider`` ready to hand to ``ConsoleAgentBridge.
-            run_reply`` and this run's ``build_mcp_review_hook``-built
-            batch-review closure; ``(None, None)`` otherwise.
+            A composed ``MCPToolProvider`` ready to hand to
+            ``ConsoleAgentBridge.run_reply`` when eligible; ``None``
+            otherwise.
         """
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
             self._publish_mcp_inspector_counts(None, None)
-            return None, None
+            return None
         try:
             kill_switch = service.get_kill_switch()
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
@@ -2836,10 +2914,10 @@ class ConsoleChatController:
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
             )
             self._publish_mcp_inspector_counts(None, None)
-            return None, None
+            return None
         if kill_switch:
             self._publish_mcp_inspector_counts(None, None)
-            return None, None
+            return None
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
@@ -2855,13 +2933,13 @@ class ConsoleChatController:
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )
             self._publish_mcp_inspector_counts(None, None)
-            return None, None
+            return None
         catalog = provider.list_catalog()
         if not catalog:
             self._publish_mcp_inspector_counts(None, None)
-            return None, None
+            return None
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
-        return provider, build_mcp_review_hook(provider, bound_request_approvals)
+        return provider
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
@@ -6537,7 +6615,7 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider(
+        mcp_provider = await self._compose_mcp_provider(
             session_id
         )
         self._mcp_provider = mcp_provider
@@ -6585,6 +6663,12 @@ class ConsoleChatController:
             mcp_provider,
             functools.partial(self.request_mcp_approvals, session_id=session_id),
             workspace_id=review_workspace_id,
+            # TASK-631: the switch must cover the tool families NEITHER
+            # provider claims (skills/spawn/find/load), and this hook is the
+            # only choke point they all pass. Read fresh per turn so a
+            # mid-run flip takes effect on the next batch. Absent service ->
+            # no switch to honor (None), matching `_compose_mcp_provider`.
+            kill_switch=self._console_tool_kill_switch_reader(),
         )
 
         # Swap site: the agent loop runs synchronously on a worker thread via

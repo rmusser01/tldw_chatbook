@@ -3674,9 +3674,8 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
         )
 
-        provider, review_hook = await controller._compose_mcp_provider()
+        provider = await controller._compose_mcp_provider()
         assert provider is not None
-        assert callable(review_hook)
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 0
 
@@ -3712,9 +3711,8 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
             ],
         )
 
-        provider, review_hook = await controller._compose_mcp_provider()
+        provider = await controller._compose_mcp_provider()
         assert provider is not None
-        assert callable(review_hook)
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 1
 

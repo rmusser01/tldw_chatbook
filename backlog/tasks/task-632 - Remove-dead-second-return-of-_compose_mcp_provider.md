@@ -1,7 +1,7 @@
 ---
 id: TASK-632
 title: Remove dead second return element of _compose_mcp_provider
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [tech-debt, tools, tests]
@@ -19,7 +19,15 @@ It is being kept only because two out-of-scope test files pin the 2-tuple shape 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] `_compose_mcp_provider` returns only what is actually consumed by its production call site, or its second element's continued existence is justified in its docstring
-- [ ] All test call sites (`Tests/UI/test_console_internals_decomposition.py`, `Tests/Chat/test_console_agent_swap.py`) are updated to match the (possibly narrowed) return shape and pass
-- [ ] No behavior change to the composed `MCPToolProvider` or to MCP tool-call review/approval flow
+- [x] `_compose_mcp_provider` returns only what is actually consumed by its production call site, or its second element's continued existence is justified in its docstring
+- [x] All test call sites (`Tests/UI/test_console_internals_decomposition.py`, `Tests/Chat/test_console_agent_swap.py`) are updated to match the (possibly narrowed) return shape and pass
+- [x] No behavior change to the composed `MCPToolProvider` or to MCP tool-call review/approval flow
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`_compose_mcp_provider` returns the provider alone; the dead `build_mcp_review_hook` closure is no longer constructed per run. All 8 pinned test call sites updated to single-value unpacking (the None-cases' `hook is None` assertions dropped with the element). The stale `Returns` paragraph documenting the tuple went with it.
+
+`build_mcp_review_hook` itself is KEPT: it has no production callers but 7 direct test call sites exercising shared logic (`_collect_mcp_pending` etc.), an arrangement its extraction comment already documents. Deleting it is beyond this task's AC.
+<!-- SECTION:NOTES:END -->
