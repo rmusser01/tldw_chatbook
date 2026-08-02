@@ -62,12 +62,13 @@ in the audio backend regardless of what this module does on its own.
 
 from __future__ import annotations
 
+import asyncio
 import queue
 import threading
 from collections import deque
 from dataclasses import dataclass
 from importlib.util import find_spec
-from typing import Any, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 from loguru import logger
 
@@ -135,6 +136,29 @@ class SinkFailed:
         reason: Human-readable description of what failed.
     """
     reason: str
+
+
+@dataclass(frozen=True)
+class PumpResult:
+    """Outcome of a completed `pump()` call.
+
+    Attributes:
+        outcome: One of `"drained"` (the source was exhausted, `pump`
+            called `close()`, and the sink went on to reach `"stopped"`
+            naturally -- or was already terminal for a reason other than
+            failure by the time `pump` checked), `"stopped"` (the sink
+            left `"open"`/`"draining"` -- e.g. an external barge-in
+            `stop()` -- while `pump` was still feeding, before the source
+            was exhausted), `"failed"` (the sink transitioned to
+            `"failed"`, whether mid-feed or during the post-`close()`
+            drain wait), or `"source_error"` (the chunk source itself
+            raised; `pump` stopped the sink in response).
+        bytes_fed: Total PCM bytes actually handed to `sink.feed()` and
+            accepted (after `skip_bytes` was consumed from the head of the
+            stream), regardless of outcome.
+    """
+    outcome: str
+    bytes_fed: int
 
 
 def sink_available() -> bool:
@@ -695,29 +719,141 @@ class StreamingPcmSink:
 
 
 #: The sink currently registered as "live" (i.e. actively producing audio
-#: output). Task 1 keeps registration/clearing inert no-ops; Task 2 wires
-#: one-voice displacement semantics (opening a new sink stops any prior
-#: live sink) on top of this holder.
+#: output). Guarded by `_LIVE_SINK_LOCK`. One-voice: opening a new sink
+#: displaces (stops) whatever sink was previously registered here.
 _LIVE_SINK: Optional[StreamingPcmSink] = None
+
+#: Guards reads/writes of `_LIVE_SINK`. Deliberately never held while a
+#: sink's `stop()` is called -- `stop()` can briefly block (an unbounded
+#: `_notify_q.join()`, see the module's carried Task-1 review risk), and
+#: holding this lock across that call would let one sink's teardown stall
+#: every other sink's `open()`/`_clear_live_sink()` in the meantime.
+_LIVE_SINK_LOCK = threading.Lock()
 
 
 def _register_live_sink(sink: StreamingPcmSink) -> None:
-    """Register `sink` as the live sink.
+    """Register `sink` as the live sink, displacing (and stopping) any prior one.
 
-    Inert in Task 1 (no displacement semantics yet) so these contract
-    tests do not depend on Task 2's one-voice behavior; Task 2 gives this
-    real semantics.
+    One-voice semantics: only one sink is ever considered "live" at a
+    time. If a different sink was previously registered, it is `stop()`'d
+    -- OUTSIDE `_LIVE_SINK_LOCK` -- so a displaced sink's own (possibly
+    briefly blocking) `stop()` never holds up this registry for anyone
+    else. This function never touches a stream directly; it only ever
+    calls the displaced sink's own public `stop()` method, which owns all
+    stream teardown itself.
 
     Args:
         sink: The sink that just started (or is starting) playback.
     """
+    global _LIVE_SINK
+    with _LIVE_SINK_LOCK:
+        displaced, _LIVE_SINK = _LIVE_SINK, sink
+    if displaced is not None and displaced is not sink:
+        displaced.stop()
 
 
 def _clear_live_sink(sink: StreamingPcmSink) -> None:
     """Clear `sink` as the live sink if it is currently registered.
 
-    Inert in Task 1; Task 2 gives this real semantics.
+    A no-op if `sink` is not the currently-registered live sink (e.g. it
+    was already displaced by a later `open()`, or it was never registered
+    at all) -- safe to call from either the notify thread (drain/failure
+    paths) or a caller thread (`stop()`).
 
     Args:
         sink: The sink that stopped, drained, or failed.
     """
+    global _LIVE_SINK
+    with _LIVE_SINK_LOCK:
+        if _LIVE_SINK is sink:
+            _LIVE_SINK = None
+
+
+async def pump(
+    sink: StreamingPcmSink,
+    chunks: AsyncIterator[bytes],
+    *,
+    skip_bytes: int = 0,
+) -> PumpResult:
+    """Feed an async source of PCM chunks into `sink` until stop or exhaustion.
+
+    Bridges an async chunk source (e.g. a streaming TTS adapter's
+    incremental response) into the sink's synchronous, non-blocking
+    `feed()`, handling:
+
+    * An optional `skip_bytes`-byte prefix (e.g. a WAV header some
+      providers cannot be told to omit), dropped across chunk boundaries
+      before any audio is fed.
+    * Backpressure: when `feed()` returns `False` (buffer full), `pump`
+      retries the very same remainder after a short sleep rather than
+      dropping audio.
+    * Prompt exit the moment the sink leaves `"open"`/`"draining"` for a
+      terminal state (e.g. an external barge-in `stop()`, or a device
+      failure) -- `pump` does not wait for the source to finish in that
+      case.
+    * A source that raises: `pump` calls `sink.stop()` and reports
+      `"source_error"`, so the sink still reaches a terminal state even
+      when the caller never gets to call `close()`/`stop()` itself.
+    * Normal exhaustion: `pump` calls `sink.close()` and waits -- polling,
+      never blocking the event loop -- for the sink to reach a terminal
+      state.
+
+    `pump` only ever calls `feed()`/`close()`/`stop()` from its own task,
+    never from a listener registered on the sink, so it never risks
+    blocking on the `stop()` -> `_notify_q.join()` carried risk noted in
+    the module's Task-1 review context.
+
+    Args:
+        sink: The (already-`open()`ed) sink to feed.
+        chunks: Async iterator of raw PCM16 byte chunks. `pump` only
+            iterates it; it does not open, close, or otherwise manage its
+            lifecycle.
+        skip_bytes: Number of leading bytes to discard from the head of
+            the concatenated chunk stream before any audio is fed to the
+            sink -- e.g. to drop a WAV header. Defaults to 0.
+
+    Returns:
+        A `PumpResult` describing how the pump ended and how many bytes
+        were actually fed to the sink.
+    """
+    bytes_fed = 0
+    remaining_skip = skip_bytes
+    try:
+        async for chunk in chunks:
+            if remaining_skip:
+                if remaining_skip >= len(chunk):
+                    remaining_skip -= len(chunk)
+                    continue
+                chunk = chunk[remaining_skip:]
+                remaining_skip = 0
+            while chunk:
+                if sink.state not in ("open", "draining"):
+                    return PumpResult(outcome=_early_exit_outcome(sink.state), bytes_fed=bytes_fed)
+                if sink.feed(chunk):
+                    bytes_fed += len(chunk)
+                    break
+                await asyncio.sleep(0.05)
+    except Exception:
+        sink.stop()
+        return PumpResult(outcome="source_error", bytes_fed=bytes_fed)
+
+    if sink.state not in ("open", "draining"):
+        return PumpResult(outcome=_early_exit_outcome(sink.state), bytes_fed=bytes_fed)
+    sink.close()
+    while sink.state not in ("stopped", "failed"):
+        await asyncio.sleep(0.01)
+    return PumpResult(outcome="failed" if sink.state == "failed" else "drained", bytes_fed=bytes_fed)
+
+
+def _early_exit_outcome(state: str) -> str:
+    """Map a sink `state` observed before/without `pump` itself calling `close()` to an outcome.
+
+    Args:
+        state: The sink's `state` at the moment `pump` noticed it had left
+            `"open"`/`"draining"` on its own (i.e. not as a result of
+            `pump`'s own `close()` call).
+
+    Returns:
+        `"failed"` if `state` is `"failed"`, otherwise `"stopped"`.
+    """
+    return "failed" if state == "failed" else "stopped"
