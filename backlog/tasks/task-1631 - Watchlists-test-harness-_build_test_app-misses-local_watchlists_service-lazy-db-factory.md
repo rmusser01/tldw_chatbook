@@ -1,7 +1,7 @@
 ---
 id: TASK-1631
 title: "Watchlists test harness: _build_test_app misses local_watchlists_service's lazy db factory"
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-31 19:03'
 labels:
@@ -48,3 +48,11 @@ free from the harness.
 - [ ] #2 The three documented workarounds (`test_watchlists_inspector.py`'s `_seed_new_item`, `test_watchlists_read_status.py`'s direct `_db()` seeding, `test_watchlists_artifacts_pane.py`'s `db_factory` monkeypatch) are removed or reduced to a one-line comment, since the split they route around no longer exists
 - [ ] #3 `Tests/Subscriptions/`, `Tests/Watchlists/`, `Tests/UI/test_watchlists_inspector.py`, and `Tests/UI/ -k watchlist` remain green after the harness change
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Fix in the harness (`Tests/UI/test_screen_navigation.py::_build_test_app`): make `get_subscriptions_db_path` resolve to the SAME temp path for the app's whole lifetime (widen the patch beyond __init__, or pre-resolve the path and patch with a constant-returning lambda held for the app fixture's duration), so the lazy `db_factory` and the eager init-time consumers agree. Prefer harness-side over caching in production `LocalWatchlistsService._db()` (production semantics unchanged).
+2. Remove/reduce the three documented workarounds (inspector `_seed_new_item` re-route, read_status direct `_db()` seeding, artifacts_pane `db_factory` monkeypatch ×2) per AC #2.
+3. AC #3 sweep: Tests/Subscriptions/, Tests/Watchlists/, test_watchlists_inspector.py, Tests/UI -k watchlist.
+<!-- SECTION:PLAN:END -->
