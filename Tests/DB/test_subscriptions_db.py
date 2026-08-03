@@ -138,6 +138,108 @@ def test_record_check_result_collapses_canonical_url_variants_to_one_row(db):
     assert rows[0]["canonical_url"] == "https://a.example/1"
 
 
+def test_record_check_error_never_unpauses_an_already_paused_subscription(db):
+    """task-1410 AC#1 (hard prerequisite of AC#2).
+
+    ``record_check_error`` used to write ``is_paused = 1 if should_pause
+    else 0`` unconditionally on every call. Since no production caller ever
+    passes ``should_pause=True``, every recorded failure silently wrote
+    ``is_paused = 0`` -- clearing any pause a *different* call had set. That
+    made auto-pause worse than a no-op the moment anything started pausing
+    subscriptions: the very next failure on a paused source (a manual
+    re-check, or the auto-pause this same task lands) would un-pause it.
+
+    ``auto_pause_threshold`` is set absurdly high so this single failure
+    cannot ALSO trip the auto-pause branch itself -- this test isolates
+    "a failure must never clear an existing pause" from "a failure can set
+    a new pause" (covered separately by the AC#2 test).
+
+    Reds under the pre-fix write: a failure with ``should_pause=False``
+    (the only value any caller ever passes) flips ``is_paused`` back to 0.
+    """
+    source_id = db.add_subscription(
+        name="Docs",
+        type="rss",
+        source="https://a.example/feed",
+        auto_pause_threshold=100,
+    )
+    with db.transaction() as conn:
+        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (source_id,))
+
+    db.record_check_error(source_id, "connection refused")
+
+    row = db.get_subscription(source_id)
+    assert row["is_paused"] == 1, "a recorded failure must never clear an existing pause"
+    # Ordinary failure bookkeeping must still happen.
+    assert row["consecutive_failures"] == 1
+    assert row["error_count"] == 1
+    assert row["last_error"] == "connection refused"
+
+
+def test_add_subscription_seeds_auto_pause_threshold_from_config_default(db, monkeypatch):
+    """task-1410 AC#3. ``[subscriptions].auto_pause_after_failures`` (config,
+    previously read by nothing) now seeds the ``auto_pause_threshold`` column
+    default for a subscription created WITHOUT an explicit value.
+
+    Reds if the seeding in ``add_subscription`` is dropped: the column would
+    fall through to the schema's own hardcoded ``DEFAULT 10`` regardless of
+    what the config says.
+    """
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default: 7,
+    )
+
+    source_id = db.add_subscription(
+        name="Docs", type="rss", source="https://a.example/feed"
+    )
+
+    row = db.get_subscription(source_id)
+    assert row["auto_pause_threshold"] == 7
+
+
+def test_add_subscription_explicit_auto_pause_threshold_overrides_config_default(
+    db, monkeypatch
+):
+    """An explicit ``auto_pause_threshold`` kwarg always wins over the
+    config-seeded default (AC#3's stated precedence).
+    """
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default: 7,
+    )
+
+    source_id = db.add_subscription(
+        name="Docs",
+        type="rss",
+        source="https://a.example/feed",
+        auto_pause_threshold=25,
+    )
+
+    row = db.get_subscription(source_id)
+    assert row["auto_pause_threshold"] == 25
+
+
+def test_add_subscription_falls_back_to_schema_default_when_config_is_unusable(
+    db, monkeypatch
+):
+    """A missing/non-numeric config value must not block subscription
+    creation (AC#3): it falls back to the same default (10) the schema's own
+    ``DEFAULT 10`` already uses, rather than raising or storing garbage.
+    """
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default: "not-a-number",
+    )
+
+    source_id = db.add_subscription(
+        name="Docs", type="rss", source="https://a.example/feed"
+    )
+
+    row = db.get_subscription(source_id)
+    assert row["auto_pause_threshold"] == 10
+
+
 def test_deleting_subscription_cascades_to_its_items(db):
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/feed"

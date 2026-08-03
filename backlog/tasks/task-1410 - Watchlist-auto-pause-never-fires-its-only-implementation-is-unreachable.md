@@ -79,9 +79,9 @@ both settings so the app stops promising a feature it does not have.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Recording a check failure never clears an existing `is_paused`; landed BEFORE #2, because auto-pause without it produces a pause the next manual re-check erases
-- [ ] #2 A source that fails the configured number of times in a row reaches the documented outcome, driven in a test through the real failure path rather than by calling the DB method directly
-- [ ] #3 `auto_pause_threshold` (column) and `auto_pause_after_failures` (`config.py:3553`) are reconciled: either both are read by a live path with a stated precedence, or both are removed together with the dead branch and the docs that advertise them
+- [x] #1 Recording a check failure never clears an existing `is_paused`; landed BEFORE #2, because auto-pause without it produces a pause the next manual re-check erases
+- [x] #2 A source that fails the configured number of times in a row reaches the documented outcome, driven in a test through the real failure path rather than by calling the DB method directly
+- [x] #3 `auto_pause_threshold` (column) and `auto_pause_after_failures` (`config.py:3553`) are reconciled: either both are read by a live path with a stated precedence, or both are removed together with the dead branch and the docs that advertise them
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -102,3 +102,65 @@ reachable for all-error runs. Wire it fully and consistently.
    `auto_pause_threshold` column default for NEW subscriptions; per-subscription column overrides
    (stated precedence). Document both in the config comment + a module docstring.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Shared helper.** Both failure paths now go through one new private method,
+`SubscriptionsDB._advance_failure_and_maybe_pause(cursor, subscription_id, error, now, *,
+force_pause=False)` (`DB/Subscriptions_DB.py`): it does the `last_checked`/`last_error`/
+`error_count`/`consecutive_failures` UPDATE, reads back the post-increment count, and pauses (with
+the "Auto-paused subscription N after M failures" WARNING) iff `force_pause` or
+`consecutive_failures >= auto_pause_threshold`. `record_check_result`'s `if error:` branch and
+`record_check_error` both call it — neither has its own copy of the threshold comparison, so they
+cannot diverge. The pause `UPDATE` inside the helper only ever sets `is_paused = 1`; there is no
+`is_paused = 0` write left anywhere in either failure path (AC#1), because `record_check_error` no
+longer runs its own combined UPDATE that used to include `is_paused = ?`.
+
+**`should_pause` fate.** Folded into the shared decision rather than removed: it is now the
+`force_pause` argument to the helper, so passing `should_pause=True` still forces a pause on that
+one failure regardless of the threshold, but — like the threshold path — it can only ever set
+`is_paused = 1`, never clear it. No production caller passes `should_pause=True` today (grep
+confirmed); it is kept as an escape hatch for a caller that already knows a failure is terminal,
+documented as such in `record_check_error`'s docstring.
+
+**AC#3 precedence.** `add_subscription` seeds `fields["auto_pause_threshold"]` from a new
+module-level `_default_auto_pause_threshold()` (reads `[subscriptions].auto_pause_after_failures`
+via the three-argument `get_cli_setting(section, key, default)` form, never the dotted form — the
+TASK-1771 default-drop trap) **only when the caller did not already supply the field**, i.e. an
+explicit `auto_pause_threshold` kwarg (including one forwarded from
+`LocalWatchlistsService.create_source`/`update_source`) always wins. A missing or non-numeric
+config value falls back to the same `10` the schema's own `DEFAULT 10` already uses, so a broken
+config cannot block subscription creation. Existing rows are untouched — this only changes what a
+brand-new INSERT defaults to. Documented in `_default_auto_pause_threshold`'s docstring and an
+inline comment on `config.py`'s `[subscriptions]` template next to `auto_pause_after_failures`.
+
+**Tests.** `Tests/DB/test_subscriptions_db.py` gained 4 tests (AC#1 direct-DB never-unpause test,
+plus 3 for AC#3's seed/override/fallback precedence via `monkeypatch.setattr` on the module-level
+`get_cli_setting` name). `Tests/Subscriptions/test_local_watchlists_service.py` gained 2 tests: AC#2
+drives the real path (`execute_run` raising → `record_run_failure` → `record_check_error`) for 3
+failures at `auto_pause_threshold=3` and asserts exactly one auto-pause WARNING (via a
+`_loguru_to_caplog` bridge fixture, same pattern as
+`Tests/Model_Artifacts/test_credentials_and_boundaries.py`); a consistency test drives an all-error
+`url_list` run (the task-1394 `record_check_result` path) and a plain always-failing source (the
+`record_check_error` path) at the same threshold and asserts both end `is_paused=1` at the same
+failure count. Every new/changed behavior was mutation-tested (Edit → run → Edit-revert, `git
+status --short` clean between): AC#1's mutation (restoring the old `is_paused = 1 if should_pause
+else 0` write) reds all 3 pause-related tests including the consistency test; AC#2's mutation
+(dropping the threshold comparison to `force_pause` only) reds the AC#2 test, the consistency test,
+and the pre-existing task-1394 all-error test; AC#3's mutations (disabling the seed, forcing the
+seed to always override, and removing the `int()` fallback) each red exactly the test they target.
+Full suite: 901 passed (895 pre-existing + 6 new) across `Tests/Subscriptions`, `Tests/Scheduling`,
+`Tests/DB/test_subscriptions_db.py`.
+
+**Files touched:** `tldw_chatbook/DB/Subscriptions_DB.py` (shared helper, `record_check_result`/
+`record_check_error` rewired, `_default_auto_pause_threshold` + `add_subscription` seeding),
+`tldw_chatbook/config.py` (precedence comment on `auto_pause_after_failures`),
+`Tests/DB/test_subscriptions_db.py`, `Tests/Subscriptions/test_local_watchlists_service.py`.
+
+**Left open / not done here:** `Docs/Features/SUBSCRIPTION_IMPLEMENTATION_PLAN.md:1052` (mentioned
+in the task description as documenting `auto_pause_after_failures`) was not re-checked against the
+new seeding behavior — out of scope for the stated ACs, called out here rather than silently
+skipped. Status intentionally left **In Progress** per dispatch instructions rather than moved to
+Done.
+<!-- SECTION:NOTES:END -->
