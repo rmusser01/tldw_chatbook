@@ -92,6 +92,8 @@ class WatchlistsWorkbench(Horizontal):
         self,
         layout: RegionLayout,
         content: Mapping[Region, Callable[[], Widget]] | None = None,
+        hidden: frozenset[Region] = frozenset(),
+        header: Callable[[], Widget] | None = None,
         **kwargs: Any,
     ) -> None:
         """Build the workbench, seeding `region_layout` without triggering a recompose.
@@ -120,10 +122,34 @@ class WatchlistsWorkbench(Horizontal):
                 new instance on every region rebuild, matching how
                 ``WatchlistsTabStrip`` (an overridden-``compose()``
                 widget) already behaves.
+            hidden: Centre regions to omit from `compose()` entirely — no
+                collapsed header, no body (TASK-1344 AC#4: gated regions
+                UNMOUNT rather than keep a one-row header). The caller
+                (`WatchlistsCollectionsScreen._hidden_centre_regions`)
+                decides which regions this is, keyed on `active_section`;
+                the workbench itself has no opinion about tabs. Constructor-
+                only, not a reactive: the caller fully reconstructs this
+                widget (via `compose_content`'s own recompose) whenever
+                `active_section` changes, so nothing here needs to react to
+                that change directly. A plain toggle/solo (`_apply_layout`
+                pushing a new `region_layout` onto the ALREADY-mounted
+                instance) never changes which tab is active, so a stale
+                `hidden` is never observable.
+            header: An optional factory for a widget rendered as the FIRST
+                child of the centre stack, unconditionally — regardless of
+                `hidden`. TASK-1344: the section tab strip and the
+                snapshot's own loading/error/empty markers are cross-
+                cutting chrome, not FEEDS content, so they must survive
+                FEEDS being hidden on every non-Read tab. `None` on the
+                Read tab, where `content[Region.FEEDS]`'s own factory
+                already supplies an (identical-looking) tab strip and
+                marker inline — passing both would mount two `#wl-tabs`.
         """
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
+        self._hidden = frozenset(hidden)
+        self._header = header
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
@@ -134,13 +160,18 @@ class WatchlistsWorkbench(Horizontal):
         `self._content` regardless of which single region actually changed.
 
         Returns:
-            The left-rail region, the centre `Vertical` of FEEDS/ITEMS/
-            CONTENT, and the right-rail region, in that order.
+            The left-rail region, the centre `Vertical` (an optional header,
+            then FEEDS/ITEMS/CONTENT minus anything in `self._hidden`), and
+            the right-rail region, in that order.
         """
         yield self._region_widget(Region.LEFT_RAIL)
 
         with Vertical(id="wl-centre", classes="watchlists-centre"):
+            if self._header is not None:
+                yield self._header()
             for region in CENTRE_REGIONS:
+                if region in self._hidden:
+                    continue
                 yield self._region_widget(region)
 
         yield self._region_widget(Region.RIGHT_RAIL)
@@ -235,21 +266,33 @@ class WatchlistsWorkbench(Horizontal):
     def _is_sole_expanded_centre_region(self, region: Region) -> bool:
         """Whether ``region`` is the only centre region still expanded.
 
-        True exactly when the centre stack shows one real pane and two
-        one-line headers — the state `RegionLayout.solo` produces, and the
-        state a user reaches by collapsing the other two by hand.
+        True exactly when the centre stack shows one real pane and, for
+        every OTHER centre region that is not hidden outright, a one-line
+        header — the state `RegionLayout.solo` produces, and the state a
+        user reaches by collapsing the other two by hand. A region in
+        `self._hidden` (TASK-1344: FEEDS/CONTENT off the Read tab) is never
+        rendered at all, not even as a header, so it is excluded from
+        "expanded" the same way a rail is — without this, ITEMS would never
+        read as sole-expanded on a non-Read tab (FEEDS/CONTENT's real
+        `region_layout.collapsed` membership is whatever the user left it
+        at on Read, not "hidden", so counting it unfiltered would make
+        `expanded` include a region that in fact never mounted).
 
         Args:
             region: The region to test. Rails always answer `False`; solo
                 applies to the centre stack only (`RegionLayout.solo`).
 
         Returns:
-            `True` if `region` is a centre region and every other centre
-            region is collapsed, `False` otherwise.
+            `True` if `region` is a centre region and every other
+            non-hidden centre region is collapsed, `False` otherwise.
         """
         if region not in CENTRE_REGIONS:
             return False
-        expanded = [r for r in CENTRE_REGIONS if not self.region_layout.is_collapsed(r)]
+        expanded = [
+            r
+            for r in CENTRE_REGIONS
+            if r not in self._hidden and not self.region_layout.is_collapsed(r)
+        ]
         return expanded == [region]
 
     async def refresh_region_content(self, region: Region) -> None:

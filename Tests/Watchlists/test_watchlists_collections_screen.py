@@ -197,6 +197,11 @@ async def test_feeds_heading_names_the_scope_with_a_live_count():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
+        # TASK-1344: FEEDS (and its `#wl-feeds-scope-heading`) is gated to
+        # the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
+
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
         )
@@ -219,6 +224,10 @@ async def test_feeds_source_row_escapes_an_untrusted_name():
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
+
+        # TASK-1344: FEEDS is gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
 
         watchlist = service.create("Morning AI Brief")
         source_id = db.add_subscription(
@@ -260,6 +269,11 @@ async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
+
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
+        # gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
 
         morning = service.create("Morning AI Brief")
         a = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
@@ -394,6 +408,10 @@ async def test_feeds_lists_each_source_once_under_the_all_scope():
         # rebuild. This is the resting state a user actually lands on.
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS (`#watchlists-list-pane`) is gated to the Read
+        # tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         for _ in range(20):
             await pilot.pause()
             if list(screen.query(".watchlist-feed-source-row")):
@@ -417,6 +435,10 @@ async def test_feeds_heading_escapes_an_untrusted_source_name():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
+        # gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         service = app.watchlist_bundle_service
         watchlist = service.create("Morning AI Brief")
         source_id = service._db.add_subscription(
@@ -708,6 +730,10 @@ async def test_renaming_a_watchlist_updates_the_rail():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`,
+        # asserted below) is gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
 
         screen.post_message(
