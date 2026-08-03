@@ -38,10 +38,15 @@ The directional glyphs used by the horizontal state labels are omitted from
 the stacked display. Direction remains clear from the handle's edge placement
 and its `Open Context rail` or `Open Inspector rail` tooltip.
 
-Both Console handles use the same narrow, fixed width and full available rail
-height. Any state badge remains visible below the button, uses the same stacked
-terminal-cell treatment when needed to fit the narrow handle, and retains the
-full badge text in its tooltip. Width must not change when badge state changes.
+Both Console handles use the same fixed width of three terminal cells and the
+full available rail height. Any state badge remains visible below the button,
+always uses the same one-character-per-row treatment while vertical presentation
+is enabled, and retains the full badge text in its tooltip. Width must not change
+when badge state changes.
+
+Before stacking, the widget trims surrounding whitespace, collapses internal
+whitespace runs to one space, and removes only the known leading or trailing
+Console rail direction glyph. Existing line breaks are treated as whitespace.
 
 ## Implementation Boundary
 
