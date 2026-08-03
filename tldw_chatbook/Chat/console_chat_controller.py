@@ -59,10 +59,6 @@ from tldw_chatbook.Chat.console_chat_store import (
     TerminalCitationFinalizer,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
-from tldw_chatbook.Chat.console_cost_tracker import (
-    PayloadFingerprint,
-    fingerprint_payload,
-)
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
@@ -91,6 +87,10 @@ from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
+)
+from tldw_chatbook.Chat.console_cost_tracker import (
+    PayloadFingerprint,
+    fingerprint_payload,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,

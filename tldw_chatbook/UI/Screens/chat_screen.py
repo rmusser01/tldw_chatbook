@@ -7173,9 +7173,22 @@ class ChatScreen(BaseAppScreen):
                 pricing_as_of = pricing.as_of
                 if (
                     cache_state == ConsoleCacheState.WARM
+                    and break_reason
                     and pricing.cache_write_per_mtok is not None
                     and pricing.cache_read_per_mtok is not None
                 ):
+                    # `break_reason` is required here (Qodo round, finding
+                    # 3): `build_cost_state`/`_cache_state_line` only ever
+                    # read `projected_delta_usd` inside their own
+                    # `break_reason`-gated branches (the alert suffix on the
+                    # label, and the "~+$" clause in the tooltip's cache
+                    # line) -- with no break reason the value is built and
+                    # then silently discarded every call. Skipping the
+                    # (expensive: `_estimate_tokens_locally` over the WHOLE
+                    # transcript) computation here avoids that on every
+                    # 0.2s/10s sync tick for a long-running WARM session
+                    # that never alerts.
+                    #
                     # `snapshot_messages` (not `messages`): same mid-stream-
                     # animation guard as the snapshot above -- an in-flight
                     # row's growing content must not grow the projected
@@ -7210,7 +7223,7 @@ class ChatScreen(BaseAppScreen):
                 pricing_as_of=pricing_as_of,
             )
         except Exception:
-            logger.warning("cost_chip_state_failed", exc_info=True)
+            logger.opt(exception=True).warning("cost_chip_state_failed")
             return self._last_console_cost_state
 
     def _sync_console_cost_chip(self) -> None:
@@ -7786,7 +7799,7 @@ class ChatScreen(BaseAppScreen):
         try:
             rows = build_cost_rows(messages, provider=provider, model=model)
         except Exception:
-            logger.warning("cost_breakdown_rows_failed", exc_info=True)
+            logger.opt(exception=True).warning("cost_breakdown_rows_failed")
             rows = []
         totals: ConsoleCostRowTotals = build_cost_rows_totals(rows)
         self.app.push_screen(ConsoleCostModal(rows, totals))
@@ -13895,7 +13908,7 @@ class ChatScreen(BaseAppScreen):
             try:
                 initial_cost_state = self._build_console_cost_state()
             except Exception:
-                logger.warning("cost_chip_state_failed", exc_info=True)
+                logger.opt(exception=True).warning("cost_chip_state_failed")
                 initial_cost_state = None
             yield ConsoleStatusChips(
                 control_state,

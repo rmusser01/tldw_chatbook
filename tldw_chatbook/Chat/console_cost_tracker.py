@@ -516,9 +516,8 @@ def build_cost_snapshot(
             row_count=row_count,
         )
     except Exception:
-        logger.warning(
-            "console_cost_tracker.build_cost_snapshot: failed to sum transcript rows",
-            exc_info=True,
+        logger.opt(exception=True).warning(
+            "console_cost_tracker.build_cost_snapshot: failed to sum transcript rows"
         )
         return ConsoleCostSnapshot(
             total_usd=None,
@@ -652,9 +651,8 @@ def build_cost_state(
             cold=cold,
         )
     except Exception:
-        logger.warning(
-            "console_cost_tracker.build_cost_state: failed to build chip state",
-            exc_info=True,
+        logger.opt(exception=True).warning(
+            "console_cost_tracker.build_cost_state: failed to build chip state"
         )
         return ConsoleCostState(
             label="Cost: unavailable",
@@ -706,9 +704,8 @@ def build_cost_rows(
         catalog = get_pricing_catalog()
         provider_key = provider_config_key(provider)
     except Exception:
-        logger.warning(
-            "console_cost_tracker.build_cost_rows: failed to init pricing catalog",
-            exc_info=True,
+        logger.opt(exception=True).warning(
+            "console_cost_tracker.build_cost_rows: failed to init pricing catalog"
         )
         return rows
 
@@ -769,10 +766,9 @@ def build_cost_rows(
                 )
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "console_cost_tracker.build_cost_rows: failed to build row {}",
                 index,
-                exc_info=True,
             )
             continue
 

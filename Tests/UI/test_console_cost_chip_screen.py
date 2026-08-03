@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.widgets import Button
@@ -35,6 +36,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
@@ -221,9 +223,81 @@ async def test_editing_earlier_history_alerts_the_warm_cache_chip():
         assert state is not None
         assert state.alert is True
         assert "earlier history changed" in state.tooltip
+        # Finding 3 (Qodo round): the alert path is the ONLY path that ever
+        # renders `projected_delta_usd` -- confirm narrowing its computation
+        # to the break-reason case didn't also drop the rendered figure.
+        assert "~+$" in state.tooltip
 
         chip = console.query_one("#console-cost-chip")
         assert chip.has_class("console-chip-alert")
+
+
+@pytest.mark.asyncio
+async def test_projected_delta_estimator_skipped_when_warm_without_break_reason():
+    """Finding 3 (Qodo round, PR3): don't burn a whole-transcript token
+    estimate on every sync tick when there's nothing to show it for.
+
+    ``_estimate_tokens_locally`` feeds ``projected_delta_usd``, which
+    ``console_cost_tracker.build_cost_state``/``_cache_state_line`` only
+    ever read inside their own ``break_reason``-gated branches (the label's
+    ``~+$`` suffix and the tooltip's cache-state line) -- with the cache
+    WARM but no break reason, the value is computed and then silently
+    discarded on every call. This pins that the estimator is skipped in
+    that case, and still runs (with the delta rendered) once a break
+    reason shows up -- mirrors
+    ``test_editing_earlier_history_alerts_the_warm_cache_chip``'s edit
+    flow, but spies on the estimator instead of just reading chip state.
+    """
+    gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store, session_id = await _mount_and_send_warm_reply(console, pilot)
+
+        # A completed send with no edits afterward is WARM with no break
+        # reason -- exactly the case that must skip the estimator.
+        baseline_state = console._last_console_cost_state
+        assert baseline_state is not None
+        assert baseline_state.alert is False
+        assert console._console_cost_cache_state == ConsoleCacheState.WARM
+
+        spy = Mock(wraps=chat_screen_module._estimate_tokens_locally)
+        original = chat_screen_module._estimate_tokens_locally
+        chat_screen_module._estimate_tokens_locally = spy
+        try:
+            state = console._build_console_cost_state()
+            assert spy.call_count == 0, (
+                "estimator ran on a WARM cache with no break reason -- "
+                "projected_delta_usd is unused without one"
+            )
+            assert state is not None
+            assert state.alert is False
+
+            # Now introduce a break reason (same edit-earlier-history flow
+            # as test_editing_earlier_history_alerts_the_warm_cache_chip)
+            # and confirm the estimator DOES run, and the alert path still
+            # shows the projected delta.
+            user_message = next(
+                message
+                for message in store.messages_for_session(session_id)
+                if message.role is ConsoleMessageRole.USER
+            )
+            store.update_message_content(user_message.id, "EDITED EARLIER HISTORY")
+
+            alert_state = console._build_console_cost_state()
+
+            assert spy.call_count == 1, (
+                "estimator must run once a break reason is present"
+            )
+            assert alert_state is not None
+            assert alert_state.alert is True
+            assert "~+$" in alert_state.tooltip
+        finally:
+            chat_screen_module._estimate_tokens_locally = original
 
 
 @pytest.mark.asyncio

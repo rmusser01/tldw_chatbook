@@ -214,6 +214,7 @@ class ConsoleCostChip(ConsoleChip):
         """Posted when the cost chip is activated from keyboard or mouse."""
 
     def action_open_cost_breakdown(self) -> None:
+        """Post the activation event that opens the cost breakdown modal."""
         self.post_message(self.ConsoleCostChipPressed())
 
     def _on_click(self, event: events.Click) -> None:
