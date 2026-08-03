@@ -1,7 +1,7 @@
 ---
 id: TASK-1363
 title: Offer appeared/disappeared semantics for content alerts
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 23:55'
 labels:
