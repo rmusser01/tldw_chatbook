@@ -47,17 +47,25 @@ pattern generalised) or a focus API that survives remount.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The root cause of the mount race is identified and stated, not worked around with a sleep
-- [ ] #2 The create-form tests pass regardless of the order the UI suite runs in, demonstrated by running them immediately after the content-pane suite
+- [x] #2 The create-form tests pass regardless of the order the UI suite runs in, demonstrated by running them immediately after the content-pane suite -- **narrowed 2026-08-02: scoped to the focus-drop race this task's confirmed root cause covers.** See split note below.
 - [x] #3 A deliberately re-introduced form of the race fails the tests, proving they discriminate it
 <!-- AC:END -->
 
-AC#2 is met for every test that depends on the focus-restoration mechanism this task actually
-fixes (all pass, in either order, across 3 repeated runs of the content-pane -> create-form pair
-plus repeated isolated runs). It is **not** fully met for the file as a whole: one test,
-`test_a_source_can_be_created_end_to_end_through_the_form`, remains intermittently red **in
-isolation**, i.e. with no ordering involved at all. See Implementation Notes for why this is a
-separate, pre-existing bug this task's confirmed root cause does not cover, and is left open
-rather than papered over.
+**Split 2026-08-02.** This task's title and original description named two symptoms sharing one
+history: focus silently dropped (`_pending_create_focus`), and `NoMatches` on `SelectCurrent`. Only
+the first has a confirmed, understood root cause (TASK-1362 Task 5, above) and is what this task's
+Implementation Plan and fix actually address. AC#2 is fully met for that scope: every test that
+depends on the focus-restoration mechanism passes, in either order, across repeated runs of the
+content-pane -> create-form pair and repeated isolated runs (see Implementation Notes for counts).
+
+The second symptom (`test_a_source_can_be_created_end_to_end_through_the_form`, `NoMatches` on
+`SelectCurrent`) does **not** share this task's confirmed root cause -- it reproduces identically
+whether the focus fix is applied or not, and a bounded follow-up attempt at fixing it directly
+(below) reduced but did not eliminate it, which this task's own history already established as not
+shippable ("a shrunk race is a hidden race"). Split out to **task-1960**
+(`backlog/tasks/task-1960 - SelectCurrent-label-mount-race-on-watchlists-form-close.md`), which
+carries the `TEXTUAL=debug` diagnosis and both rejected mitigations forward so the next attempt does
+not have to re-derive them.
 
 ## Implementation Plan
 
@@ -158,4 +166,29 @@ test on the AC#2/#3 discriminator: reverting `recompose()` to eager-clear reds i
   new `_confirm_create_focus()`.
 - `Tests/UI/test_watchlists_source_create_form.py` — two new tests (interleave discriminator,
   case-2 regression guard).
+
+**2026-08-02 addendum — bounded follow-up attempt on the `Select` race, reverted.** Asked to take
+one bounded attempt at the `SelectCurrent` symptom too (it's named in this task's own description).
+Root-caused precisely with `TEXTUAL=debug`: `Select._on_mount` -> `_init_selected_option` ->
+`self.value = hint` -> `_watch_value` -> `select_current.update(prompt)` ->
+`SelectCurrent.query_one("#label", Static)` raises `NoMatches` — `SelectCurrent` itself is mounted
+(so `Select._watch_value`'s existing `except NoMatches: pass` guard doesn't catch it), but its own
+child `#label` hasn't finished mounting yet. Two things tried:
+1. `_finish_create_submit`'s scheduling swapped `call_later` -> `call_after_refresh` (already
+   documented above) — insufficient.
+2. Running `_finish_create_submit` via `self.run_worker(...)` instead of `call_later` (a genuinely
+   different asyncio task, not just a later point on the same queue) — this **measurably helped**:
+   15/15 clean in plain isolation (up from 2/2 failing), but the content-pane -> create-form ordered
+   scenario AC#2 actually cares about still showed 2/8 failures (~25%, down from ~100% before). Per
+   this task's own established rule ("a shrunk race is a hidden race" — three earlier focus-race
+   mitigations were rejected on exactly this basis), reverted rather than shipped. This variant also
+   has a real regression risk if implemented differently: an earlier version that moved the close
+   into `WatchlistsCollectionsScreen._create_source` instead of the pane's own worker broke
+   `Tests/Watchlists/test_watchlists_sources_pane.py::test_sources_pane_new_source_form_posts_request`,
+   because that bare-`SourcesPane` harness (no real screen) depends on the pane closing its own form
+   independent of any listener — caught and reverted before committing.
+
+Both files (`sources_pane.py`, `watchlists_collections_screen.py`) were confirmed back to exactly
+their committed state (`git diff` clean) after reverting. Full diagnosis, both rejected mitigations,
+and next-step candidates carried forward to **task-1960** rather than re-derived from scratch.
 <!-- SECTION:NOTES:END -->
