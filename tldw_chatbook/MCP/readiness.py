@@ -13,7 +13,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
-from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -234,10 +233,13 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
             the hub (any source: local, server, or builtin).
 
     Returns:
-        A human-readable summary, e.g. "2 of 4 servers ready — 1 needs
-        setup, 1 stale.", or "No MCP servers configured yet." when empty.
-        An off/opt-in built-in (F-051) is excluded from the ready/problem
-        math and reported separately as off instead.
+        A human-readable aggregate, e.g. "2 of 4 servers ready.", or "No
+        MCP servers configured yet." when empty. An off/opt-in built-in
+        (F-051) is excluded from the ready math and noted separately.
+        F-059: no per-state breakdown ("— 1 needs setup, 1 stale") -- each
+        problem's state is already stated once, per server, in the
+        table/rail/callouts (the complete itemized list); the summary
+        keeps only the aggregate count, which those don't say.
     """
     if not snapshots:
         return "No MCP servers configured yet."
@@ -246,16 +248,9 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     if not counted:
         return "Built-in server is off — enable it to let MCP clients use chatbook's tools."
     total = len(counted)
-    counts = Counter(snap.state for snap in counted)
-    ready = counts.get(ReadinessState.READY, 0)
-    problems = [
-        f"{count} {STATE_LABELS[state].lower()}"
-        for state, count in counts.items()
-        if state is not ReadinessState.READY and count
-    ]
-    suffix = f" — {', '.join(problems)}" if problems else ""
+    ready = sum(1 for snap in counted if snap.state is ReadinessState.READY)
     opt_in_note = " Built-in server is off (opt-in)." if off_opt_in else ""
-    return f"{ready} of {total} servers ready{suffix}.{opt_in_note}"
+    return f"{ready} of {total} servers ready.{opt_in_note}"
 
 
 # Task 11: severity order for the overview's aggregate status badge --
@@ -332,9 +327,12 @@ def _snapshot_counts(
 # would say out loud; every surface (overview table, rail tooltip, detail
 # body) reads `snapshot.auth_display` so the plural form is derived once
 # here rather than re-humanized ad hoc at each call site.
+# F-059: the empty case is "—", the same calm placeholder the Tools/Scope
+# columns and `_count_display` use -- one spelling for "nothing" across the
+# whole overview, not "none" here and "—" there.
 def _env_auth_display(placeholder_count: int) -> str:
     if placeholder_count == 0:
-        return "none"
+        return "—"
     if placeholder_count == 1:
         return "1 env var"
     return f"{placeholder_count} env vars"
@@ -593,7 +591,7 @@ def builtin_readiness(
         reasons=reasons,
         message=message,
         transport="stdio",
-        auth_display="none",
+        auth_display="—",
         scope_display="—",
         detail={
             # Task 10: stored directly rather than left for callers to

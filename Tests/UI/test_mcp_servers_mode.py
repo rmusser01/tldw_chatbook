@@ -1189,7 +1189,9 @@ async def test_genuine_problem_still_files_callout_alongside_off_builtin():
         assert app.query_one("#mcp-builtin-enable", Button)
         text = str(app.query_one("#mcp-overview-summary", Static).renderable)
         assert "0 of 1" in text
-        assert "needs setup" in text
+        # F-059: the state itself is stated once -- by the callout above --
+        # not repeated as a summary breakdown.
+        assert "needs setup" not in text
         assert "off" in text.lower()
 
 

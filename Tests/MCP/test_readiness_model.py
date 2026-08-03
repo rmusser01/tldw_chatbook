@@ -95,7 +95,11 @@ def test_aggregate_summary_counts_states():
     ]
     summary = aggregate_summary(snaps)
     assert "2 of 4" in summary
-    assert "needs setup" in summary
+    # F-059: the per-state breakdown is gone -- per-server states are
+    # already itemized in the table/rail/callouts; the summary keeps only
+    # the aggregate ready count (genuinely different information).
+    assert "needs setup" not in summary
+    assert "stale" not in summary
     assert aggregate_summary([]) == "No MCP servers configured yet."
 
 
@@ -119,7 +123,11 @@ def test_aggregate_summary_excludes_off_builtin_from_setup_math():
         [_snap(ReadinessState.NEEDS_SETUP, (ReasonCode.AUTH_MISSING,)), off]
     )
     assert "0 of 1" in problem
-    assert "needs setup" in problem
+    # F-059: no per-state breakdown in the summary anymore -- the problem
+    # callout/table row carries the state; the aggregate count and the
+    # off/opt-in note stay.
+    assert "needs setup" not in problem
+    assert "off" in problem.lower()
 
 
 def test_state_css_classes_complete():

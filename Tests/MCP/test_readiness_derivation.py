@@ -78,7 +78,7 @@ def test_local_profile_connected_with_snapshot_is_ready():
     snap = local_profile_readiness(record, environ={})
     assert snap.state is ReadinessState.READY
     assert snap.reasons == ()
-    assert snap.auth_display == "none"
+    assert snap.auth_display == "—"
 
 
 class _Target:
@@ -246,6 +246,8 @@ def test_builtin_readiness():
     assert on.server_key == BUILTIN_SERVER_KEY
     assert on.state is ReadinessState.READY
     assert on.transport == "stdio"
+    # F-059: one empty-cell placeholder everywhere -- "—", not "none".
+    assert on.auth_display == "—"
     off = builtin_readiness(enabled=False)
     assert off.state is ReadinessState.NEEDS_SETUP
     assert off.primary_reason is ReasonCode.NOT_CONFIGURED
@@ -321,9 +323,12 @@ def test_local_profile_auth_display_plural_for_multiple_env_vars():
     assert snap.auth_display == "2 env vars"
 
 
-def test_local_profile_auth_display_none_for_no_env_vars():
+def test_local_profile_auth_display_dash_for_no_env_vars():
+    """F-059: the empty Auth cell uses the same calm "—" placeholder the
+    Tools/Scope columns and `_count_display` already use -- not a second
+    "none" spelling for the same nothing."""
     snap = local_profile_readiness(_local_record(), environ={})
-    assert snap.auth_display == "none"
+    assert snap.auth_display == "—"
 
 
 # -- Task 11: worst_state() for the aggregate status badge -------------------
