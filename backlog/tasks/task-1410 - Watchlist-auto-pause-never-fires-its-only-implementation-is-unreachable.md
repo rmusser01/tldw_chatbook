@@ -1,7 +1,7 @@
 ---
 id: TASK-1410
 title: Watchlist auto-pause never fires; its only implementation is unreachable
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 08:20'
 labels:
