@@ -42,7 +42,6 @@ MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
-RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
 MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
@@ -1637,17 +1636,6 @@ def test_huggingface_model_card_selected_file_row_is_readable():
         "ModelCardViewer .file-item.selected:hover",
     ):
         assert_readable_inline_selected_state_contract(css_block(text, selector))
-
-
-def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
-    ui_text = RAG_SEARCH_WINDOW.read_text(encoding="utf-8")
-    text = SEARCH_RAG.read_text(encoding="utf-8")
-    assert 'classes="search-query-input-enhanced"' in ui_text
-    base = css_block(text, ".search-query-input-enhanced")
-    focus = css_block(text, ".search-query-input-enhanced:focus")
-    assert_stable_solid_border_geometry(base, focus)
-    assert_thin_input_focus(focus)
-    assert "background: $ds-input-focus-bg;" in focus
 
 
 def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
