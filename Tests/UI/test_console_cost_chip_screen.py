@@ -330,9 +330,148 @@ async def test_reverting_the_edit_clears_the_alert():
         state = console._last_console_cost_state
         assert state is not None
         assert state.alert is False
+        # task-2115: the alert clearing was never in question -- what the
+        # live-provider verification flagged is whether the cache-state
+        # READOUT underneath it also comes back to plain warm, rather than
+        # landing on cold/expired despite real TTL time remaining (no clock
+        # manipulation happened between the edit and the revert here, so
+        # the deadline recorded by the original send is still comfortably
+        # in the future).
+        assert state.cold is False
+        assert console._console_cost_cache_state == ConsoleCacheState.WARM
 
         chip = console.query_one("#console-cost-chip")
         assert not chip.has_class("console-chip-alert")
+        assert not chip.has_class("console-chip-cold")
+
+
+# --- task-2115: revert-with-TTL-remaining vs. genuine TTL lapse -------------
+
+
+async def _mount_and_send_warm_system_prompt(console, pilot):
+    """Send one turn that warms the cache, matching
+    ``_mount_and_send_warm_reply`` but returning the store/session id the
+    same way for the system-prompt-edit tests below."""
+    await _send_and_settle(console, pilot, "hello", "warm reply")
+    store = console._ensure_console_chat_store()
+    session_id = store.active_session_id
+    controller = console._ensure_console_chat_controller()
+    warm_until, had_activity = controller.cache_ttl_snapshot(session_id)
+    assert had_activity is True and warm_until is not None, (
+        "test setup: the stub usage must actually warm the cache"
+    )
+    return store, session_id, controller
+
+
+@pytest.mark.asyncio
+async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm():
+    """task-2115 (real-provider live verification, 2026-08-03): a warm cache,
+    a system-prompt edit (alert), then a revert of that exact edit -- with
+    NO clock manipulation, so the 300s TTL recorded by the original send is
+    still comfortably in the future the whole time (mirrors the spec's own
+    TTL model: "reverting an edit is not a send, so the deadline itself
+    should be untouched by step 3").
+
+    This is the scripted reproduction that settled task-2115: it pins that
+    the chip returns to plain warm ``●`` (not cold ``○``) with a correct
+    remaining countdown, proving the live-verify's observed "lands on
+    expired" was not caused by the revert path itself -- see the task's
+    Implementation Notes for the full determination.
+    """
+    gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store, session_id, controller = await _mount_and_send_warm_system_prompt(
+            console, pilot
+        )
+        warm_until_before, _ = controller.cache_ttl_snapshot(session_id)
+
+        console._apply_console_session_system_prompt("You are a pirate.")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        edited_state = console._last_console_cost_state
+        assert edited_state is not None
+        assert edited_state.alert is True
+        assert "system prompt changed" in edited_state.tooltip
+
+        # Revert to no override -- same session, no new send, no elapsed
+        # clock beyond real test-execution time (well under the 300s TTL).
+        console._apply_console_session_system_prompt(None)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        reverted_state = console._last_console_cost_state
+        assert reverted_state is not None
+        assert reverted_state.alert is False
+        assert reverted_state.cold is False
+        assert "Cache: warm" in reverted_state.tooltip
+        assert "expired" not in reverted_state.tooltip
+        assert console._console_cost_cache_state == ConsoleCacheState.WARM
+
+        # The deadline itself is untouched by the edit/revert round trip --
+        # not just "still warm" but the SAME deadline the original send set.
+        warm_until_after, had_activity_after = controller.cache_ttl_snapshot(
+            session_id
+        )
+        assert had_activity_after is True
+        assert warm_until_after == warm_until_before
+
+        chip = console.query_one("#console-cost-chip")
+        assert not chip.has_class("console-chip-alert")
+        assert not chip.has_class("console-chip-cold")
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expired():
+    """task-2115, AC#5: the companion case to the test above -- once the
+    recorded deadline has GENUINELY passed (simulated the same way
+    ``test_ttl_timer_expires_the_chip_and_stops_itself`` does: pushing the
+    controller's own ``_cache_warm_until`` entry into the past, never by
+    freezing/jumping the real monotonic clock a running app also depends
+    on), a break -> revert sequence must still report the chip as expired/
+    cold, not warm -- proving the fix for the "revert restores warm" case
+    above did not also make the chip forget a real TTL lapse.
+    """
+    gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store, session_id, controller = await _mount_and_send_warm_system_prompt(
+            console, pilot
+        )
+
+        console._apply_console_session_system_prompt("You are a pirate.")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console._last_console_cost_state.alert is True
+
+        console._apply_console_session_system_prompt(None)
+        # The deadline has genuinely lapsed by the time the revert is
+        # observed -- e.g. a slow manual round trip through the editor
+        # modal, exactly the real-world scenario the live verification hit.
+        controller._cache_warm_until[session_id] = time.monotonic() - 1.0
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        state = console._last_console_cost_state
+        assert state is not None
+        assert state.alert is False
+        assert state.cold is True
+        assert "Cache: expired" in state.tooltip
+        assert console._console_cost_cache_state == ConsoleCacheState.EXPIRED
+
+        chip = console.query_one("#console-cost-chip")
+        assert chip.has_class("console-chip-cold")
 
 
 # --- (d) no active native session -> None / hidden --------------------------
