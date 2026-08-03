@@ -1829,6 +1829,57 @@ class SubscriptionsDB(BaseDB):
             raise KeyError(f"Subscription item not found: {item_id}")
         return str(row["status"] or "new")
 
+    def get_url_snapshots(
+        self, subscription_id: int, url: str, *, limit: int = 2
+    ) -> List[Dict[str, Any]]:
+        """Read the newest `limit` `url_snapshots` rows for one (subscription, url).
+
+        TASK-1494: the reader's `[full page]` (index 0) and `[previous
+        snapshot]` (index 1) affordances read this. `_SNAPSHOTS_KEPT_PER_URL`
+        (`monitoring_engine.py`) prunes each `(subscription_id, url)` down to
+        its newest three rows, and slot 2 exists specifically so this call
+        always has something to answer "previous" with once a URL has
+        changed at least twice.
+
+        `ORDER BY created_at DESC, id DESC` is the SAME ordering the prune's
+        own survivor-selection DELETE and `URLMonitor.check_url`'s baseline
+        SELECT both use (the "TASK-1393 ordering pact", named in both of
+        their comments) -- diverging it here would answer "newest"/
+        "second-newest" against a different ordering than the one that
+        decided which rows survived pruning, so this could return a row the
+        prune already deleted, or skip one it kept.
+
+        Args:
+            subscription_id: Owning subscription (`url_snapshots.subscription_id`).
+            url: The exact URL the snapshot was captured for. Load-bearing,
+                not optional: a `url_list`/`sitemap` source's URLs all share
+                one `subscription_id`, so without this predicate "the
+                previous snapshot" would be whichever URL of the source was
+                checked last, not this item's own page.
+            limit: How many rows to return, newest first. `2` answers both
+                affordances (full page, previous snapshot) in one call.
+
+        Returns:
+            Up to `limit` dicts with `id`, `extracted_content`, `created_at`
+            -- newest first. Empty when this (subscription, url) pair has no
+            stored snapshot at all.
+        """
+        # `transaction()` like the sibling reads (`get_item_status` above):
+        # this file's convention, unlike some other DB modules (task-1494
+        # Qodo round).
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, extracted_content, created_at
+                FROM url_snapshots
+                WHERE subscription_id = ? AND url = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (subscription_id, url, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_item_status(
         self,
         item_id: int,

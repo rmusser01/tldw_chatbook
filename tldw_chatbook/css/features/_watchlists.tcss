@@ -1552,3 +1552,60 @@ KeptBriefingsModal {
     border: none;
     margin-left: 1;
 }
+
+/* Snapshot view modal (task-1494): `SnapshotViewModal`. Same centred/
+ * explicitly-sized shape as `KeptBriefingsModal`/`BriefingPresetModal`
+ * above -- an unstyled `ModalScreen` fills the terminal from the top-left
+ * corner. `width: 90` is deliberately a THIRD pinned value, distinct from
+ * both siblings' (96/104) -- see `#kbm-dialog`'s own comment on why a
+ * shared width would let a geometry test pass against the wrong modal.
+ */
+SnapshotViewModal {
+    align: center middle;
+}
+
+#svm-dialog {
+    width: 90;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+#svm-header {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* The snapshot body is the one field here with no natural size cap --
+ * `extracted_content` is a full page's extracted text -- so it gets its
+ * own scrollable region rather than growing the whole dialog past the
+ * terminal, mirroring `#kbm-detail`'s identical `max-height` + `overflow-y`
+ * pair above.
+ */
+#svm-body-scroll {
+    width: 100%;
+    height: auto;
+    max-height: 28;
+    overflow-y: auto;
+}
+
+#svm-body {
+    width: 100%;
+    height: auto;
+}
+
+#svm-actions {
+    width: 100%;
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#svm-actions Button {
+    min-width: 12;
+    height: 3;
+    border: none;
+}

@@ -123,7 +123,11 @@ from ..Watchlists_Modules.artifacts_pane import (
     cadence_scope_phrase,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
-from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
+from ..Watchlists_Modules.content_pane import (
+    ContentPane,
+    UnreadToggleRequested,
+    ViewSnapshotRequested,
+)
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
@@ -156,6 +160,7 @@ from ..Watchlists_Modules.rules_pane import (
     SaveRuleRequested,
 )
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.sources_pane import (
     CreateFormDraftChanged,
     CreateFormVisibilityChanged,
@@ -3691,6 +3696,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return getattr(self.app_instance, "chachanotes_db", None)
 
+    def _local_watchlists_service(self) -> Any:
+        """The live `LocalWatchlistsService`, or `None` (TASK-1494).
+
+        `url_snapshots` is local-only storage -- only `URLMonitor.check_url`
+        (the local monitoring engine) ever writes it, and there is no
+        server-backend equivalent to route to -- so the reader's snapshot
+        viewer reaches this service directly, the same `getattr(self.
+        app_instance, ..., None)` idiom `_watchlist_bundle_service`/`_
+        chachanotes_db` above use, rather than through `self._controller`
+        (`WatchlistsBackendController`), which exists to route a call to
+        whichever of local/server is active and has no reason to gain a
+        local-only method just for this one read.
+        """
+        return getattr(self.app_instance, "local_watchlists_service", None)
+
     def _briefing_schedules_enabled(self) -> bool:
         """Whether `[scheduling] briefing_schedules_enabled` is on for this
         run (task-1812, AC #1).
@@ -6718,6 +6738,93 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
+
+    @on(ViewSnapshotRequested)
+    def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        Deferred to a worker for the same reason every other DB-touching
+        handler on this screen is: `_open_snapshot_view` awaits a service
+        call and, on success, `push_screen_wait`, neither legal directly
+        inside a synchronous `@on` handler. No `exclusive=True`: like
+        `handle_kept_briefings_requested`'s sibling note explains, cancelling
+        a modal-owning worker mid-view would leave the modal on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        self.run_worker(
+            self._open_snapshot_view(item, event.which),
+            group="wl-view-snapshot",
+        )
+
+    async def _open_snapshot_view(self, item: dict[str, Any], which: str) -> None:
+        """Resolve `which` against `url_snapshots` and show it, or say why not.
+
+        AC#2: an absent snapshot (a `full_page` request against an item
+        whose page was somehow never stored, or a `previous` request when
+        only one snapshot exists yet) degrades to an honest toast, never an
+        empty modal and never a silent no-op -- the two failure modes the
+        acceptance criterion explicitly rules out.
+
+        Args:
+            item: The normalized watchlist item `ViewSnapshotRequested`
+                carried -- `source_id`/`url` key the `url_snapshots` lookup.
+            which: `"full_page"` (the newest snapshot) or `"previous"` (the
+                second-newest).
+        """
+        service = self._local_watchlists_service()
+        source_id = item.get("source_id")
+        url = item.get("url")
+        if service is None or source_id is None or not url:
+            self._notify_watchlists(
+                "Could not look up this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        try:
+            snapshots = await service.get_url_snapshots(source_id, url, limit=2)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load url_snapshots for the reader's snapshot viewer."
+            )
+            self._notify_watchlists(
+                "Could not load this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # Closed vocabulary, refused rather than defaulted (task-1494 Qodo):
+        # an unrecognized `which` silently treated as "previous" would open
+        # the WRONG snapshot after a typo'd/future caller, with a misleading
+        # toast on the absent case. Type-only log; nothing user-derived.
+        _SNAPSHOT_INDEX = {"full_page": 0, "previous": 1}
+        index = _SNAPSHOT_INDEX.get(which)
+        if index is None:
+            logger.warning(
+                f"ViewSnapshotRequested with unknown which={which!r}; refusing."
+            )
+            return
+        if index >= len(snapshots):
+            self._notify_watchlists(
+                "No page snapshot saved yet for this item."
+                if which == "full_page"
+                else "No previous snapshot yet for this page.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        snapshot = snapshots[index]
+        await self.app.push_screen_wait(
+            SnapshotViewModal(
+                url=url,
+                created_at=snapshot.get("created_at"),
+                content=snapshot.get("extracted_content"),
+            )
+        )
 
     async def _item_status_write_allowed(
         self, item_id: Any, intent: "_ItemStatusIntent"

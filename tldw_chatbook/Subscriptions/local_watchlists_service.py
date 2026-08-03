@@ -422,6 +422,34 @@ class LocalWatchlistsService:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         return self._db().get_item_status(row_id)
 
+    async def get_url_snapshots(
+        self, source_id: Any, url: str, *, limit: int = 2
+    ) -> list[dict[str, Any]]:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        A thin passthrough to `SubscriptionsDB.get_url_snapshots` -- no
+        normalization needed on the way out; the three columns it returns
+        (`id`, `extracted_content`, `created_at`) are exactly what the
+        screen's `ViewSnapshotRequested` handler and `SnapshotViewModal`
+        read. Not wrapped in `asyncio.to_thread`: no read on this service
+        is (see `list_items`/`get_source`/`get_item_status` above) --
+        `SubscriptionsDB`'s SQLite reads are fast enough that this service
+        has never paid for a thread hop on one, and adding it just for this
+        method would be an inconsistency, not a fix.
+
+        Args:
+            source_id: Owning subscription id (bare, not namespaced) --
+                `normalize_watchlist_item`'s `source_id` field.
+            url: The exact URL the snapshot was captured for --
+                `normalize_watchlist_item`'s `url` field.
+            limit: How many rows to return, newest first.
+
+        Returns:
+            Up to `limit` dicts, newest first; empty when the (source, url)
+            pair has no snapshot yet.
+        """
+        return self._db().get_url_snapshots(int(source_id), str(url), limit=limit)
+
     async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
         """Move one watchlist item to a new status.
 
