@@ -331,6 +331,28 @@ def _summarise_option(field: Any, value: Any) -> str:
     return f"{field.label}: {value}"
 
 
+def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
+    """Scope-line copy for one options panel.
+
+    Shared by ``_compose_type_group`` and the screen's in-place dynamic
+    update (task-2042 review): per-group file counts change without the
+    group SET changing, so the label must be updatable without a panel
+    recompose -- one source keeps the two paths from drifting.
+
+    Args:
+        cap: The group's capability schema (supplies the display label).
+        has_files: Whether the current pre-flight staged files for it.
+
+    Returns:
+        The scope sentence for the panel.
+    """
+    return (
+        f"Applies to all {cap.label} in this import."
+        if has_files
+        else f"Applies to {cap.label} if this import contains any."
+    )
+
+
 def _toggle_label(*, enabled: bool, text: str) -> str:
     """Return a toggle Button's visible label, ``✓``/``○`` convention."""
     marker = "✓" if enabled else "○"
@@ -393,11 +415,7 @@ class LibraryIngestCanvas(VerticalScroll):
         # (task-2016) The generic panel is always rendered so global options
         # stay reachable -- but claiming "Applies to all X in this import."
         # with zero such files staged was a false statement.
-        scope_label = (
-            f"Applies to all {cap.label} in this import."
-            if has_files
-            else f"Applies to {cap.label} if this import contains any."
-        )
+        scope_label = ingest_scope_label(cap, has_files)
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
         cap_fields_by_name = {f.name: f for f in cap.fields}

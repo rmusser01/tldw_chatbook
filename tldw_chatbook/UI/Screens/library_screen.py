@@ -68,6 +68,7 @@ from ...Library.library_export_state import (
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
+from ...Widgets.Library.library_ingest_canvas import ingest_scope_label
 from ...Library.library_ingest_jobs import (
     LibraryIngestJob,
     count_duplicate_done_jobs,
@@ -5746,9 +5747,17 @@ class LibraryScreen(BaseAppScreen):
         # counting it as "imported" made the toast contradict the row copy.
         # Matches are recognised by the writer's progress-message prefix
         # (shared constant, so the two can never drift).
-        jobs_fn = getattr(registry, "jobs", None)
-        registry_jobs = jobs_fn() if callable(jobs_fn) else ()
-        matched_now = count_duplicate_done_jobs(registry_jobs)
+        # (task-2042 review) The registry's internal counter avoids a second
+        # deep-copy ``jobs()`` snapshot per tick; the pure-function fallback
+        # keeps test doubles working.
+        matched_counter = getattr(registry, "count_duplicate_done", None)
+        if callable(matched_counter):
+            matched_now = matched_counter()
+        else:
+            jobs_fn = getattr(registry, "jobs", None)
+            matched_now = count_duplicate_done_jobs(
+                jobs_fn() if callable(jobs_fn) else ()
+            )
         baseline_done, baseline_failed, baseline_matched = (
             self._library_ingest_batch_baseline
         )
@@ -5871,7 +5880,13 @@ class LibraryScreen(BaseAppScreen):
     def _update_library_ingest_gate(
         self, new_state: LibraryIngestCanvasState
     ) -> None:
-        """Sync the Start button + gate line in place (never a recompose)."""
+        """Sync the Start button + gate line in place (never a recompose).
+
+        Args:
+            new_state: The freshly built canvas state whose
+                ``start_enabled``/``start_quiet_line`` are applied to the
+                live widgets.
+        """
         try:
             start_button = self.query_one("#library-ingest-start", Button)
         except (NoMatches, QueryError):
@@ -5932,6 +5947,23 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             clear_button.display = new_state.show_clear_path
+        # (task-2042 review) Scope labels depend on per-group file counts,
+        # which change WITHOUT the group set changing (generic is always
+        # present) -- update them in place so a panel never claims files it
+        # doesn't have.
+        for group in new_state.type_groups:
+            try:
+                scope = canvas.query_one(
+                    f"#type-group-{group} .type-group-scope", Static
+                )
+            except (NoMatches, QueryError):
+                continue
+            scope.update(
+                ingest_scope_label(
+                    get_capabilities(group),
+                    bool(new_state.type_group_file_counts.get(group)),
+                )
+            )
         self._update_library_ingest_gate(new_state)
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:

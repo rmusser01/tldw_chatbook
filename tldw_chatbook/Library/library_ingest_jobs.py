@@ -67,7 +67,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Iterable, Protocol
 
 from loguru import logger
 
@@ -289,11 +289,12 @@ class IngestJobStore(Protocol):
 INGEST_DUPLICATE_PROGRESS_PREFIX = "Already in Library"
 
 
-def count_duplicate_done_jobs(jobs: "Sequence[LibraryIngestJob]") -> int:
+def count_duplicate_done_jobs(jobs: "Iterable[LibraryIngestJob]") -> int:
     """Count DONE jobs whose outcome was a dedup match, not a fresh import.
 
     Args:
-        jobs: A registry ``jobs()`` snapshot (any iterable of jobs).
+        jobs: Any iterable of jobs (a ``jobs()`` snapshot or the
+            registry's internal list -- consumed once).
 
     Returns:
         The number of DONE jobs whose progress message carries
@@ -1092,6 +1093,25 @@ class LibraryIngestJobRegistry:
         return tuple(
             _copy_job(job)
             for job in reversed(self._jobs)
+            if not (job.superseded or job.dismissed)
+        )
+
+    def count_duplicate_done(self) -> int:
+        """Count visible DONE jobs whose outcome was a dedup match.
+
+        Iterates the internal list directly -- no ``_copy_job`` deep copies
+        -- because the batch-settle toast asks on EVERY registry tick and
+        ``jobs()``'s snapshot cost would be paid twice per tick alongside
+        the canvas-state build (task-2042 review). Same visibility filter
+        as ``jobs()``/``counts()``.
+
+        Returns:
+            The number of visible DONE jobs carrying the writer's
+            ``INGEST_DUPLICATE_PROGRESS_PREFIX`` progress marker.
+        """
+        return count_duplicate_done_jobs(
+            job
+            for job in self._jobs
             if not (job.superseded or job.dismissed)
         )
 

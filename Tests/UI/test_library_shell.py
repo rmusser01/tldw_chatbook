@@ -12528,3 +12528,41 @@ async def test_group_set_change_still_rebuilds_panels(tmp_path):
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#type-group-pdf")
         assert screen.query_one("#type-group-pdf", Collapsible)
+
+
+@pytest.mark.asyncio
+async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
+    """(task-2042 review) Per-group file counts change without the group SET
+    changing (generic is always present), so the in-place apply must update
+    the panel scope copy -- otherwise it keeps claiming "if this import
+    contains any" after files ARE staged."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="r2-scope")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        start_before = screen.query_one("#library-ingest-start", Button)
+        screen._library_ingest_form.path = "/tmp/report.txt"
+        result = PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=316,
+            truncated=False,
+            total_files=1,
+        )
+        screen._apply_library_ingest_preflight_result(
+            result, screen._library_ingest_preflight_generation
+        )
+        await pilot.pause()
+
+        scope = screen.query_one("#type-group-generic .type-group-scope", Static)
+        assert "Applies to all" in str(scope.renderable), (
+            f"in-place apply left the scope label stale: {scope.renderable!r}"
+        )
+        # Still the in-place path: the form widgets kept identity.
+        assert screen.query_one("#library-ingest-start", Button) is start_before
