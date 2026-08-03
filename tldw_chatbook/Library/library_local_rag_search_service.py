@@ -60,6 +60,21 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
     "conversations": "conversations",
     "chat": "conversations",
 }
+# The canonical source types `_SEMANTIC_SOURCE_TYPE_MAP` can ever produce
+# (task-15 finding I2): `prompts` (and `workspaces`/`collections`) has no
+# semantic-index seam at all -- no provenance `source_type` a semantic
+# search row carries will ever canonicalize to it. `selected_source_types`
+# reaching `_search_semantic` is the Search canvas's full scope, which
+# includes `prompts` under its default (all four toggles on, the common
+# case whenever a workspace has >=1 prompt) -- diffing that raw scope
+# against `present` in `_semantic_scope_coverage` would flag `prompts`
+# "uncovered" on every single non-empty rag-mode query, forever, turning a
+# per-query signal ("semantic search looked at X and found nothing") into a
+# permanent false nag with the wrong implicature (prompts are structurally
+# absent from the semantic leg, not "searched and empty"). Used to filter
+# `source_types` down to only what the semantic leg can structurally speak
+# to before computing coverage.
+_SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())
 
 
 def _validated_query(query: str) -> str:
@@ -735,11 +750,16 @@ def _semantic_scope_coverage(
 
     Returns:
         `{"covered": [...], "uncovered": [...]}`, both in `source_types`
-        order. A row whose provenance is missing or unrecognized (edge case:
-        it survives the scope post-filter because it cannot be attributed to
-        any toggle) contributes to neither list -- it cannot prove any
-        specific requested type was actually searched-and-found, so it must
-        not mask a genuinely uncovered type.
+        order and both restricted to types the semantic leg can
+        structurally speak to (`_SEMANTICALLY_COVERABLE_SOURCE_TYPES`,
+        task-15 finding I2) -- a requested type with no semantic-index seam
+        at all (`prompts`) never appears in either list, since it was never
+        "searched" in any sense this note can honestly claim. A row whose
+        provenance is missing or unrecognized (edge case: it survives the
+        scope post-filter because it cannot be attributed to any toggle)
+        contributes to neither list -- it cannot prove any specific
+        requested type was actually searched-and-found, so it must not mask
+        a genuinely uncovered type.
     """
     present: set[str] = set()
     for row in rows:
@@ -752,10 +772,19 @@ def _semantic_scope_coverage(
         )
         if canonical:
             present.add(canonical)
+    coverable_source_types = [
+        source_type
+        for source_type in source_types
+        if source_type in _SEMANTICALLY_COVERABLE_SOURCE_TYPES
+    ]
     return {
-        "covered": [source_type for source_type in source_types if source_type in present],
+        "covered": [
+            source_type for source_type in coverable_source_types if source_type in present
+        ],
         "uncovered": [
-            source_type for source_type in source_types if source_type not in present
+            source_type
+            for source_type in coverable_source_types
+            if source_type not in present
         ],
     }
 

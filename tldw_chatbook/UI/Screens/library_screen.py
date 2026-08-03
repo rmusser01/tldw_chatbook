@@ -1139,6 +1139,14 @@ class LibraryScreen(BaseAppScreen):
         # path below so the coverage note built from it can never drift
         # from the results it describes.
         self._library_rag_diagnostics: Mapping[str, Any] = {}
+        # task-15 finding I3: the query the CURRENT `_library_rag_results`/
+        # `_library_rag_retrieval_status` were actually retrieved for --
+        # travels with them through every reset/outcome/save-restore path
+        # exactly like `_library_rag_diagnostics` above, so the quiet
+        # no-match line (`library_rag_empty_state_quiet_copy`) can never
+        # quote query text the "empty" outcome it explains wasn't actually
+        # run against.
+        self._library_rag_searched_query: str = ""
         # B2: source types the user has toggled OFF (deselected) in the
         # scope region. Empty = every available source is in scope (the
         # default). Persists across rail switches within the session, same
@@ -1668,6 +1676,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
         state["library_rag_diagnostics"] = dict(self._library_rag_diagnostics)
+        state["library_rag_searched_query"] = self._library_rag_searched_query
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
@@ -1764,6 +1773,9 @@ class LibraryScreen(BaseAppScreen):
         rag_diagnostics = state.get("library_rag_diagnostics")
         self._library_rag_diagnostics = (
             dict(rag_diagnostics) if isinstance(rag_diagnostics, Mapping) else {}
+        )
+        self._library_rag_searched_query = str(
+            state.get("library_rag_searched_query") or ""
         )
 
         media_type_filter = state.get("library_media_type_filter")
@@ -3596,6 +3608,7 @@ class LibraryScreen(BaseAppScreen):
                 "collections": 0,
             },
             query=self._library_rag_query,
+            searched_query=self._library_rag_searched_query,
             mode=self._library_rag_mode,
             results=self._library_rag_results,
             selected_result_id=self._library_rag_selected_result_id,
@@ -15900,6 +15913,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_diagnostics = {}
+        self._library_rag_searched_query = ""
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -16043,6 +16057,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
         self._library_rag_diagnostics = {}
+        self._library_rag_searched_query = ""
         # The rail-top search box can invoke this mid-recompose -- it selects
         # the Search canvas via ``_select_library_rail_row`` and then runs the
         # query immediately after, before the scheduled recompose has mounted
@@ -16524,6 +16539,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
         self._library_rag_diagnostics = outcome.diagnostics
+        # task-15 finding I3: `request.query` is what this outcome was
+        # actually retrieved for -- already verified equal to the panel's
+        # query at the top of this method (the stale-query guard above), so
+        # it is safe to record as "the searched query" here.
+        self._library_rag_searched_query = request.query
         self._library_rag_selected_result_id = ""
         # D1: the results-arrival transition is the ONLY place allowed to
         # force the `Recent searches` collapsible open/closed -- collapse it

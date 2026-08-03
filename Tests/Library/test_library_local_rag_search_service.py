@@ -823,6 +823,45 @@ async def test_rag_mode_diagnostics_unknown_provenance_row_does_not_count_as_cov
     }
 
 
+# task-15 finding I2: the REAL default Search-canvas scope is all four
+# toggles on -- `("notes", "media", "conversations", "prompts")` -- whenever
+# the workspace has >=1 prompt. `prompts` has no entry in
+# `_SEMANTIC_SOURCE_TYPE_MAP` that produces it (no semantic-index seam
+# exists for prompts at all), so before this fix every non-empty rag-mode
+# query under the default scope permanently reported "Semantic search found
+# nothing from: Prompts." -- a structural absence misrepresented as a
+# per-query "searched and found nothing" result. `prompts` must be excluded
+# from the coverage computation entirely: it appears in neither `covered`
+# nor `uncovered`.
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_exclude_prompts_structurally_uncoverable_under_default_scope():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search(
+        "cake", ("notes", "media", "conversations", "prompts"), "rag", top_k=5
+    )
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["notes"],
+        "uncovered": ["media", "conversations"],
+    }
+
+
 # Edge case (c): when the post-filter/merge leaves zero rows, this is the
 # empty/no-match state -- Task 11's territory, not a coverage note listing
 # every requested source as "uncovered". The service must not attach a

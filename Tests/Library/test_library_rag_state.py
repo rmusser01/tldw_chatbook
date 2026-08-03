@@ -373,6 +373,42 @@ def test_result_row_display_snippet_preserves_technical_identifiers() -> None:
     assert "user_id=42" in row.display_snippet
 
 
+@pytest.mark.parametrize(
+    ("snippet", "preserved"),
+    [
+        ("config [*/etc/hosts*]", ("etc", "hosts")),
+        ("[*/tmp/*] is the scratch dir", ("tmp", "scratch")),
+        ("[_TODO_] finish this", ("TODO", "finish")),
+        ("[*bold*] emphasis in brackets", ("bold", "emphasis")),
+    ],
+)
+def test_result_row_display_snippet_bracketed_emphasis_stays_inert(
+    snippet: str, preserved: tuple[str, ...]
+) -> None:
+    """(final-review C1) Markdown stripping must run BEFORE the terminal
+    markup escape, never after it.
+
+    When the strip ran on already-escaped text, removing the `*`/`_`
+    emphasis delimiters inside a bracket exposed a `[...]` that
+    `escape_markup` had deliberately left alone (rich only escapes brackets
+    that already look like tags). Ordinary technical note content then
+    became LIVE Textual markup: `config [*/etc/hosts*]` turned into
+    `config [/etc/hosts]`, which raises `MarkupError` and crashes the app,
+    and `[_TODO_] finish this` turned into `[TODO] finish this`, whose text
+    Textual silently swallowed as an unknown tag.
+
+    Pins both halves of the contract: nothing parses as markup, and the
+    words a user needs in order to judge relevance survive."""
+    from rich.text import Text
+
+    row = LibraryRagResultRow.from_result({"title": "Notes", "snippet": snippet})
+
+    rendered = Text.from_markup(row.display_snippet)
+    assert rendered.spans == []
+    for word in preserved:
+        assert word in rendered.plain
+
+
 def test_result_row_display_snippet_clamps_long_text_at_word_boundary() -> None:
     words = [f"word{i}" for i in range(120)]
     long_text = " ".join(words)  # well over 320 plain-prose chars, no Markdown

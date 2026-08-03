@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import html
 import re
 from types import MappingProxyType
@@ -224,38 +224,70 @@ def _sanitize_display_text(
         return fallback
     if not escape:
         return text
-    # RAG-30/31 originally re-escaped here (html.escape(html.unescape(text)))
-    # so a "R&amp;D" upstream source rendered as a single "&amp;D" instead
-    # of doubling into "R&amp;amp;D". That kept the escaping *symmetric* but
-    # broke the actual display surface: `Static` widgets render Rich markup,
-    # not HTML, so Rich never decodes "&amp;" back to "&" -- a user typing a
-    # literal "&" saw the literal string "&amp;" on screen (live UAT,
-    # 2026-08-03 task-15 finding 1).
-    #
-    # Un-escaping first and NOT re-escaping fixes that display bug, but
-    # naively deleting `html.escape` here is unsafe on its own: this
-    # function's dangerous-pattern scrubber
-    # (`_remove_dangerous_display_patterns`, dropping `<script>` blocks/
-    # `javascript:`/`onclick=`/`onerror=`) already ran ABOVE, on `sanitized`,
-    # BEFORE any unescaping. An entity-encoded payload
-    # (`&lt;script&gt;alert(1)&lt;/script&gt;`) sails straight past that
-    # scrubber -- it doesn't look like `<script>` yet -- and then, on this
-    # line, `html.unescape` would decode it into a LIVE `<script>` tag.
-    # `escape_markup` only neutralizes Rich's own `[`/`]` markup syntax; it
-    # does nothing for `<script`. So the scrubber has to run AGAIN, after
-    # unescaping, on the now-decoded text, before the final markup-escape.
+    return escape_markup(_unescape_and_rescrub(text))
+
+
+def _unescape_and_rescrub(text: str) -> str:
+    """Undo HTML-entity encoding on already-collapsed display text, safely.
+
+    The shared tail of `_sanitize_display_text(escape=True)`, factored out
+    so `LibraryRagResultRow.from_result` can reuse it to derive the
+    UNESCAPED-but-otherwise-fully-processed snippet text `display_snippet`
+    strips Markdown structure from (RAG-30/31 C1 fix) -- escaping must stay
+    display_snippet's terminal step, so the Markdown-stripping pass needs
+    this function's output, not `_sanitize_display_text`'s own
+    `escape_markup`-terminated one.
+
+    RAG-30/31 originally re-escaped here (html.escape(html.unescape(text)))
+    so a "R&amp;D" upstream source rendered as a single "&amp;D" instead
+    of doubling into "R&amp;amp;D". That kept the escaping *symmetric* but
+    broke the actual display surface: `Static` widgets render Rich markup,
+    not HTML, so Rich never decodes "&amp;" back to "&" -- a user typing a
+    literal "&" saw the literal string "&amp;" on screen (live UAT,
+    2026-08-03 task-15 finding 1).
+
+    Un-escaping first and NOT re-escaping fixes that display bug, but
+    naively deleting `html.escape` here is unsafe on its own: this
+    function's caller's dangerous-pattern scrubber
+    (`_remove_dangerous_display_patterns`, dropping `<script>` blocks/
+    `javascript:`/`onclick=`/`onerror=`) already ran ABOVE, on `sanitized`,
+    BEFORE any unescaping. An entity-encoded payload
+    (`&lt;script&gt;alert(1)&lt;/script&gt;`) sails straight past that
+    scrubber -- it doesn't look like `<script>` yet -- and then, on this
+    line, `html.unescape` would decode it into a LIVE `<script>` tag.
+    `escape_markup` only neutralizes Rich's own `[`/`]` markup syntax; it
+    does nothing for `<script`. So the scrubber has to run AGAIN, after
+    unescaping, on the now-decoded text, before any final markup-escape.
+
+    Args:
+        text: Already sanitized/scrubbed/collapsed display text (the
+            `_sanitize_display_text(escape=False)` output).
+
+    Returns:
+        `text` with HTML entities decoded and dangerous patterns re-scrubbed
+        against the decoded form. Still UNESCAPED -- callers that render
+        this must run it through `escape_markup` (or a stricter equivalent)
+        as their own terminal step.
+    """
     unescaped = html.unescape(text)
     unescaped, _ = _remove_dangerous_display_patterns(unescaped)
-    return escape_markup(unescaped)
+    return unescaped
 
 
 # `_strip_markdown_syntax` structural patterns. This is deliberately a small
 # regex pass, not a Markdown parser: it removes structural notation (link
 # syntax keeps its visible text) while leaving the underlying text content
-# alone. Applied to `LibraryRagResultRow.snippet`, which is already
-# HTML/Rich-markup escaped, so `[` may already carry the escape_markup
-# backslash (`\[`); the link pattern below accepts either form.
-_MARKDOWN_LINK_PATTERN = re.compile(r"\\?\[([^\]]*)\]\([^)]*\)")
+# alone. Applied ONLY to the UNESCAPED sanitized snippet text (RAG-30/31 C1
+# fix) -- escaping must be `display_snippet`'s terminal step, so `[` here is
+# never already escape_markup-escaped; the link pattern below no longer
+# needs to tolerate an optional leading backslash (an earlier version did,
+# back when this ran on already-escaped text -- see the C1 fix notes on
+# `LibraryRagResultRow.display_snippet` for why that ordering was unsafe:
+# stripping Markdown syntax AFTER escaping could turn an inert escaped
+# bracket into a live one, e.g. `\[*/etc/hosts*\]`-shaped input never
+# reached this function, but `[*/etc/hosts*]` did, and stripping its `*`
+# delimiters exposed a bracket `escape_markup` had not touched).
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^#{1,6}[ \t]+")
 _MARKDOWN_LIST_MARKER_PATTERN = re.compile(r"(?m)^(?:[-*+]|\d+[.)])[ \t]+")
 _MARKDOWN_BACKTICK_PATTERN = re.compile(r"`+")
@@ -296,6 +328,64 @@ def _strip_markdown_syntax(text: str) -> str:
     stripped = _MARKDOWN_BACKTICK_PATTERN.sub("", stripped)
     stripped = _MARKDOWN_EMPHASIS_PATTERN.sub(r"\2", stripped)
     return stripped
+
+
+# `escape_markup` (rich.markup.escape) only escapes a `[` immediately
+# followed by what RICH's own markup grammar treats as a tag start
+# (`[a-z#/@]`) -- by design, since Rich's own renderer only recognizes tags
+# matching that same pattern. Every on-screen `Static`/`Label` in this app,
+# however, renders through TEXTUAL's `Content` markup tokenizer
+# (`textual.markup`), not Rich's -- and Textual's tokenizer opens a tag on
+# ANY unescaped `[` (`expect_markup.open_tag = r"(?<!\\)\["`), regardless of
+# what follows. A bracket `escape_markup` leaves untouched because it
+# doesn't look like a Rich tag -- `[TODO]`, `[/etc/hosts]`, any bracket not
+# immediately followed by a lowercase letter/`#`/`/`/`@` -- is therefore
+# STILL live markup to Textual: `Content.from_markup('[TODO] finish this')`
+# silently drops the bracketed span (renders `' finish this'`, eating the
+# visible text), and `Content.from_markup('config [/etc/hosts]')` raises
+# `MarkupError` outright (verified against the installed Textual 8.2.7).
+#
+# `display_snippet` strips Markdown structure before its terminal escape
+# step (RAG-30/31 C1 fix): stripping emphasis delimiters can turn a bracket
+# `escape_markup` would have covered on the raw text (`[*/etc/hosts*]`, not
+# tag-shaped -- the `*` right after `[` isn't in `[a-z#/@]` either) into
+# exactly this exposed shape (`[/etc/hosts]`) once the `*`s are gone. Using
+# `escape_markup` as the terminal step there would still leave the `[TODO]`
+# shape (from stripping `[_TODO_]`) unescaped and eaten -- so that terminal
+# step needs the fuller guarantee below, not `escape_markup`'s narrower one.
+_UNESCAPED_BRACKET_PATTERN = re.compile(r"(\\*)(\[)")
+
+
+def _escape_all_brackets(text: str) -> str:
+    """Escape every `[` in `text`, not only Rich-tag-shaped ones.
+
+    Same backslash-doubling algorithm `escape_markup` uses (existing
+    backslashes before a `[` are doubled, then one more is added, keeping
+    the resulting run odd -- Textual's tokenizer treats an odd backslash
+    run immediately before `[` as "already escaped", an even run as
+    literal backslashes followed by a live tag open) -- just applied to
+    every `[`, not only ones that look like a Rich/Textual tag start. For
+    any bracket `escape_markup` already escapes, this produces the
+    identical output (see the module comment above); it additionally
+    covers the brackets `escape_markup` does not.
+
+    Args:
+        text: Text to escape for safe rendering in a Textual `Content`
+            markup string (e.g. a `Static(...)` argument).
+
+    Returns:
+        `text` with every `[` neutralized against Textual's markup
+        tokenizer.
+    """
+
+    def _double_backslashes(match: re.Match[str]) -> str:
+        backslashes = match.group(1)
+        return f"{backslashes}{backslashes}\\["
+
+    escaped = _UNESCAPED_BRACKET_PATTERN.sub(_double_backslashes, text)
+    if escaped.endswith("\\") and not escaped.endswith("\\\\"):
+        escaped += "\\"
+    return escaped
 
 
 def _clamp_display_text(
@@ -857,6 +947,15 @@ class LibraryRagResultRow:
     citations: tuple[LibraryRagCitation, ...]
     provenance: Mapping[str, Any]
     runtime_backend: str = ""
+    #: Sanitized/collapsed/HTML-entity-decoded snippet text, still UNESCAPED
+    #: (RAG-30/31 C1 fix) -- `display_snippet` strips Markdown structure from
+    #: this, never from `snippet` (which is already `escape_markup`-escaped
+    #: for the Console-handoff/evidence-bundle surface), so escaping stays
+    #: `display_snippet`'s terminal step instead of running before a text
+    #: transform that can expose an unescaped bracket. Excluded from
+    #: equality/repr: it is a pure function of the same source data `snippet`
+    #: is built from, never independently meaningful.
+    _snippet_plain: str = field(default="", repr=False, compare=False)
 
     @classmethod
     def from_result(cls, result: Mapping[str, Any] | Any) -> "LibraryRagResultRow":
@@ -879,12 +978,21 @@ class LibraryRagResultRow:
             or values.get("source_title"),
             "Untitled source",
         )
-        snippet = _sanitize_display_text(
+        # Collapsed-but-unescaped first (mirrors `_sanitize_display_text`'s
+        # own `escape=True` path one step at a time, see `_unescape_and_rescrub`)
+        # so `snippet_plain` -- what `display_snippet` strips Markdown syntax
+        # from -- and `snippet` -- the escaped Console-handoff/evidence-bundle
+        # value -- are derived from the exact same processed text, just with
+        # escaping applied (or not) as the very last step for each.
+        snippet_collapsed = _sanitize_display_text(
             values.get("snippet") or values.get("text") or values.get("content"),
             "No snippet available.",
             max_length=LIBRARY_RAG_SNIPPET_MAX_LENGTH,
             preserve_newlines=True,
+            escape=False,
         )
+        snippet_plain = _unescape_and_rescrub(snippet_collapsed)
+        snippet = escape_markup(snippet_plain)
         citations = tuple(
             _normalize_citation(citation)
             for citation in _as_sequence(values.get("citations"))
@@ -911,6 +1019,7 @@ class LibraryRagResultRow:
                 "",
                 escape=False,
             ),
+            _snippet_plain=snippet_plain,
         )
 
     @property
@@ -928,10 +1037,29 @@ class LibraryRagResultRow:
         `LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS` at a word boundary, so a
         single low-relevance result can't render 25+ lines and bury the
         rest of the evidence list.
+
+        Derived from `_snippet_plain` -- the same sanitized/collapsed text
+        `snippet` is built from, but still UNESCAPED -- never from `snippet`
+        itself (2026-08-03 task-15 finding C1 fix): Markdown-stripping ran
+        on the already-`escape_markup`-escaped `snippet` before this fix,
+        which could resurrect live markup an earlier stripped delimiter had
+        been shielding (e.g. `[*/etc/hosts*]` is inert -- `escape_markup`
+        does not need to touch it, since Rich's tag-look-alike check fails
+        on the leading `*` -- but stripping its `*` emphasis markers first
+        exposes `[/etc/hosts]`, a bracket `escape_markup` DOES leave alone
+        because `/` passes that same check, and Textual's renderer used to
+        see it live and crash). Escaping now runs strictly last, over the
+        fully stripped/flattened/clamped text, via `_escape_all_brackets`
+        rather than `escape_markup` -- `escape_markup`'s narrower
+        tag-look-alike check still leaves some stripped shapes (e.g.
+        `[TODO]`, from stripping `[_TODO_]`) unescaped, and Textual's own
+        markup tokenizer opens a tag on ANY unescaped `[`, not only
+        tag-shaped ones (see `_escape_all_brackets`'s module comment).
         """
-        stripped = _strip_markdown_syntax(self.snippet)
+        stripped = _strip_markdown_syntax(self._snippet_plain)
         flattened = _collapse_text(stripped, preserve_newlines=False)
-        return _clamp_display_text(flattened)
+        clamped = _clamp_display_text(flattened)
+        return _escape_all_brackets(clamped)
 
     @property
     def source_type_badge_label(self) -> str:
@@ -1016,11 +1144,6 @@ class LibraryRagResultRow:
         if self.chunk_id:
             return f"Chunk: {self.chunk_id}"
         return "Source: unavailable"
-
-    @property
-    def score_label(self) -> str:
-        """User-facing retrieval score when the adapter provides one."""
-        return "" if self.score is None else f"Score: {self.score:.3f}"
 
     @property
     def runtime_label(self) -> str:
@@ -1181,8 +1304,16 @@ def library_rag_coverage_note(
         if isinstance(coverage, Mapping)
         else ()
     )
+    # `_source_type_display_label` falls back to the raw, unrecognized
+    # `source_type` verbatim when it isn't one of `LIBRARY_RAG_SOURCE_TYPES`
+    # -- and `uncovered` above is `str(item)` from the service's
+    # `semantic_scope_coverage` diagnostics mapping, a swappable attribute
+    # this module does not control the shape of. Every other user-visible
+    # string this module builds is `escape_markup`-escaped before reaching a
+    # `Static`; these labels were the one gap (task-15 finding M8).
     uncovered_labels = tuple(
-        _source_type_display_label(source_type) for source_type in uncovered
+        escape_markup(_source_type_display_label(source_type))
+        for source_type in uncovered
     )
     message = (
         f"Semantic search found nothing from: {', '.join(uncovered_labels)}."
@@ -1219,6 +1350,18 @@ class LibraryRagPanelState:
     #: `diagnostics["semantic_scope_coverage"]` and the panel's own
     #: `results`. Empty string when there is nothing to say.
     coverage_note: str = ""
+    #: The query the CURRENT `retrieval_status`/`results` were actually
+    #: retrieved for -- independent of `query_state.query`, which tracks
+    #: live, not-yet-submitted input text (task-15 finding I3). The two
+    #: coincide immediately after a search lands, but `query_state.query`
+    #: keeps moving on every keystroke (in-panel query box) or rail-search-
+    #: box edit while `retrieval_status` can still read "empty" from the
+    #: last completed search -- the quiet no-match line must quote the query
+    #: that produced that outcome, not whatever text is sitting in a box at
+    #: render time. Defaults to `query` (via `from_values`'s `None` sentinel)
+    #: so every pre-existing call site that never distinguished the two
+    #: keeps its exact prior behavior.
+    searched_query: str = ""
 
     @classmethod
     def from_values(
@@ -1226,6 +1369,7 @@ class LibraryRagPanelState:
         *,
         source_counts: Mapping[str, Any] | None = None,
         query: Any = "",
+        searched_query: Any = None,
         mode: Any = "rag",
         results: Sequence[LibraryRagResultRow | Mapping[str, Any]] = (),
         selected_result_id: Any = "",
@@ -1244,7 +1388,15 @@ class LibraryRagPanelState:
 
         Args:
             source_counts: Available source counts keyed by source type.
-            query: User query text.
+            query: User query text (live, not-yet-submitted input).
+            searched_query: The query the current `retrieval_status`/
+                `results` were actually retrieved for (task-15 finding I3).
+                `None` (the default -- every call site that predates this
+                fix) falls back to `query`, so a caller that never tracked
+                the two separately keeps identical prior behavior; a caller
+                that does (the screen) passes the query it last actually
+                searched, which can differ from `query` once the user edits
+                the box (or a separate rail search box) without re-running.
             mode: Search mode, either `rag` or `search`.
             results: Retrieval result rows or mappings.
             selected_result_id: Result ID selected for inspector/Console handoff.
@@ -1288,6 +1440,9 @@ class LibraryRagPanelState:
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
             provider_ready=provider_ready,
+        )
+        normalized_searched_query, _ = _sanitize_query(
+            query if searched_query is None else searched_query
         )
         result_rows = tuple(
             result
@@ -1408,6 +1563,7 @@ class LibraryRagPanelState:
             history=tuple(str(h) for h in history),
             history_collapsed=bool(history_collapsed),
             coverage_note=coverage_note,
+            searched_query=normalized_searched_query,
         )
 
 

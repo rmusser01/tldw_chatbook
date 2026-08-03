@@ -474,8 +474,15 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
         if state.retrieval_status == "empty":
             return [
                 Static(
+                    # `state.searched_query`, NOT `state.query_state.query`
+                    # (task-15 finding I3): the latter is live, not-yet-
+                    # submitted input text that keeps moving after this
+                    # "empty" outcome landed (in-panel edits, the rail
+                    # search box, a scope toggle) -- this line must quote
+                    # the query that actually produced the outcome it
+                    # explains, not whatever is sitting in a box right now.
                     library_rag_empty_state_quiet_copy(
-                        state.query_state.query, state.scope
+                        state.searched_query, state.scope
                     ),
                     id=state.recovery_selector,
                     classes="library-rag-quiet-line",

@@ -60,8 +60,9 @@ the current results.
   installed.
 - **RAG Answer** — semantic retrieval. If embeddings support isn't
   installed, the run blocks as "RAG unavailable" with the next step
-  "Install embeddings support or switch mode to Search" and the recovery
-  pointer "Settings > RAG". Installed but nothing indexed yet? The block is
+  `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
+  restart, or switch mode to Search.` and the recovery pointer
+  "Settings > RAG". Installed but nothing indexed yet? The block is
   "Index empty" — "The semantic index has no content yet" — with the
   recovery "Ingest content to index it automatically, run a semantic index
   backfill, or switch mode to Search".
@@ -78,13 +79,22 @@ media"** button ([Import & export](import-and-export.md)).
 
 Each hit is one block:
 
-- **Title** — numbered, e.g. "1. g2_demo_article", with a relevance score
-  appended when one applies (`| score 0.812`).
+- **Title** — numbered, e.g. "1. g2_demo_article", with a match band
+  appended when the row carries a score: `| match: strong` (≥ 0.5),
+  `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
+  keeps the raw number so you can see how weak. Keyword ("Search") mode
+  rows carry no score, so nothing is appended.
 - **Badge line** — the source type first (e.g. "media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row
   can't be used in the active workspace.
-- **Snippet** — the matched text, or "No snippet available."
+- **Snippet** — the matched text, or "No snippet available." On screen it is
+  clamped to roughly 320 characters at a word boundary (with a trailing "…"
+  when clamped) and Markdown structure is stripped — headings, emphasis
+  markers, list bullets, and code fences — so a long, heavily-formatted
+  match can't bury the results below it. Identifiers keep their punctuation:
+  `top_k` and `my_notes_2026.md` render intact. The full, unclamped text is
+  what travels to Console when you stage the evidence.
 - **"Citations: …"** — the citation labels, when present.
 - **Actions** — **Open** (jumps to the item in its own Library surface: the
   media viewer, notes editor, prompt editor, or that conversation) and
@@ -157,7 +167,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 | Key | Action |
 |---|---|
 | Enter (in the query box) | Run the search |
-| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library |
+| Tab | Move focus through the panel, including each evidence card in turn |
+| Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
+| `o` (on a focused evidence card) | Open that item in its own Library surface |
+| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
 
 ## Related settings & docs
 
@@ -191,8 +204,9 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   source types, but retrieval doesn't reach them, so no toggle appears for
   either.
 - **RAG Answer mode needs embeddings support.** Without it, runs block with
-  "Install embeddings support or switch mode to Search" — Search mode
-  always works.
+  `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
+  restart, or switch mode to Search.` — Search mode always works, and is the
+  zero-cost escape while you decide whether to install.
 - **`u` works only on this row.** Elsewhere in Library the key does
   nothing, and the footer hint disappears.
 - **Citations don't flow into generated answers yet.** Evidence carries
@@ -204,3 +218,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 —
 *Verified against dev @ bd05a692a — 2026-07-31*
+
+*Updated for RAG UX v2 PR-2 (match bands, coverage notes, scope summary,
+quiet no-match, evidence-card keys, snippet clamping, deps copy) without a
+fresh live pass — the stamp above still refers to the last full live
+verification of this page.*
