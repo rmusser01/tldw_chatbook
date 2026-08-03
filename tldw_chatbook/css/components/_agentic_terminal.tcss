@@ -6354,4 +6354,13 @@ LibraryIngestCanvas Button:disabled {
    mount); two rows clears both frame borders. */
 Toast {
     margin-bottom: 2;
+
+/* Slash-command completion popup: floats above the composer. Position,
+ * offset, width, and height are set imperatively in
+ * ConsoleCommandPopup.show_suggestions/reposition. */
+#console-command-popup {
+    position: absolute;
+    display: none;
+    background: $ds-surface-panel;
+    padding: 0 1;
 }
