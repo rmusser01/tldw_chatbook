@@ -6143,9 +6143,25 @@ LibraryIngestCanvas CollapsibleTitle:focus {
    stock CollapsibleTitle is width:auto, so the PARENT clips it before its
    own text-overflow can engage -- constrain the width and pin one line so
    the ellipsis actually renders. */
-LibraryIngestCanvas CollapsibleTitle {
+/* Child combinator for specificity: css/features/_conversations.tcss ships
+   an unscoped `Collapsible > CollapsibleTitle { height: 3; }` LATER in the
+   bundle -- at equal specificity it won, re-adding two filler rows inside
+   every panel title (task-2043). */
+LibraryIngestCanvas Collapsible > CollapsibleTitle {
     width: 1fr;
     height: 1;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+/* task-2043: Textual's Collapsible defaults supply the panel filler rows
+   (Collapsible padding-bottom: 1 + Contents padding: 1 0 0 3) -- a
+   collapsed panel carried ~3 blank rows below its title and an expanded
+   one trailed blank rows. Scoped removal; row separation comes from the
+   panels' own stacking. */
+LibraryIngestCanvas Collapsible {
+    padding-bottom: 0;
+}
+LibraryIngestCanvas Collapsible Contents {
+    padding: 0 0 0 3;
 }
