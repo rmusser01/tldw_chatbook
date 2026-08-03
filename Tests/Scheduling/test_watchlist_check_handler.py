@@ -129,6 +129,62 @@ async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
 
 
 @pytest.mark.asyncio
+async def test_partial_url_errors_are_visible_in_the_metric_and_a_warning(
+    handler, metrics_patch
+):
+    """TASK-1394 Qodo: a url_list/sitemap run that isolates a per-URL failure
+    still completes, so a status-only reader would metric it as a clean
+    success. The handler must surface the error count -- a `url_errors` metric
+    label and a per-run WARNING -- so a recurring dead URL is visible outside
+    the Runs pane.
+
+    Args:
+        handler: The `WatchlistCheckHandler` fixture (mock service/DB).
+        metrics_patch: `(log_counter, log_histogram)` patched to capture labels.
+    """
+    counter, _histogram = metrics_patch
+    handler.subscriptions_db.get_subscription.return_value = _subscription("url_list")
+    # A completed run whose dispositions record one isolated URL error.
+    handler.watchlists_service.execute_run.return_value = {
+        "run_id": 7,
+        "status": "completed",
+        "stats": {"new_items_found": 2, "dispositions": {"changed": 2, "error": 1}},
+    }
+
+    await handler.handle(_task())
+
+    _args, kwargs = counter.call_args
+    assert kwargs["labels"]["status"] == "success"
+    assert kwargs["labels"]["url_errors"] == "true", (
+        "a completed run with error dispositions must be distinguishable in "
+        "the metric from a clean success"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_clean_run_carries_no_url_errors_label(handler, metrics_patch):
+    """The `url_errors` label appears ONLY when a run had per-URL errors, so a
+    clean success is not tagged (TASK-1394 Qodo).
+
+    Args:
+        handler: The `WatchlistCheckHandler` fixture (mock service/DB).
+        metrics_patch: `(log_counter, log_histogram)` patched to capture labels.
+    """
+    counter, _histogram = metrics_patch
+    handler.subscriptions_db.get_subscription.return_value = _subscription("url_list")
+    handler.watchlists_service.execute_run.return_value = {
+        "run_id": 7,
+        "status": "completed",
+        "stats": {"new_items_found": 2, "dispositions": {"changed": 2, "error": 0}},
+    }
+
+    await handler.handle(_task())
+
+    _args, kwargs = counter.call_args
+    assert "url_errors" not in kwargs["labels"]
+
+
+@pytest.mark.asyncio
 async def test_failed_run_is_reported_without_a_second_error_record(handler):
     """`execute_run` handles its own fetch failures and does not re-raise."""
     handler.watchlists_service.execute_run.return_value = {

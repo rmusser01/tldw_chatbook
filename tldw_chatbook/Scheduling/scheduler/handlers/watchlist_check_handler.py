@@ -148,6 +148,7 @@ class WatchlistCheckHandler:
         subscription_type = "unknown"
         status = _STATUS_MISSING
         run_id: Any = None
+        had_url_errors = False
 
         try:
             subscription_id = self._parse_subscription_id(task.get("id"))
@@ -217,11 +218,28 @@ class WatchlistCheckHandler:
                 )
             else:
                 status = _STATUS_SUCCESS
-                logger.info(
-                    f"Subscription check complete: '{subscription.get('name')}' - "
-                    f"run {run_id} {run_status or 'completed'}, "
-                    f"{stats.get('new_items_found', 0)} new items"
-                )
+                # A url_list/sitemap run isolates per-URL failures into an
+                # `error` disposition and still completes (TASK-1394), so a
+                # status-only reader here would metric a run with dead URLs as
+                # a clean success. Surface the count: a per-run WARNING (not
+                # per-URL -- low noise) and a low-cardinality metric label, so
+                # a recurring dead/blocked URL is visible outside the Runs
+                # pane. Count only, never the URL or the error text.
+                url_errors = int((stats.get("dispositions") or {}).get("error", 0))
+                if url_errors:
+                    had_url_errors = True
+                    logger.warning(
+                        f"Subscription check completed WITH ERRORS: "
+                        f"'{subscription.get('name')}' - run {run_id}, "
+                        f"{url_errors} URL(s) failed, "
+                        f"{stats.get('new_items_found', 0)} new items"
+                    )
+                else:
+                    logger.info(
+                        f"Subscription check complete: '{subscription.get('name')}' - "
+                        f"run {run_id} {run_status or 'completed'}, "
+                        f"{stats.get('new_items_found', 0)} new items"
+                    )
 
         except Exception as exc:
             status = _STATUS_ERROR
@@ -234,6 +252,11 @@ class WatchlistCheckHandler:
                 "status": status,
                 "subscription_type": subscription_type,
             }
+            if had_url_errors:
+                # Distinguishes a clean success from a completed-with-URL-errors
+                # run in the metric, without the cardinality of a raw count
+                # (TASK-1394).
+                labels["url_errors"] = "true"
             if self.shadow_mode:
                 labels["shadow"] = "true"
             log_counter("watchlist_checks", labels=labels)
