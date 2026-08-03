@@ -1379,8 +1379,13 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
             'Install RAG support: pip install "tldw_chatbook\\[embeddings_rag]", '
             "then restart, or switch mode to Search." in visible_text
         )
-        # The display sanitizer HTML-escapes the recovery route's ">".
-        assert "Recovery: Settings &gt; RAG." in visible_text
+        # (2026-08-03 task-15 finding-1 fix) The display sanitizer no longer
+        # HTML-entity-escapes plain text for display -- a Rich `Static`
+        # never decodes "&gt;" back to ">", so re-encoding here was itself
+        # the over-escaping bug finding 1 fixed (for "&" in evidence
+        # snippets; ">" in this recovery copy is the same class of bug).
+        # The recovery route's ">" now renders as the literal character.
+        assert "Recovery: Settings > RAG." in visible_text
 
 
 @pytest.mark.asyncio

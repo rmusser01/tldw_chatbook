@@ -224,11 +224,29 @@ def _sanitize_display_text(
         return fallback
     if not escape:
         return text
-    # Undo any HTML-entity escaping the text already carries (e.g. an
-    # upstream source that stored "R&amp;D" for a literal "R&D") before the
-    # single escape pass below -- otherwise re-escaping already-escaped text
-    # doubles it into "R&amp;amp;D" on screen (RAG-30/31).
-    return escape_markup(html.escape(html.unescape(text), quote=False))
+    # RAG-30/31 originally re-escaped here (html.escape(html.unescape(text)))
+    # so a "R&amp;D" upstream source rendered as a single "&amp;D" instead
+    # of doubling into "R&amp;amp;D". That kept the escaping *symmetric* but
+    # broke the actual display surface: `Static` widgets render Rich markup,
+    # not HTML, so Rich never decodes "&amp;" back to "&" -- a user typing a
+    # literal "&" saw the literal string "&amp;" on screen (live UAT,
+    # 2026-08-03 task-15 finding 1).
+    #
+    # Un-escaping first and NOT re-escaping fixes that display bug, but
+    # naively deleting `html.escape` here is unsafe on its own: this
+    # function's dangerous-pattern scrubber
+    # (`_remove_dangerous_display_patterns`, dropping `<script>` blocks/
+    # `javascript:`/`onclick=`/`onerror=`) already ran ABOVE, on `sanitized`,
+    # BEFORE any unescaping. An entity-encoded payload
+    # (`&lt;script&gt;alert(1)&lt;/script&gt;`) sails straight past that
+    # scrubber -- it doesn't look like `<script>` yet -- and then, on this
+    # line, `html.unescape` would decode it into a LIVE `<script>` tag.
+    # `escape_markup` only neutralizes Rich's own `[`/`]` markup syntax; it
+    # does nothing for `<script`. So the scrubber has to run AGAIN, after
+    # unescaping, on the now-decoded text, before the final markup-escape.
+    unescaped = html.unescape(text)
+    unescaped, _ = _remove_dangerous_display_patterns(unescaped)
+    return escape_markup(unescaped)
 
 
 # `_strip_markdown_syntax` structural patterns. This is deliberately a small

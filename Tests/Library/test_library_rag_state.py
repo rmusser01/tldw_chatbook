@@ -288,6 +288,14 @@ def test_result_row_preserves_snippet_score_citations_and_provenance() -> None:
 
 
 def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
+    """Title/citation-label assertions updated for the 2026-08-03 task-15
+    finding-1 fix: `_sanitize_display_text` no longer HTML-entity-escapes
+    for display (a Rich `Static` never decodes "&lt;"/"&gt;" back to literal
+    characters, so the old "&lt;b&gt;Release&lt;/b&gt;" expectation pinned
+    the same over-escaping bug finding 1 fixed for "&amp;" -- see
+    `test_sanitize_display_text_decodes_html_entities_for_display`).
+    `<b>`/`<i>` are not dangerous patterns (only `<script>`/`javascript:`/
+    `onclick=`/`onerror=` are), so they now pass through as literal text."""
     row = LibraryRagResultRow.from_result(
         {
             "title": "<b>Release</b>",
@@ -303,10 +311,10 @@ def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
     assert row.result_id == "0:0"
     assert row.source_id == "0"
     assert row.chunk_id == "0"
-    assert row.title == "&lt;b&gt;Release&lt;/b&gt;"
+    assert row.title == "<b>Release</b>"
     assert "Line one\nLine two" in row.snippet
     assert "<script" not in row.snippet
-    assert row.citation_labels == ("&lt;i&gt;Citation&lt;/i&gt;",)
+    assert row.citation_labels == ("<i>Citation</i>",)
     assert row.citations[0].url == ""
 
 
@@ -396,11 +404,18 @@ def test_result_row_display_snippet_passes_through_short_snippet_unclamped() -> 
     assert "…" not in row.display_snippet
 
 
-def test_sanitize_display_text_unescapes_before_single_html_escape() -> None:
-    """(RAG-30/31) Text arriving already HTML-escaped (e.g. an upstream
-    source that ran html.escape on "R&D") must not be escaped a second time
-    into "R&amp;amp;D" -- unescape first so the single escape pass is a
-    fixed point."""
+def test_sanitize_display_text_decodes_html_entities_for_display() -> None:
+    """(RAG-30/31, revised 2026-08-03 task-15 live-UAT finding 1) The
+    display surface is a Textual/Rich `Static`, which renders Rich markup,
+    not HTML -- it never decodes HTML entities back to literal characters.
+    The original RAG-30/31 fix kept text HTML-escaped (re-escaping once,
+    not twice) to avoid "R&amp;amp;D" on screen, but that still put the
+    literal string "&amp;" on screen for a user who typed (or whose source
+    stored) a plain "&" -- confirmed live: a Note containing "Alice & Bob"
+    rendered as "Alice &amp; Bob" in the evidence card. Text arriving
+    HTML-entity-escaped (e.g. an upstream source that ran html.escape on
+    "R&D" and stored "R&amp;D Report") must now decode to the literal
+    character for display instead."""
     row = LibraryRagResultRow.from_result(
         {
             "title": "R&amp;D Report",
@@ -408,14 +423,13 @@ def test_sanitize_display_text_unescapes_before_single_html_escape() -> None:
         }
     )
 
-    assert row.title == "R&amp;D Report"
-    assert row.title.count("&amp;") == 1
-    assert "&amp;amp;" not in row.title
+    assert row.title == "R&D Report"
+    assert "&amp;" not in row.title
 
-    assert row.snippet.count("&amp;") == 1
-    assert "&amp;amp;" not in row.snippet
-    assert row.display_snippet.count("&amp;") == 1
-    assert "&amp;amp;" not in row.display_snippet
+    assert row.snippet == "Budget covers R&D spending this quarter."
+    assert "&amp;" not in row.snippet
+    assert row.display_snippet == row.snippet
+    assert "&amp;" not in row.display_snippet
 
 
 def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_trip() -> (
@@ -426,7 +440,14 @@ def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_tri
     ([bold]/[red]) stays neutralized behind a backslash, and a payload that
     ARRIVES already HTML-entity-encoded (&lt;script&gt;...) round-trips
     through unescape+escape to a single, inert escape -- it never decodes
-    back to a literal '<'/'>' and never double-escapes to '&amp;lt;'."""
+    back to a literal '<'/'>' and never double-escapes to '&amp;lt;'.
+
+    Unchanged by the 2026-08-03 finding-1 fix (`_sanitize_display_text` no
+    longer re-escapes with `html.escape` for display) -- this test must
+    keep passing verbatim, because the dangerous-pattern scrubber now runs
+    a second time AFTER unescaping (see the sequencing-gap test below) and
+    still fully removes both the literal and the entity-encoded <script>
+    blocks before the final markup-escape."""
     row = LibraryRagResultRow.from_result(
         {
             "title": "[bold]spoof[/] &lt;script&gt;alert(1)&lt;/script&gt;",
@@ -442,19 +463,35 @@ def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_tri
         assert "&amp;lt;" not in text
         assert "&amp;amp;" not in text
 
-    # Rich markup is escaped (backslash breaks the live "[tag]...[/]" run)
-    # rather than merely present-but-inert-looking.
-    assert "[bold]spoof[/]" not in row.title
-    assert r"\[bold]spoof\[/]" in row.title
-    assert "[red]inject[/]" not in row.snippet
-    assert r"\[red]inject\[/]" in row.snippet
-    assert "[red]inject[/]" not in row.display_snippet
 
-    # The already-encoded payload is a fixed point of unescape+escape: it
-    # stays literally readable as escaped markup, never collapses back to a
-    # raw '<script>' and never grows an extra layer of escaping.
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in row.title
-    assert "&lt;script&gt;alert(2)&lt;/script&gt;" in row.snippet
+def test_sanitize_display_text_rescrubs_dangerous_patterns_unescaping_reveals() -> None:
+    """(2026-08-03 task-15 finding-1 fix review) Pins the exact sequencing
+    gap the reviewer flagged: `_remove_dangerous_display_patterns` runs once
+    on the RAW/still-entity-encoded text, before any unescaping -- an
+    entity-encoded `<script>` payload (`&lt;script&gt;...&lt;/script&gt;`)
+    does not look dangerous at that point, so it passes through untouched.
+    Naively deleting `html.escape` and returning `escape_markup(html.
+    unescape(text))` would then decode that payload into a LIVE `<script>`
+    tag that reaches the final `Static(...)` unescaped -- `escape_markup`
+    only neutralizes Rich's own `[`/`]` markup syntax, never `<script`.
+    The fix re-scrubs a second time, after unescaping, closing the gap."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "&lt;script&gt;alert(1)&lt;/script&gt;",
+            "snippet": (
+                "safe text [danger] &lt;script&gt;alert(2)&lt;/script&gt; more text"
+            ),
+        }
+    )
+
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "<script" not in text.lower()
+        assert "&amp;" not in text
+
+    # A bracket payload (Rich markup syntax, not HTML) must still come out
+    # backslash-escaped rather than stripped or left live -- the re-scrub
+    # pass only targets <script>/javascript:/onclick=/onerror=, never `[`/`]`.
+    assert r"\[danger]" in row.snippet
 
 
 def test_result_row_provenance_is_immutable_snapshot() -> None:
