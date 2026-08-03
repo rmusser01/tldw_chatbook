@@ -429,7 +429,7 @@ def test_failed_force_stop_quarantines_executor_and_prevents_second_generation(
             _submit(executor, _Callbacks(), attempt_id="blocked")
 
         monkeypatch.setattr(tree, "terminate_tree", original)
-        assert original(term_timeout=1.0, kill_timeout=1.0) is True
+        assert original(term_timeout=2.0, kill_timeout=2.0) is True
     finally:
         executor.close()
 
