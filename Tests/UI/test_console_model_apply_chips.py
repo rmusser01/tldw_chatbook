@@ -40,6 +40,8 @@ async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
 
 @pytest.mark.asyncio
 async def test_popover_apply_refreshes_the_provider_chip():
+    """Applying new session settings must refresh the provider chip
+    without a session switch — the tick's control-bar sync path."""
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
@@ -67,10 +69,12 @@ async def test_popover_apply_refreshes_the_provider_chip():
         assert isinstance(chat_screen, ChatScreen)
         chat_screen._ensure_console_chat_controller()
 
+        from textual.css.query import NoMatches
+
         def chip_text() -> str:
             try:
                 chip = chat_screen.query_one("#console-provider-chip", Static)
-            except Exception:  # noqa: BLE001
+            except NoMatches:
                 return ""
             return str(chip.renderable)
 
