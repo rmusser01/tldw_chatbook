@@ -120,6 +120,21 @@
     min-height: 0;
 }
 
+/* TASK-1344: the always-rendered centre header (section tab strip + the
+ * snapshot's loading/error/empty/summary marker) shown above the gated
+ * regions on every tab except Read -- see
+ * `WatchlistsCollectionsScreen._build_centre_status_header`. Same root
+ * cause and same fix as `#watchlists-list-pane` below: `Vertical`'s own
+ * `DEFAULT_CSS` claims `height: 1fr` (textual/containers.py), and an `fr`
+ * sibling here would compete with ITEMS's own `1fr`/`2fr` share for the
+ * centre's height instead of taking only what its (fixed-height) tab strip
+ * and one-line marker actually need. `height: auto` fixes that; no border,
+ * this is plain chrome, not a region.
+ */
+#wl-centre-status {
+    height: auto;
+}
+
 /* FEEDS shared an equal `1fr` with ITEMS -- which hosts all six section
  * panes and their DataTables -- and CONTENT (Finding 5). At 160x42 that
  * handed FEEDS 11 rows for a handful of Static lines while ITEMS, doing all

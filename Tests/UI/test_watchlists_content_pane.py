@@ -377,6 +377,10 @@ async def test_content_region_is_gated_to_the_items_read_tab():
     `ItemSelected` ever comes from), so CONTENT must occupy real space
     there and nowhere else, regardless of the user's stored collapse
     preference for it.
+
+    TASK-1344 AC#4: gated regions UNMOUNT rather than keep a one-row
+    header, so "nowhere else" means CONTENT has no DOM presence at all off
+    the Read tab -- no `#wl-header-content`, not just no `#wl-region-content`.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -389,10 +393,10 @@ async def test_content_region_is_gated_to_the_items_read_tab():
         screen = host.screen_stack[-1]
 
         # Default section is "overview" -- not Read -- so CONTENT must be
-        # gated to its collapsed header despite the un-gated default
-        # (`region_layout`) being expanded.
+        # unmounted despite the un-gated default (`region_layout`) being
+        # expanded.
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
-        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
@@ -402,7 +406,7 @@ async def test_content_region_is_gated_to_the_items_read_tab():
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
 
@@ -436,7 +440,11 @@ async def test_content_region_gating_does_not_clobber_a_real_collapse_preference
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert screen.query("#wl-header-content")
+        # TASK-1344 AC#4: CONTENT unmounts off the Read tab -- no header,
+        # not even the collapsed one the user's real preference would
+        # otherwise still show on Items.
+        assert not screen.query("#wl-header-content")
+        assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
         await pilot.pause(0.2)
@@ -1178,15 +1186,18 @@ async def test_opening_an_item_does_not_cancel_unrelated_background_work():
 
 @pytest.mark.asyncio
 async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persists():
-    """The gate force-collapses CONTENT off the Read tab, which renders a
-    real, focusable `▸ Content` button. Clicking it (or pressing `z` with it
-    focused) ran the toggle against the REAL `region_layout` rather than the
-    derived view, so nothing visibly changed, the user's genuine preference
-    silently flipped to collapsed, and `"content"` was written to
-    `[watchlists].collapsed_regions` on disk -- honoured forever, since the
-    Phase D migration marker is already set. That permanently recreates the
-    exact state the migration exists to repair, from a control that looked
-    inert.
+    """TASK-1344 AC#4: CONTENT UNMOUNTS off the Read tab, so there is no
+    `▸ Content` chevron left to click at all -- the affordance this test
+    used to defend against no longer exists. What remains reachable is a
+    STALE `focused_region` (e.g. the user last focused CONTENT on Read, then
+    switched tabs without moving focus): `z`/`Z` can still be invoked with it
+    pointed at a region that is not currently mounted, so
+    `_refuse_region_gesture_off_read_tab` must refuse the toggle rather than
+    running it against the REAL `region_layout` -- which would silently flip
+    the user's genuine preference to collapsed and, once persisted, be
+    honoured forever thanks to the Phase D migration marker already being
+    set. That permanently recreates the exact state the migration exists to
+    repair, from a gesture that produced no visible feedback at all.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -1200,28 +1211,32 @@ async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persis
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        assert screen.query("#wl-header-content"), "the gate collapsed CONTENT"
+        assert not screen.query("#wl-header-content"), "CONTENT must be unmounted, not collapsed"
+        assert not screen.query("#wl-region-content")
         assert not screen.region_layout.is_collapsed(Region.CONTENT), (
             "the real preference is still expanded -- the precondition"
         )
 
-        await pilot.click("#wl-header-content")
+        # A stale `focused_region` (left over from a prior visit to Read) is
+        # the one remaining route that could still reach CONTENT here.
+        screen.focused_region = Region.CONTENT
+        screen.action_toggle_region()
         await pilot.pause(0.3)
 
         assert not screen.region_layout.is_collapsed(Region.CONTENT), (
-            "clicking the gated chevron must not flip the real preference"
+            "the gesture must be refused, not run against the real preference"
         )
         assert Region.CONTENT not in (screen._last_persisted_collapsed or frozenset()), (
             "and it must never reach the persisted collapse set"
         )
 
-        # `z` with CONTENT focused is the same action by another route.
-        screen.focused_region = Region.CONTENT
-        screen.action_toggle_region()
+        # `Z` (solo) with CONTENT focused is the same class of route.
+        screen.action_solo_region()
         await pilot.pause(0.3)
+        assert screen.region_layout.solo_region is None
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
 
-        # And back on Read the reader is still there.
+        # And back on Read the reader is still there, untouched.
         screen.active_section = "items"
         await pilot.pause(0.3)
         assert screen.query("#wl-region-content")
@@ -1672,19 +1687,21 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
 async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded():
     """PR #1091 review, F2: the workbench must never render an empty centre.
 
-    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab
-    `_visible_region_layout` force-collapses CONTENT as well, and it used to
-    add that to the SOLO view -- collapsing all three centre regions, so the
-    workbench mounted three header buttons and nothing else. Deriving from
-    the pre-solo baseline instead leaves the user's real layout showing, and
-    their solo is still there when they come back to Read.
+    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab,
+    FEEDS and CONTENT are both hidden outright now (TASK-1344 AC#1/#4:
+    `_hidden_centre_regions` unmounts them, independent of `collapsed`), so
+    the old failure mode this test was written against -- a force-collapse
+    derivation that added CONTENT to the solo's own collapsed set and left
+    all three centre regions collapsed with nothing expanded -- can no
+    longer happen structurally: hiding never touches `collapsed`, and ITEMS
+    (the one region that must survive) is forced OUT of `collapsed` by
+    `_rendered_region_layout` on every non-Read tab regardless of what
+    happened on Read. This test now pins that ITEMS is what is actually left
+    on screen, and that the user's solo is untouched and comes back on Read.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
-        CENTRE_REGIONS,
-        Region,
-    )
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -1705,17 +1722,20 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
         screen.active_section = "sources"
         await pilot.pause(0.3)
 
-        rendered = screen._visible_region_layout()
-        expanded = [r for r in CENTRE_REGIONS if not rendered.is_collapsed(r)]
-        assert expanded, (
-            "leaving Read with CONTENT soloed collapsed every centre region: "
-            f"rendered layout was {sorted(r.value for r in rendered.collapsed)}"
+        # TASK-1344 widened the gate to hide FEEDS off Read too (AC#1), so
+        # the only centre region ever mounted on Sources is now ITEMS --
+        # assert against the DOM directly rather than the old
+        # `_visible_region_layout` derivation, which no longer exists in
+        # that shape (`_hidden_centre_regions` + `_rendered_region_layout`
+        # replaced it; hiding is now orthogonal to `RegionLayout.collapsed`
+        # rather than expressed through it, so there is nothing left to
+        # probe for "still collapsed").
+        assert screen.query("#wl-region-items"), (
+            "at least one centre region must be mounted expanded, not an "
+            "empty centre"
         )
-        # Not just the derived value -- what actually mounted.
-        assert screen.query("#wl-region-feeds") or screen.query("#wl-region-items"), (
-            "at least one centre region must be mounted expanded, not three "
-            "header buttons over an empty centre"
-        )
+        assert not screen.query("#wl-region-feeds"), "FEEDS is hidden off Read too"
+        assert not screen.query("#wl-region-content"), "and CONTENT stays hidden"
 
         screen.active_section = "items"
         await pilot.pause(0.3)
@@ -1730,10 +1750,12 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
 async def test_solo_on_content_off_the_read_tab_is_refused():
     """PR #1091 review, F2 (second half) / TASK-1344 AC#2.
 
-    The collapsed `▸ Content` header is focusable on every tab, so `Z` could
-    still solo a region the user cannot see -- collapsing FEEDS and ITEMS
-    around it and leaving nothing on screen. The chevron and `z` are already
-    refused there; `Z` must be too.
+    CONTENT is unmounted off the Read tab (AC#4), so there is no chevron to
+    click there -- but `focused_region` is a screen-level reactive that
+    outlives the widget that last set it, so `Z` can still be invoked with
+    it pointing at CONTENT after a tab switch. That must be refused rather
+    than soloing a region the user cannot see, which would otherwise
+    collapse FEEDS and ITEMS around it and leave nothing on screen.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
