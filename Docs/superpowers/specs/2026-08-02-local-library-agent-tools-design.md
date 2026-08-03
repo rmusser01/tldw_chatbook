@@ -66,7 +66,8 @@ The implementation follows these observed repository seams:
   as `mcp__tldw_chatbook__<tool>`. Name-collision filtering alone therefore
   cannot prevent the new Library MCP tools from reappearing in Console when
   the direct provider is absent. Console composition needs a source-aware
-  exclusion for the built-in server's 18 raw Library tool names.
+  exclusion for the built-in server's raw Library tool names, including
+  overlapping legacy read/RAG tools.
 - `UI/Screens/chat_screen.py` is the actual Console bridge construction and
   settings-injection seam. The app instance already owns the local services
   needed to construct the Library service.
@@ -197,6 +198,7 @@ The public ID must not encode page position, search rank, mutable title text,
 or an unrestricted filesystem path. Raw backing IDs stay behind the codec.
 Illustrative forms are `media:<opaque>`, `note:<opaque>`, and
 `collection:<opaque>`; callers must treat the entire value as opaque.
+Encoded public IDs use an ASCII-safe alphabet and are bounded to 128 bytes.
 
 Every get operation validates and decodes the expected prefix. Missing items
 return `not_found`; wrong-type or malformed IDs return `invalid_argument`.
@@ -308,10 +310,13 @@ at least:
 - Supported keywords/tags, bounded to 20 values.
 - `keyword_total` and `keywords_truncated` when more keywords exist.
 
-Brief titles/names and previews are each bounded to 240 displayed characters.
-Individual returned keyword values are bounded to 120 displayed characters.
-The underlying exact match and count use the complete stored values; these are
-response bounds only.
+Brief titles/names are display-normalized by replacing control characters with
+spaces and are bounded at a UTF-8 boundary to 160 bytes, including an ellipsis
+when truncated. They include `title_truncated` or `name_truncated` when the
+display value is shortened. Previews are bounded to 240 displayed characters,
+and individual returned keyword values are bounded to 120 displayed
+characters. The underlying exact match and count use the complete stored
+values; these are response bounds only.
 
 The exact fields may differ by Library type, but Console and MCP receive the
 same normalized shape for a given operation. Missing source metadata is
@@ -339,10 +344,18 @@ and merely discard it afterward:
 - Prompt reads project only the selected textual fields or section instead of
   materializing unrelated version-history data.
 
-Every operation has a 32 KiB serialized-result hard ceiling. Mandatory page
-fields are bounded so a maximum 50-item page fits. If optional data would cross
-the ceiling, the serializer trims in this fixed order: additional keyword
-values, previews, then optional metadata.
+Every operation has a 32 KiB UTF-8 serialized-result hard ceiling. Page
+serialization reserves at most 24 KiB for the envelope and mandatory item
+fields: ASCII stable ID, fixed type, byte-bounded display title/name,
+title/name truncation flag, exact keyword count, and keyword-truncation flag.
+The serializer measures the actual encoded JSON bytes. If mandatory fields
+would exceed their reserved budget, it deterministically shortens display
+titles/names further, never below a 32-byte display floor, and sets the
+corresponding truncation flag.
+The ASCII ID and fixed-field bounds guarantee that a 50-item mandatory page
+fits below the reserve. If optional data would cross the full ceiling, the
+serializer trims in this fixed order: additional keyword values, previews,
+then optional metadata.
 It preserves every item in the requested page and always preserves each item's
 `id`, `type`, bounded title/name, and keyword counts. The envelope then returns
 `response_truncated: true` plus `omitted_fields`; otherwise it returns
@@ -459,9 +472,14 @@ Enabling the setting is the Console consent boundary for automatic read-only
 Library tool execution; this design does not add a second per-call approval
 prompt. To prevent duplication or bypass in either setting state, the
 Console-specific `MCPToolProvider` composition always excludes tools whose
-source identity is `builtin:tldw_chatbook` and whose raw name is one of the 18
-descriptor-defined Library names. It does not exclude similarly named tools
-from external MCP profiles, which remain governed by existing MCP permissions.
+source identity is `builtin:tldw_chatbook` and whose raw name is in a
+Console-only exclusion set. That set is the 18 descriptor-defined Library
+names plus the overlapping legacy tools `search_rag`, `search_notes`,
+`search_conversations`, `get_conversation_history`, and
+`export_conversation`. Suppression affects Console exposure only; these legacy
+tools retain their existing MCP contracts for MCP clients. The filter does not
+exclude similarly named tools from external MCP profiles, which remain
+governed by existing MCP permissions.
 
 ## 9. Errors, Validation, and Security
 
@@ -548,8 +566,10 @@ skill directories. They must cover:
 
 - Descriptor completeness and uniqueness for all 18 canonical tool names.
 - Console catalog discovery/loading and per-run provider composition.
-- Source-aware suppression of the 18 built-in Library MCP duplicates in both
-  Console toggle states, without suppressing external MCP profiles.
+- Source-aware suppression of the 18 built-in Library MCP duplicates and the
+  five overlapping legacy built-in read/RAG tools in both Console toggle
+  states, without suppressing external MCP profiles or changing MCP-client
+  contracts.
 - MCP registration, capability/schema exposure, generic delegation, and
   read-policy mapping.
 - Standalone MCP bootstrap using configured current database paths.
@@ -565,9 +585,11 @@ skill directories. They must cover:
 - Deduplication when one item matches multiple fields, keywords, messages, or
   members.
 - Keyword value/count bounds and search evidence bounds.
-- Maximum-page serialization proving required item fields are preserved below
-  the hard ceiling and deterministic `response_truncated` metadata identifies
-  omitted optional fields.
+- Maximum-page serialization with multibyte Unicode and JSON-escaped input,
+  proving byte-bounded mandatory fields fit their reserve, required item IDs
+  are preserved, display titles shorten deterministically when necessary, and
+  `response_truncated` identifies omitted optional fields below the hard
+  ceiling.
 - Text chunk sizes, serialized hard ceiling, cursor continuation, terminal
   chunks, tampered cursors, and revision-change rejection.
 - Conversation message totals, message pagination, long-message continuation,
