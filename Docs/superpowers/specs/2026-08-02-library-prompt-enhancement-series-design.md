@@ -1,7 +1,7 @@
 # Library Prompt Enhancement Series Design
 
 **Date:** 2026-08-02  
-**Status:** Final audit amendments pending specification re-review
+**Status:** Approved decisions; three review passes completed and final findings addressed
 **Scope:** `tldw_chatbook` TASK-202, TASK-196, TASK-198, TASK-199,
 TASK-197, and TASK-203 as six sequential, merge-gated pull requests
 
@@ -443,8 +443,9 @@ dialog also states whether User text will replace the `/prompt` command draft
 or append to the Console draft from Library.
 
 If System replacement is off and there is no applicable User lane, the primary
-Apply action is disabled with a short `Select a lane to apply` explanation.
-Cancel and `Use original placeholders` remain available.
+Apply action and `Use original placeholders` are both disabled with a short
+`Select a lane to apply` explanation. Cancel remains enabled. Neither apply
+path may become a no-op or bypass explicit System authorization.
 
 Primary application renders the ephemeral copy. A secondary `Use original
 placeholders` action applies the selected lanes without interpolation. This is
@@ -468,11 +469,11 @@ System fingerprint, creation time, and expiry. It does not store the raw
 variable map, source Prompt body, or values separately; sensitive fields are
 excluded from representation and logs.
 
-The handoff is latest-wins, one-shot, owner-thread-only, and expires 120 seconds
-after creation using a monotonic clock. Console checks expiry both when claiming
-and before applying, then acknowledges and discards expired or wrong-session
-requests with a warning. A transient missing composer releases the claim for
-retry only while it remains valid.
+The handoff is latest-wins, one-shot, owner-thread-only, and is expired when
+monotonic elapsed time is greater than or equal to 120 seconds. Console checks
+expiry both when claiming and before applying, then acknowledges and discards
+expired or wrong-session requests with a warning. A transient missing composer
+releases the claim for retry only while it remains valid.
 
 For Library append, Console captures the composer snapshot when consuming the
 handoff so the text appends to the settled active draft. It rechecks the
@@ -571,7 +572,9 @@ Records deleted after scope resolution are skipped and included in the outcome
 summary. If every Prompt in a Prompts-only scope disappears or becomes invalid
 before collection, no empty archive is finalized; the form reports that no
 selected Prompt remained. An Everything export may still complete with its
-other selected content and reports the skipped Prompt count.
+other selected content and reports the skipped Prompt count. If no Prompt or
+other selected content remains, it also finalizes no empty archive and reports
+that the resolved scope became empty.
 
 Archive creation retains the existing partial-file plus atomic-replace
 finalization. Prompt collection runs in the export worker. Export logs metadata,
@@ -721,7 +724,7 @@ hidden selection.
   adjacent and triple braces, case sensitivity, empty values, one-pass
   rendering, and no input mutation.
 - Shared System/User variables, System toggle, use-original, cancel, variable
-  limit, and scrollable dialog.
+  limit, no-active-lane disablement, and scrollable dialog.
 - Exact slash, picker, ordinary-draft replacement disclosure, and Library
   append integrations.
 - 120-second boundary, expired/replaced/wrong-session handoff, stale
@@ -736,7 +739,8 @@ hidden selection.
   policies.
 - Older-reader compatibility projection.
 - Prompts-only, Everything, explicit-ID, beyond-page-cap, deleted-mid-export,
-  all-items-disappeared, and atomic archive-finalization tests.
+  all-items-disappeared for Prompts-only and Everything, and atomic archive-
+  finalization tests.
 - Validated manifest paths, duplicate ID/path rejection, unresolved ASK
   conflicts, import preview selection, and bounded partial outcome UI.
 
