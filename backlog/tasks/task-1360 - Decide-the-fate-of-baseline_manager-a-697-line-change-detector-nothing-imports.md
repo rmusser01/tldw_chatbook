@@ -1,7 +1,7 @@
 ---
 id: TASK-1360
 title: Decide the fate of baseline_manager, a 697-line change detector nothing imports
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 23:10'
 labels:
