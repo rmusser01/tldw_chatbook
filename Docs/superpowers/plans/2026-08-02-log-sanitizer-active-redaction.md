@@ -915,7 +915,9 @@ Review every changed line for:
 - no global logging hook or new config dependency;
 - no URL value remains in the pruning diagnostic;
 - no simplified/test-only app exists; and
-- no unrelated inventory entry or user change is included.
+- no inventory entry beyond the separately reviewed latest-dev reconciliation
+  and the TASK-856 monitoring digest is included, and no user change is
+  disturbed.
 
 - [ ] **Step 6: Request independent code review and address verified findings**
 
@@ -925,9 +927,13 @@ Use `superpowers:requesting-code-review` with TASK-856, ADR-029, the approved sp
 
 Update TASK-856 only after code and reviews are complete:
 
-- check all six acceptance criteria;
-- add concise `## Implementation Notes` covering the classifier/scanner, consumer boundary changes, installed-wheel proof, one-digest inventory update, changed files, and ADR-029;
-- record every verification count and the known base/head-equivalent inventory failure;
+- check all seven acceptance criteria;
+- add concise `## Implementation Notes` covering the reviewed baseline
+  reconciliation, classifier/scanner, consumer boundary changes,
+  installed-wheel proof, subsequent one-digest TASK-856 inventory update,
+  changed files, and ADR-029;
+- record every verification count, the initial latest-dev inventory mismatch,
+  the reconciliation commit, and the reconciled base/head fingerprints;
 - change the design status to `Implemented and verified`;
 - check completed plan steps and document any deviation; and
 - run `backlog task edit 856 -s Done` only after all other Definition-of-Done items are satisfied.
