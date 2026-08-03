@@ -8,17 +8,6 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
     build_library_rag_console_live_work_payload,
 )
-from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
-
-
-def test_search_result_builds_use_in_chat_event_with_result_data():
-    result = {"title": "Doc", "content": "Snippet", "source": "notes", "score": 0.8}
-    card = SearchResult(result, 0)
-
-    event = card._build_use_in_chat_event()
-
-    assert event.index == 0
-    assert event.result["title"] == "Doc"
 
 
 def test_library_rag_console_payload_preserves_evidence_fields():

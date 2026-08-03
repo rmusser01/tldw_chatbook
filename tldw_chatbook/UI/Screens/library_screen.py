@@ -20,6 +20,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
@@ -156,11 +157,11 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
-    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
+    library_rag_scope_summary,
     update_search_history,
 )
 from ...Library.library_rail_state import (
@@ -230,7 +231,6 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryPromptsListCanvas,
     LibraryRail,
-    LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
     library_dim_label_text,
@@ -241,6 +241,8 @@ from ...Widgets.Library import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     next_skill_context,
+    results_heading_text,
+    scope_toggle_label,
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
@@ -395,6 +397,15 @@ LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
+# `_refresh_library_rag_results_widgets` tears down every direct child of
+# `#library-rag-results` NOT in this set, then remounts fresh ones from
+# `library_rag_results_body_children` -- the same function `compose()`
+# uses, so the two paths cannot drift. Task 12/RAG-36 wrapped each row's
+# several flat sibling widgets into ONE `.library-rag-result-card`
+# container per row; that reduces the child COUNT under
+# `#library-rag-results` but does not change this set's membership, since
+# every row-level id (old flat widgets or the new card) was already being
+# removed and remounted here -- only the always-kept heading is listed.
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 
 LIBRARY_STUDY_HANDOFF_MODES = {
@@ -881,6 +892,20 @@ class LibraryScreen(BaseAppScreen):
         # everywhere else on the screen.
         ("ctrl+s", "library_skill_save", "Save skill"),
         ("escape", "library_skill_back", "Back to skills list"),
+        # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
+        # cards. Both actions gate on the currently FOCUSED widget being one
+        # of the per-result `.library-rag-result-card` containers (see
+        # `_focused_library_rag_result_card_index`) -- Button and Input
+        # already own "enter" via their own BINDINGS (press / submit
+        # respectively), which are resolved before a Screen-level binding
+        # ever sees the key, so this never fires while a button or the
+        # query input is focused. `show=False`: contextual to a focused
+        # evidence card, not a screen-wide shortcut worth surfacing in the
+        # key/command palette.
+        Binding(
+            "enter", "library_rag_result_card_select", "Select evidence", show=False
+        ),
+        Binding("o", "library_rag_result_card_open", "Open evidence", show=False),
     ]
 
     #: Whether the media item open in the viewer lives on the SERVER. Set only
@@ -895,8 +920,21 @@ class LibraryScreen(BaseAppScreen):
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
     #: Footer used to render (task-264 review: per-screen AppFooterStatus
-    #: renders registered contexts, not bindings).
-    LIBRARY_SHORTCUTS = (("u", "use Library context in Console"),)
+    #: renders registered contexts, not bindings). `_register_footer_shortcuts`
+    #: only wires this set in while the Search/RAG canvas is active, so every
+    #: entry here is already scoped correctly -- no new gating needed.
+    #: Task 12/RAG-36 fix-review: the `enter`/`o` evidence-card `Binding`s
+    #: are `show=False` (Textual's own key panel doesn't need them), which
+    #: made this the ONLY on-screen advertisement of those keys -- and it
+    #: was left unedited, so the keys shipped completely undiscoverable.
+    #: That reproduces the exact defect RAG-36 exists to close (a
+    #: keyboard-only user cannot find a hidden key), so both are listed here
+    #: too.
+    LIBRARY_SHORTCUTS = (
+        ("u", "use Library context in Console"),
+        ("enter", "select evidence"),
+        ("o", "open evidence"),
+    )
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -1096,6 +1134,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        # Task 8: the current results' non-result-shaped retrieval
+        # diagnostics (e.g. `semantic_scope_coverage`) -- travels with
+        # `_library_rag_results` through every reset/outcome/save-restore
+        # path below so the coverage note built from it can never drift
+        # from the results it describes.
+        self._library_rag_diagnostics: Mapping[str, Any] = {}
+        # task-15 finding I3: the query the CURRENT `_library_rag_results`/
+        # `_library_rag_retrieval_status` were actually retrieved for --
+        # travels with them through every reset/outcome/save-restore path
+        # exactly like `_library_rag_diagnostics` above, so the quiet
+        # no-match line (`library_rag_empty_state_quiet_copy`) can never
+        # quote query text the "empty" outcome it explains wasn't actually
+        # run against.
+        self._library_rag_searched_query: str = ""
         # B2: source types the user has toggled OFF (deselected) in the
         # scope region. Empty = every available source is in scope (the
         # default). Persists across rail switches within the session, same
@@ -1626,6 +1678,8 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
         state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        state["library_rag_diagnostics"] = dict(self._library_rag_diagnostics)
+        state["library_rag_searched_query"] = self._library_rag_searched_query
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
@@ -1718,6 +1772,13 @@ class LibraryScreen(BaseAppScreen):
             recovery_state
             if isinstance(recovery_state, DestinationRecoveryState)
             else None
+        )
+        rag_diagnostics = state.get("library_rag_diagnostics")
+        self._library_rag_diagnostics = (
+            dict(rag_diagnostics) if isinstance(rag_diagnostics, Mapping) else {}
+        )
+        self._library_rag_searched_query = str(
+            state.get("library_rag_searched_query") or ""
         )
 
         media_type_filter = state.get("library_media_type_filter")
@@ -2189,7 +2250,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 and self._library_prompts_view == "editor"
-            ):
+            ) or self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 # A source refresh may update the Prompts count while a newly
                 # created Prompt remains open. Recompose only the rail so the
                 # shared block editor keeps its TextAreas, cursor, selection,
@@ -2199,6 +2260,18 @@ class LibraryScreen(BaseAppScreen):
                 # recompose here remounted the form mid-click (the queue
                 # renders from the job registry, not this snapshot -- only
                 # the rail needs the fresh counts).
+                # (RAG-27) Same protection for the Search/RAG canvas: a
+                # background ingest completing while the user is mid-search
+                # must not eject them from the panel either -- the rail sync
+                # below covers the rail, and the extra call further down
+                # syncs the panel's own scope-toggle counts and Run-gate
+                # label/enabled state (NOT results/history/the query-status
+                # callout -- see
+                # `_sync_library_rag_scope_toggle_and_run_gate_widgets`'s
+                # docstring for why this path deliberately stays a plain,
+                # non-`await`ed attribute sync rather than the shared
+                # `_refresh_search_rag_panel_state_widgets` coroutine every
+                # other caller uses).
                 try:
                     rail = self.query_one("#library-rail", LibraryRail)
                 except (NoMatches, QueryError):
@@ -2211,6 +2284,8 @@ class LibraryScreen(BaseAppScreen):
                     self._library_rail_preferences(),
                     query=self._library_rag_query,
                 )
+                if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                    self._sync_library_rag_scope_toggle_and_run_gate_widgets()
                 return
             self.refresh(recompose=True)
 
@@ -3536,6 +3611,7 @@ class LibraryScreen(BaseAppScreen):
                 "collections": 0,
             },
             query=self._library_rag_query,
+            searched_query=self._library_rag_searched_query,
             mode=self._library_rag_mode,
             results=self._library_rag_results,
             selected_result_id=self._library_rag_selected_result_id,
@@ -3564,6 +3640,7 @@ class LibraryScreen(BaseAppScreen):
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
+            diagnostics=self._library_rag_diagnostics,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -15940,6 +16017,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
+        self._library_rag_diagnostics = {}
+        self._library_rag_searched_query = ""
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -16082,6 +16161,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
+        self._library_rag_diagnostics = {}
+        self._library_rag_searched_query = ""
         # The rail-top search box can invoke this mid-recompose -- it selects
         # the Search canvas via ``_select_library_rail_row`` and then runs the
         # query immediately after, before the scheduled recompose has mounted
@@ -16207,6 +16288,18 @@ class LibraryScreen(BaseAppScreen):
         """Select an evidence row for inspector review and Console handoff."""
         event.stop()
         result_index = self._trailing_index(event.button.id)
+        await self._select_library_rag_result_by_index(result_index)
+
+    async def _select_library_rag_result_by_index(
+        self, result_index: int | None
+    ) -> None:
+        """Shared select-evidence implementation (Task 12).
+
+        Used by the "Select evidence" button handler above AND by the
+        focused-card Enter key path (`action_library_rag_result_card_select`)
+        so both routes run the exact same selection logic -- no duplicated
+        implementation between the mouse and keyboard paths.
+        """
         if result_index is None or result_index >= len(self._library_rag_results):
             return
         self._library_rag_selected_result_id = self._library_rag_results[
@@ -16219,11 +16312,64 @@ class LibraryScreen(BaseAppScreen):
         """Open a Search/RAG evidence result straight to its Library detail surface."""
         event.stop()
         index = self._trailing_index(event.button.id)
+        await self._open_library_rag_result_by_index(index)
+
+    async def _open_library_rag_result_by_index(self, index: int | None) -> None:
+        """Shared open-evidence implementation (Task 12).
+
+        Used by the "Open" button handler above AND by the focused-card `o`
+        key path (`action_library_rag_result_card_open`) so both routes run
+        the exact same open logic -- no duplicated implementation between
+        the mouse and keyboard paths.
+        """
         rows = self._library_rag_results
         if index is None or not (0 <= index < len(rows)):
             return
         row = rows[index]
         await self._open_library_item_by_id(row.open_source_type, row.source_id)
+
+    def _focused_library_rag_result_card_index(self) -> int | None:
+        """Return the evidence index of the focused `.library-rag-result-card`.
+
+        Task 12/RAG-36: Enter/`o`/the `u` fast path all gate on the
+        CURRENTLY FOCUSED widget being one of the per-result cards (not
+        just any Button.Pressed/global key) -- this is the single place
+        that resolves "which card" via the same `_trailing_index` helper
+        the button handlers already use on their own ids. Returns `None`
+        when nothing is focused or the focused widget isn't a result card
+        (e.g. the query Input, a Button, or nothing at all), which every
+        caller treats as a no-op.
+        """
+        focused = self.focused
+        if focused is None or not focused.id:
+            return None
+        if not focused.id.startswith("library-rag-result-card-"):
+            return None
+        return self._trailing_index(focused.id)
+
+    async def action_library_rag_result_card_select(self) -> None:
+        """Enter on a focused evidence card: select it (Task 12/RAG-36).
+
+        Mirrors clicking the row's own "Select evidence" button -- routes
+        through the identical `_select_library_rag_result_by_index` no
+        matter which input method triggered it.
+        """
+        index = self._focused_library_rag_result_card_index()
+        if index is None:
+            return
+        await self._select_library_rag_result_by_index(index)
+
+    async def action_library_rag_result_card_open(self) -> None:
+        """`o` on a focused evidence card: open it (Task 12/RAG-36).
+
+        Mirrors clicking the row's own "Open" button -- routes through the
+        identical `_open_library_rag_result_by_index` no matter which input
+        method triggered it.
+        """
+        index = self._focused_library_rag_result_card_index()
+        if index is None:
+            return
+        await self._open_library_rag_result_by_index(index)
 
     async def _open_library_item_by_id(self, source_type: str, record_id: str) -> None:
         """Open a Library item straight to its detail surface by id.
@@ -16403,10 +16549,25 @@ class LibraryScreen(BaseAppScreen):
         """Stage selected evidence from the center results lane."""
         self._use_library_rag_result_in_console(event)
 
-    def action_library_rag_use_in_console(self) -> None:
-        """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
+    async def action_library_rag_use_in_console(self) -> None:
+        """Keyboard shortcut for staging selected Search/RAG evidence in Console.
+
+        Task 12/RAG-36 focused-card fast path: when a `.library-rag-result-
+        card` currently holds keyboard focus, `u` selects THAT evidence
+        (same as Enter would) and then stages it, in one keystroke --
+        instead of requiring the user to Tab to the card, press Enter to
+        select, then press `u` to stage. This does not change `u`'s
+        meaning when no card is focused (still stages whatever evidence
+        was already selected, unchanged from before this task); it only
+        adds a shortcut for the case where the user is looking straight at
+        the evidence they want staged but hasn't explicitly selected it
+        yet -- the same "act on what's focused" idiom Enter/`o` use.
+        """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             return
+        index = self._focused_library_rag_result_card_index()
+        if index is not None:
+            await self._select_library_rag_result_by_index(index)
         self._stage_library_rag_result_in_console()
 
     def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
@@ -16482,6 +16643,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_results = outcome.results
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
+        self._library_rag_diagnostics = outcome.diagnostics
+        # task-15 finding I3: `request.query` is what this outcome was
+        # actually retrieved for -- already verified equal to the panel's
+        # query at the top of this method (the stale-query guard above), so
+        # it is safe to record as "the searched query" here.
+        self._library_rag_searched_query = request.query
         self._library_rag_selected_result_id = ""
         # D1: the results-arrival transition is the ONLY place allowed to
         # force the `Recent searches` collapsible open/closed -- collapse it
@@ -16494,6 +16661,73 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
+
+    def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
+        """Refresh the scope-toggle counts and the Run gate in place, with
+        NO `await` (RAG-27 fix-review).
+
+        Called synchronously from `_apply_local_source_snapshot`'s
+        in-place branch, which fires off the UI thread on every ingest
+        done-count growth -- a moment with no coordination against the
+        panel's four other refresh callers (`update_library_rag_query`,
+        `_start_library_rag_query`, `select_library_rag_result`,
+        `_apply_library_rag_search_outcome`), all of which `await
+        self._refresh_search_rag_panel_state_widgets(...)` directly with
+        no shared lock or exclusive worker group. That coroutine's real
+        yield points (`await widget.remove()` / `await ...mount(...)` for
+        the query-status callout and, when `include_results_and_history`
+        is left True, results/history) make two concurrent invocations
+        unsafe: an ingest snapshot landing mid-keystroke could interleave
+        two remove/mount sequences on the same containers (double-remove
+        or duplicate-id). Restricting the snapshot path to plain
+        attribute writes -- `Button.label`/`.disabled`/`.tooltip`,
+        `Static.update()` -- has no yield points at all, so it can never
+        interleave with anything and needs no coordination.
+
+        Trade-off: the query region's quiet-line/blocked-callout/recovery
+        block (`library_rag_query_status_children`) and the scope
+        container's `has-recovery` class are NOT refreshed here (both
+        require remove/mount or would visually desync from an unrefreshed
+        callout) -- an ingest-driven scope change that flips the run gate's
+        *reason* text (as opposed to just enabled/disabled) stays stale
+        until the next full refresh. Accepted narrowly for this
+        snapshot-driven path only; every other caller above still runs the
+        full `_refresh_search_rag_panel_state_widgets` and is unaffected.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
+        ):
+            return
+        panel_state = self._library_rag_panel_state()
+
+        try:
+            run_button = self.query_one("#library-rag-run-query", Button)
+        except (NoMatches, QueryError):
+            return
+        run_action = panel_state.query_state.run_action
+        run_button.label = run_action.label
+        run_button.disabled = not run_action.enabled
+        run_button.tooltip = run_action.tooltip
+
+        options_by_source_type = {
+            option.source_type: option for option in panel_state.scope.options
+        }
+        for toggle in self.query(".library-rag-scope-toggle"):
+            if not isinstance(toggle, Button) or toggle.id is None:
+                continue
+            source_type = toggle.id.removeprefix("library-rag-scope-toggle-")
+            option = options_by_source_type.get(source_type)
+            if option is None:
+                continue
+            toggle.label = scope_toggle_label(option)
+            toggle.disabled = not option.available
+
+        try:
+            self.query_one("#library-rag-scope-summary", Static).update(
+                self._library_rag_scope_summary(panel_state)
+            )
+        except (NoMatches, QueryError):
+            pass
 
     async def _refresh_search_rag_panel_state_widgets(
         self,
@@ -16538,8 +16772,6 @@ class LibraryScreen(BaseAppScreen):
             await widget.remove()
         for child in library_rag_scope_recovery_children(panel_state):
             await scope_container.mount(child)
-
-        self._refresh_library_rag_inspector(panel_state)
 
         if not include_results_and_history:
             return
@@ -16658,17 +16890,6 @@ class LibraryScreen(BaseAppScreen):
             for row in library_rag_history_children(panel_state):
                 await contents.mount(row)
 
-    def _refresh_library_rag_inspector(
-        self,
-        panel_state: LibraryRagPanelState,
-    ) -> None:
-        inspector_widgets = list(self.query("#library-rag-inspector"))
-        if not inspector_widgets:
-            return
-        inspector = inspector_widgets[0]
-        if isinstance(inspector, LibrarySearchRagInspectorPanel):
-            inspector.refresh_from_state(panel_state)
-
     async def _refresh_library_rag_results_widgets(
         self,
         panel_state: LibraryRagPanelState,
@@ -16678,11 +16899,36 @@ class LibraryScreen(BaseAppScreen):
         Shared with `LibrarySearchRagPanel.compose()` (C1): both build rows,
         the searching line, recovery copy, and the empty state from the
         same function, closing the compose-vs-refresh duplication that
-        previously let the two paths drift apart.
+        previously let the two paths drift apart. Each row is now ONE
+        `.library-rag-result-card` (Task 12/RAG-36) instead of several flat
+        sibling widgets, but that card is still just another direct child
+        of `results_container` -- the remove/remount loop below (skip
+        `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tear down everything else,
+        remount from `library_rag_results_body_children`) needed no change
+        to stay in lockstep with the new structure.
+
+        What DOES need explicit handling: this remove/remount cycle
+        destroys and recreates the card widget INSTANCES, including
+        whichever one currently holds keyboard focus (e.g. the user just
+        pressed Enter on a card, which calls this via
+        `_select_library_rag_result_by_index`). Textual does not carry
+        focus across a removed widget being replaced by a same-id
+        successor, so without the save/restore below, every keyboard
+        selection would silently drop focus back to nothing -- breaking
+        the "Enter selects, then keep going" keyboard flow this task exists
+        to add.
         """
         results_container = self.query_one("#library-rag-results", Vertical)
         self.query_one("#library-rag-results-heading", Static).update(
-            f"Evidence · top {panel_state.query_state.top_k} per source"
+            results_heading_text(panel_state)
+        )
+        focused = self.focused
+        focused_card_id = (
+            focused.id
+            if focused is not None
+            and focused.id
+            and focused.id.startswith("library-rag-result-card-")
+            else None
         )
         for child in list(results_container.children):
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
@@ -16690,10 +16936,19 @@ class LibraryScreen(BaseAppScreen):
             await child.remove()
         for child in library_rag_results_body_children(panel_state):
             await results_container.mount(child)
+        if focused_card_id is not None:
+            try:
+                self.query_one(f"#{focused_card_id}").focus()
+            except (NoMatches, QueryError):
+                # The just-focused card's result can legitimately be gone
+                # after the rebuild (e.g. a re-run landed a shorter result
+                # set) -- falling back to no focus is correct there, not a
+                # bug to paper over.
+                pass
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+        return library_rag_scope_summary(panel_state.scope)
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()

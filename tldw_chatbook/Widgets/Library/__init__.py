@@ -14,8 +14,8 @@ from .library_notes_canvas import LibraryNotesCanvas
 from .library_prompts_canvas import LibraryPromptsListCanvas
 from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
 from .library_search_rag_panel import (
-    LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    library_rag_coverage_note_children,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
@@ -24,6 +24,8 @@ from .library_search_rag_panel import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     library_rag_scope_toggle_children,
+    results_heading_text,
+    scope_toggle_label,
 )
 from .library_skills_canvas import (
     LibrarySkillsListCanvas,
@@ -56,7 +58,6 @@ __all__ = [
     "LibraryNotesCanvas",
     "LibraryPromptsListCanvas",
     "LibraryRail",
-    "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
     "LibrarySkillsListCanvas",
     "SKILL_MODEL_HINT_COPY",
@@ -74,6 +75,7 @@ __all__ = [
     "skill_trust_unlock_enabled",
     "skill_user_invocable_label",
     "library_dim_label_text",
+    "library_rag_coverage_note_children",
     "library_rag_history_children",
     "library_rag_query_shows_full_recovery",
     "library_rag_query_status_children",
@@ -82,4 +84,6 @@ __all__ = [
     "library_rag_scope_recovery_children",
     "library_rag_scope_shows_recovery",
     "library_rag_scope_toggle_children",
+    "results_heading_text",
+    "scope_toggle_label",
 ]

@@ -24,7 +24,6 @@ LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
-SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
@@ -691,6 +690,17 @@ def test_library_mode_chip_selector_is_retired_from_focus_contracts():
         selectors = css_selectors(text)
         assert not css_selectors_contain_class(selectors, ".library-mode-chip")
         assert not css_selectors_contain_class(selectors, ".notes-mode-chip")
+
+
+def test_search_rag_selectors_are_retired_from_bundled_css():
+    """features/_search-rag.tcss was deleted (RAG UX v2 PR-2 Task 2); its
+    selectors must not resurface in any bundled css module."""
+    for module_path in bundled_css_module_paths():
+        selectors = css_selectors(module_path.read_text(encoding="utf-8"))
+        assert not css_selectors_contain_class(
+            selectors, ".search-query-input-enhanced"
+        )
+        assert not css_selectors_contain_class(selectors, ".results-list-enhanced")
 
 
 def test_css_class_selector_matching_uses_token_boundaries():
@@ -1599,6 +1609,41 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     inline_focus = css_block(inline_text, ".search-input:focus")
     assert_stable_solid_border_geometry(inline_base, inline_focus)
     assert_thin_inline_input_focus(inline_focus)
+
+
+def test_library_rag_query_input_uses_stable_thin_contracts():
+    text = AGENTIC.read_text(encoding="utf-8")
+    base = css_block(text, "#library-rag-query-input")
+    focus = css_block(text, "#library-rag-query-input:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert_thin_input_focus(focus)
+    assert "background: $ds-input-focus-bg;" in focus
+
+
+@pytest.mark.unit
+def test_library_rag_result_card_focus_uses_stable_border_geometry():
+    """Task 12/RAG-36: the focusable evidence-row card border only changes
+    COLOR on focus (never adds a border edge the base rule doesn't already
+    reserve, per the stable-border-geometry rule from Task 5 -- otherwise
+    Tab/Shift+Tab through the results list would visibly jitter). Also
+    confirms focus is distinguished from `.library-rag-result-row.is-
+    selected`'s own $ds-focus-bg/$ds-focus-fg treatment by NOT touching
+    background/color, so "keyboard is here" never reads as "this evidence
+    is selected"."""
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, ".library-rag-result-card")
+        focus = css_block(text, ".library-rag-result-card:focus")
+        assert_stable_solid_border_geometry(base, focus)
+        assert "border: solid $ds-focus-accent;" in focus
+        assert "border-bottom: solid $ds-focus-accent;" in focus
+        assert "outline: heavy" not in focus
+        assert "$primary" not in focus
+        assert "$accent" not in focus
+        assert "background:" not in focus
+        assert "color:" not in focus
 
 
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():

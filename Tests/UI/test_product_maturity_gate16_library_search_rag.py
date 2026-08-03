@@ -15,7 +15,10 @@ from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
 )
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_SEARCH,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
@@ -163,6 +166,206 @@ async def _wait_for_evidence_selected(
     raise AssertionError(
         f"Timed out waiting for Library Search/RAG selection: {title!r}"
     )
+
+
+# --- Task 8: mode-aware Evidence heading + semantic coverage note ----------
+
+
+def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> None:
+    """(Task 8) RAG mode's Evidence heading drops the false "per source"
+    claim -- the semantic leg is one merged store query trimmed to top_k,
+    not a fan-out per selected source the way the keyword leg is -- and the
+    coverage-note Static mounts directly under the heading, only when there
+    is a specific, honest thing to say."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import (
+        library_rag_results_body_children,
+        results_heading_text,
+    )
+
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Media doc",
+            "score": 0.6,
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        }
+    )
+    rag_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+        diagnostics={
+            "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+        },
+    )
+    search_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="search",
+        results=(result,),
+    )
+
+    # A3's "top_k" claim is only accurate for keyword mode's per-source
+    # fan-out; rag mode drops the "per source" suffix outright.
+    assert results_heading_text(rag_state) == "Evidence · top 5"
+    assert results_heading_text(search_state) == "Evidence · top 5 per source"
+
+    rag_children = library_rag_results_body_children(rag_state)
+    coverage_statics = [
+        child
+        for child in rag_children
+        if getattr(child, "id", None) == "library-rag-coverage-note"
+    ]
+    assert len(coverage_statics) == 1
+    assert coverage_statics[0].has_class("library-rag-quiet-line")
+    assert (
+        str(coverage_statics[0].renderable)
+        == "Semantic search found nothing from: Notes."
+    )
+    # It renders directly under the heading -- the first body child.
+    assert rag_children[0] is coverage_statics[0]
+
+    # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
+    # coverage claim to make) -> no widget mounted at all.
+    search_children = library_rag_results_body_children(search_state)
+    assert not any(
+        getattr(child, "id", None) == "library-rag-coverage-note"
+        for child in search_children
+    )
+
+
+# --- Task 11: quiet no-match state (RAG-33) ---------------------------------
+
+
+def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
+    """(RAG-33/Task 11) A routine "your library has nothing matching this
+    query" search (`retrieval_status == "empty"`) renders the quiet-line
+    idiom (`.library-rag-quiet-line`, already used by the empty-query and
+    no-scope gates) instead of the retired Unavailable/Why/Next/Recovery/
+    Owner dump -- but a REAL failure at the same render seam
+    (`retrieval_status == "failed"`: missing dependencies, empty index,
+    provider unavailable, policy denial) still renders that dump verbatim,
+    because the user genuinely has to act on infrastructure there."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    empty_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="unicorn migration guide",
+        retrieval_status="empty",
+    )
+    empty_children = library_rag_results_body_children(empty_state)
+    assert len(empty_children) == 1
+    quiet_static = empty_children[0]
+    assert quiet_static.id == "library-rag-empty-state"
+    assert quiet_static.has_class("library-rag-quiet-line")
+    quiet_text = str(quiet_static.renderable)
+    assert quiet_text == (
+        "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+    )
+    for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+        assert jargon not in quiet_text
+
+    # Real failure: same render seam, different retrieval_status -> the
+    # full recovery dump is unchanged.
+    failed_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="unicorn migration guide",
+        retrieval_status="failed",
+    )
+    failed_children = library_rag_results_body_children(failed_state)
+    assert len(failed_children) == 1
+    dump_static = failed_children[0]
+    assert dump_static.id == "library-rag-service-error"
+    assert not dump_static.has_class("library-rag-quiet-line")
+    dump_text = str(dump_static.renderable)
+    assert "Owner: Library retrieval." in dump_text
+    assert "Unavailable: Library Search/RAG retrieval." in dump_text
+
+
+# --- Task 13: honest re-run hint on history rows (RAG-38) ------------------
+
+
+def test_history_row_tooltip_names_current_mode_and_tracks_mode_changes() -> None:
+    """(RAG-38) Clicking a search-history row re-runs the query under the
+    CURRENT mode, not the mode it originally ran under -- history entries
+    are bare strings, no mode is recorded per entry (an honest fix here is
+    a tooltip, not a persistence/data-model change). Each row's tooltip
+    must therefore name whichever mode is presently selected, and change
+    when the mode does -- a tooltip that always said e.g. "RAG Answer"
+    would go stale the moment the user flipped modes and become exactly
+    the kind of silent lie this task exists to remove."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_history_children
+
+    search_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        mode="search",
+        history=("cats", "dogs"),
+    )
+    rag_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        mode="rag",
+        history=("cats", "dogs"),
+    )
+
+    search_rows = {
+        child.id: child for child in library_rag_history_children(search_state)
+    }
+    rag_rows = {child.id: child for child in library_rag_history_children(rag_state)}
+
+    search_row = search_rows["library-rag-history-0"]
+    rag_row = rag_rows["library-rag-history-0"]
+    assert search_row.tooltip == "Re-runs under the current mode (Search)."
+    assert rag_row.tooltip == "Re-runs under the current mode (RAG Answer)."
+    # The dynamic pin: same history entry, same index, different mode ->
+    # different tooltip text. A hardcoded string could not satisfy this.
+    assert search_row.tooltip != rag_row.tooltip
+
+    # Second row gets the same treatment, not just the first.
+    assert (
+        search_rows["library-rag-history-1"].tooltip
+        == "Re-runs under the current mode (Search)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> (
+    None
+):
+    """(RAG-33/Task 11) Full plumbing: a real zero-row service outcome
+    renders the quiet two-line no-match state, not the six-line dump the
+    2026-07 UAT flagged (critique RAG-33)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService([])
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "unicorn migration guide"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-empty-state")
+
+        quiet_line = screen.query_one("#library-rag-empty-state", Static)
+        assert quiet_line.has_class("library-rag-quiet-line")
+
+        visible_text = _visible_text(screen)
+        assert "No evidence matched 'unicorn migration guide'." in visible_text
+        assert "Try broader terms" in visible_text
+        assert "Owner:" not in visible_text
+        assert "Unavailable:" not in visible_text
+        assert len(screen.query("#library-rag-service-error")) == 0
 
 
 def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
@@ -450,10 +653,116 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
             }
         ]
         visible_text = _visible_text(screen)
-        assert "Incident Review | score 0.930" in visible_text
+        # (RAG-34) Evidence rows render an honest match band, not the raw
+        # cosine score -- 0.93 lands in the "strong" band.
+        assert "Incident Review | match: strong" in visible_text
         assert "Expired credential caused the incident." in visible_text
         assert "Incident Review p.2" in visible_text
         assert len(screen.query("#library-rag-service-error")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() -> None:
+    """(Task 8) Full plumbing: a rag-mode outcome whose `diagnostics` carry
+    `semantic_scope_coverage` renders the honest heading and coverage note
+    on screen -- not just at the pure display-state layer."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Fixture doc",
+                    "snippet": "Unrelated fixture content.",
+                    "score": "0.08",
+                    "source_id": "media-1",
+                    "runtime_backend": "rag-semantic",
+                    "provenance": {"source_type": "media"},
+                }
+            ],
+            "runtime_backend": "rag-semantic",
+            "diagnostics": {
+                "semantic_scope_coverage": {
+                    "covered": ["media"],
+                    "uncovered": ["notes", "conversations"],
+                }
+            },
+        }
+    )
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "cake"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(150):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-coverage-note")
+
+        visible_text = _visible_text(screen)
+        # Scout item 3: the semantic leg is one merged query, not a
+        # per-source fan-out -- the heading must not claim "per source".
+        assert "Evidence · top 5" in visible_text
+        assert "per source" not in visible_text
+        assert (
+            "Semantic search found nothing from: Notes, Conversations."
+            in visible_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> None:
+    """Keyword mode's per-source fan-out keeps the "per source" heading
+    claim (it is true there), and no coverage note is ever attached --
+    `_search_semantic` is the only diagnostics producer for this slot."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "source_id": "note-42",
+                    "runtime_backend": "local-fts",
+                    "provenance": {"source_type": "note"},
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "incident"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        visible_text = _visible_text(screen)
+        assert "Evidence · top 5 per source" in visible_text
+        assert not screen.query("#library-rag-coverage-note")
 
 
 @pytest.mark.asyncio
@@ -707,6 +1016,224 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
     app.open_chat_with_handoff.assert_not_called()
 
 
+# --- Task 12/RAG-36: keyboard-traversable evidence cards --------------------
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_tab_reaches_and_focuses_evidence_card() -> None:
+    """Tab from the query input eventually lands on the first evidence
+    card, and the card itself (not just its buttons) is the focus target --
+    the flat Static+Button rows evidence used to render gave keyboard users
+    no row-level cursor at all (RAG-36)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "First result",
+                    "snippet": "alpha evidence",
+                    "source_id": "note-1",
+                },
+                {
+                    "document_title": "Second result",
+                    "snippet": "beta evidence",
+                    "source_id": "note-2",
+                },
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "alpha or beta"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-0")
+
+        query_input.focus()
+        await pilot.pause()
+
+        for _ in range(40):
+            focused = screen.focused
+            if focused is not None and focused.id == "library-rag-result-card-0":
+                break
+            await pilot.press("tab")
+        else:
+            raise AssertionError(
+                "Tab from the query input never reached the first evidence card."
+            )
+
+        card = screen.query_one("#library-rag-result-card-0")
+        assert card.has_focus is True
+        assert "focus" in card.pseudo_classes
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_enter_on_focused_card_selects_evidence() -> None:
+    """Enter on a focused evidence card selects it, same as clicking its
+    "Select evidence" button -- and the incremental results refresh that
+    selection triggers must not steal focus off the card the user just
+    acted on (the refresh-path lockstep hazard the largest part of this
+    change has to get right)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "First result",
+                    "snippet": "alpha evidence",
+                    "source_id": "note-1",
+                },
+                {
+                    "document_title": "Second result",
+                    "snippet": "beta evidence",
+                    "source_id": "note-2",
+                },
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "alpha or beta"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-1")
+
+        card = screen.query_one("#library-rag-result-card-1")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_evidence_selected(screen, pilot, "Second result")
+
+        assert screen.query_one("#library-rag-result-1").has_class("is-selected")
+        # The refresh triggered by selection remounts the results region --
+        # the SAME card index must still hold keyboard focus afterward.
+        assert screen.query_one("#library-rag-result-card-1").has_focus is True
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
+    """`o` on a focused evidence card routes to the same open path as the
+    row's "Open" button (mirrors ``test_library_shell.py``'s
+    Open-button-lands-in-viewer pilots)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": "media-1",
+                    "document_title": "Transcript A",
+                    "snippet": "audio transcript",
+                    "provenance": {"source_type": "media"},
+                }
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "transcript"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-open-result-0")
+
+        card = screen.query_one("#library-rag-result-card-0")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("o")
+
+        for _ in range(120):
+            if (
+                screen._selected_media_id == "media-1"
+                and screen._library_media_view == "viewer"
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "`o` on the focused card never opened the media evidence item."
+            )
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_u_on_focused_card_selects_then_stages() -> None:
+    """The focused-card fast path: `u` on a focused-but-not-yet-selected
+    card selects that evidence AND stages it in one keystroke, instead of
+    requiring Enter (select) then u (stage) as two separate actions."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Fast-path Evidence",
+                    "snippet": "u selects then stages",
+                    "source_id": "note-fastpath",
+                    "chunk_id": "chunk-fp",
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Does u select then stage?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-0")
+
+        # No prior Enter/select -- the card is only focused, never activated.
+        assert not screen.query(".library-rag-result-row.is-selected")
+
+        card = screen.query_one("#library-rag-result-card-0")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert payload["source_id"] == "note-fastpath"
+    assert payload["chunk_id"] == "chunk-fp"
+    app.open_chat_with_handoff.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_server_result_launches_server_console_live_work() -> (
     None
@@ -841,9 +1368,24 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
 
         visible_text = _visible_text(screen)
         assert "RAG unavailable" in visible_text
-        assert "Install embeddings support or switch mode to Search" in visible_text
-        # The display sanitizer HTML-escapes the recovery route's ">".
-        assert "Recovery: Settings &gt; RAG." in visible_text
+        # (Task-14 enabler) the recovery copy now names the pip extra. The
+        # display sanitizer's `escape_markup` pass backslash-escapes the
+        # opening "[" (same reason `library-rag-history-*` labels escape
+        # entries -- unescaped, Rich would try to parse "[embeddings_rag]"
+        # as a style tag); the backslash resolves away at real paint time
+        # and is not visible to the user, but `_visible_text` reads
+        # `.renderable` directly, before that resolution.
+        assert (
+            'Install RAG support: pip install "tldw_chatbook\\[embeddings_rag]", '
+            "then restart, or switch mode to Search." in visible_text
+        )
+        # (2026-08-03 task-15 finding-1 fix) The display sanitizer no longer
+        # HTML-entity-escapes plain text for display -- a Rich `Static`
+        # never decodes "&gt;" back to ">", so re-encoding here was itself
+        # the over-escaping bug finding 1 fixed (for "&" in evidence
+        # snippets; ">" in this recovery copy is the same class of bug).
+        # The recovery route's ">" now renders as the literal character.
+        assert "Recovery: Settings > RAG." in visible_text
 
 
 @pytest.mark.asyncio

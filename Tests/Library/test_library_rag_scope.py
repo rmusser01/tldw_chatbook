@@ -672,6 +672,28 @@ async def test_unscoped_semantic_search_issues_a_single_unrestricted_query():
     assert [row["source_id"] for row in result["results"]] == ["n1"]
 
 
+# Task 8: the same coverage diagnostic fires under a real scope allowlist,
+# not just the unscoped single-query path -- the notes leg of the per-type
+# merge returns nothing even though a note id was allowlisted.
+@pytest.mark.asyncio
+async def test_scoped_semantic_search_diagnostics_report_uncovered_source_types():
+    rag = _SpyRagService(
+        {
+            "media": [_sem_item("m1", "media", 0.5)],
+        }
+    )
+    app = SimpleNamespace(_rag_service=rag)
+    service = LibraryLocalRagSearchService(app)
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1"}, SOURCE_TYPE_NOTE: {"n1"}})
+
+    result = await service.search("q", ("notes", "media"), "rag", top_k=5, scope=scope)
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["media"],
+        "uncovered": ["notes"],
+    }
+
+
 @pytest.mark.asyncio
 async def test_scoped_semantic_search_zero_results_marker():
     rag = _SpyRagService({})

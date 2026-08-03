@@ -2187,6 +2187,59 @@ async def test_search_route_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
+    """RAG UX v2 PR-2, Task 4: booting with ``default_tab = "search"`` must
+    land on Library with the Search/RAG rail row selected, not generic
+    Library. Mirrors ``test_search_route_lands_on_library_rag_canvas`` above
+    exactly, except it drives the BOOT path (``_push_initial_screen``, via
+    ``_build_test_app(configured_default=...)``) instead of an in-app
+    ``NavigateToScreen`` message -- before this fix, ``_push_initial_screen``
+    never consulted ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``, so a configured
+    "search" default tab silently degraded to the generic Library canvas
+    (default rail row) instead of honoring the alias's landing promise.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app(configured_default="search")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected():
+    """Sibling of ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
+    proving the boot-time fix is generic across
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` rather than special-cased to
+    "search" -- the table also carries "prompts", "skills" and "customize",
+    and the fix must apply whichever pre-resolution route id
+    ``_resolve_initial_shell_route()`` returns.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+
+    app = _build_test_app(configured_default="prompts")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-prompts"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
+@pytest.mark.asyncio
 async def test_search_all_palette_command_lands_on_library_with_honest_toast():
     """RAG UX v2 PR-1, Task 2: the "Search All Content" quick-action palette
     command dispatches through the "search" alias (Task 1), so it must
