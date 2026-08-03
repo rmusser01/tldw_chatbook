@@ -159,6 +159,27 @@ class AgentRunsChangeReviewProvider:
             )
         return turns
 
+    def snapshots_pruned(self, row: dict) -> bool:
+        """Whether a row's snapshots no longer exist (retention reset).
+
+        Args:
+            row: One ``change_snapshots`` row.
+
+        Returns:
+            True when either recorded sha is gone from the shadow repo —
+            the row's history was pruned by retention (TASK-1975).
+        """
+        try:
+            repo = self._service.repo_for_root(row["root"])
+            return not (
+                repo.has_snapshot(str(row.get("baseline_sha") or ""))
+                and repo.has_snapshot(str(row.get("end_sha") or ""))
+            )
+        except ChangeTrackingError:
+            # The root itself vanished — the diff is equally unrenderable;
+            # the generic unavailable copy handles it.
+            return False
+
     def changed_files(self, row: dict) -> list[ChangedFile]:
         """A snapshot row's changed files (empty for tracking-error rows).
 
@@ -368,11 +389,26 @@ class ChangeReviewScreen(Screen):
             if error:
                 banners.append(f"⚠ tracking failed for {row['root']}: {error}")
                 continue
+            oversize = int(row.get("untracked_oversize") or 0)
+            if oversize:
+                # TASK-1975 AC#2: cost bounds are honest, not silent.
+                plural = "s" if oversize != 1 else ""
+                banners.append(
+                    f"⚠ {oversize} oversized file{plural} untracked for "
+                    f"{row['root']} (over the size cap)"
+                )
             try:
                 for change in self._provider.changed_files(row):
                     grouped.setdefault(change.status, []).append((row, change))
             except ChangeTrackingError as exc:
-                banners.append(f"⚠ diff unavailable for {row['root']}: {exc}")
+                if self._provider.snapshots_pruned(row):
+                    banners.append(
+                        f"history for {row['root']} was pruned by retention"
+                    )
+                else:
+                    banners.append(
+                        f"⚠ diff unavailable for {row['root']}: {exc}"
+                    )
 
         known = {code for code, _label in _GROUPS}
         for code, label in _GROUPS:
