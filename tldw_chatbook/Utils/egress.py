@@ -52,11 +52,15 @@ class EgressBlockedError(Exception):
     """URL blocked by the egress policy (SSRF guard)."""
 
     def __init__(self, url: str, reason: str, detail: str = ""):
+        # ``self.url`` keeps the full URL for programmatic consumers (retry
+        # logic, callers that need the real target); the redaction boundary
+        # is str()/repr() -- what actually reaches logs and end users -- so
+        # the exception MESSAGE gets the credential-free origin label only.
         self.url = url
         self.reason = reason
         self.detail = detail
         super().__init__(
-            f"Egress blocked ({reason}) for {url}"
+            f"Egress blocked ({reason}) for {_log_origin(url)}"
             + (f": {detail}" if detail else "")
             + " [remedy: add the host to [web_security] allowed_hosts in"
             " config.toml, or set [web_security] enabled = false]"
@@ -268,8 +272,10 @@ class EgressFetchError(Exception):
     """Guarded-fetch transport failure: size cap, hop cap, missing Location."""
 
     def __init__(self, message: str, url: str = ""):
+        # Same redaction boundary as EgressBlockedError: ``self.url`` keeps
+        # the full URL, the message gets the origin label only.
         self.url = url
-        super().__init__(f"{message}" + (f" [{url}]" if url else ""))
+        super().__init__(f"{message}" + (f" [{_log_origin(url)}]" if url else ""))
 
 
 @dataclass

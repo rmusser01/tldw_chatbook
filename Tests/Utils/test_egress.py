@@ -320,6 +320,49 @@ def test_check_url_or_raise_raises_with_remedy(monkeypatch):
     assert exc.value.reason == "private"
 
 
+# ---------------------------------------------------------------------------
+# Exception message redaction (TASK-1722 fix round 1): EgressBlockedError and
+# EgressFetchError are caught and logged verbatim by many callers (e.g.
+# Article_Extractor_Lib.py, monitoring_engine.py, audio_processing.py) --
+# their str()/repr() is as much a "log site" as a direct logger.* call. The
+# ``.url`` attribute keeps the full URL for programmatic use; only the
+# message is redacted.
+# ---------------------------------------------------------------------------
+
+def test_egress_blocked_error_message_omits_query_marker():
+    marker = "SECRET-TOKEN-MARKER"
+    url = f"https://user:pw@example.test:8443/models/f.gguf?sig={marker}#frag"
+
+    exc = EgressBlockedError(url, "private", "resolves to private IP")
+
+    assert marker not in str(exc)
+    assert marker not in repr(exc)
+    assert "user:pw@" not in str(exc)
+    assert "example.test:8443" in str(exc)  # host stays visible to operators
+    assert "allowed_hosts" in str(exc)  # remedy text preserved
+    assert exc.url == url  # full URL still available to programmatic consumers
+
+
+def test_egress_fetch_error_message_omits_query_marker():
+    marker = "SECRET-TOKEN-MARKER"
+    url = f"https://user:pw@example.test:8443/models/f.gguf?sig={marker}#frag"
+
+    exc = EgressFetchError("too many redirects", url=url)
+
+    assert marker not in str(exc)
+    assert marker not in repr(exc)
+    assert "user:pw@" not in str(exc)
+    assert "example.test:8443" in str(exc)
+    assert exc.url == url
+
+
+def test_egress_fetch_error_no_url_omits_bracket():
+    """No url given -> no bracketed suffix at all (unchanged behavior)."""
+    exc = EgressFetchError("HTTP 500")
+    assert str(exc) == "HTTP 500"
+    assert exc.url == ""
+
+
 @pytest.mark.asyncio
 async def test_async_variant_same_policy(monkeypatch):
     async def _fake(host):
