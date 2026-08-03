@@ -15,6 +15,34 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 if "TEXTUAL_LOG" not in os.environ:
     os.environ["TEXTUAL_LOG"] = ""  # Empty string disables logging
 
+# (task-2016) Spawn-pool workers re-import this module as ``__mp_main__``
+# with an inherited REAL-TTY stderr (see ``_create_ingest_parse_pool``'s
+# Textual-stderr workaround), so import-time noise from the chain below --
+# loguru's default stderr sink ("python-frontmatter not installed…"),
+# ``RequestsDependencyWarning`` -- painted raw text over the parent's TUI
+# on every first submit. This guard MUST run before the heavy imports:
+# the noise is emitted while they import. The pool ``initializer``
+# (``silence_ingest_worker_import_noise``) still runs afterwards as a
+# belt for post-import noise.
+import multiprocessing as _early_multiprocessing
+
+# ``__mp_main__`` is the name spawn gives this module while re-importing it
+# in a child; ``parent_process()`` alone is NOT yet populated at that point
+# (live-verified: the flood survived a parent_process()-only guard).
+if (
+    __name__ == "__mp_main__"
+    or _early_multiprocessing.parent_process() is not None
+):
+    import warnings as _early_warnings
+
+    _early_warnings.simplefilter("ignore")
+    try:
+        from loguru import logger as _early_worker_logger
+
+        _early_worker_logger.remove()
+    except Exception:
+        pass
+
 # Imports
 import concurrent.futures
 import contextlib
@@ -180,6 +208,7 @@ from tldw_chatbook.Local_Ingestion import FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
     run_parse_job,
+    silence_ingest_worker_import_noise,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
@@ -2120,10 +2149,19 @@ class LibraryIngestQueueMixin:
         """
         ctx = multiprocessing.get_context("spawn")
         processes = self._ingest_parse_worker_count()
+        # (task-2016) The initializer silences worker-side import noise
+        # (loguru default sink, dependency warnings) that would otherwise
+        # write straight over the TUI via the inherited real-TTY stderr.
         if _stream_fileno(sys.stderr) >= 0:
-            return ctx.Pool(processes=processes)
+            return ctx.Pool(
+                processes=processes,
+                initializer=silence_ingest_worker_import_noise,
+            )
         with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
-            return ctx.Pool(processes=processes)
+            return ctx.Pool(
+                processes=processes,
+                initializer=silence_ingest_worker_import_noise,
+            )
 
     def _ensure_ingest_parse_pool(self):
         """Return the current parse pool, lazily creating one if needed.

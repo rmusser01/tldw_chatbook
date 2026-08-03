@@ -69,6 +69,35 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
+def silence_ingest_worker_import_noise() -> None:
+    """Pool ``initializer``: keep worker import noise off the parent's TTY.
+
+    (task-2016) Spawn workers inherit a REAL-TTY stderr: the parent
+    constructs the pool under ``redirect_stderr(sys.__stderr__)`` when
+    Textual's fd-less stderr wrapper is active (see
+    ``_create_ingest_parse_pool``), so anything a worker's lazy imports
+    emit -- loguru's default stderr sink ("python-frontmatter not
+    installed…"), ``RequestsDependencyWarning`` and friends -- paints raw
+    text over the running TUI on the first submit. Runs INSIDE each worker
+    process before any job. Deliberately does NOT touch ``sys.stderr``
+    itself: a hard worker crash should still be able to reach a terminal
+    for diagnosis; only the known import-noise channels are silenced.
+    """
+    import logging
+    import warnings
+
+    try:
+        from loguru import logger as loguru_logger
+
+        loguru_logger.remove()
+    except Exception:
+        pass
+    # Route ``warnings.warn`` through logging (which has no configured
+    # handlers in a worker) instead of straight to stderr.
+    logging.captureWarnings(True)
+    warnings.simplefilter("ignore")
+
+
 def classify_parse_failure(exc: Exception) -> bool:
     """Return whether an ingest-time exception is a *permanent* failure.
 
