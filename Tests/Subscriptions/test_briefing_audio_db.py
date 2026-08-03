@@ -65,6 +65,30 @@ def test_create_briefing_audio_accepts_an_explicit_status():
     assert db.get_briefing_audio(audio_id)["status"] == "complete"
 
 
+def test_create_briefing_audio_writes_status_and_error_in_one_insert():
+    """TASK-1718: a create-and-immediately-fail preflight writes the finished
+    `failed` row atomically -- status AND error in a single insert -- so there
+    is no create-then-separate-update window a crash could leave a stuck
+    `generating` row in. Reds if `create_briefing_audio` drops the `error`
+    argument (the row would come back with `error is None`)."""
+    db = SubscriptionsDB(":memory:", "test")
+    script_id = _make_script(db)
+
+    audio_id = db.create_briefing_audio(
+        script_id,
+        voice_snapshot_json="[]",
+        status="failed",
+        error="voice 'Host' could not be resolved",
+    )
+
+    row = db.get_briefing_audio(audio_id)
+    assert row["status"] == "failed"
+    assert row["error"] == "voice 'Host' could not be resolved"
+    # A plain create still leaves error NULL -- the param is opt-in.
+    plain = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    assert db.get_briefing_audio(plain)["error"] is None
+
+
 def test_get_briefing_audio_returns_none_for_missing_id():
     db = SubscriptionsDB(":memory:", "test")
     assert db.get_briefing_audio(999999) is None
