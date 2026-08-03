@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 import tldw_chatbook.Widgets.Console.console_rail_handle as console_rail_handle
@@ -13,22 +18,110 @@ from tldw_chatbook.Chat.console_rail_state import (
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 
+_BUNDLED_STYLESHEET = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
+
+
+class _VerticalRailHandleHarness(App[None]):
+    """Small live layout for asserting bundled vertical-handle geometry."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def compose(self) -> ComposeResult:
+        yield Horizontal(
+            _handle(
+                label=CONSOLE_RAIL_CONTEXT_LABEL,
+                button_id="vertical-context-button",
+                badge_id="vertical-context-badge",
+                side="left",
+                vertical=True,
+                id="vertical-context-handle",
+            ),
+            _handle(
+                label=CONSOLE_RAIL_INSPECTOR_LABEL,
+                badge="1 approval",
+                button_id="vertical-inspector-button",
+                badge_id="vertical-inspector-badge",
+                side="right",
+                vertical=True,
+                id="vertical-inspector-handle",
+            ),
+            id="vertical-rail-handle-harness",
+        )
+
+
 def _handle(
     *,
     label: str,
     badge: str = "",
     side: str = "left",
     vertical: bool = False,
+    id: str | None = None,
+    button_id: str = "test-console-rail-button",
+    badge_id: str = "test-console-rail-badge",
 ) -> ConsoleRailHandle:
     """Build a handle with stable IDs for focused presentation tests."""
     return ConsoleRailHandle(
         label=label,
         badge=badge,
-        button_id="test-console-rail-button",
-        badge_id="test-console-rail-badge",
+        button_id=button_id,
+        badge_id=badge_id,
         side=side,
         vertical=vertical,
+        id=id,
     )
+
+
+def _assert_content_column_contained(handle, child) -> None:
+    """Assert a child content column is exactly one cell inside its handle."""
+    content = handle.content_region
+    child_content = child.content_region
+
+    assert child_content.width == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+    assert child_content.x >= content.x
+    assert child_content.x + child_content.width <= content.x + content.width
+    assert child_content.y >= content.y
+    assert child_content.y + child_content.height <= content.y + content.height
+
+
+@pytest.mark.asyncio
+async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_visible() -> None:
+    """Bundled TCSS makes both vertical rail sides narrow, tall, and contained."""
+    app = _VerticalRailHandleHarness()
+
+    async with app.run_test(size=(32, 24)) as pilot:
+        await pilot.pause()
+        host = app.query_one("#vertical-rail-handle-harness", Horizontal)
+        left = app.query_one("#vertical-context-handle", ConsoleRailHandle)
+        right = app.query_one("#vertical-inspector-handle", ConsoleRailHandle)
+        left_button = app.query_one("#vertical-context-button", Button)
+        right_button = app.query_one("#vertical-inspector-button", Button)
+        right_badge = app.query_one("#vertical-inspector-badge", Static)
+
+        assert left.region.width == ConsoleRailHandle.VERTICAL_WIDTH
+        assert right.region.width == ConsoleRailHandle.VERTICAL_WIDTH
+        assert left.region.height == host.content_region.height
+        assert right.region.height == host.content_region.height
+        assert left.content_region.width == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+        assert right.content_region.width > ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+        assert left.styles.border.top[0] == "solid"
+        assert right.styles.border.top[0] in {"", "none"}
+        _assert_content_column_contained(left, left_button)
+        _assert_content_column_contained(right, right_button)
+        _assert_content_column_contained(right, right_badge)
+        assert right_button.region.height >= 7
+        assert right_button.region.y + right_button.region.height <= right_badge.region.y
+        assert right_badge.region.y >= right.content_region.y
+        assert right_badge.region.y + right_badge.region.height <= (
+            right.content_region.y + right.content_region.height
+        )
+        assert left_button.tooltip == "Open Context rail"
+        assert right_button.tooltip == "Open Inspector rail"
+        assert right_badge.tooltip == "1 approval"
 
 
 def test_vertical_context_label_stacks_without_direction_glyph() -> None:

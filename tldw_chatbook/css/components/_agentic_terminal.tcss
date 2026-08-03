@@ -2700,6 +2700,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-height: 3;
 }
 
+.console-rail-handle-vertical {
+    width: 3;
+    min-width: 3;
+    max-width: 3;
+    height: 100%;
+    min-height: 20;
+    max-height: 100%;
+}
+
+.console-rail-handle-button-vertical {
+    width: 1;
+    min-width: 1;
+    max-width: 1;
+    height: 1fr;
+    min-height: 7;
+    max-height: 100%;
+}
+
 /* TASK-345: controls that previously had NO :focus rule fell back to
    Textual's imperceptible default shift. Non-obscuring contract vocabulary
    only (ds tokens + bold underline; no accent, no reverse). */
@@ -2745,6 +2763,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-align: center;
     color: $ds-text-primary;
     background: $ds-surface-raised;
+}
+
+.console-rail-handle-badge-vertical {
+    width: 1;
+    min-width: 1;
+    max-width: 1;
 }
 
 .console-rail-header {
