@@ -506,6 +506,24 @@ class LLMScreen(LabScreen):
         error: str | None,
     ) -> None:
         """Show the shared consent modal, or a sanitized preflight failure."""
+        # NOTE (pre-existing since TASK-1803, annotated not fixed here):
+        # _model_install_worker is None from this line until
+        # _confirm_curated_install's own _run_curated_provision() call --
+        # i.e. for as long as the shared consent modal is up. A second,
+        # non-UI-originated InstallRequested landing in that window would
+        # pass _curated_install_requested's/_remote_install_requested's
+        # worker-in-flight guard (which only checks _model_install_worker),
+        # and -- if that second request were invalid -- reach
+        # _clear_curated_install_state()/_clear_remote_install_state(),
+        # which unconditionally zeroes _model_install_kind, clobbering
+        # whichever flow (curated or remote) is the one actually still
+        # awaiting consent. Currently unreachable via the UI: the consent
+        # modal is a ModalScreen and captures input, so neither view's own
+        # Install/candidate button can be pressed again -- and therefore
+        # no second InstallRequested can be posted -- while it is showing.
+        # A future refactor that lets something else post InstallRequested
+        # (a command palette action, a test harness driving the message
+        # bus directly, etc.) would need to close this gap for real.
         self._model_install_worker = None
         if error is not None or report is None:
             self.notify(error or "Model preflight failed.", severity="error")
@@ -822,6 +840,13 @@ class LLMScreen(LabScreen):
         error: str | None,
     ) -> None:
         """Show the shared consent modal, or a sanitized preflight failure."""
+        # NOTE (pre-existing since TASK-1803, annotated not fixed here): see
+        # the identical note in _apply_curated_preflight_result -- the same
+        # narrow pending-consent window (_model_install_worker is None
+        # until _confirm_remote_install's own _run_remote_provision() call)
+        # applies here, and for the same reason (the consent modal is a
+        # ModalScreen that captures input, so no second InstallRequested,
+        # curated or remote, can be posted through the UI while it is up).
         self._model_install_worker = None
         catalog = self._model_install_catalog
         candidate = self._model_install_candidate

@@ -21,6 +21,7 @@ the outcome, calls ``cancel_pending_install()``/``finish_install()``/
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from threading import Event
 from unittest.mock import MagicMock
@@ -45,6 +46,121 @@ from tldw_chatbook.Model_Artifacts.remote_huggingface import (
 
 _COMMIT = "a" * 40
 _DIGEST = "b" * 64
+
+
+# ---------------------------------------------------------------------------
+# Shared AST-based module-scope import check (TASK-1914 fix round 1).
+#
+# The original version of this check (see git history) scanned for three
+# literal substrings in the module's source text. That missed the
+# package-then-attribute bypass -- `from tldw_chatbook.Model_Artifacts
+# import acquisition` is a real, eager, module-scope import of the
+# acquisition runtime, but contains none of the three forbidden substrings
+# (no ".acquisition import", no "from .acquisition import", no "import
+# tldw_chatbook.Model_Artifacts.acquisition"). This is the exact class of
+# gap this workstream's own Task 2 no-subclass test caught and fixed with
+# an MRO check instead of a substring scan; the fix here is the same shape
+# of fix, applied to imports instead of subclassing.
+#
+# ``test_model_curated_view.py`` imports this helper rather than
+# duplicating it -- both modules are held to the identical rule, and one
+# AST walker gets to be the single implementation both tests exercise.
+# ---------------------------------------------------------------------------
+
+
+def _is_type_checking_test(test: ast.expr) -> bool:
+    """True for an ``if`` test that is (or ends in) ``TYPE_CHECKING``.
+
+    Covers both ``if TYPE_CHECKING:`` (a bare ``Name``) and
+    ``if typing.TYPE_CHECKING:`` (an ``Attribute``) -- this codebase only
+    ever uses the former, but the check is cheap to make either way.
+    """
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _module_dotted_suffix_is(module: str | None, suffix: str) -> bool:
+    """True if ``module`` (an import's dotted path, absolute or relative)
+    ends in ``suffix`` as its own final component -- e.g. both
+    ``"tldw_chatbook.Model_Artifacts.acquisition"`` and
+    ``"Model_Artifacts.acquisition"`` (a relative import's ``module``,
+    which never includes the leading dots ``ast`` strips into ``level``)
+    end in ``"acquisition"``, but ``"acquisition_helpers"`` does not.
+    """
+    if not module:
+        return False
+    return module.rsplit(".", 1)[-1] == suffix
+
+
+def module_scope_forbidden_acquisition_imports(source: str) -> list[str]:
+    """Find real, module-scope imports of ``Model_Artifacts.acquisition``/``.fetch``.
+
+    "Module scope" here means reachable by simply importing the module --
+    NOT nested inside any function/method body (those run lazily, on
+    demand, which is exactly what the "acquisition/fetch only inside
+    functions" rule requires) and NOT inside an ``if TYPE_CHECKING:``
+    guard (``False`` at runtime, so that branch never executes).
+
+    Catches both import forms a violation could take:
+
+    - ``from tldw_chatbook.Model_Artifacts.acquisition import X`` (or the
+      relative ``from ...Model_Artifacts.acquisition import X``) -- the
+      import's own ``module`` ends in ``"acquisition"``/``"fetch"``.
+    - ``from tldw_chatbook.Model_Artifacts import acquisition`` -- the
+      package-then-attribute bypass a plain substring scan on import text
+      misses entirely: ``module`` ends in ``"Model_Artifacts"``, but one
+      of the imported *names* is ``"acquisition"``/``"fetch"``.
+
+    Args:
+        source: The module's full source text (e.g. from
+            ``inspect.getsource``).
+
+    Returns:
+        Human-readable descriptions of every forbidden import found, one
+        per finding; empty when the module is clean.
+    """
+    tree = ast.parse(source)
+    findings: list[str] = []
+
+    def visit(node: ast.AST, in_function: bool, in_type_checking: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            child_in_function = in_function or isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            child_in_type_checking = in_type_checking or (
+                isinstance(child, ast.If) and _is_type_checking_test(child.test)
+            )
+            if (
+                isinstance(child, (ast.Import, ast.ImportFrom))
+                and not in_function
+                and not in_type_checking
+            ):
+                if isinstance(child, ast.Import):
+                    for alias in child.names:
+                        if _module_dotted_suffix_is(
+                            alias.name, "acquisition"
+                        ) or _module_dotted_suffix_is(alias.name, "fetch"):
+                            findings.append(f"line {child.lineno}: import {alias.name}")
+                else:
+                    module = child.module
+                    if _module_dotted_suffix_is(
+                        module, "acquisition"
+                    ) or _module_dotted_suffix_is(module, "fetch"):
+                        findings.append(
+                            f"line {child.lineno}: from {module!r} import ..."
+                        )
+                    elif _module_dotted_suffix_is(module, "Model_Artifacts"):
+                        for alias in child.names:
+                            if alias.name in {"acquisition", "fetch"}:
+                                findings.append(
+                                    f"line {child.lineno}: from {module!r} "
+                                    f"import {alias.name}"
+                                )
+            visit(child, child_in_function, child_in_type_checking)
+
+    visit(tree, False, False)
+    return findings
 
 
 class _Resolver:
@@ -935,17 +1051,22 @@ def test_remote_view_does_not_import_acquisition_at_module_scope() -> None:
     """``RemoteView`` posts intents; only ``LLMScreen``'s worker methods
     (and this module's own lazily-invoked ``_default_credential_resolver``)
     import ``Model_Artifacts.acquisition``.
+
+    Uses the AST-based :func:`module_scope_forbidden_acquisition_imports`
+    (TASK-1914 fix round 1) rather than a text/substring scan: a substring
+    scan for ``"from tldw_chatbook.Model_Artifacts.acquisition import"``
+    (etc.) passes right over ``from tldw_chatbook.Model_Artifacts import
+    acquisition`` -- a real, eager, module-scope import of the acquisition
+    runtime via the package-then-attribute form -- because that exact
+    substring never appears in it.
     """
     import inspect
 
     from tldw_chatbook.UI.Screens import model_remote_view as module
 
     source = inspect.getsource(module)
-    before_type_checking = source.split("if TYPE_CHECKING:")[0]
     assert "class RemoteView(Widget):" in source
-    assert (
-        "from tldw_chatbook.Model_Artifacts.acquisition import"
-        not in before_type_checking
+    findings = module_scope_forbidden_acquisition_imports(source)
+    assert findings == [], (
+        f"model_remote_view.py imports acquisition/fetch at module scope: {findings}"
     )
-    assert "from .acquisition import" not in before_type_checking
-    assert "import tldw_chatbook.Model_Artifacts.acquisition" not in before_type_checking

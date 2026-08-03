@@ -349,3 +349,41 @@ def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progr
     assert view._operation_reference is None
     assert view._progress is None
     view.ensure_loaded.assert_called_once_with(force=True)
+
+
+# ---------------------------------------------------------------------------
+# Module-scope import boundary (TASK-1914 fix round 1).
+#
+# Not previously covered by a dedicated test for this module: the review
+# that added the AST-based check for model_remote_view.py confirmed
+# CuratedView has the identical gap (nothing here enforced "acquisition
+# only inside functions" beyond code review), and the STT/Model_Artifacts
+# subprocess import-recording suite (test_credentials_and_boundaries.py)
+# does not cover this module either -- its script only ever imports
+# STT/transcription/registry/store modules.
+# ---------------------------------------------------------------------------
+
+
+def test_curated_view_does_not_import_acquisition_at_module_scope() -> None:
+    """``CuratedView`` posts intents; only ``LLMScreen``'s worker methods
+    import ``Model_Artifacts.acquisition``.
+
+    Reuses ``test_model_remote_view.py``'s AST-based ``module_scope_
+    forbidden_acquisition_imports`` -- both modules are held to the
+    identical rule, so one AST walker implementation backs both tests
+    rather than two independent (and independently stale-able) substring
+    scans.
+    """
+    import inspect
+
+    from tldw_chatbook.UI.Screens import model_curated_view as module
+    from Tests.UI.test_model_remote_view import (
+        module_scope_forbidden_acquisition_imports,
+    )
+
+    source = inspect.getsource(module)
+    assert "class CuratedView(Widget):" in source
+    findings = module_scope_forbidden_acquisition_imports(source)
+    assert findings == [], (
+        f"model_curated_view.py imports acquisition/fetch at module scope: {findings}"
+    )
