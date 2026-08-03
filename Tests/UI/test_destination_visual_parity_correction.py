@@ -3712,10 +3712,15 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
             "a profile with no runs still renders the failed-runs table"
         )
 
-        # ...replaced by copy that actually reaches the screen.
+        # ...replaced by copy that actually reaches the screen. Asserting the
+        # actual guidance sentence, not merely the word "watchlist", is the
+        # point of task-1347: the weaker check passed even with the title
+        # blanked, because "Watchlists" appears elsewhere on screen (e.g. the
+        # inspector's own copy) with nothing to do with THIS pane's body.
         painted = _pane_painted_text(screen, overview)
-        assert "watchlist" in painted.lower(), (
-            f"the first-run panel says nothing useful; it paints {painted!r}"
+        assert "a watchlist is a folder of feeds" in painted.lower(), (
+            f"the no-watchlists first-run guidance is missing or empty; it "
+            f"paints {painted!r}"
         )
 
         # AC#2: the guidance must name controls that exist and can be used
