@@ -60,9 +60,34 @@ identity) rather than colliding.
 | `artifact_id` | sanitized lowercase filename stem | must satisfy `_validate_canonical_component` |
 | `revision` | `sha256-<first 12 hex of the file digest>` | content-addressed: identity follows bytes |
 | `variant` = `precision` | parsed quant tag (e.g. `q4-k-m`) or `imported` | validator requires precision == reference.variant |
-| `source_url` | percent-encoded `file://` URL of the original path | real provenance; encoding satisfies `_validate_url` (no `?`/`#`/whitespace) |
+| `source_url` | percent-encoded `file://` URL of the original path | **requires the sealed-core accommodation below** — `_validate_url` today mandates `scheme in {http, https}` with a hostname, so a `file://` value raises at construction |
 | `upstream_repository` | literal `local-import` | |
+| `license_id` | `unknown` | an imported file's license is genuinely unknown; never guess one |
+| `license_url` | empty, via the accommodation below | `_validate_url` requires a non-empty http(s) URL and no honest one exists |
 | `provenance` | `LOCAL_INTEGRITY_RECORDED` only | never a stronger claim for locally computed digests |
+
+### Sealed-core accommodation for local-origin descriptors
+
+An earlier draft of this spec claimed a percent-encoded `file://` URL "satisfies
+`_validate_url`". **That was wrong** — the validator's second half explicitly
+requires an http(s) scheme and hostname, and the same applies to `license_url`,
+which an imported file cannot honestly supply. Rather than smuggle in fake https
+URLs, the core gets one deliberate, narrow, additive change (the same class of
+change as `ArtifactPreflightEntry.provenance` in Phase 1):
+
+- `source_url` MAY be `file:///` + a percent-encoded absolute path **only when
+  every provenance entry is `LOCAL_INTEGRITY_RECORDED`** (cross-field
+  validation, like the existing `precision == variant` rule). All other
+  descriptors keep the strict http(s) rule.
+- `license_url` MAY be empty **only when `license_id == "unknown"`**, same
+  gating. The UI renders "License: unknown" with no link.
+
+**Defense in depth, verified against the code:** allowing `file://` in a
+descriptor does not create a local-file-read primitive in the download path —
+`egress._pre_resolution` rejects any non-http(s) scheme (`reason="scheme"`)
+before resolution, so an acquisition flow handed a `file://` source dies at the
+egress gate. The accommodation task must still add an explicit test pinning
+that refusal, so the two rules can never drift apart silently.
 
 ## Per-server launch-path mapping
 
@@ -78,10 +103,29 @@ parent spec's list of four missed ONNX), read via
 | vLLM | ready models of compatible format | **stays first-class** — HF repo ids are a legitimate input, not a legacy path |
 | MLX | ready models of compatible format | **stays first-class**, same reason |
 
-Selecting a managed model resolves its installed path from
-`ModelArtifactService` at launch time **without re-hashing** — `activate()`
-already verified the closure; launch is a manifest lookup. The picker is one
-shared widget (AC #8 discipline: one implementation, five call sites).
+**Resolution happens at selection time, and the launch handlers stay
+untouched.** The existing launch flow reads each `#<server>-model-path` Input
+at button-press time (`handle_start_*_server_button_pressed` in
+`Event_Handlers/LLM_Management_Events/llm_management_events.py`), and a
+`FileOpen` browse dialog already populates those Inputs via
+`_make_path_update_callback`. The picker slots into exactly that seam: choosing
+a managed model resolves its payload path from `ModelArtifactService` (for
+GGUF, `<artifact_dir>/<files[0].path>`; no re-hashing — `activate()` already
+verified the closure) and writes it into the Input. Launch code does not change
+at all, which keeps this task's blast radius out of five server-start handlers.
+
+Accepted trade-off, stated plainly: the path is resolved when picked, not when
+launched. A model deleted or deactivated between selection and launch yields a
+stale path and the server fails with file-not-found — the same failure mode a
+hand-typed path has today for a moved file. Launch-time re-resolution would
+require rewriting all five handlers and is deliberately out of scope.
+
+The picker is one shared widget (AC #8 discipline: one implementation, five
+call sites), and the **import worker follows the TASK-1803/1914 ownership
+rule**: the view posts an intent; `LLMScreen` owns the threaded copy-and-hash
+worker, so a recompose mid-import cannot orphan it. The import dialog is
+bespoke — it is NOT `ModelPlanPanel`, because no `PreflightReport` exists for a
+local import and synthesizing a fake one would misuse the consent machinery.
 
 ## Retirement
 
