@@ -8,6 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Model_Artifacts.test_service import installed_root_and_dependency
+from Tests.STT.executor_test_support import (
+    fake_executor_worker,
+    resident_executor_worker,
+)
+from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
 from tldw_chatbook.STT.contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
@@ -21,12 +27,14 @@ from tldw_chatbook.STT.executor import (
     ExecutorResult,
     ExecutorUnavailableError,
     LocalSTTExecutor,
+    LocalSourceChangedError,
     LocalSourceSnapshot,
     ModelIdentity,
     WorkerPhase,
     _AttemptTerminalGuard,
+    snapshot_local_source,
+    validate_local_source_snapshot,
 )
-from Tests.STT.executor_test_support import fake_executor_worker
 
 
 def _identity(**overrides: object) -> ModelIdentity:
@@ -49,14 +57,10 @@ def _request() -> ExecutorRequest:
         attempt_id="attempt-1",
         job_id="job-1",
         source_path=Path("/private/media/interview.wav"),
-        identity=_identity(),
+        identity=_identity(local_snapshot_token=None),
         options={"transcription_model_dir": "/private/models/parakeet"},
-        local_source=LocalSourceSnapshot(
-            token="private-snapshot-token",
-            paths=(Path("/private/models/parakeet/encoder-model.int8.onnx"),),
-            identities=((7, 11, 1024, 123456),),
-        ),
         managed_store_root=Path("/private/models/managed"),
+        managed_artifact_ref=("parakeet-v2", "revision-a", "int8"),
     )
 
 
@@ -108,10 +112,30 @@ def test_protocol_repr_redacts_private_paths_options_and_snapshot_tokens() -> No
         failed_attempt={"private": "/private/models/secret.gguf"},
     )
 
-    rendered = repr(request) + repr(request.identity) + repr(request.local_source)
+    snapshot = LocalSourceSnapshot(
+        token="private-snapshot-token",
+        paths=(Path("/private/models/parakeet/encoder-model.int8.onnx"),),
+        identities=((7, 11, 1024, 123456),),
+    )
+    rendered = repr(request) + repr(request.identity) + repr(snapshot)
     assert "/private/" not in rendered
     assert "private-snapshot-token" not in rendered
     assert "/private/" not in repr(failure)
+
+
+def test_managed_artifact_reference_is_validated() -> None:
+    values = {
+        "generation": 3,
+        "attempt_id": "attempt-1",
+        "job_id": "job-1",
+        "source_path": Path("media.wav"),
+        "identity": _identity(),
+        "options": {},
+        "managed_store_root": Path("store"),
+    }
+
+    with pytest.raises(ValueError, match="managed_artifact_ref"):
+        ExecutorRequest(**values, managed_artifact_ref=("parakeet-v2", "", "int8"))
 
 
 def test_worker_phase_is_restricted_to_worker_owned_transitions() -> None:
@@ -472,3 +496,221 @@ def test_close_is_idempotent_and_removes_idle_generation_scratch() -> None:
 
     assert scratch.exists() is False
     assert executor.busy is False
+
+
+def test_local_source_snapshot_is_path_private_and_detects_replacement(
+    tmp_path: Path,
+) -> None:
+    encoder = tmp_path / "private-encoder.onnx"
+    decoder = tmp_path / "private-decoder.onnx"
+    encoder.write_bytes(b"encoder-a")
+    decoder.write_bytes(b"decoder-a")
+    snapshot = snapshot_local_source((encoder, decoder))
+
+    assert len(snapshot.token) == 64
+    assert str(tmp_path) not in repr(snapshot)
+    validate_local_source_snapshot(snapshot)
+
+    encoder.write_bytes(b"encoder-replaced-with-different-bytes")
+    with pytest.raises(LocalSourceChangedError) as raised:
+        validate_local_source_snapshot(snapshot)
+    assert str(tmp_path) not in str(raised.value)
+    assert str(tmp_path) not in repr(raised.value)
+
+
+def test_local_source_snapshot_rejects_symlink_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.gguf"
+    link = tmp_path / "private-link.gguf"
+    target.write_bytes(b"model")
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+
+    with pytest.raises(LocalSourceChangedError) as raised:
+        snapshot_local_source((link,))
+
+    assert str(link) not in str(raised.value)
+    assert str(link) not in repr(raised.value)
+
+
+def _resident_executor() -> LocalSTTExecutor:
+    return LocalSTTExecutor(
+        worker_target=resident_executor_worker,
+        startup_timeout=5.0,
+        graceful_shutdown_timeout=0.2,
+        force_stop_timeout=2.0,
+    )
+
+
+def _managed_request_values(
+    tmp_path: Path,
+) -> tuple[object, object, object, ModelIdentity]:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+    fingerprint = leased.handle.closure_fingerprint
+    leased.close()
+    identity = _identity(
+        root_revision=root.reference.revision,
+        closure_fingerprint=fingerprint,
+        local_snapshot_token=None,
+    )
+    return service, root, dependency, identity
+
+
+def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    try:
+        for attempt_id, callbacks in (("one", first), ("two", second)):
+            executor.submit(
+                attempt_id=attempt_id,
+                job_id=f"job-{attempt_id}",
+                source_path=tmp_path / "fixture.wav",
+                identity=identity,
+                options={"transcription_provider": "parakeet-onnx"},
+                managed_store_root=tmp_path / "store",
+                managed_artifact_ref=(
+                    root.reference.artifact_id,
+                    root.reference.revision,
+                    root.reference.variant,
+                ),
+                on_result=callbacks.on_result,
+                on_failure=callbacks.on_failure,
+            )
+            _wait_for_terminal(callbacks)
+
+        assert first.results[0].payload["runtime_load_number"] == 1
+        assert second.results[0].payload["runtime_load_number"] == 1
+        contender = ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01)
+        for reference in (root.reference, dependency.reference):
+            with pytest.raises(ArtifactInUseError):
+                contender.delete(reference)
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+    assert service.artifact_path(dependency.reference).exists() is False
+
+
+def test_worker_crash_releases_managed_closure_lease(tmp_path: Path) -> None:
+    service, root, dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    callbacks = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="crash",
+            job_id="job-crash",
+            source_path=tmp_path / "fixture.wav",
+            identity=identity,
+            options={
+                "transcription_provider": "parakeet-onnx",
+                "test_worker_crash": True,
+            },
+            managed_store_root=tmp_path / "store",
+            managed_artifact_ref=(
+                root.reference.artifact_id,
+                root.reference.revision,
+                root.reference.variant,
+            ),
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+        assert callbacks.failures[0].code is TranscriptionFailureCode.ENGINE_CRASHED
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+    assert service.artifact_path(dependency.reference).exists() is False
+
+
+def test_force_stop_releases_managed_closure_lease(tmp_path: Path) -> None:
+    service, root, dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    callbacks = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="held",
+            job_id="job-held",
+            source_path=tmp_path / "fixture.wav",
+            identity=identity,
+            options={
+                "transcription_provider": "parakeet-onnx",
+                "test_worker_hold": True,
+            },
+            managed_store_root=tmp_path / "store",
+            managed_artifact_ref=(
+                root.reference.artifact_id,
+                root.reference.revision,
+                root.reference.variant,
+            ),
+            on_event=callbacks.on_event,
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_until(
+            lambda: any(
+                event.phase is WorkerPhase.TRANSCRIBING for event in callbacks.events
+            )
+        )
+        assert executor.force_stop("held") is True
+        _wait_for_terminal(callbacks)
+        _wait_until(lambda: executor.retiring is False)
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+    assert service.artifact_path(dependency.reference).exists() is False
+
+
+def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
+    tmp_path: Path,
+) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"first-model")
+    snapshot = snapshot_local_source((model,))
+    identity = _identity(
+        root_revision=None,
+        closure_fingerprint=None,
+        local_snapshot_token=snapshot.token,
+    )
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="one",
+            job_id="job-one",
+            source_path=tmp_path / "fixture.wav",
+            identity=identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=snapshot,
+            on_result=first.on_result,
+            on_failure=first.on_failure,
+        )
+        _wait_for_terminal(first)
+        model.write_bytes(b"replacement-model-with-new-identity")
+        executor.submit(
+            attempt_id="two",
+            job_id="job-two",
+            source_path=tmp_path / "fixture.wav",
+            identity=identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=snapshot,
+            on_result=second.on_result,
+            on_failure=second.on_failure,
+        )
+        _wait_for_terminal(second)
+
+        assert second.results == []
+        assert second.failures[0].code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    finally:
+        executor.close()

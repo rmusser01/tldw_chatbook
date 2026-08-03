@@ -11,7 +11,7 @@ import tempfile
 import logging
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urlparse
 import subprocess
 from loguru import logger
@@ -49,7 +49,12 @@ class VideoDownloadError(VideoProcessingError):
 class LocalVideoProcessor:
     """Handles local video processing including download, audio extraction, and analysis."""
 
-    def __init__(self, media_db: Optional[MediaDatabase] = None):
+    def __init__(
+        self,
+        media_db: Optional[MediaDatabase] = None,
+        *,
+        transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
+    ):
         """
         Initialize the video processor.
 
@@ -57,7 +62,10 @@ class LocalVideoProcessor:
             media_db: Optional MediaDatabase instance for storage
         """
         self.media_db = media_db
-        self.audio_processor = LocalAudioProcessor(media_db)
+        self.audio_processor = LocalAudioProcessor(
+            media_db,
+            transcription_runner=transcription_runner,
+        )
         self._cancelled = False  # Flag to track cancellation
         self.max_file_size_mb = get_cli_setting(
             "media_processing.max_video_file_size_mb", 2000
@@ -750,9 +758,7 @@ class LocalVideoProcessor:
                     )
                     if isinstance(audio_result.get("error_detail"), dict):
                         result["error_detail"] = audio_result["error_detail"]
-                    if isinstance(
-                        audio_result.get("stt_failure_provenance"), dict
-                    ):
+                    if isinstance(audio_result.get("stt_failure_provenance"), dict):
                         result["stt_failure_provenance"] = audio_result[
                             "stt_failure_provenance"
                         ]
@@ -771,9 +777,7 @@ class LocalVideoProcessor:
                     "analysis": audio_result.get("analysis"),
                     "analysis_details": audio_result.get("analysis_details"),
                     "warnings": audio_result.get("warnings", []),
-                    "transcription_model": audio_result.get(
-                        "transcription_model"
-                    ),
+                    "transcription_model": audio_result.get("transcription_model"),
                     "transcription_provenance": audio_result.get(
                         "transcription_provenance"
                     ),

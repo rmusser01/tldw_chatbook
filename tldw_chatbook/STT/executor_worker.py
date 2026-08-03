@@ -1,27 +1,355 @@
-"""Spawn entry point for the app-owned local STT worker."""
+"""Spawn entry point for the app-owned resident local STT worker."""
 
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass
 from multiprocessing.connection import Connection
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contracts import TranscriptionFailureCode
-from .executor import ExecutorEvent, ExecutorFailure, ExecutorRequest, WorkerPhase
+from .executor import (
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorRequest,
+    ExecutorResident,
+    ExecutorResult,
+    LocalSourceChangedError,
+    WorkerPhase,
+    validate_local_source_snapshot,
+)
 from .executor_process_tree import enter_worker_containment
 
+TranscriptionRunner = Callable[..., dict[str, Any]]
+ProviderBuilder = Callable[[ExecutorRequest, Path | None], "ProviderRuntime"]
+ParseJob = Callable[..., dict[str, Any]]
 
-def run_executor_worker(
+
+@dataclass(slots=True)
+class ProviderRuntime:
+    """The two operations needed from a resident provider implementation."""
+
+    runner: TranscriptionRunner
+    close: Callable[[], None]
+
+
+@dataclass(slots=True)
+class _ResidentRuntime:
+    identity: object
+    provider: ProviderRuntime
+    local_snapshot_token: str | None
+    managed_store_root: Path | None
+    managed_artifact_ref: tuple[str, str, str] | None
+    lease: Any | None = None
+    reported: bool = False
+
+    def close(self) -> None:
+        """Close native state before releasing its protecting artifact lease."""
+
+        try:
+            self.provider.close()
+        finally:
+            if self.lease is not None:
+                self.lease.close()
+                self.lease = None
+
+
+class _ProviderLoadFailure(RuntimeError):
+    def __init__(
+        self,
+        code: TranscriptionFailureCode,
+        actions: tuple[str, ...] = (),
+    ) -> None:
+        self.code = code
+        self.actions = actions
+        super().__init__(code.value)
+
+
+def _cancelled_failure(request: ExecutorRequest) -> ExecutorFailure:
+    return ExecutorFailure(
+        request.generation,
+        request.attempt_id,
+        TranscriptionFailureCode.CANCELLED,
+    )
+
+
+def _failure_from_exception(
+    request: ExecutorRequest,
+    error: BaseException,
+) -> ExecutorFailure:
+    if isinstance(error, LocalSourceChangedError):
+        return ExecutorFailure(
+            request.generation,
+            request.attempt_id,
+            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+        )
+    if isinstance(error, _ProviderLoadFailure):
+        return ExecutorFailure(
+            request.generation,
+            request.attempt_id,
+            error.code,
+            recovery_actions=error.actions,
+        )
+
+    from .transcribe_cpp import TranscribeCppFailure
+
+    if isinstance(error, TranscribeCppFailure):
+        return ExecutorFailure(
+            request.generation,
+            request.attempt_id,
+            error.code,
+            recovery_actions=tuple(error.actions),
+            failed_attempt=error.stt_failure_provenance,
+        )
+
+    error_detail = getattr(error, "error_detail", None)
+    if isinstance(error_detail, dict):
+        try:
+            code = TranscriptionFailureCode(error_detail.get("code"))
+        except (TypeError, ValueError):
+            code = TranscriptionFailureCode.INFERENCE_FAILED
+        actions = error_detail.get("actions", ())
+        if not isinstance(actions, (list, tuple)):
+            actions = ()
+        safe_actions = tuple(
+            action[:80]
+            for action in actions
+            if isinstance(action, str) and action.strip()
+        )[:8]
+        failed_attempt = getattr(error, "stt_failure_provenance", None)
+        if not isinstance(failed_attempt, dict):
+            failed_attempt = None
+        return ExecutorFailure(
+            request.generation,
+            request.attempt_id,
+            code,
+            recovery_actions=safe_actions,
+            failed_attempt=failed_attempt,
+        )
+    return ExecutorFailure(
+        request.generation,
+        request.attempt_id,
+        TranscriptionFailureCode.INFERENCE_FAILED,
+    )
+
+
+def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Path] | None:
+    if request.managed_artifact_ref is None:
+        return None
+    assert request.managed_store_root is not None
+    from tldw_chatbook.Model_Artifacts import ArtifactRef, ModelArtifactService
+
+    try:
+        reference = ArtifactRef(*request.managed_artifact_ref)
+        leased = ModelArtifactService(request.managed_store_root).acquire(reference)
+        handle = leased.handle
+        if (
+            handle.root != reference
+            or handle.root.revision != request.identity.root_revision
+            or handle.closure_fingerprint != request.identity.closure_fingerprint
+        ):
+            leased.close()
+            raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+        return leased, dict(handle.paths)[handle.root]
+    except _ProviderLoadFailure:
+        raise
+    except Exception:
+        raise _ProviderLoadFailure(
+            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        ) from None
+
+
+def _direct_local_model_root(request: ExecutorRequest) -> Path | None:
+    snapshot = request.local_source
+    if snapshot is None:
+        return None
+    validate_local_source_snapshot(snapshot)
+    if request.identity.local_snapshot_token != snapshot.token:
+        raise LocalSourceChangedError("Local STT model files changed")
+    if request.identity.provider_id == "transcribe-cpp":
+        if len(snapshot.paths) != 1:
+            raise LocalSourceChangedError("Local STT model files changed")
+        return snapshot.paths[0]
+    parents = {path.parent for path in snapshot.paths}
+    if len(parents) != 1:
+        raise LocalSourceChangedError("Local STT model files changed")
+    return parents.pop()
+
+
+def _load_resident(
+    request: ExecutorRequest,
+    provider_builder: ProviderBuilder,
+) -> _ResidentRuntime:
+    model_root = _direct_local_model_root(request)
+    acquired = _acquire_managed_model(request)
+    lease = None
+    if acquired is not None:
+        lease, model_root = acquired
+    try:
+        provider = provider_builder(request, model_root)
+    except Exception:
+        if lease is not None:
+            lease.close()
+        raise
+    return _ResidentRuntime(
+        identity=request.identity,
+        provider=provider,
+        local_snapshot_token=(
+            request.local_source.token if request.local_source is not None else None
+        ),
+        managed_store_root=(
+            request.managed_store_root.absolute()
+            if request.managed_store_root is not None
+            else None
+        ),
+        managed_artifact_ref=request.managed_artifact_ref,
+        lease=lease,
+    )
+
+
+def _validate_reuse(request: ExecutorRequest, resident: _ResidentRuntime) -> None:
+    if request.identity != resident.identity:
+        raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+    if request.local_source is not None:
+        validate_local_source_snapshot(request.local_source)
+        if request.local_source.token != resident.local_snapshot_token:
+            raise LocalSourceChangedError("Local STT model files changed")
+    request_store = (
+        request.managed_store_root.absolute()
+        if request.managed_store_root is not None
+        else None
+    )
+    if (
+        request_store != resident.managed_store_root
+        or request.managed_artifact_ref != resident.managed_artifact_ref
+    ):
+        raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+
+
+def _transcribe_cpp_provider(
+    request: ExecutorRequest,
+    model_root: Path | None,
+) -> ProviderRuntime:
+    from .persistence import build_transcription_provenance_document
+    from .transcribe_cpp import TranscribeCppRuntime
+
+    model_path = model_root
+    if model_path is not None and model_path.is_dir():
+        relative_value = request.options.get("managed_model_relative_path")
+        if not isinstance(relative_value, str) or not relative_value.strip():
+            raise _ProviderLoadFailure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                ("choose_another_gguf", "retry_faster_whisper"),
+            )
+        relative = PurePosixPath(relative_value)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise _ProviderLoadFailure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                ("choose_another_gguf", "retry_faster_whisper"),
+            )
+        model_path = model_path.joinpath(*relative.parts)
+    context = request.options.get("transcription_context") or {}
+    if not isinstance(context, dict):
+        context = {}
+    runtime = TranscribeCppRuntime.load(
+        model_path=model_path,
+        attempt_id=request.attempt_id,
+        batch_id=context.get("batch_id"),
+        job_id=request.job_id,
+        language=request.options.get("language") or "en",
+        ffmpeg_path=request.options.get("ffmpeg_path"),
+    )
+
+    def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
+        normalized = runtime.transcribe(
+            audio_path=Path(audio_path),
+            attempt_id=kwargs.get("attempt_id") or request.attempt_id,
+            batch_id=kwargs.get("batch_id") or context.get("batch_id"),
+            job_id=kwargs.get("job_id") or request.job_id,
+            retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
+            retry_of_job_id=kwargs.get("retry_of_job_id"),
+            language=kwargs.get("language") or "en",
+            timestamps=bool(kwargs.get("timestamps", True)),
+        )
+        provenance = build_transcription_provenance_document(
+            normalized,
+            failed_attempt=kwargs.get("retry_source_failure_provenance"),
+        )
+        return {
+            "text": normalized.text,
+            "segments": [
+                {
+                    "start": segment.start_seconds,
+                    "end": segment.end_seconds,
+                    "text": segment.text,
+                }
+                for segment in normalized.segments
+            ],
+            "transcription_model": normalized.provenance.model_id,
+            "transcription_provenance": provenance,
+        }
+
+    return ProviderRuntime(runner=runner, close=runtime.close)
+
+
+def _parakeet_provider(
+    _request: ExecutorRequest,
+    model_root: Path | None,
+) -> ProviderRuntime:
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+
+    service = TranscriptionService()
+
+    def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
+        if model_root is not None:
+            kwargs["model_dir"] = str(model_root)
+        return service.transcribe(audio_path, **kwargs)
+
+    return ProviderRuntime(runner=runner, close=service.cleanup)
+
+
+def _default_provider_builder(
+    request: ExecutorRequest,
+    model_root: Path | None,
+) -> ProviderRuntime:
+    if request.identity.provider_id == "transcribe-cpp":
+        return _transcribe_cpp_provider(request, model_root)
+    if request.identity.provider_id == "parakeet-onnx":
+        return _parakeet_provider(request, model_root)
+    raise _ProviderLoadFailure(TranscriptionFailureCode.PROVIDER_UNAVAILABLE)
+
+
+def _default_parse_job(
+    file_path: str | Path,
+    options: dict[str, Any],
+    *,
+    transcription_runner: TranscriptionRunner,
+) -> dict[str, Any]:
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        parse_local_file_for_ingest,
+    )
+
+    return parse_local_file_for_ingest(
+        file_path,
+        options,
+        transcription_runner=transcription_runner,
+    )
+
+
+def _run_executor_worker(
     connection: Connection,
     admission_event: Any,
     cancellation_event: Any,
     generation: int,
     scratch_path: str,
+    *,
+    provider_builder: ProviderBuilder = _default_provider_builder,
+    parse_job: ParseJob = _default_parse_job,
 ) -> None:
-    """Run the admitted worker loop until provider wiring is installed."""
-
-    del cancellation_event
     identity = enter_worker_containment()
     connection.send(("bootstrap", identity))
     if not admission_event.wait(30.0):
@@ -31,6 +359,7 @@ def run_executor_worker(
         return
     tempfile.tempdir = str(scratch)
     connection.send(("ready", generation))
+    resident: _ResidentRuntime | None = None
     try:
         while True:
             command = connection.recv()
@@ -38,17 +367,87 @@ def run_executor_worker(
                 return
             if type(command) is not ExecutorRequest or command.generation != generation:
                 continue
+            request = command
             connection.send(
-                ExecutorEvent(generation, command.attempt_id, WorkerPhase.PREPARING)
+                ExecutorEvent(generation, request.attempt_id, WorkerPhase.PREPARING)
             )
-            connection.send(
-                ExecutorFailure(
-                    generation,
-                    command.attempt_id,
-                    TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+            if cancellation_event.is_set():
+                connection.send(_cancelled_failure(request))
+                continue
+            try:
+                if resident is None:
+                    connection.send(
+                        ExecutorEvent(
+                            generation,
+                            request.attempt_id,
+                            WorkerPhase.LOADING,
+                        )
+                    )
+                    resident = _load_resident(request, provider_builder)
+                else:
+                    _validate_reuse(request, resident)
+                if cancellation_event.is_set():
+                    connection.send(_cancelled_failure(request))
+                    continue
+                connection.send(
+                    ExecutorEvent(
+                        generation,
+                        request.attempt_id,
+                        WorkerPhase.TRANSCRIBING,
+                    )
                 )
-            )
+                payload = parse_job(
+                    request.source_path,
+                    dict(request.options),
+                    transcription_runner=resident.provider.runner,
+                )
+                if cancellation_event.is_set():
+                    connection.send(_cancelled_failure(request))
+                    continue
+                if not resident.reported:
+                    connection.send(
+                        ExecutorResident(
+                            generation,
+                            request.attempt_id,
+                            request.identity,
+                        )
+                    )
+                    resident.reported = True
+                connection.send(
+                    ExecutorEvent(
+                        generation,
+                        request.attempt_id,
+                        WorkerPhase.POST_PROCESSING,
+                    )
+                )
+                connection.send(ExecutorResult(generation, request.attempt_id, payload))
+            except Exception as error:
+                connection.send(_failure_from_exception(request, error))
+                if isinstance(error, LocalSourceChangedError):
+                    return
     except (EOFError, OSError):
         return
     finally:
-        connection.close()
+        try:
+            if resident is not None:
+                resident.close()
+        finally:
+            connection.close()
+
+
+def run_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Run one admitted resident worker until its parent closes it."""
+
+    _run_executor_worker(
+        connection,
+        admission_event,
+        cancellation_event,
+        generation,
+        scratch_path,
+    )

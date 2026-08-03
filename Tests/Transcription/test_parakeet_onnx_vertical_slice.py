@@ -51,9 +51,7 @@ def _known_v2_receipt() -> dict[str, object]:
     }
 
 
-def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
-    tmp_path, monkeypatch
-) -> None:
+def test_parakeet_onnx_reuses_local_v2_int8_model(tmp_path, monkeypatch) -> None:
     audio_path = tmp_path / "speech.wav"
     model_dir = tmp_path / "model"
     _write_model_bundle(model_dir)
@@ -78,6 +76,10 @@ def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
     service = TranscriptionService()
     service.config["parakeet_onnx_model_dir"] = str(model_dir)
     result = service.transcribe(
+        str(audio_path),
+        provider="parakeet-onnx",
+    )
+    reused_result = service.transcribe(
         str(audio_path),
         provider="parakeet-onnx",
     )
@@ -116,6 +118,7 @@ def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
         "provider": "parakeet-onnx",
         "model": PARAKEET_V2_MODEL,
     }
+    assert reused_result == result
 
 
 def test_parakeet_onnx_non_english_selects_v3_without_decoder_language(
@@ -710,9 +713,7 @@ def test_parakeet_onnx_batch_falls_back_to_verified_legacy_bundle(
     monkeypatch.setitem(
         sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
     )
-    monkeypatch.setattr(
-        service_module, "active_managed_parakeet_v2_dir", lambda: None
-    )
+    monkeypatch.setattr(service_module, "active_managed_parakeet_v2_dir", lambda: None)
     monkeypatch.setattr(service_module, "parakeet_v2_install_dir", lambda: legacy_dir)
     monkeypatch.setattr(
         service_module,
@@ -735,13 +736,13 @@ def test_parakeet_onnx_batch_reports_missing_model_when_nothing_resolves(
     _write_silent_wav(audio_path)
 
     monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
-    monkeypatch.setattr(
-        service_module, "active_managed_parakeet_v2_dir", lambda: None
-    )
+    monkeypatch.setattr(service_module, "active_managed_parakeet_v2_dir", lambda: None)
     monkeypatch.setattr(
         service_module, "parakeet_v2_install_dir", lambda: tmp_path / "no-legacy"
     )
-    monkeypatch.setattr(service_module, "verify_parakeet_v2_bundle", lambda directory: False)
+    monkeypatch.setattr(
+        service_module, "verify_parakeet_v2_bundle", lambda directory: False
+    )
 
     service = TranscriptionService()
     assert not service.config["parakeet_onnx_model_dir"]

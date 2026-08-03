@@ -11,6 +11,78 @@ from pathlib import Path
 from typing import Any
 
 
+_resident_runtime_loads = 0
+
+
+class _FakeResidentRuntime:
+    """Small provider runtime used only inside spawned executor tests."""
+
+    def __init__(self, load_number: int) -> None:
+        self.load_number = load_number
+
+    def transcribe(self, audio_path: str, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "text": f"transcript:{Path(audio_path).name}",
+            "segments": [],
+            "runtime_load_number": self.load_number,
+        }
+
+    def close(self) -> None:
+        return
+
+
+def _fake_provider_builder(_request: Any, _model_root: Path | None) -> Any:
+    global _resident_runtime_loads
+    from tldw_chatbook.STT.executor_worker import ProviderRuntime
+
+    _resident_runtime_loads += 1
+    runtime = _FakeResidentRuntime(_resident_runtime_loads)
+    return ProviderRuntime(runner=runtime.transcribe, close=runtime.close)
+
+
+def _fake_parse_job(
+    file_path: str | Path,
+    options: dict[str, Any],
+    *,
+    transcription_runner: Any,
+) -> dict[str, Any]:
+    if options.get("test_worker_crash"):
+        os._exit(71)
+    if options.get("test_worker_hold"):
+        while True:
+            time.sleep(1.0)
+    transcription = transcription_runner(
+        str(file_path),
+        provider=options.get("transcription_provider"),
+    )
+    return {
+        "content": transcription["text"],
+        "runtime_load_number": transcription["runtime_load_number"],
+    }
+
+
+def resident_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Run the real resident loop with dependency-free fake provider work."""
+
+    from tldw_chatbook.STT.executor_worker import _run_executor_worker
+
+    _run_executor_worker(
+        connection,
+        admission_event,
+        cancellation_event,
+        generation,
+        scratch_path,
+        provider_builder=_fake_provider_builder,
+        parse_job=_fake_parse_job,
+    )
+
+
 def containment_probe(connection: Connection, admission_event: Any) -> None:
     """Report containment identity, then prove admission gates worker progress."""
 

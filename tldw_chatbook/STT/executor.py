@@ -7,8 +7,10 @@ objects without loading a native speech runtime.
 
 from __future__ import annotations
 
+import hashlib
 import multiprocessing
 import shutil
+import stat
 import tempfile
 import threading
 from collections.abc import Callable
@@ -62,6 +64,10 @@ class ExecutorUnavailableError(RuntimeError):
     """Raised when another worker generation cannot be started safely."""
 
 
+class LocalSourceChangedError(RuntimeError):
+    """Raised when an unmanaged local model no longer matches its snapshot."""
+
+
 @dataclass(frozen=True, slots=True)
 class LocalSourceSnapshot:
     """Private transient identity for unmanaged local model files."""
@@ -85,6 +91,48 @@ class LocalSourceSnapshot:
             for identity in self.identities
         ):
             raise TypeError("snapshot identities must be four-integer tuples")
+
+
+def _local_file_identity(path: Path) -> tuple[int, int, int, int]:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise LocalSourceChangedError("Local STT model files changed") from None
+    if not stat.S_ISREG(metadata.st_mode):
+        raise LocalSourceChangedError("Local STT model files changed")
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(metadata.st_size),
+        int(metadata.st_mtime_ns),
+    )
+
+
+def snapshot_local_source(paths: tuple[Path, ...]) -> LocalSourceSnapshot:
+    """Capture a path-private metadata identity for required local model files."""
+
+    if type(paths) is not tuple or not paths:
+        raise ValueError("paths must be a non-empty tuple")
+    absolute_paths = tuple(path.absolute() for path in paths)
+    identities = tuple(_local_file_identity(path) for path in absolute_paths)
+    digest = hashlib.sha256()
+    for index, identity in enumerate(identities):
+        digest.update(f"{index}:{identity!r};".encode("ascii"))
+    return LocalSourceSnapshot(
+        token=digest.hexdigest(),
+        paths=absolute_paths,
+        identities=identities,
+    )
+
+
+def validate_local_source_snapshot(snapshot: LocalSourceSnapshot) -> None:
+    """Fail path-privately unless every required local model file is unchanged."""
+
+    if type(snapshot) is not LocalSourceSnapshot:
+        raise TypeError("snapshot must be a LocalSourceSnapshot")
+    current = tuple(_local_file_identity(path) for path in snapshot.paths)
+    if current != snapshot.identities:
+        raise LocalSourceChangedError("Local STT model files changed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +173,7 @@ class ExecutorRequest:
     options: dict[str, Any] = field(repr=False)
     local_source: LocalSourceSnapshot | None = field(default=None, repr=False)
     managed_store_root: Path | None = field(default=None, repr=False)
+    managed_artifact_ref: tuple[str, str, str] | None = None
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
@@ -144,6 +193,26 @@ class ExecutorRequest:
             self.managed_store_root, Path
         ):
             raise TypeError("managed_store_root must be a Path")
+        if self.managed_artifact_ref is not None:
+            if (
+                type(self.managed_artifact_ref) is not tuple
+                or len(self.managed_artifact_ref) != 3
+                or any(
+                    type(component) is not str or not component.strip()
+                    for component in self.managed_artifact_ref
+                )
+            ):
+                raise ValueError(
+                    "managed_artifact_ref must contain three non-empty strings"
+                )
+        if (self.managed_store_root is None) != (self.managed_artifact_ref is None):
+            raise ValueError(
+                "managed_store_root and managed_artifact_ref must be provided together"
+            )
+        if self.local_source is not None and self.managed_artifact_ref is not None:
+            raise ValueError(
+                "local_source and managed_artifact_ref are mutually exclusive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,6 +446,7 @@ class LocalSTTExecutor:
         options: dict[str, Any],
         local_source: LocalSourceSnapshot | None = None,
         managed_store_root: Path | None = None,
+        managed_artifact_ref: tuple[str, str, str] | None = None,
         on_event: Callable[[ExecutorEvent], None] = _ignore_event,
         on_result: Callable[[ExecutorResult], None] = _ignore_result,
         on_failure: Callable[[ExecutorFailure], None] = _ignore_failure,
@@ -415,6 +485,7 @@ class LocalSTTExecutor:
                 options=dict(options),
                 local_source=local_source,
                 managed_store_root=managed_store_root,
+                managed_artifact_ref=managed_artifact_ref,
             )
             self._active_request = request
             self._active_callbacks = _ActiveCallbacks(
@@ -879,8 +950,11 @@ __all__ = [
     "ExecutorResident",
     "ExecutorResult",
     "ExecutorUnavailableError",
+    "LocalSourceChangedError",
     "LocalSourceSnapshot",
     "LocalSTTExecutor",
     "ModelIdentity",
     "WorkerPhase",
+    "snapshot_local_source",
+    "validate_local_source_snapshot",
 ]

@@ -367,6 +367,11 @@ class TranscribeCppAdapter:
         if callable(exit_method):
             exit_method(None, None, None)
 
+    def mark_model_reused(self) -> None:
+        """Exclude one-time model load cost from later resident jobs."""
+
+        self._model_load_seconds = 0.0
+
 
 def _failure_actions(code: TranscriptionFailureCode) -> tuple[str, ...]:
     if code in {
@@ -409,6 +414,237 @@ def _failed_attempt_document(
     return load_failed_transcription_attempt(dump_failed_transcription_attempt(attempt))
 
 
+def _runtime_failure(
+    *,
+    code: TranscriptionFailureCode,
+    attempt_id: str,
+    model_id: str,
+    language: str,
+    batch_id: str | None = None,
+    job_id: str | None = None,
+    actions: tuple[str, ...] | None = None,
+) -> TranscribeCppFailure:
+    selected_actions = _failure_actions(code) if actions is None else actions
+    normalized_language = (language or "en").strip().lower()
+    return TranscribeCppFailure(
+        code,
+        model_id=model_id,
+        actions=selected_actions,
+        failed_attempt=_failed_attempt_document(
+            code=code,
+            attempt_id=attempt_id,
+            batch_id=batch_id,
+            job_id=job_id,
+            model_id=model_id,
+            language=normalized_language,
+        ),
+    )
+
+
+class TranscribeCppRuntime:
+    """One admitted native model reusable across matching worker jobs."""
+
+    def __init__(
+        self,
+        *,
+        adapter: TranscribeCppAdapter,
+        coordinator: TranscriptionCoordinator,
+        model_id: str,
+        maximum_timestamps: frozenset[TimestampGranularity],
+    ) -> None:
+        self._adapter = adapter
+        self._coordinator = coordinator
+        self._model_id = model_id
+        self._maximum_timestamps = maximum_timestamps
+        self._closed = False
+
+    @classmethod
+    def load(
+        cls,
+        *,
+        model_path: Path | None,
+        attempt_id: str,
+        batch_id: str | None = None,
+        job_id: str | None = None,
+        language: str = "en",
+        ffmpeg_path: str | None = None,
+    ) -> TranscribeCppRuntime:
+        """Admit and load one direct-local GGUF without leaking native detail."""
+
+        unavailable_model = "local-gguf:unavailable"
+        if model_path is None:
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=unavailable_model,
+                language=language,
+                actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+            )
+        try:
+            admission = validate_local_gguf(model_path)
+        except Exception:
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=unavailable_model,
+                language=language,
+                actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+            ) from None
+        try:
+            runtime = importlib.import_module("transcribe_cpp")
+        except Exception:
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=unavailable_model,
+                language=language,
+                actions=(_RETRY_FASTER_WHISPER,),
+            ) from None
+
+        model: object | None = None
+        adapter: TranscribeCppAdapter | None = None
+        model_id = f"local-gguf:{admission.metadata.architecture}"
+        try:
+            set_log_callback = getattr(runtime, "set_log_callback", None)
+            if callable(set_log_callback):
+                set_log_callback(lambda *_args: None)
+            load_started = time.perf_counter()
+            model = runtime.Model(str(admission.path))
+            load_seconds = time.perf_counter() - load_started
+            if getattr(model, "arch", None) != admission.metadata.architecture:
+                raise ValueError("native model architecture mismatch")
+            adapter = TranscribeCppAdapter(
+                model=model,
+                architecture=admission.metadata.architecture,
+                model_load_seconds=load_seconds,
+                ffmpeg_path=ffmpeg_path,
+            )
+            policy = default_routing_policy()
+            declarations = CatalogDeclarations(
+                providers=(adapter.provider(),),
+                models=adapter.describe(),
+            )
+            registry = build_builtin_registry(
+                policy,
+                adapters=(adapter,),
+                extra_declarations=declarations,
+            )
+            coordinator = TranscriptionCoordinator(
+                registry=registry,
+                router=TranscriptionRouter(policy),
+                pipeline=PipelineCapabilities(),
+            )
+            maximum_timestamps = adapter.describe()[0].capabilities.timestamps
+            return cls(
+                adapter=adapter,
+                coordinator=coordinator,
+                model_id=model_id,
+                maximum_timestamps=maximum_timestamps,
+            )
+        except Exception:
+            if adapter is not None:
+                adapter.close()
+            elif model is not None:
+                close = getattr(model, "close", None)
+                if callable(close):
+                    close()
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=model_id,
+                language=language,
+                actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+            ) from None
+
+    def transcribe(
+        self,
+        *,
+        audio_path: Path,
+        attempt_id: str,
+        batch_id: str | None = None,
+        job_id: str | None = None,
+        retry_of_attempt_id: str | None = None,
+        retry_of_job_id: str | None = None,
+        language: str = "en",
+        timestamps: bool = False,
+    ) -> Any:
+        """Transcribe one file with this already-loaded exact model."""
+
+        if self._closed:
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=self._model_id,
+                language=language,
+            )
+        normalized_language = (language or "en").strip().lower()
+        timestamp_request = (
+            TimestampGranularity.SEGMENT
+            if timestamps and TimestampGranularity.SEGMENT in self._maximum_timestamps
+            else TimestampGranularity.NONE
+        )
+        request = TranscriptionRequest(
+            attempt_id=attempt_id,
+            batch_id=batch_id,
+            job_id=job_id,
+            retry_of_attempt_id=retry_of_attempt_id,
+            retry_of_job_id=retry_of_job_id,
+            source=FileAudioSource(audio_path),
+            provider_id=PROVIDER_ID,
+            model_id=self._model_id,
+            language=normalized_language,
+            task=TranscriptionTask.TRANSCRIBE,
+            precision=PRECISION,
+            device=ExecutionDevice.AUTO,
+            timestamps=timestamp_request,
+            privacy=PrivacyRequirements(allow_remote_processing=False),
+        )
+        try:
+            return self._coordinator.transcribe(request)
+        except TranscriptionCoordinatorError as error:
+            raise _runtime_failure(
+                code=error.failure.code,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=self._model_id,
+                language=normalized_language,
+                actions=_failure_actions(error.failure.code),
+            ) from None
+        except TranscribeCppFailure:
+            raise
+        except Exception:
+            raise _runtime_failure(
+                code=TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                model_id=self._model_id,
+                language=normalized_language,
+                actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+            ) from None
+        finally:
+            self._adapter.mark_model_reused()
+
+    def close(self) -> None:
+        """Close the resident native model once."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._adapter.close()
+
+
 def transcribe_file(
     *,
     audio_path: Path,
@@ -422,170 +658,35 @@ def transcribe_file(
     timestamps: bool = False,
     ffmpeg_path: str | None = None,
 ) -> Any:
-    """Run one direct-local job and return its normalized result.
+    """Load, use, and close one direct-local model for legacy callers."""
 
-    The return annotation is deliberately broad at this legacy bridge: callers
-    serialize the validated ``TranscriptionResult`` into their existing dict
-    payload, while the native runtime remains absent from module scope.
-
-    Args:
-        audio_path: Local audio file to normalize and transcribe.
-        model_path: Configured local GGUF path, or ``None`` when unset.
-        attempt_id: Stable identity for this transcription attempt.
-        batch_id: Optional identity shared by a batch of ingest jobs.
-        job_id: Optional Library ingest job identity.
-        retry_of_attempt_id: Optional immediately preceding attempt identity.
-        retry_of_job_id: Optional immediately preceding Library job identity.
-        language: Explicit language code or ``auto``.
-        timestamps: Whether to request segment timestamps when supported.
-        ffmpeg_path: Optional explicit ffmpeg executable path.
-
-    Returns:
-        A validated provider-neutral ``TranscriptionResult``.
-
-    Raises:
-        TranscribeCppFailure: If admission, runtime loading, preflight, or
-            inference fails. The exception contains only bounded recovery data.
-    """
-
-    normalized_language = (language or "en").strip().lower()
-
-    def failure(
-        code: TranscriptionFailureCode,
-        *,
-        model_id: str = "local-gguf:unavailable",
-        actions: tuple[str, ...] | None = None,
-    ) -> TranscribeCppFailure:
-        selected_actions = _failure_actions(code) if actions is None else actions
-        return TranscribeCppFailure(
-            code,
-            model_id=model_id,
-            actions=selected_actions,
-            failed_attempt=_failed_attempt_document(
-                code=code,
-                attempt_id=attempt_id,
-                batch_id=batch_id,
-                job_id=job_id,
-                model_id=model_id,
-                language=normalized_language,
-            ),
-        )
-
-    if model_path is None:
-        raise failure(
-            TranscriptionFailureCode.MODEL_NOT_INSTALLED,
-            actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        )
-
-    try:
-        admission = validate_local_gguf(model_path)
-    except Exception:
-        raise failure(
-            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
-            actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from None
-
-    try:
-        # Deliberately keep this native ABI load at the worker boundary instead
-        # of require_dependency(): that helper logs ImportError details and only
-        # normalizes import-related exceptions, while this path must redact every
-        # native loader/ABI failure before it can cross the spawn boundary.
-        runtime = importlib.import_module("transcribe_cpp")
-    except Exception:
-        raise failure(
-            TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
-            actions=(_RETRY_FASTER_WHISPER,),
-        ) from None
-
-    model: object | None = None
-    adapter: TranscribeCppAdapter | None = None
-    model_id = f"local-gguf:{admission.metadata.architecture}"
-    try:
-        set_log_callback = getattr(runtime, "set_log_callback", None)
-        if callable(set_log_callback):
-            set_log_callback(lambda *_args: None)
-        load_started = time.perf_counter()
-        model = runtime.Model(str(admission.path))
-        load_seconds = time.perf_counter() - load_started
-        if getattr(model, "arch", None) != admission.metadata.architecture:
-            raise ValueError("native model architecture mismatch")
-        adapter = TranscribeCppAdapter(
-            model=model,
-            architecture=admission.metadata.architecture,
-            model_load_seconds=load_seconds,
-            ffmpeg_path=ffmpeg_path,
-        )
-    except Exception:
-        if model is not None and adapter is None:
-            close = getattr(model, "close", None)
-            if callable(close):
-                close()
-        raise failure(
-            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
-            model_id=model_id,
-            actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from None
-
-    policy = default_routing_policy()
-    declarations = CatalogDeclarations(
-        providers=(adapter.provider(),),
-        models=adapter.describe(),
+    runtime = TranscribeCppRuntime.load(
+        model_path=model_path,
+        attempt_id=attempt_id,
+        batch_id=batch_id,
+        job_id=job_id,
+        language=language,
+        ffmpeg_path=ffmpeg_path,
     )
     try:
-        registry = build_builtin_registry(
-            policy,
-            adapters=(adapter,),
-            extra_declarations=declarations,
-        )
-        maximum_timestamps = adapter.describe()[0].capabilities.timestamps
-        timestamp_request = (
-            TimestampGranularity.SEGMENT
-            if timestamps and TimestampGranularity.SEGMENT in maximum_timestamps
-            else TimestampGranularity.NONE
-        )
-        request = TranscriptionRequest(
+        return runtime.transcribe(
+            audio_path=audio_path,
             attempt_id=attempt_id,
             batch_id=batch_id,
             job_id=job_id,
             retry_of_attempt_id=retry_of_attempt_id,
             retry_of_job_id=retry_of_job_id,
-            source=FileAudioSource(audio_path),
-            provider_id=PROVIDER_ID,
-            model_id=model_id,
-            language=normalized_language,
-            task=TranscriptionTask.TRANSCRIBE,
-            precision=PRECISION,
-            device=ExecutionDevice.AUTO,
-            timestamps=timestamp_request,
-            privacy=PrivacyRequirements(allow_remote_processing=False),
+            language=language,
+            timestamps=timestamps,
         )
-        coordinator = TranscriptionCoordinator(
-            registry=registry,
-            router=TranscriptionRouter(policy),
-            pipeline=PipelineCapabilities(),
-        )
-        return coordinator.transcribe(request)
-    except TranscriptionCoordinatorError as error:
-        raise failure(
-            error.failure.code,
-            model_id=model_id,
-            actions=_failure_actions(error.failure.code),
-        ) from None
-    except TranscribeCppFailure:
-        raise
-    except Exception:
-        raise failure(
-            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
-            model_id=model_id,
-            actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
-        ) from None
     finally:
-        adapter.close()
+        runtime.close()
 
 
 __all__ = [
     "PROVIDER_ID",
     "TranscribeCppAdapter",
     "TranscribeCppFailure",
+    "TranscribeCppRuntime",
     "transcribe_file",
 ]

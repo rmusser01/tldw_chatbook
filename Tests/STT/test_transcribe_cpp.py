@@ -159,6 +159,58 @@ def test_transcribe_file_revalidates_then_loads_once_and_normalizes_result(
     )
 
 
+def test_reusable_runtime_loads_once_transcribes_twice_and_closes_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    first_audio = tmp_path / "first.wav"
+    second_audio = tmp_path / "second.wav"
+    model_path = tmp_path / "private-model.gguf"
+    _write_pcm_wav(first_audio)
+    _write_pcm_wav(second_audio)
+    model_path.write_bytes(b"fixture")
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setitem(sys.modules, "transcribe_cpp", _fake_runtime(calls))
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
+
+    runtime = module.TranscribeCppRuntime.load(
+        model_path=model_path,
+        attempt_id="attempt-1",
+        language="en",
+    )
+    try:
+        first = runtime.transcribe(
+            audio_path=first_audio,
+            attempt_id="attempt-1",
+            language="en",
+        )
+        second = runtime.transcribe(
+            audio_path=second_audio,
+            attempt_id="attempt-2",
+            language="en",
+        )
+    finally:
+        runtime.close()
+        runtime.close()
+
+    event_names = [name for name, _value in calls]
+    assert event_names.count("model") == 1
+    assert event_names.count("run") == 2
+    assert event_names.count("close") == 1
+    assert first.provenance.attempt_id == "attempt-1"
+    assert second.provenance.attempt_id == "attempt-2"
+    assert first.timings.model_load_seconds >= 0
+    assert second.timings.model_load_seconds == 0
+
+
 def test_loaded_capabilities_are_identical_in_declaration_and_probe() -> None:
     module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
     calls: list[tuple[str, object]] = []
@@ -316,9 +368,7 @@ def test_native_import_failure_is_sanitized_and_path_private(
     assert str(secret) not in str(raised.value)
     assert str(secret) not in repr(raised.value)
     assert "bad ABI" not in str(raised.value)
-    rendered = "".join(
-        traceback.format_exception(raised.type, raised.value, raised.tb)
-    )
+    rendered = "".join(traceback.format_exception(raised.type, raised.value, raised.tb))
     assert str(secret) not in rendered
     assert "bad ABI" not in rendered
 
@@ -361,9 +411,7 @@ def test_native_model_load_failure_closes_nothing_and_never_leaks_path(
     assert raised.value.actions == ("choose_another_gguf", "retry_faster_whisper")
     assert str(secret) not in str(raised.value)
     assert str(secret) not in repr(raised.value)
-    rendered = "".join(
-        traceback.format_exception(raised.type, raised.value, raised.tb)
-    )
+    rendered = "".join(traceback.format_exception(raised.type, raised.value, raised.tb))
     assert str(secret) not in rendered
     assert "native load failed" not in rendered
     assert [name for name, _value in calls] == ["model"]
