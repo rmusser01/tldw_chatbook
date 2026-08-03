@@ -1040,16 +1040,19 @@ def test_declining_the_consent_modal_does_not_start_the_install_worker():
 def test_curated_install_requested_refuses_a_second_concurrent_install():
     """TASK-1803 review round 1 (Important, gap #2): untested until now.
 
-    ``_curated_install_requested``'s worker-in-flight guard (mirroring
-    ``LibraryScreen.handle_parakeet_v2_install_requested``'s own) must
-    refuse a second request while one install is still running -- not
-    start a competing preflight worker, not touch the running install's
-    own retained reference/service/registry/sources, and not touch its
-    worker handle -- and must release only the freshly clicking
-    ``CuratedView``'s own in-flight indicator (see the method's own
-    docstring for why that view, specifically, is the one instance a
-    screen-level recompose can hand a second chance to click Install
-    while the original install is still in flight elsewhere).
+    ``_curated_install_requested``'s concurrency guard (``_install_in_
+    progress()``, mirroring ``LibraryScreen.handle_parakeet_v2_install_
+    requested``'s own worker-in-flight guard, generalized in TASK-1914
+    fix round 2 to span the whole install lifecycle rather than only
+    "a worker happens to be running") must refuse a second request while
+    one install is still in progress -- not start a competing preflight
+    worker, not touch the running install's own retained reference/
+    service/registry/sources, and not touch its worker handle -- and must
+    release only the freshly clicking ``CuratedView``'s own in-flight
+    indicator (see the method's own docstring for why that view,
+    specifically, is the one instance a screen-level recompose can hand a
+    second chance to click Install while the original install is still in
+    progress elsewhere).
     """
     from unittest.mock import MagicMock
 
@@ -1069,6 +1072,7 @@ def test_curated_install_requested_refuses_a_second_concurrent_install():
     screen._run_curated_preflight = MagicMock()
     view = MagicMock()
     screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_kind = "curated"
     screen._model_install_worker = running_worker
     screen._model_install_reference = running_reference
     screen._model_install_service = running_service
@@ -1145,6 +1149,7 @@ def test_curated_install_requested_refuses_an_invalid_payload_without_starting_a
     screen._run_curated_preflight = MagicMock()
     view = MagicMock()
     screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_kind = None
     screen._model_install_worker = None
     screen._model_install_reference = None
     screen._model_install_service = None
@@ -1206,6 +1211,7 @@ def test_curated_install_requested_refuses_when_service_registry_or_sources_is_n
     screen._run_curated_preflight = MagicMock()
     view = MagicMock()
     screen._curated_view = MagicMock(return_value=view)
+    screen._model_install_kind = None
     screen._model_install_worker = None
     screen._model_install_reference = None
     screen._model_install_service = None
@@ -2151,21 +2157,52 @@ def test_declining_the_remote_consent_modal_does_not_start_the_install_worker():
 
 
 @pytest.mark.parametrize(
-    ("first_kind", "second_kind"),
-    (("curated", "remote"), ("remote", "curated")),
+    ("first_kind", "second_kind", "phase"),
+    (
+        ("curated", "remote", "worker"),
+        ("remote", "curated", "worker"),
+        ("curated", "curated", "pending_consent"),
+        ("remote", "remote", "pending_consent"),
+        ("curated", "remote", "pending_consent"),
+        ("remote", "curated", "pending_consent"),
+    ),
 )
-def test_a_second_concurrent_install_of_either_kind_is_refused_by_the_shared_lock(
-    first_kind, second_kind
+def test_a_second_concurrent_install_is_refused_regardless_of_kind_or_phase(
+    first_kind, second_kind, phase
 ):
-    """TASK-1914: curated and remote installs share ONE screen-level lock
-    (``_model_install_worker``), not two independent ones -- documented in
-    that field's own docstring: the managed store's own
-    ``ArtifactAcquisitionService.provision`` already serializes concurrent
-    installs behind one in-process lease regardless of which view started
-    them, so tracking two locks would only mean paying for a wasted
-    preflight before the second one blocked anyway. Parametrized both
-    directions: a running CURATED install refuses a REMOTE request, and a
-    running REMOTE install refuses a CURATED request.
+    """TASK-1914 fix round 2: curated and remote installs share ONE
+    screen-level concurrency guard, ``_install_in_progress()`` (checking
+    ``_model_install_kind``), not two independent ones and not a check on
+    the worker handle -- documented in ``_install_in_progress``'s own
+    docstring: the managed store's own ``ArtifactAcquisitionService.
+    provision`` already serializes concurrent installs behind one
+    in-process lease regardless of which view started them, so tracking
+    two locks would only mean paying for a wasted preflight before the
+    second one blocked anyway.
+
+    Parametrized over both the kind pairing (same-flow and cross-flow)
+    AND the phase the first install is in:
+
+    - ``"worker"``: a preflight/provision thread is actually running
+      (``_model_install_worker`` set, not finished) -- the case the
+      original (pre-fix-round-2) guard already covered.
+    - ``"pending_consent"``: the PR #1245 automated-review finding this
+      round fixes. Preflight has already succeeded and the shared consent
+      modal is up, awaiting the user's decision -- ``_model_install_
+      worker`` is ``None`` here (see ``_apply_curated_preflight_result``/
+      ``_apply_remote_preflight_result``, which reset it to ``None``
+      before pushing the modal), which is exactly the window a
+      worker-handle-only guard could not see. ``_model_install_kind``
+      stays set through this window (cleared only in the terminal
+      apply-provision-result/clear-state paths), so the fixed guard still
+      refuses here.
+
+    Every combination asserts the same contract: the second request is
+    refused, notified, only the second (freshly clicking) view's own
+    in-flight indicator is released, and the FIRST install's own
+    ``_model_install_kind``/reference/pending-report survive byte-
+    identical -- not merely equal, but the exact same retained objects,
+    proving the second request never touched them before being refused.
     """
     from unittest.mock import MagicMock
 
@@ -2174,9 +2211,17 @@ def test_a_second_concurrent_install_of_either_kind_is_refused_by_the_shared_loc
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
-    running_worker = MagicMock()
-    running_worker.is_finished = False
     running_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    running_report = object()
+    if phase == "worker":
+        running_worker = MagicMock()
+        running_worker.is_finished = False
+    else:
+        # The exact state _apply_curated_preflight_result/_apply_remote_
+        # preflight_result leave behind the moment the shared consent
+        # modal is pushed: no worker running, but the install is very
+        # much still in progress.
+        running_worker = None
 
     screen = module.LLMScreen.__new__(module.LLMScreen)
     screen.notify = MagicMock()
@@ -2197,6 +2242,7 @@ def test_a_second_concurrent_install_of_either_kind_is_refused_by_the_shared_loc
     screen._model_install_credential_resolver = (
         MagicMock() if first_kind == "remote" else None
     )
+    screen._model_install_pending_report = running_report
 
     if second_kind == "curated":
         event = CuratedView.InstallRequested(
@@ -2226,9 +2272,12 @@ def test_a_second_concurrent_install_of_either_kind_is_refused_by_the_shared_loc
     event.stop.assert_called_once_with()
     screen.notify.assert_called_once()
     released_view.cancel_pending_install.assert_called_once_with()
-    # The running install's own retained state must survive untouched.
+    # The in-progress install's own retained state must survive untouched
+    # -- byte-identical (`is`), not merely equal, proving the second
+    # request never overwrote it before being refused.
     assert screen._model_install_kind == first_kind
     assert screen._model_install_reference is running_reference
+    assert screen._model_install_pending_report is running_report
     assert screen._model_install_worker is running_worker
 
 
@@ -2319,6 +2368,7 @@ def test_remote_install_requested_refuses_when_candidate_service_or_resolver_is_
     screen._run_remote_preflight = MagicMock()
     view = MagicMock()
     screen._remote_view = MagicMock(return_value=view)
+    screen._model_install_kind = None
     screen._model_install_worker = None
     screen._model_install_reference = None
     screen._model_install_service = None

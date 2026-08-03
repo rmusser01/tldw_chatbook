@@ -104,18 +104,26 @@ class LLMScreen(LabScreen):
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
-        #: Which flow currently owns ``_model_install_worker``/the fields
-        #: below -- ``"curated"`` or ``"remote"``, or ``None`` when idle.
-        #: TASK-1914: curated and remote installs share this screen's one
-        #: set of retained state and one worker slot (see
-        #: ``_model_install_worker``'s own docstring for why one shared
-        #: lock is correct here, not two independent ones), so this is the
-        #: only way to know which mounted view (``_curated_view()`` or
-        #: ``_remote_view()``) the currently in-flight operation belongs
-        #: to -- both views can be mounted at once (``LLMManagementWindow``
-        #: composes every rail view eagerly; only ``active_view`` picks
-        #: which is visible), so a progress tick must be routed to the
-        #: right one, not applied to both. See ``_active_install_view``.
+        #: Which flow currently owns the fields below -- ``"curated"`` or
+        #: ``"remote"``, or ``None`` when idle. TASK-1914: curated and
+        #: remote installs share this screen's one set of retained state
+        #: (see this field's own role below for why one shared lock is
+        #: correct here, not two independent ones). Serves two purposes:
+        #: (1) routing -- the only way to know which mounted view
+        #: (``_curated_view()`` or ``_remote_view()``) the currently
+        #: in-flight operation belongs to, since both views can be mounted
+        #: at once (``LLMManagementWindow`` composes every rail view
+        #: eagerly; only ``active_view`` picks which is visible), so a
+        #: progress tick must be routed to the right one, not applied to
+        #: both -- see ``_active_install_view``; and (2), since TASK-1914
+        #: fix round 2, THE concurrency guard itself: set once, when
+        #: ``_curated_install_requested``/``_remote_install_requested``
+        #: accepts a request, and cleared ONLY in the terminal
+        #: apply-provision-result/clear-state paths, so it stays non-
+        #: ``None`` for an accepted request's entire lifecycle -- preflight
+        #: running, pending consent, and provisioning -- unlike
+        #: ``_model_install_worker`` below, which is briefly ``None``
+        #: during the pending-consent window. See ``_install_in_progress``.
         self._model_install_kind: str | None = None
         #: The last ``AcquisitionProgress`` this screen has seen for the
         #: active install (curated or remote), retained so a freshly
@@ -130,23 +138,25 @@ class LLMScreen(LabScreen):
         #: The install worker currently running (preflight OR provision --
         #: reassigned when the second phase starts, mirroring
         #: ``LibraryScreen``'s single ``_parakeet_v2_install_worker`` field
-        #: across its own two phases). Guards ``_curated_install_requested``
-        #: AND ``_remote_install_requested`` against starting a second,
-        #: concurrent install while this one is still in flight -- a
-        #: SINGLE lock shared by both flows (TASK-1914), not one each,
-        #: because the managed store's own ``ArtifactAcquisitionService.
-        #: provision`` already serializes concurrent installs behind one
-        #: in-process lease regardless of which view started them (see
-        #: that class's own docstring): a curated install and a remote
-        #: install running "at the same time" would already queue against
-        #: each other at that layer, so tracking two independently here
-        #: would only mean paying for a wasted preflight before the second
-        #: one blocked anyway, while doubling every field below for no
-        #: operational benefit. This screen owns exactly one
-        #: ``WorkerManager``, unlike the view-owned workers TASK-1803/
-        #: TASK-1914 replaced, so this guard now holds across a
-        #: screen-level recompose instead of only within one view
-        #: instance's lifetime.
+        #: across its own two phases), and briefly ``None`` BETWEEN those
+        #: two phases while the shared consent modal awaits the user's
+        #: decision. NOT the concurrency guard (TASK-1914 fix round 2 --
+        #: it was, before this fix, and that was the bug: a worker-handle
+        #: check is blind to the pending-consent window). ``_model_install_
+        #: kind`` is the guard now (see ``_install_in_progress``); this
+        #: field exists purely so the actual ``Worker`` handle is
+        #: retained/inspectable across the two phases, mirroring
+        #: ``LibraryScreen``'s equivalent field. Both flows still share
+        #: this one slot (TASK-1914), not one each, because the managed
+        #: store's own ``ArtifactAcquisitionService.provision`` already
+        #: serializes concurrent installs behind one in-process lease
+        #: regardless of which view started them (see that class's own
+        #: docstring): a curated install and a remote install running "at
+        #: the same time" would already queue against each other at that
+        #: layer, so tracking two independently here would only mean
+        #: paying for a wasted preflight before the second one blocked
+        #: anyway, while doubling every field below for no operational
+        #: benefit.
         self._model_install_worker: Worker | None = None
         #: The reference, service, and (curated-only) registry/source map
         #: the currently running (or about-to-run) curated install needs
@@ -357,6 +367,38 @@ class LLMScreen(LabScreen):
             return self._remote_view()
         return None
 
+    def _install_in_progress(self) -> bool:
+        """Return whether a curated or remote install is in ANY phase.
+
+        TASK-1914 fix round 2: the concurrency guard in ``_curated_
+        install_requested``/``_remote_install_requested`` used to check
+        only ``_model_install_worker is not None and not worker.is_
+        finished`` -- true while a preflight/provision thread is actually
+        running, but ``_model_install_worker`` is deliberately set back to
+        ``None`` by ``_apply_curated_preflight_result``/``_apply_remote_
+        preflight_result`` the moment preflight succeeds, before the
+        shared consent modal is even pushed (see those methods' own
+        docstrings). A second ``InstallRequested`` landing during that
+        pending-consent window -- no worker running, but an install very
+        much still in progress, awaiting the user's decision -- passed the
+        old guard and could overwrite ``_model_install_kind``/the pending
+        report/reference for the install actually awaiting consent.
+
+        ``_model_install_kind`` is the fix: set once, when a request is
+        accepted (``_curated_install_requested``/``_remote_install_
+        requested``), and cleared ONLY in the terminal paths -- the
+        provision-result methods (success or failure) and the cancel/
+        clear-state helpers (invalid payload, preflight failure, explicit
+        decline) -- so it is non-``None`` for the ENTIRE lifecycle of an
+        accepted request: preflight running, pending consent, and
+        provisioning, not merely "a worker happens to be running right
+        now".
+
+        Returns:
+            Whether an install (either kind) is currently in progress.
+        """
+        return self._model_install_kind is not None
+
     # -- Curated model install: this screen owns preflight/provision -----
     #
     # TASK-1803: CuratedView posts CuratedView.InstallRequested and renders
@@ -377,16 +419,21 @@ class LLMScreen(LabScreen):
 
         Refuses a second concurrent install outright (mirroring
         ``LibraryScreen.handle_parakeet_v2_install_requested``'s own
-        worker-in-flight guard) -- including a concurrent REMOTE install
-        (TASK-1914: both flows share this screen's one
-        ``_model_install_worker`` lock, see its own docstring for why one
-        shared lock is correct here): the requesting ``CuratedView``
-        already disabled its own row before posting this, but only a
-        screen-level recompose can hand a *different*, freshly (re)mounted
-        instance a chance to post a second request while the first is
-        still running -- ``cancel_pending_install()`` releases only that
-        fresh instance's own indicator, leaving the still-running
-        install's retained state (below) untouched.
+        worker-in-flight guard, generalized -- see ``_install_in_progress``)
+        -- including a concurrent REMOTE install (TASK-1914: both flows
+        share this screen's one ``_model_install_kind`` lifecycle guard) --
+        for as long as ANY phase of another install is in progress:
+        preflight running, pending consent (the shared modal is up, no
+        worker running), or provisioning (TASK-1914 fix round 2 -- see
+        ``_install_in_progress``'s own docstring for why checking the
+        worker handle alone left the pending-consent window unguarded).
+        The requesting ``CuratedView`` already disabled its own row before
+        posting this, but only a screen-level recompose can hand a
+        *different*, freshly (re)mounted instance a chance to post a
+        second request while the first is still in progress --
+        ``cancel_pending_install()`` releases only that fresh instance's
+        own indicator, leaving the still-in-progress install's retained
+        state (below) untouched.
 
         Also validates the event's payload before storing any of it
         (TASK-1803 review round 2, Critical): ``CuratedView`` only ever
@@ -403,8 +450,7 @@ class LLMScreen(LabScreen):
         formatting are the defense-in-depth backstop.
         """
         event.stop()
-        worker = self._model_install_worker
-        if worker is not None and not worker.is_finished:
+        if self._install_in_progress():
             self.notify(
                 "A curated model install is already running.",
                 severity="information",
@@ -506,24 +552,15 @@ class LLMScreen(LabScreen):
         error: str | None,
     ) -> None:
         """Show the shared consent modal, or a sanitized preflight failure."""
-        # NOTE (pre-existing since TASK-1803, annotated not fixed here):
         # _model_install_worker is None from this line until
         # _confirm_curated_install's own _run_curated_provision() call --
-        # i.e. for as long as the shared consent modal is up. A second,
-        # non-UI-originated InstallRequested landing in that window would
-        # pass _curated_install_requested's/_remote_install_requested's
-        # worker-in-flight guard (which only checks _model_install_worker),
-        # and -- if that second request were invalid -- reach
-        # _clear_curated_install_state()/_clear_remote_install_state(),
-        # which unconditionally zeroes _model_install_kind, clobbering
-        # whichever flow (curated or remote) is the one actually still
-        # awaiting consent. Currently unreachable via the UI: the consent
-        # modal is a ModalScreen and captures input, so neither view's own
-        # Install/candidate button can be pressed again -- and therefore
-        # no second InstallRequested can be posted -- while it is showing.
-        # A future refactor that lets something else post InstallRequested
-        # (a command palette action, a test harness driving the message
-        # bus directly, etc.) would need to close this gap for real.
+        # i.e. for as long as the shared consent modal is up -- but that no
+        # longer matters for concurrency safety: _curated_install_
+        # requested/_remote_install_requested guard on _install_in_
+        # progress() (_model_install_kind is not None), and _model_install_
+        # kind stays set through this entire pending-consent window (TASK-
+        # 1914 fix round 2). A second InstallRequested landing here is
+        # refused before it can touch any of this screen's retained state.
         self._model_install_worker = None
         if error is not None or report is None:
             self.notify(error or "Model preflight failed.", severity="error")
@@ -709,31 +746,33 @@ class LLMScreen(LabScreen):
     # RemoteView.InstallRequested and renders what it is told
     # (apply_progress/cancel_pending_install/finish_install); resolving the
     # plan, showing the consent modal, and provisioning all run here. Both
-    # flows share this screen's single _model_install_worker lock (see that
-    # field's own docstring) and the InstallProgressed/InstallStatusChanged
-    # delivery path (_deliver_curated, despite its name -- see its own
-    # docstring) and hydration path (_hydrate_model_install_progress);
-    # only the curated-vs-remote-specific plan-resolution/consent/
-    # provisioning steps below are duplicated, exactly as the curated
-    # block duplicates LibraryScreen's own Parakeet v2 shape.
+    # flows share this screen's single _install_in_progress()/
+    # _model_install_kind concurrency guard (see that method's own
+    # docstring) and the InstallProgressed/InstallStatusChanged delivery
+    # path (_deliver_curated, despite its name -- see its own docstring)
+    # and hydration path (_hydrate_model_install_progress); only the
+    # curated-vs-remote-specific plan-resolution/consent/provisioning
+    # steps below are duplicated, exactly as the curated block duplicates
+    # LibraryScreen's own Parakeet v2 shape.
 
     @on(RemoteView.InstallRequested)
     def _remote_install_requested(self, event: RemoteView.InstallRequested) -> None:
         """Resolve an install plan for a reviewed remote candidate, off the Textual event loop.
 
-        Shares ``_curated_install_requested``'s worker-in-flight guard
-        (the same ``_model_install_worker`` field -- see its own docstring
-        for why one screen-level lock, not two, is the correct shape now
-        that both flows live on this screen) and the same validate-before-
-        store discipline (TASK-1803 review round 2, Critical, applied here
-        from the start rather than rediscovered): an invalid payload
-        notifies, releases the clicking view's own indicator, and clears
-        state via ``_clear_remote_install_state`` without ever starting a
-        worker.
+        Shares ``_curated_install_requested``'s guard (``_install_in_
+        progress()``, checking ``_model_install_kind`` rather than the
+        worker handle -- see that method's own docstring for why one
+        screen-level lock, not two, is the correct shape now that both
+        flows live on this screen, AND why the guard must span the whole
+        install lifecycle, not just "a worker happens to be running")
+        and the same validate-before-store discipline (TASK-1803 review
+        round 2, Critical, applied here from the start rather than
+        rediscovered): an invalid payload notifies, releases the clicking
+        view's own indicator, and clears state via ``_clear_remote_
+        install_state`` without ever starting a worker.
         """
         event.stop()
-        worker = self._model_install_worker
-        if worker is not None and not worker.is_finished:
+        if self._install_in_progress():
             self.notify(
                 "A model install is already running.",
                 severity="information",
@@ -840,13 +879,10 @@ class LLMScreen(LabScreen):
         error: str | None,
     ) -> None:
         """Show the shared consent modal, or a sanitized preflight failure."""
-        # NOTE (pre-existing since TASK-1803, annotated not fixed here): see
-        # the identical note in _apply_curated_preflight_result -- the same
-        # narrow pending-consent window (_model_install_worker is None
-        # until _confirm_remote_install's own _run_remote_provision() call)
-        # applies here, and for the same reason (the consent modal is a
-        # ModalScreen that captures input, so no second InstallRequested,
-        # curated or remote, can be posted through the UI while it is up).
+        # See the identical note in _apply_curated_preflight_result: this
+        # window is safe now because _install_in_progress() guards on
+        # _model_install_kind, not on _model_install_worker (TASK-1914 fix
+        # round 2).
         self._model_install_worker = None
         catalog = self._model_install_catalog
         candidate = self._model_install_candidate
