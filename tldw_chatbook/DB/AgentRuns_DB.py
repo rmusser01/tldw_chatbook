@@ -181,8 +181,13 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_snapshots ADD COLUMN "
                     "untracked_oversize INTEGER NOT NULL DEFAULT 0"
                 )
-            # Keep the (write-only, audit) version row in step with the DDL.
-            conn.execute("UPDATE schema_version SET version = 4 WHERE version < 4")
+            # Keep the (write-only, audit) version table in step with the
+            # DDL -- append-per-version, matching the INSERT OR IGNORE
+            # convention above (UPDATE would collide on the UNIQUE column
+            # when older version rows exist).
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
+            )
 
     def record_change_snapshot(
         self,
