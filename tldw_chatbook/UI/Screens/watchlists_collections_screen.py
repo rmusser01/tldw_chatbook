@@ -180,7 +180,11 @@ from ..Watchlists_Modules.watchlist_tree import (
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
-from ..Watchlists_Modules.watchlists_workbench import RegionToggled, WatchlistsWorkbench
+from ..Watchlists_Modules.watchlists_workbench import (
+    REGION_TITLES,
+    RegionToggled,
+    WatchlistsWorkbench,
+)
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
@@ -450,6 +454,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._wc_lookup_error: str | None = None
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
+        # Whether focus currently sits in the centre header/tab strip
+        # (`#wl-centre-status`), outside every `wl-region-*`/`wl-header-*`
+        # wrapper -- see `on_descendant_focus` and `action_toggle_region`/
+        # `action_solo_region` (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         self._pending_open_create_form = False
         self._pending_open_import_opml = False
         self._pending_delete_entity: dict[str, Any] | None = None
@@ -1357,11 +1366,149 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         label = escape_markup(self._tree_scope_label(rows))
         return Text.from_markup(f"Feeds in {label} ({len(rows)})")
 
+    def _watchlists_status_marker_widgets(
+        self, scoped_rows: Sequence[Mapping[str, Any]]
+    ) -> list[Widget]:
+        """The snapshot's own loading/error/empty/summary marker.
+
+        Extracted (TASK-1344) so the SAME service-state readout can appear
+        in two places: inline in `_build_list_pane`'s FEEDS body on the Read
+        tab (unchanged from before this task -- Read-tab geometry and every
+        test pinned to it stays byte-identical), and in
+        `_build_centre_status_header` on every OTHER tab, now that FEEDS
+        itself is hidden there (`_hidden_centre_regions`). Before this task
+        FEEDS was unconditionally mounted, so this state was already visible
+        on every tab; keeping it that way through the new header avoids a
+        real regression (Sources/Runs/... silently losing all visibility
+        into "snapshot still loading" / "service unavailable" / "no sources
+        yet", not merely a cosmetic gap) rather than introducing new
+        behaviour.
+
+        Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
+        snapshot is the only service-health probe on this screen -- it is
+        what distinguishes "the Watchlists service is unavailable" and
+        "policy denied" (whose recovery state supplies `#wc-service-error`'s
+        copy) from "there are no rows". `scoped_source_rows()` is a
+        synchronous local query that returns `[]` for every one of those
+        cases, and `#wc-loading-state` has no meaning for it at all. In
+        production the two agree anyway: both read `subscriptions`.
+
+        Called fresh on every region/header rebuild, so it must stay
+        side-effect-free (same discipline as every other content factory
+        here -- see `WatchlistsWorkbench.__init__`'s docstring on why
+        `content` holds factories, not instances).
+
+        Args:
+            scoped_rows: The current tree scope's source rows
+                (`scoped_source_rows()`), used only by the summary-line
+                branch. Passed in rather than re-resolved so a caller that
+                already has it (both callers do) does not query twice.
+
+        Returns:
+            One widget (the loading/error/empty-state text, or the
+            one-line staging summary) in every case except the empty-state,
+            which also appends the Create-source/Import-OPML action row.
+        """
+        if not self._wc_loaded:
+            return [
+                Static(
+                    "Loading local Watchlists snapshot...",
+                    id="wc-loading-state",
+                )
+            ]
+        if self._wc_lookup_error:
+            recovery_state = self._wc_lookup_recovery_state
+            return [
+                Static(
+                    self._wc_lookup_error,
+                    id=(
+                        recovery_state.stable_selector
+                        if recovery_state is not None
+                        else "wc-service-error"
+                    ),
+                )
+            ]
+        if not self._has_local_wc_context():
+            return [
+                Static(
+                    "No sources yet.",
+                    id="wc-empty-state",
+                ),
+                Horizontal(
+                    Button(
+                        "Create source",
+                        id="wc-empty-create-source",
+                        variant="primary",
+                        tooltip="Add a new Watchlists source.",
+                    ),
+                    Button(
+                        "Import OPML",
+                        id="wc-empty-import-opml",
+                        tooltip="Import sources from an OPML file.",
+                    ),
+                    id="wc-empty-actions",
+                    classes="destination-filter-strip",
+                ),
+            ]
+        # One line, not a second source list (fix round 1, Finding 1).
+        # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
+        # finished loading" terminal selector the guard suites wait on --
+        # and says what pressing Stage would send, which is the scope
+        # `_build_list_pane`/`_build_centre_status_header` names just above
+        # it. `#wc-snapshot-title` is folded into this same line rather than
+        # kept as a separate heading; no test referenced it, and a one-line
+        # block does not need a title row.
+        return [
+            Static(
+                self._staging_summary_line(scoped_rows),
+                id="wc-watchlists-summary",
+                classes="destination-section",
+            )
+        ]
+
+    def _build_centre_status_header(self) -> Vertical:
+        """Build the ALWAYS-rendered centre header: the section tab strip
+        plus the snapshot's own loading/error/empty/summary marker.
+
+        TASK-1344 AC#1 hides FEEDS on every tab except Read
+        (`_hidden_centre_regions`), but the tab strip and the snapshot
+        markers are cross-cutting chrome, not FEEDS-specific "feed content"
+        — before this task FEEDS was unconditionally mounted, so both were
+        already visible on every tab. This is what carries that forward:
+        `WatchlistsWorkbench`'s `header=` factory, wired only when
+        `active_section != "items"` (`compose_content`) so it never
+        coexists with `_build_list_pane`'s own, identical-looking inline
+        copy on the Read tab — mounting both would duplicate `#wl-tabs`.
+
+        Called fresh on every workbench rebuild, so it must stay
+        side-effect-free, like every other factory here.
+
+        Returns:
+            A `Vertical` holding the tab strip and whichever status marker
+            `_watchlists_status_marker_widgets` returns for the current
+            snapshot state.
+        """
+        scoped_rows = self.scoped_source_rows()
+        children: list[Widget] = [
+            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
+        ]
+        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
+        return Vertical(
+            *children,
+            id="wl-centre-status",
+            classes="watchlists-centre-status",
+        )
+
     def _build_list_pane(self) -> Vertical:
         """Build the FEEDS-region content: the section tab strip, a heading
-        naming the current tree scope, that scope's source rows, the
-        snapshot's own loading/error/empty markers, and a one-line summary
-        of what Console staging would send.
+        naming the current tree scope, that scope's source rows, and the
+        snapshot's own loading/error/empty/summary marker.
+
+        Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
+        else), and unchanged in shape from before TASK-1344 widened FEEDS's
+        gating: every Read-tab geometry test pinned to this pane's exact
+        row counts (`_watchlists.tcss`'s `.watchlists-region-feeds` cap
+        derivation) still applies untouched.
 
         The source list appears ONCE (fix round 1, Finding 1). Task 7 added
         the scoped rows above a block that already enumerated
@@ -1372,16 +1519,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         source therefore printed twice in one box, in identical typography.
         Staging now follows the tree scope (see `_snapshot_body`), so that
         block collapses to a single line.
-
-        The loading/error/empty markers stay keyed on the async snapshot,
-        NOT on `scoped_source_rows()`: the snapshot is the only
-        service-health probe on this screen -- it is what distinguishes
-        "the Watchlists service is unavailable" and "policy denied" (whose
-        recovery state supplies `#wc-service-error`'s copy) from "there are
-        no rows". `scoped_source_rows()` is a synchronous local query that
-        returns `[]` for every one of those cases, and `#wc-loading-state`
-        has no meaning for it at all. In production the two agree anyway:
-        both read `subscriptions`.
 
         The tab strip is unchanged -- `Tests/UI/test_destination_shells.py`
         and `Tests/UI/test_destination_visual_parity_correction.py` both
@@ -1396,7 +1533,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         now that the navigator is retired — `Region.LEFT_RAIL` hosts the
         watchlist tree (`_build_tree_pane`), and this is the strip's
         permanent home per the design (a one-row strip at the top of the
-        centre).
+        centre). `_build_centre_status_header` is FEEDS's twin for every
+        OTHER tab, where this factory is never called at all.
 
         This is called fresh on every region rebuild (see
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
@@ -1424,64 +1562,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     classes="watchlist-feed-source-row",
                 )
             )
-        if not self._wc_loaded:
-            children.append(
-                Static(
-                    "Loading local Watchlists snapshot...",
-                    id="wc-loading-state",
-                )
-            )
-        elif self._wc_lookup_error:
-            recovery_state = self._wc_lookup_recovery_state
-            children.append(
-                Static(
-                    self._wc_lookup_error,
-                    id=(
-                        recovery_state.stable_selector
-                        if recovery_state is not None
-                        else "wc-service-error"
-                    ),
-                )
-            )
-        elif not self._has_local_wc_context():
-            children.append(
-                Static(
-                    "No sources yet.",
-                    id="wc-empty-state",
-                )
-            )
-            children.append(
-                Horizontal(
-                    Button(
-                        "Create source",
-                        id="wc-empty-create-source",
-                        variant="primary",
-                        tooltip="Add a new Watchlists source.",
-                    ),
-                    Button(
-                        "Import OPML",
-                        id="wc-empty-import-opml",
-                        tooltip="Import sources from an OPML file.",
-                    ),
-                    id="wc-empty-actions",
-                    classes="destination-filter-strip",
-                )
-            )
-        else:
-            # One line, not a second source list (fix round 1, Finding 1).
-            # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
-            # finished loading" terminal selector the guard suites wait on
-            # -- and now says what pressing Stage would send, which is the
-            # scope above it. `#wc-snapshot-title` is folded into this same
-            # line rather than kept as a separate heading; no test
-            # referenced it, and a one-line block does not need a title row.
-            children.append(
-                Static(
-                    self._staging_summary_line(scoped_rows),
-                    id="wc-watchlists-summary",
-                    classes="destination-section",
-                )
-            )
+        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
         return Vertical(
             *children,
             id="watchlists-list-pane",
@@ -1830,7 +1911,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             attach_disabled, attach_tooltip = self._wc_attach_state()
             yield WatchlistsWorkbench(
-                self._visible_region_layout(),
+                self._rendered_region_layout(),
                 content={
                     # Factories, not instances: `region_layout` is
                     # `recompose=True`, so any collapse/solo/rail toggle
@@ -1847,12 +1928,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         latest_console_item, attach_disabled, attach_tooltip
                     ),
                 },
+                hidden=self._hidden_centre_regions(),
+                # `None` on the Read tab: `_build_list_pane` (FEEDS's own
+                # factory, above) already supplies the tab strip and the
+                # snapshot markers inline there, exactly as it always has.
+                # Off Read, FEEDS is hidden, so this is what carries both
+                # forward -- see `_build_centre_status_header`.
+                header=(
+                    None
+                    if self.active_section == "items"
+                    else self._build_centre_status_header
+                ),
                 id="wl-workbench",
             )
 
-    def _visible_region_layout(self) -> RegionLayout:
-        """The layout actually rendered — `region_layout` with CONTENT
-        gated to the Read tab (fix round 1, Task 4).
+    def _hidden_centre_regions(self) -> frozenset[Region]:
+        """Centre regions the workbench must not mount at all on this tab.
 
         Per the approved design spec (`### Tabs`): "Only Read uses the
         three-pane split. Sources, Runs, Rules, and Artifacts take the full
@@ -1860,60 +1951,81 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `active_section == "items"` is this implementation's Read tab (the
         spec's five sections don't literally match today's six — Overview
         and Notifications aren't in the spec's list either — but Items is
-        unambiguously the one with an items-to-read relationship, and the
-        only section `ContentPane` is ever fed from; see
-        `handle_item_selected`). On every OTHER section, CONTENT force-
-        collapses regardless of what the user has expanded/collapsed it to,
-        because the reader has nothing to show there and, before this fix,
-        its mere presence (even idle) taxed the Sources create-form's
-        already-zero-slack layout at 160x42.
+        unambiguously the one with an items-to-read relationship). FEEDS
+        (the scoped source list) and CONTENT (the reader) are both
+        meaningless outside that relationship, so both are hidden on every
+        other tab (TASK-1344 AC#1 generalises the CONTENT-only gating Task 4
+        introduced to cover FEEDS too, which had the identical violation
+        from Phase C and was never fixed alongside it).
 
-        This is a DERIVED view layered on top of `self.region_layout`, the
-        same shape `RegionLayout.solo` already establishes for its own
-        collapsed-view-vs-pre-solo-baseline split: the override must never
-        reach `_schedule_layout_persist` (only `_apply_layout`'s own
-        `layout` argument — the real, un-derived preference — does), or a
-        user's real "CONTENT expanded" choice would be silently overwritten
-        on disk just because they happened to be looking at Sources when
-        some unrelated toggle fired a save.
-
-        A CONTENT solo is derived from the PRE-SOLO baseline, not from the
-        solo view (PR #1091 review, F2). Soloing CONTENT sets `collapsed` to
-        `{FEEDS, ITEMS}`; adding CONTENT to that off the Read tab collapsed
-        all three centre regions at once, and the workbench mounted three
-        header buttons with no expanded centre at all -- recoverable only by
-        clicking a chevron the user has no reason to suspect. Deriving from
-        `collapsed_for_persistence()` (which is exactly "the collapsed set
-        before the solo") with solo cleared for the rendered view leaves
-        whatever the user had expanded before soloing, and leaves
-        `self.region_layout` itself untouched -- so returning to Read
-        restores the solo they set.
-
-        `FEEDS` has the identical spec violation -- it is unconditionally
-        built by `_build_list_pane` regardless of `active_section`, so it
-        also occupies space on every tab the spec says should be full-width.
-        That predates this change (Phase C) and is NOT fixed here (TASK-1344
-        AC#1); scoping this fix to CONTENT only, since that is what Task 4
-        introduced.
+        TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
+        header — see `_rendered_region_layout`'s docstring for why a header
+        was rejected. `WatchlistsWorkbench.compose()` skips anything in the
+        returned set entirely; nothing here touches `self.region_layout`
+        (the real, persisted preference), so a CONTENT/FEEDS collapse or
+        solo the user set on Read is untouched by which OTHER tab they
+        happen to be looking at.
 
         Returns:
-            The layout to render: `region_layout` verbatim on the Read tab,
-            otherwise a derived copy with CONTENT collapsed -- rebased onto
-            the pre-solo baseline when CONTENT is the soloed region.
+            `{Region.FEEDS, Region.CONTENT}` on every section except Read,
+            otherwise the empty set.
+        """
+        if self.active_section == "items":
+            return frozenset()
+        return frozenset({Region.FEEDS, Region.CONTENT})
+
+    def _rendered_region_layout(self) -> RegionLayout:
+        """`self.region_layout`, adjusted for what this tab can actually show.
+
+        FEEDS and CONTENT no longer need adjusting here at all (TASK-1344):
+        `_hidden_centre_regions` unmounts them outright on every non-Read
+        tab, regardless of their real collapsed/solo state, so the old
+        "force CONTENT into `collapsed`, rebased onto the pre-solo baseline
+        when CONTENT itself is soloed" derivation this method used to need
+        (Task 4's fix round 1) is gone -- unmounting is orthogonal to
+        `RegionLayout.collapsed` instead of reusing it, so there is nothing
+        left to rebase.
+
+        ITEMS is the one region that still needs a derived view. Off the
+        Read tab, ITEMS is not "the middle third of a three-pane split" at
+        all -- it is the section's own full-width pane (`SourcesPane`,
+        `RunsPane`, ...), unconditionally shown, with no chevron that can
+        reach it on that tab. `z`/`Z` CAN still reach it, though --
+        `on_descendant_focus` sets `focused_region = ITEMS` for anything
+        inside `#wl-region-items`, so merely interacting with the section
+        pane off Read points a keybinding at it. That is exactly why
+        `_refuse_region_gesture_off_read_tab` refuses every centre region
+        off Read, not just the ones `_hidden_centre_regions` unmounts
+        (task-1344 whole-branch review, B1): before that fix, a `z` here
+        toggled and PERSISTED a real ITEMS collapse with no visible
+        feedback on the current tab (this method already forced it back
+        out of the render), so the damage stayed invisible until the user
+        returned to Read and found the centre empty. With the gate
+        covering ITEMS too, that mutation can no longer happen -- but
+        `region_layout.collapsed` can still legitimately contain ITEMS from
+        a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
+        (`solo(CONTENT)` collapses the OTHER two centre regions, ITEMS
+        included) leaves `collapsed` containing ITEMS even after the user
+        switches away, and that is a genuine user preference this method
+        must still honor on Read without rendering it as a dead end
+        elsewhere. Rendering that verbatim would collapse e.g. the
+        Sources tab down to a focusable "▸ Items" header over an otherwise
+        empty centre -- the exact dead-end AC#3 exists to rule out, just
+        reached from CONTENT's solo bookkeeping rather than FEEDS's. Forcing
+        ITEMS out of `collapsed` on every non-Read tab closes that: the
+        section's pane is always what actually renders there, and
+        `self.region_layout` itself is untouched, so Read still shows
+        whatever ITEMS state the user really left behind.
+
+        Returns:
+            `self.region_layout` verbatim on the Read tab; otherwise a copy
+            with `Region.ITEMS` removed from `collapsed`.
         """
         if self.active_section == "items":
             return self.region_layout
-        if self.region_layout.solo_region is Region.CONTENT:
-            # Solo is dropped from the DERIVED view only: `self.region_layout`
-            # keeps `solo_region`, so the user's solo comes back on Read.
-            return RegionLayout(
-                collapsed=frozenset(
-                    self.region_layout.collapsed_for_persistence() | {Region.CONTENT}
-                )
-            )
         return replace(
             self.region_layout,
-            collapsed=frozenset(self.region_layout.collapsed | {Region.CONTENT}),
+            collapsed=frozenset(self.region_layout.collapsed - {Region.ITEMS}),
         )
 
     def _apply_layout(self, layout: RegionLayout) -> None:
@@ -1933,10 +2045,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # compositor calls `.arrange()` on every render, so shadowing it
             # breaks rendering outright. Verified empirically in Task 3.
             #
-            # Pushes the VISIBLE (tab-gated) layout, not the raw `layout`
-            # argument -- see `_visible_region_layout`. Persistence just
-            # below still persists the real, un-derived `layout`.
-            self.query_one(WatchlistsWorkbench).region_layout = self._visible_region_layout()
+            # Pushes the RENDERED (tab-adjusted) layout, not the raw `layout`
+            # argument -- see `_rendered_region_layout`. Persistence just
+            # below still persists the real, un-derived `layout`. `hidden`/
+            # `header` are constructor-only on the already-mounted workbench
+            # and are not re-pushed here: neither can have changed, since
+            # only `active_section` changing invalidates them and this
+            # method is never called from an `active_section` watcher.
+            self.query_one(WatchlistsWorkbench).region_layout = self._rendered_region_layout()
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
         self._schedule_layout_persist(layout)
@@ -1992,30 +2108,95 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return
             save_region_layout(layout)
 
-    def _content_toggle_is_blocked(self, region: Region) -> bool:
-        """Whether a CONTENT layout change must be refused right now.
+    def _region_hidden_on_active_section(self, region: Region) -> bool:
+        """Whether ``region`` is not rendered at all on the active tab.
 
-        Whole-branch review (Important): off the Read (Items) tab,
-        `_visible_region_layout` force-collapses CONTENT, which renders a
-        real, focusable `▸ Content` header button. Clicking it -- or pressing
-        `z` with it focused -- ran the toggle against the REAL
-        `region_layout`, not the derived view the user was actually looking
-        at. So the click did nothing visible, silently flipped the user's
-        genuine preference to collapsed, and `_schedule_layout_persist` wrote
-        `"content"` into `[watchlists].collapsed_regions` on disk. With the
-        Phase D migration marker already set, that is then honoured forever
-        -- permanently recreating the exact broken state the migration exists
-        to repair, from a control that appeared to be inert.
+        Pure query, no side effects. Distinct from "is this gesture
+        refused" (`_refuse_region_gesture_off_read_tab`, below, refuses
+        every centre region off Read, not only hidden ones -- task-1344
+        review B1): this predicate answers the narrower "is `region`
+        actually unmounted here", which that refusal consults only to pick
+        which notify copy is truthful. The only thing that ever answers
+        `True`: a rail (LEFT_RAIL/RIGHT_RAIL) is never tab-dependent, and
+        ITEMS is always the section's own full-width pane on every tab
+        (visible, just no longer collapsible off Read), so this reduces to
+        "is `region` in `_hidden_centre_regions()`".
 
-        The header stays focusable (a collapsed region must be), so refusing
-        the toggle here, with an explanation, is the fix rather than removing
-        the affordance.
+        Args:
+            region: The region a gesture (chevron click, `z`, `Z`) targets.
 
-        Also gates SOLO (PR #1091 review, F2 / TASK-1344 AC#2). `Z` on the
-        same focused header collapsed FEEDS and ITEMS around a region the
-        user cannot see on this tab, so the centre went empty -- the same
-        class of harm as the chevron, through the one route that was still
-        open.
+        Returns:
+            `True` when `region` is FEEDS or CONTENT and the active section
+            is not Read (`"items"`), `False` otherwise.
+        """
+        return region in self._hidden_centre_regions()
+
+    def _refuse_region_gesture_off_read_tab(self, region: Region) -> bool:
+        """Refuse a layout change aimed at a centre region off the Read tab.
+
+        Generalized from `_refuse_content_toggle_off_read_tab` (TASK-1344
+        AC#2): that name special-cased `Region.CONTENT`, which was the only
+        gated region when it was written. FEEDS is now gated identically
+        (`_hidden_centre_regions`), so a stray `focused_region` left over
+        from the Read tab (e.g. the user last touched FEEDS there, then
+        switched to Sources without moving focus) must be refused the same
+        way CONTENT already was — this is the ONE place both `action_toggle_
+        region`/`action_solo_region`/`_on_region_toggled` consult, per the
+        prompt's "one source of truth for is region R visible on section S".
+
+        Named as an ACTION, not a predicate (it was `_content_toggle_is_blocked`
+        before TASK-1349), because it is NOT pure: when it refuses it calls
+        `self.notify(...)`. A side-effecting predicate is safe only until
+        someone wires it into a render path -- this codebase already shipped
+        `provider_is_configured()` writing an `eval_models` row from
+        `compose()`, so opening the Evals screen mutated the DB on every fresh
+        install. The verb in the name is the warning that innocent name never
+        gave; keep it a verb if the notify stays here.
+
+        Whole-branch review (Important, Task 4): off the Read (Items) tab, a
+        hidden region used to still render a real, focusable `▸ <Region>`
+        header button (the AC#4-era design). Clicking it -- or pressing `z`
+        with it focused -- ran the toggle against the REAL `region_layout`,
+        not the derived view the user was actually looking at. So the click
+        did nothing visible, silently flipped the user's genuine preference
+        to collapsed, and `_schedule_layout_persist` wrote it to disk, honored
+        forever. TASK-1344 AC#4 now unmounts hidden regions outright rather
+        than rendering that header (see `_hidden_centre_regions`), which
+        removes the click/chevron route entirely -- but `focused_region` is a
+        screen-level reactive that outlives the widget that last set it
+        (`on_descendant_focus`), so `z`/`Z` can still be invoked with it
+        pointed at a region that is not currently mounted at all. This
+        refusal is what stops that stale reference from mutating the real
+        layout blind.
+
+        Also gates SOLO (PR #1091 review, F2 / TASK-1344 AC#2). `Z` on a
+        stale `focused_region` would otherwise collapse the OTHER centre
+        regions around one the user cannot see on this tab, the same class
+        of harm as the chevron, through the one route that was still open.
+
+        Whole-branch review round 2 (task-1344 review, B1): the check used
+        to be `region in _hidden_centre_regions()`, so ITEMS -- never
+        hidden, always the section's own full-width pane off Read (see
+        `_rendered_region_layout`) -- was never refused. But
+        `_rendered_region_layout` only forces ITEMS out of `collapsed` for
+        the RENDER; the gesture handlers above still call `_apply_layout`
+        against the real, persisted layout. So an off-Read `z`/`Z` with
+        `focused_region == ITEMS` (reachable any time focus lands inside the
+        section pane -- `on_descendant_focus` sets exactly that while using
+        Sources/Runs/...) toggled and PERSISTED a real ITEMS collapse with
+        zero visible feedback on the current tab, and -- combined with
+        FEEDS+CONTENT already collapsed on Read -- returning to Read
+        rendered three headers over an empty centre: the exact dead-end
+        AC#3 exists to rule out, written to disk, surviving a restart.
+        Region-layout gestures (collapse/solo of the three-pane centre)
+        simply do not apply to ANY centre region off Read, not just the
+        ones that happen to be unmounted there, so the gate now refuses
+        every `region in CENTRE_REGIONS` off Read unconditionally. The
+        notify copy forks on whether the region is actually hidden here:
+        FEEDS/CONTENT keep the "only shown on the Read tab" copy (true for
+        them), while ITEMS -- visible, just not collapsible from this tab
+        -- gets copy that says so honestly instead of claiming it is not
+        shown at all.
 
         Args:
             region: The region the user's gesture targets.
@@ -2024,31 +2205,64 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             `True` when the gesture must be refused (and the user has been
             told why), `False` when it may proceed.
         """
-        if region is not Region.CONTENT or self.active_section == "items":
+        if self.active_section == "items" or region not in CENTRE_REGIONS:
             return False
-        self.notify(
-            "The reader is only shown on the Read tab. Switch to Read to "
-            "change its layout."
-        )
+        if self._region_hidden_on_active_section(region):
+            self.notify(
+                f"{REGION_TITLES[region]} is only shown on the Read tab. "
+                "Switch to Read to change its layout.",
+                markup=False,
+            )
+        else:
+            self.notify(
+                "The pane layout can only be changed on the Read tab.",
+                markup=False,
+            )
         return True
 
     def action_toggle_region(self) -> None:
-        """Collapse or expand whichever region currently has focus."""
+        """Collapse or expand whichever region currently has focus.
+
+        Silently refused while focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness):
+        `focused_region` there names wherever the user last actually
+        visited, not where they are now, and a rail (LEFT_RAIL/RIGHT_RAIL)
+        is never gated by `_refuse_region_gesture_off_read_tab` below (it
+        only covers `CENTRE_REGIONS`), so without this check a stale
+        `focused_region` pointing at a rail would still collapse -- and
+        persist -- it from a keypress that has no visible relationship to
+        either the rail or the tab strip the user is actually looking at.
+        """
+        if self._focus_in_centre_header:
+            return
         region = self.focused_region
-        if self._content_toggle_is_blocked(region):
+        if self._refuse_region_gesture_off_read_tab(region):
             return
         self._apply_layout(self.region_layout.toggle(region))
 
     def action_solo_region(self) -> None:
         """Isolate the focused centre pane; press again to restore.
 
-        Refused for CONTENT off the Read tab, exactly as the chevron and `z`
-        already are -- see `_content_toggle_is_blocked`.
+        Refused for any centre region off the Read tab, exactly as the
+        chevron and `z` already are -- see
+        `_refuse_region_gesture_off_read_tab`. Also silently refused while
+        focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness),
+        for the same reason `action_toggle_region` checks it just above --
+        `focused_region` is stale there. Checked after the `CENTRE_REGIONS`
+        guard, not before: solo never applies to a rail regardless of
+        focus, so that refusal (and its notify) stays exactly as it was;
+        this only silences the CENTRE-region case, which -- off the Read
+        tab, where the header exists at all -- `_refuse_region_gesture_
+        off_read_tab` below would otherwise refuse anyway, just with a
+        notify keyed to a region the user is not looking at.
         """
         if self.focused_region not in CENTRE_REGIONS:
             self.notify("Solo applies to the Feeds, Items, or Content panes.")
             return
-        if self._content_toggle_is_blocked(self.focused_region):
+        if self._focus_in_centre_header:
+            return
+        if self._refuse_region_gesture_off_read_tab(self.focused_region):
             return
         self._apply_layout(self.region_layout.solo(self.focused_region))
 
@@ -2061,7 +2275,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RegionToggled)
     def _on_region_toggled(self, event: RegionToggled) -> None:
         event.stop()
-        if self._content_toggle_is_blocked(event.region):
+        if self._refuse_region_gesture_off_read_tab(event.region):
             return
         self._apply_layout(self.region_layout.toggle(event.region))
 
@@ -2567,7 +2781,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
 
     def watch_tree_scope(self) -> None:
-        """Rebuild FEEDS in place so it follows the tree selection (Task 7).
+        """Rebuild FEEDS (or the centre header) in place so it follows the
+        tree selection (Task 7; header half added task-1344 fix wave).
 
         Deliberately does NOT do what `watch_active_section` does
         (`self.refresh(recompose=True)`): that rebuilds every region,
@@ -2582,18 +2797,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         task makes scope-dependent -- leaving the Tree and Inspector
         instances untouched.
 
+        Off the Read tab, FEEDS is unmounted (`_hidden_centre_regions`) and
+        `_build_centre_status_header` carries the SAME scoped summary
+        instead (`_watchlists_status_marker_widgets`), so
+        `_refresh_feeds_region_for_scope` alone is a silent no-op there --
+        `WatchlistsWorkbench.refresh_region_content` cannot find
+        `#wl-region-feeds` to replace, since it is not mounted. Before this
+        fix the header was left showing the PREVIOUS scope's summary until
+        some unrelated recompose came along and rebuilt it for a different
+        reason. `_refresh_centre_header_for_scope` is the header's
+        equivalent, called only when the header actually exists
+        (`active_section != "items"`, mirroring `compose_content`'s own
+        `header=` condition).
+
         Also pushes the new scope into the still-mounted `WatchlistTree`
         (task-876): since this watcher is the single reconciliation point
         for BOTH a real tree click and a breadcrumb promotion (the latter
         never touches the tree widget at all -- see
         `handle_breadcrumb_scope_selected`), and neither one rebuilds the
-        Tree instance (only FEEDS refreshes above), the tree's own
+        Tree instance (only FEEDS/the header refresh above), the tree's own
         `active_scope` would otherwise go stale the moment the scope changes
         by any path other than a fresh `_build_tree_pane` construction.
         """
         if not self.is_mounted:
             return
         self._refresh_feeds_region_for_scope()
+        if self.active_section != "items":
+            self._refresh_centre_header_for_scope()
         try:
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
         except NoMatches:
@@ -2631,6 +2861,35 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "Failed to refresh the Feeds region for the new scope."
             )
 
+    @work(exclusive=True, group="wc_header_scope_refresh")
+    async def _refresh_centre_header_for_scope(self) -> None:
+        """Worker wrapper mirroring `_refresh_feeds_region_for_scope`, for
+        the centre header that carries the scoped summary off the Read tab.
+
+        Own exclusive worker GROUP, deliberately not shared with
+        `_refresh_feeds_region_for_scope`: `watch_tree_scope` calls both
+        from the same reactive watcher (this one only when the header
+        exists at all), and a shared `exclusive=True` group would let
+        whichever call lands second cancel the other before it finishes,
+        even though in practice only one of the two ever does real work for
+        a given tab. `exclusive=True` here still collapses a fast burst of
+        tree clicks to the last one requested, the same reasoning
+        `_refresh_feeds_region_for_scope` and `_schedule_layout_persist`
+        both already document for their own workers.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            workbench = self.query_one(WatchlistsWorkbench)
+        except NoMatches:
+            return
+        try:
+            await workbench.refresh_header_content()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to refresh the centre header for the new scope."
+            )
+
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.
 
@@ -2638,6 +2897,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         happened to default to, regardless of where the user actually is.
         Both id prefixes are checked so that focusing a *collapsed* region's
         header targets that region rather than expanding some other one.
+
+        Also tracks `_focus_in_centre_header` (task-1344 fix wave, Qodo
+        correctness): the centre header/tab strip (`#wl-centre-status`,
+        mounted directly under `#wl-centre` by `_build_centre_status_header`
+        -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
+        `wl-header-*` wrapper, so neither prefix above ever matches while
+        focus is in it. Without this branch `focused_region` would keep
+        naming whatever region the user last actually visited, silently
+        indistinguishable here from a live selection: a user who tabs into
+        the tab strip and presses `z`/`Z` would act on that stale reference
+        with no visible relationship to where they are.
+        `action_toggle_region`/`action_solo_region` consult
+        `_focus_in_centre_header` to refuse exactly that.
         """
         node = event.widget
         while node is not None:
@@ -2648,10 +2920,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         self.focused_region = Region(node_id[len(prefix):])
                     except ValueError:
                         pass
+                    self._focus_in_centre_header = False
                     return
+            if node_id == "wl-centre-status":
+                self._focus_in_centre_header = True
+                return
             node = node.parent
+        # Focus landed in neither zone -- a widget outside both the centre
+        # regions and the status header (e.g. `#watchlists-backend-select`, a
+        # sibling of the workbench). The flag tracks ONLY "focus is in the
+        # status header", so anything else must clear it; leaving a stale
+        # `True` from a prior header focus would wrongly refuse a later
+        # `z`/`Z` (task-1344 fix wave re-review, Qodo-follow-up). `focused_
+        # region` keeps its last real value, as it already did for this case.
+        self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
+        # A tab switch always fully recomposes the centre (below): whatever
+        # `_focus_in_centre_header` was tracking about the OLD DOM is moot
+        # the instant that DOM is torn down, and the header itself may not
+        # even exist on the new tab at all (`header=None` on Read). Reset
+        # to "not in the header" rather than leave a stale `True` standing
+        # -- `on_descendant_focus` will set it again the moment a fresh
+        # focus event actually lands there, but nothing guarantees one
+        # fires if the new tab happens to auto-focus nothing trackable, and
+        # a stale `True` would wrongly refuse a legitimate `z`/`Z` on the
+        # new tab (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:
@@ -4055,7 +4350,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         toasts already take applies.
 
         For a resolving id, switches to the Items ("Read") section --
-        `ContentPane` is only ever mounted there (`_visible_region_layout`)
+        `ContentPane` is only ever mounted there (`_hidden_centre_regions`)
         -- and, once that section's `ItemsPane` exists, hands it the
         resolved item via `ItemsPane.select_and_reveal` (NOT `handle_item_
         selected` directly: that method's own docstring warns the pane's

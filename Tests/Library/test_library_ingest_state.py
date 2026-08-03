@@ -459,7 +459,7 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert (
         state.queue_counts_line
-        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
+        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — all ingests"
     )
 
 
@@ -488,7 +488,9 @@ def test_queue_counts_line_omits_zero_states():
         ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "2 done · 1 failed"
+    # (task-2043) The suffix says the totals span ALL ingests (the
+    # registry restores prior sessions from the jobs DB).
+    assert state.queue_counts_line == "2 done · 1 failed — all ingests"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -1471,3 +1473,112 @@ def test_done_row_without_timestamps_omits_elapsed_segment():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
     assert state.queue_rows[0].line == "✓ done · report.txt"
+
+
+# --- task-2043: P2 batch ----------------------------------------------------
+
+
+def test_unwrap_ingest_error_collapses_chain_keeping_tail():
+    """(task-2043) The details surface shows the FULL message (tail kept),
+    but never more than one 'Failed to …' prefix."""
+    from tldw_chatbook.Library.library_ingest_state import unwrap_ingest_error
+
+    nested = (
+        "Failed to ingest pdf file: Failed to process pdf file: "
+        "PDF Extraction Error."
+    )
+    assert (
+        unwrap_ingest_error(nested)
+        == "Failed to process pdf file: PDF Extraction Error."
+    )
+    single = "Failed to process pdf file: PDF Extraction Error."
+    assert unwrap_ingest_error(single) == single
+
+
+def test_expanded_details_render_unwrapped_lines_and_retry_hint():
+    """(task-2043) An expanded failed row carries category, the unwrapped
+    message, and -- when Retry is offered -- an honest hint about what a
+    retry could fix."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "message": (
+                "Failed to ingest pdf file: Failed to process pdf file: "
+                "PDF Extraction Error."
+            ),
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert row.details_expanded is True
+    assert row.detail_lines[0] == "Category: parse error"
+    assert row.detail_lines[1] == (
+        "Details: Failed to process pdf file: PDF Extraction Error."
+    )
+    assert any("retry can succeed" in line for line in row.detail_lines)
+
+    collapsed = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert collapsed.queue_rows[0].details_expanded is False
+    assert collapsed.queue_rows[0].detail_lines == ()
+
+
+def test_preflight_duplicate_line_renders_and_suppresses_under_errors():
+    """(task-2043) The pre-flight duplicate forecast renders a quiet line;
+    error states suppress it like the estimate."""
+    preflight = PreflightResult(
+        type_groups={"generic": ["/tmp/a.txt", "/tmp/b.txt"]},
+        warnings=[],
+        errors=[],
+        total_size=200,
+        truncated=False,
+        total_files=2,
+        already_in_library=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp"), preflight=preflight
+    )
+    assert state.duplicate_line == (
+        "2 files appear to already be in your Library — "
+        "they'll be matched, not re-imported."
+    )
+
+    single = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert single.duplicate_line == (
+        "1 file appears to already be in your Library — "
+        "it will be matched, not re-imported."
+    )
+
+    with_errors = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/nope"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /nope"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+            already_in_library=1,
+        ),
+    )
+    assert with_errors.duplicate_line == ""

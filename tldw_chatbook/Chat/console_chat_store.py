@@ -466,6 +466,10 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        # Cost-ticker PR3: per-session monotonic counter of payload-affecting
+        # mutations, so the cost chip knows when its cache-break fingerprint
+        # needs recomputing. Process-local, like the speech revisions above.
+        self._payload_revisions: dict[str, int] = {}
 
     def ensure_session(
         self,
@@ -605,6 +609,7 @@ class ConsoleChatStore:
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
         self._hydrate_generation_metadata_from_persistence(session.id)
+        self._bump_payload_revision(session.id)
         return session
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
@@ -853,6 +858,7 @@ class ConsoleChatStore:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
         session.settings = settings
+        self._bump_payload_revision(session_id)
         return session
 
     def session_draft(self, session_id: str) -> str:
@@ -1013,6 +1019,7 @@ class ConsoleChatStore:
         self._variant_stream_bases.clear()
         self._variant_restored_message_ids.clear()
         self._message_speech_revisions.clear()
+        self._payload_revisions.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
@@ -1030,6 +1037,7 @@ class ConsoleChatStore:
             self._ingest_linear_messages(
                 session.id, messages_by_session.get(session.id, ())
             )
+            self._bump_payload_revision(session.id)
 
         if active_session_id in self._sessions:
             self.active_session_id = active_session_id
@@ -1171,6 +1179,7 @@ class ConsoleChatStore:
             if arm_finalizer or arm_provisional_selection or arm_terminal_deferral:
                 self.clear_terminal_citation_state(message.id)
             raise
+        self._bump_payload_revision(session_id)
         return self._snapshot(message)
 
     def create_sibling(
@@ -1255,6 +1264,7 @@ class ConsoleChatStore:
         # the node owns a persisted id. For the persist=False path this mirrors
         # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
         self._persist_active_leaf(session_id, message.id)
+        self._bump_payload_revision(session_id)
         return self._snapshot(message)
 
     def append_generation_message(
@@ -1318,6 +1328,7 @@ class ConsoleChatStore:
         self._recompute_active_path(session_id)
         if persist:
             self._persist_new_message_or_defer(session_id=session_id, message=message)
+        self._bump_payload_revision(session_id)
         return message
 
     def append_generation_variant(
@@ -1392,6 +1403,7 @@ class ConsoleChatStore:
                     f"generation variant position drift: store computed {new_position}, "
                     f"persistence assigned {persisted_position}"
                 )
+        self._bump_payload_revision(session_id)
         return new_position
 
     def keep_generation_variant(
@@ -1457,6 +1469,7 @@ class ConsoleChatStore:
             self.persistence.keep_message_attachment(
                 message.persisted_message_id, position
             )
+        self._bump_payload_revision(session_id)
 
     def hydrate_generation_metadata(
         self,
@@ -1720,6 +1733,7 @@ class ConsoleChatStore:
             buffer[:] = [selected_body]
         self._stream_materialized_counts[message.id] = 1
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
 
     def set_citation_presentation(
@@ -1771,6 +1785,7 @@ class ConsoleChatStore:
             )
             message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1814,6 +1829,7 @@ class ConsoleChatStore:
         if on_active_path:
             self._active_leaf_by_session[session_id] = parent_native_id
         self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
         return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
@@ -1855,6 +1871,7 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session_id] = message_id
         self._recompute_active_path(session_id)
         self._persist_active_leaf(session_id, message_id)
+        self._bump_payload_revision(session_id)
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
@@ -1898,6 +1915,7 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         self._context_summary_by_session[session_id] = (summary, boundary_native_id)
         self._persist_context_summary(session_id, summary, boundary_native_id)
+        self._bump_payload_revision(session_id)
 
     def active_path_message_ids(self, session_id: str) -> list[str]:
         """Return native ids along the active path, root -> active leaf.
@@ -2071,6 +2089,7 @@ class ConsoleChatStore:
         if not terminal_persistence:
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
+            self._bump_payload_revision(self._message_session_index[message.id])
             self._persist_existing_message(message)
             return self._snapshot(message)
 
@@ -2078,6 +2097,7 @@ class ConsoleChatStore:
             if not message.content:
                 message.status = "complete"
                 self._bump_message_speech_revision(message.id)
+                self._bump_payload_revision(self._message_session_index[message.id])
                 self._persist_existing_message(message)
                 return self._snapshot(message)
 
@@ -2090,6 +2110,7 @@ class ConsoleChatStore:
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
             session_id = self._message_session_index[message.id]
+            self._bump_payload_revision(session_id)
             try:
                 self._persist_new_message(
                     session_id=session_id,
@@ -2139,6 +2160,7 @@ class ConsoleChatStore:
             message.status = "stopped"
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2174,6 +2196,7 @@ class ConsoleChatStore:
             message.status = "failed"
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2216,6 +2239,7 @@ class ConsoleChatStore:
             )
         message.status = "failed"
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2260,6 +2284,7 @@ class ConsoleChatStore:
         # A new generation starts here -- see `begin_variant_stream`.
         self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
 
     def add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
@@ -2279,6 +2304,7 @@ class ConsoleChatStore:
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2314,6 +2340,7 @@ class ConsoleChatStore:
         self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
 
     def finalize_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -2347,6 +2374,7 @@ class ConsoleChatStore:
         message.content = message.variants.current.content
         message.status = "complete"
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2363,6 +2391,7 @@ class ConsoleChatStore:
         message.variants.selected_index = selected_index
         message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(self._message_session_index[message.id])
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2695,6 +2724,7 @@ class ConsoleChatStore:
             else None
         )
         session.settings = replace(session.settings, system_prompt=normalized)
+        self._bump_payload_revision(session_id)
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -2757,6 +2787,7 @@ class ConsoleChatStore:
             return session, False
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
         session.settings = replace(session.settings, pinned_prefill=normalized)
+        self._bump_payload_revision(session_id)
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -3409,6 +3440,22 @@ class ConsoleChatStore:
     def _bump_message_speech_revision(self, message_id: str) -> None:
         """Advance one registered node's process-local speech fence."""
         self._message_speech_revisions[message_id] += 1
+
+    def _bump_payload_revision(self, session_id: str) -> None:
+        """Mark the session's provider payload as changed (cost-ticker PR3).
+
+        Bumped at every mutation that can change what a future send would
+        transmit; the cost chip recomputes its cache-break fingerprint only
+        when this moves, so a missed bump means a stale chip (annoying), not
+        a wrong send (impossible from here).
+        """
+        self._payload_revisions[session_id] = (
+            self._payload_revisions.get(session_id, 0) + 1
+        )
+
+    def payload_revision(self, session_id: str) -> int:
+        """Monotonic per-session counter of payload-affecting mutations."""
+        return self._payload_revisions.get(session_id, 0)
 
     def _register_tree_node(
         self,

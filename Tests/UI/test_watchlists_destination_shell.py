@@ -112,10 +112,22 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
         assert screen.query_one("#wl-tabs")
-        assert screen.query_one("#watchlists-list-pane")
+        # TASK-1344: FEEDS (`#watchlists-list-pane`) is gated to the Read
+        # tab, matching CONTENT -- the default section ("overview") shows
+        # only ITEMS/the inspector centre-width, with the tab strip and
+        # snapshot markers carried by `#wl-centre-status`
+        # (`_build_centre_status_header`) instead of FEEDS's own body.
+        assert screen.query_one("#wl-centre-status")
+        assert not screen.query("#watchlists-list-pane")
         assert screen.query_one("#watchlists-detail-pane")
         assert screen.query_one("#watchlists-inspector-pane")
         assert screen.query_one("#watchlists-backend-select", Select)
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query_one("#watchlists-list-pane"), (
+            "FEEDS's own pane must still exist on the Read tab"
+        )
 
 
 @pytest.mark.asyncio
@@ -666,6 +678,11 @@ async def test_collapsing_a_region_persists(monkeypatch):
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # task-1344 review, B1: region-layout gestures only apply on the
+        # Read tab now -- an ITEMS toggle off Read (the default section is
+        # "overview") is refused, not persisted.
+        screen.active_section = "items"
+        await pilot.pause(0.1)
         screen.focused_region = Region.ITEMS
         await pilot.press("z")
         await pilot.pause()
@@ -697,6 +714,12 @@ async def test_focus_drives_which_region_z_collapses():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # task-1344 review, B1: region-layout gestures only apply on the
+        # Read tab -- the default section is "overview", so switch to Read
+        # before exercising the toggle itself (focus-tracking is unaffected
+        # by which tab is active and is exercised as-is above).
+        screen.active_section = "items"
+        await pilot.pause(0.1)
         screen.query_one("#wl-region-items").focus()
         await pilot.pause()
         assert screen.focused_region == Region.ITEMS
@@ -778,6 +801,15 @@ async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
         saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
 
         screen = host.screen_stack[-1]
+        # task-1344 review, B1: region-layout gestures only apply on the
+        # Read tab -- the default section is "overview", so switch to Read
+        # before the real toggle this test measures.
+        screen.active_section = "items"
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        saved.clear()  # the tab switch's own data-load workers, not a layout write.
+
         screen.focused_region = Region.ITEMS
         await pilot.press("z")
         await pilot.pause()
@@ -1789,3 +1821,529 @@ async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
             assert composes == [1], (
                 f"seeding queued an extra recompose ({len(composes)} composes)"
             )
+
+
+# --- TASK-1344: FEEDS gated to the Read tab, like CONTENT (AC#1); solo/toggle
+# refused on any region hidden on the active tab (AC#2); no sequence of tab
+# switches and region gestures may leave the centre with nothing expanded
+# (AC#3). Mirrors the CONTENT-only tests Task 4 added in
+# `Tests/UI/test_watchlists_content_pane.py`, generalized to cover FEEDS too.
+
+
+@pytest.mark.asyncio
+async def test_feeds_region_is_gated_to_the_items_read_tab():
+    """AC#1: FEEDS occupies the centre only on the Read tab, matching the
+    CONTENT gating Task 4 added (see
+    `test_content_region_is_gated_to_the_items_read_tab` in
+    `test_watchlists_content_pane.py`).
+
+    AC#4: gated regions UNMOUNT rather than keep a one-row header, so "every
+    other tab" means FEEDS has no DOM presence at all there -- no
+    `#wl-header-feeds`, not just no `#wl-region-feeds`.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # Default section is "overview" -- not Read.
+        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+        assert not screen.query("#wl-header-feeds")
+        assert not screen.query("#wl-region-feeds")
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query("#wl-region-feeds")
+        assert not screen.query("#wl-header-feeds")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert not screen.query("#wl-header-feeds")
+        assert not screen.query("#wl-region-feeds")
+
+
+@pytest.mark.asyncio
+async def test_the_feeds_toggle_off_the_read_tab_neither_collapses_nor_persists():
+    """AC#1/#2, FEEDS's half of
+    `test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persists`
+    (`test_watchlists_content_pane.py`).
+
+    FEEDS is unmounted off the Read tab, so there is no chevron to click --
+    but a stale `focused_region` (left over from a prior visit to Read) can
+    still be pointed at FEEDS when `z`/`Z` fires, and that must be refused
+    rather than silently flipping the user's real preference and persisting
+    it (dead forever, honoured on every future Read visit).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        assert not screen.query("#wl-header-feeds")
+        assert not screen.query("#wl-region-feeds")
+        assert not screen.region_layout.is_collapsed(Region.FEEDS), (
+            "the real preference is still expanded -- the precondition"
+        )
+
+        screen.focused_region = Region.FEEDS
+        screen.action_toggle_region()
+        await pilot.pause(0.3)
+
+        assert not screen.region_layout.is_collapsed(Region.FEEDS), (
+            "the gesture must be refused, not run against the real preference"
+        )
+        assert Region.FEEDS not in (screen._last_persisted_collapsed or frozenset()), (
+            "and it must never reach the persisted collapse set"
+        )
+
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+        assert screen.region_layout.solo_region is None
+        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+
+        # And back on Read, FEEDS is still there, untouched.
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        assert screen.query("#wl-region-feeds")
+
+
+@pytest.mark.asyncio
+async def test_solo_on_feeds_off_the_read_tab_is_refused():
+    """AC#2, FEEDS's half of `test_solo_on_content_off_the_read_tab_is_refused`
+    (`test_watchlists_content_pane.py`): the single `_refuse_region_gesture_
+    off_read_tab` source of truth must cover FEEDS exactly as it covers
+    CONTENT, not special-case CONTENT alone.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "runs"
+        await pilot.pause(0.3)
+        before = screen.region_layout
+
+        screen.focused_region = Region.FEEDS
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout is before or screen.region_layout == before, (
+            "solo on the gated FEEDS region must not touch the real layout"
+        )
+        assert screen.region_layout.solo_region is None
+        assert screen.query("#wl-region-items"), (
+            "and the centre must still have something in it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists():
+    """task-1344 whole-branch review, B1 -- ITEMS's half of
+    `test_the_feeds_toggle_off_the_read_tab_neither_collapses_nor_persists`,
+    the one leg the original AC#3/#4 work never covered.
+
+    Unlike FEEDS/CONTENT, ITEMS is force-shown off the Read tab
+    (`_rendered_region_layout`) -- it is the section's own full-width pane,
+    never a member of `_hidden_centre_regions()`. But a stale
+    `focused_region == ITEMS` (set by `on_descendant_focus` any time the
+    user's focus lands inside that pane, e.g. simply using Sources) let
+    `z`/`Z` reach `_apply_layout(region_layout.toggle(ITEMS))` against the
+    REAL, persisted layout with zero visible feedback -- the render already
+    forces ITEMS back out of `collapsed`, so the collapse only bit the next
+    time the user visited Read, at which point it (and FEEDS/CONTENT, if
+    already collapsed there) could leave the centre with nothing expanded
+    at all. Must be refused exactly like FEEDS/CONTENT, with copy that is
+    actually true for ITEMS (it IS shown off Read, just not collapsible
+    from here).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        assert screen.query("#wl-region-items"), (
+            "unlike FEEDS/CONTENT, ITEMS IS rendered off Read -- the "
+            "section's own full-width pane"
+        )
+        assert not screen.region_layout.is_collapsed(Region.ITEMS), (
+            "the real preference is still expanded -- the precondition"
+        )
+
+        screen.notify = Mock()
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
+        await pilot.pause(0.3)
+
+        assert not screen.region_layout.is_collapsed(Region.ITEMS), (
+            "the gesture must be refused, not run against the real preference"
+        )
+        assert Region.ITEMS not in (screen._last_persisted_collapsed or frozenset()), (
+            "and it must never reach the persisted collapse set"
+        )
+        screen.notify.assert_called_once()
+        message = screen.notify.call_args.args[0]
+        assert "only shown on the Read tab" not in message, (
+            "ITEMS IS shown off Read -- claiming otherwise would be false"
+        )
+        assert screen.notify.call_args.kwargs.get("markup") is False
+
+        # And back on Read, ITEMS is still there, untouched.
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        assert screen.query("#wl-region-items")
+        assert not screen.region_layout.is_collapsed(Region.ITEMS)
+
+
+@pytest.mark.asyncio
+async def test_solo_on_items_off_the_read_tab_is_refused():
+    """AC#2, ITEMS's half of `test_solo_on_feeds_off_the_read_tab_is_refused`
+    (task-1344 whole-branch review, B1): the same generalized
+    `_refuse_region_gesture_off_read_tab` must refuse ITEMS's solo gesture
+    off Read too -- ITEMS is not hidden there, but region-layout gestures
+    still do not apply to it outside the Read tab.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "runs"
+        await pilot.pause(0.3)
+        before = screen.region_layout
+
+        screen.notify = Mock()
+        screen.focused_region = Region.ITEMS
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout is before or screen.region_layout == before, (
+            "solo on ITEMS off Read must not touch the real layout"
+        )
+        assert screen.region_layout.solo_region is None
+        assert screen.query("#wl-region-items"), (
+            "and the centre must still have something in it"
+        )
+        screen.notify.assert_called_once()
+        message = screen.notify.call_args.args[0]
+        assert "only shown on the Read tab" not in message, (
+            "ITEMS IS shown off Read -- claiming otherwise would be false"
+        )
+
+
+@pytest.mark.asyncio
+async def test_no_sequence_of_tab_switches_and_region_gestures_leaves_the_centre_empty():
+    """AC#3: no sequence of tab switches and region toggles/solos may leave
+    the workbench with zero expanded centre regions -- recoverable only by
+    clicking a header the user has no reason to suspect (PR #1091 review,
+    F2's original report, now widened past the single CONTENT-solo path
+    Task 4 fixed: FEEDS is gated the same way, and both FEEDS's and
+    CONTENT's solo/toggle gestures are refused off the Read tab).
+
+    Drives real gestures (tab switches, `z`, `Z`, `[`) through the full
+    production shell (`DestinationHarness`, the same harness every other
+    test in this file uses), asserting after EACH one that at least one
+    centre region is genuinely mounted and expanded -- not merely that the
+    real `region_layout` looks fine, which is exactly the gap a purely
+    layout-level (non-DOM) assertion could miss.
+    """
+
+    def _any_centre_region_expanded(screen) -> bool:
+        return bool(
+            screen.query("#wl-region-feeds")
+            or screen.query("#wl-region-items")
+            or screen.query("#wl-region-content")
+        )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        async def step(label: str) -> None:
+            await pilot.pause(0.2)
+            assert _any_centre_region_expanded(screen), (
+                f"the centre has nothing expanded after {label!r}: "
+                f"active_section={screen.active_section!r} "
+                f"region_layout={screen.region_layout!r}"
+            )
+
+        await step("mount (Overview, default)")
+
+        screen.active_section = "items"
+        await step("switch to Read")
+
+        # The specific reported path: solo CONTENT on Read, then leave --
+        # now refused on return, but must never have emptied the centre
+        # even before this fix's refusal existed (Task 4's own regression).
+        screen.focused_region = Region.CONTENT
+        screen.action_solo_region()
+        await step("solo CONTENT on Read")
+
+        screen.active_section = "sources"
+        await step("leave Read with CONTENT soloed")
+
+        # A stale `focused_region` still pointed at a hidden region: both
+        # gestures must be refused, not just one.
+        screen.action_toggle_region()
+        await step("toggle refused on Sources (focused_region=CONTENT)")
+        screen.action_solo_region()
+        await step("solo refused on Sources (focused_region=CONTENT)")
+
+        screen.active_section = "items"
+        await step("back to Read (CONTENT solo must have survived)")
+
+        # Un-solo, then manually collapse ITEMS itself on Read -- this is
+        # the OTHER route `_rendered_region_layout` has to guard (a manual
+        # `z` on ITEMS while soloing CONTENT, or a plain ITEMS collapse,
+        # both leave `region_layout.collapsed` containing ITEMS).
+        screen.focused_region = Region.CONTENT
+        screen.action_solo_region()
+        await step("un-solo CONTENT on Read")
+
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
+        await step("collapse ITEMS on Read")
+
+        screen.active_section = "runs"
+        await step("switch to Runs with ITEMS collapsed on Read")
+
+        # Rail toggles are orthogonal to the centre and must not interact.
+        await pilot.press("[")
+        await step("collapse the left rail")
+        await pilot.press("]")
+        await step("expand the left rail")
+
+        screen.active_section = "items"
+        await step("back to Read with ITEMS still collapsed from before")
+
+
+@pytest.mark.asyncio
+async def test_off_read_items_toggle_never_empties_the_read_centre_or_persists():
+    """AC#3 gap the whole-branch review found (task-1344 review, B1): the
+    sequence test above never drove the ONE path that actually breaks
+    AC#3 -- collapse FEEDS and CONTENT on Read (both legitimate,
+    persistable states), leave for a non-Read tab where ITEMS is
+    force-shown, then `z` with `focused_region == ITEMS` (set by
+    `on_descendant_focus` for anything inside the section pane, so simply
+    using Sources/Runs/... sets it up).
+
+    Before this fix that toggle was ACCEPTED: `region_layout.toggle(ITEMS)`
+    mutated and PERSISTED the real layout to `{feeds, items, content}` with
+    no visible change on the current tab (ITEMS is forced back out of
+    `collapsed` for the render), so returning to Read rendered three
+    headers over an empty centre -- on disk, surviving a restart.
+    """
+
+    def _any_centre_region_expanded(screen) -> bool:
+        return bool(
+            screen.query("#wl-region-feeds")
+            or screen.query("#wl-region-items")
+            or screen.query("#wl-region-content")
+        )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+
+        # Collapse FEEDS and CONTENT on Read -- the report's exact
+        # precondition, both legitimate and persistable on their own.
+        screen.focused_region = Region.FEEDS
+        screen.action_toggle_region()
+        await pilot.pause(0.2)
+        screen.focused_region = Region.CONTENT
+        screen.action_toggle_region()
+        await pilot.pause(0.2)
+
+        assert screen.region_layout.is_collapsed(Region.FEEDS)
+        assert screen.region_layout.is_collapsed(Region.CONTENT)
+        assert not screen.region_layout.is_collapsed(Region.ITEMS)
+        collapsed_before = screen.region_layout.collapsed
+        persisted_before = screen._last_persisted_collapsed
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        assert _any_centre_region_expanded(screen), (
+            "ITEMS is force-shown off Read even with FEEDS/CONTENT collapsed"
+        )
+
+        screen.notify = Mock()
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout.collapsed == collapsed_before, (
+            "an off-Read ITEMS toggle must be refused, not mutate the real, "
+            "persisted layout"
+        )
+        assert screen._last_persisted_collapsed == persisted_before, (
+            "and it must never reach the persisted collapse set"
+        )
+        screen.notify.assert_called_once()
+
+        screen.notify.reset_mock()
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+        assert screen.region_layout.collapsed == collapsed_before, (
+            "solo on ITEMS off Read must be refused too"
+        )
+        assert screen._last_persisted_collapsed == persisted_before
+        screen.notify.assert_called_once()
+
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        assert _any_centre_region_expanded(screen), (
+            "returning to Read must not land on a dead end -- ITEMS was "
+            "never actually collapsed by the refused off-Read gesture"
+        )
+        assert screen.query("#wl-region-items"), (
+            "ITEMS specifically must still be the expanded centre region"
+        )
+
+
+# --- task-1344 fix wave (Qodo correctness): `z`/`Z` while focus is in the --
+# centre header/tab strip -----------------------------------------------
+#
+# `#wl-centre-status`/`#wl-tabs` (`_build_centre_status_header`) are mounted
+# directly under `#wl-centre`, outside every `wl-region-*`/`wl-header-*`
+# wrapper -- so `on_descendant_focus` never updates `focused_region` while
+# focus sits there, leaving it naming whatever region the user last actually
+# visited.
+
+
+@pytest.mark.asyncio
+async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region():
+    """Before this fix, a user who last focused the left rail (setting
+    `focused_region = LEFT_RAIL`), then tabbed into the tab strip and
+    pressed `z`, collapsed -- and PERSISTED -- the rail anyway:
+    `_refuse_region_gesture_off_read_tab` only gates `CENTRE_REGIONS`, so a
+    rail's toggle was never refused there regardless of where real focus
+    was. This is the one gesture the header-focus guard actually prevents
+    from mutating anything (unlike solo below, whose CENTRE-region path was
+    already refused by the existing off-Read gate regardless of focus).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # Default section is "overview" -- not Read, so the header exists
+        # (`_build_centre_status_header`) and FEEDS/CONTENT are hidden.
+        screen.query_one("#wl-region-left_rail").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        assert not screen._focus_in_centre_header
+        before = screen.region_layout
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, (
+            "precondition: the tab strip must be recognized as the centre "
+            "header"
+        )
+
+        await pilot.press("z")
+        await pilot.pause(0.2)
+
+        assert screen.region_layout == before, (
+            "z with focus in the tab strip must not act on the stale "
+            "focused_region left over from the rail"
+        )
+        assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        assert screen._last_persisted_collapsed == before.collapsed_for_persistence()
+
+
+@pytest.mark.asyncio
+async def test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region():
+    """The solo half of the test above.
+
+    Unlike the toggle case, ITEMS's solo off the Read tab is ALREADY
+    refused by `_refuse_region_gesture_off_read_tab` regardless of focus
+    (task-1344 whole-branch review, B1), so `region_layout` never had a
+    path to actually mutate here either way. What this fix changes instead:
+    without it, that refusal still fires its `self.notify(...)`, keyed to
+    a region (`focused_region`, stale) the user is not looking at and has
+    no reason to associate with the tab strip they actually pressed `Z`
+    in. With the fix, focus-in-header short-circuits before that notify.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.ITEMS, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        before = screen.region_layout
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, (
+            "precondition: the tab strip must be recognized as the centre "
+            "header"
+        )
+
+        screen.notify = Mock()
+        await pilot.press("Z")
+        await pilot.pause(0.2)
+
+        assert screen.region_layout == before, (
+            "Z with focus in the tab strip must not solo the stale "
+            "focused_region left over from ITEMS"
+        )
+        assert screen.region_layout.solo_region is None
+        screen.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag():
+    """Re-review follow-up (task-1344): the `_focus_in_centre_header` sentinel
+    must be True ONLY while focus is genuinely in the status header. Focus
+    that moves from the header to a widget in NEITHER zone (here the
+    top-level backend picker `#watchlists-backend-select`, a sibling of the
+    workbench) has to clear the flag -- `on_descendant_focus`'s ancestor walk
+    otherwise falls off the top without touching it, leaving a stale `True`
+    that a later `z`/`Z` would wrongly consult. Reds without the explicit
+    else-reset: the flag stays True after focus leaves the header.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, "precondition: focus is in the header"
+
+        # `#watchlists-backend-select` sits in `#watchlists-header-bar`, a
+        # top-level bar outside both `wl-region-*`/`wl-header-*` and the
+        # status header -- the exact "neither zone" case.
+        screen.query_one("#watchlists-backend-select").focus()
+        await pilot.pause()
+        assert not screen._focus_in_centre_header, (
+            "focus outside the status header must clear the sentinel; a stale "
+            "True would wrongly refuse a later z/Z"
+        )

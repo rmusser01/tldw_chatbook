@@ -4634,8 +4634,8 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
     """(Minor, L3b Task 6 fix wave) A cached ``LibraryScreen`` re-entered via
     Home's ingest-jobs ``Open details`` deep link must never show a stale
     half-filled Import media form left over from a previous Ingest visit --
-    ``_select_library_rail_row`` (the rail-row entry path) already resets
-    the form on every switch via ``_reset_library_ingest_transient_state``,
+    ``_select_library_rail_row`` (the rail-row entry path) deliberately
+    PRESERVES the form since task-2043,
     but the ``LIBRARY_NAV_CONTEXT_INGEST`` deep-link branch in
     ``_apply_navigation_context_state`` skipped that call, so a post-mount
     re-entry through the deep link (unlike the pre-mount case covered by
@@ -9860,7 +9860,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued"
+        assert str(counts_line.renderable) == "1 queued — all ingests"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 
@@ -12773,3 +12773,175 @@ async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
         )
         # Still the in-place path: the form widgets kept identity.
         assert screen.query_one("#library-ingest-start", Button) is start_before
+
+
+@pytest.mark.asyncio
+async def test_rail_switch_preserves_staged_ingest_form(tmp_path):
+    """(task-2043) Looking at another rail row and coming back must not
+    destroy a staged batch -- the old wipe-on-switch punished multi-batch
+    workflows (round-2 critique)."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2043-keep")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/tmp/staged-batch.txt"
+        screen.query_one("#library-ingest-author", Input).value = "Dana"
+        await pilot.pause()
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        assert screen._library_ingest_form.path == "/tmp/staged-batch.txt"
+        assert screen._library_ingest_form.author == "Dana"
+        assert (
+            screen.query_one("#library-ingest-path", Input).value
+            == "/tmp/staged-batch.txt"
+        )
+
+
+@pytest.mark.asyncio
+async def test_details_toggle_renders_and_hides_inline_lines(tmp_path):
+    """(task-2043) Show details expands inline lines under the failed row
+    (the old surface was an auto-expiring toast); a second press hides."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2043-det")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-details-{failing.job_id}"
+        )
+        screen.query_one(
+            f"#library-ingest-details-{failing.job_id}", Button
+        ).press()
+        await pilot.pause()
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-detail-{failing.job_id}-0"
+        )
+        button = screen.query_one(
+            f"#library-ingest-details-{failing.job_id}", Button
+        )
+        assert str(button.label) == "Hide details"
+
+        button.press()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if not list(
+                screen.query(f"#library-ingest-detail-{failing.job_id}-0")
+            ):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("details never collapsed")
+
+
+@pytest.mark.asyncio
+async def test_preflight_forecasts_already_ingested_text_files(tmp_path):
+    """(task-2043) A byte-identical text file staged for ingest is
+    forecast as already-in-Library at pre-flight time (hash lookup on the
+    worker thread), instead of the match being an after-the-fact
+    discovery."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2043-dup")
+    body = "identical body " * 20
+    first = tmp_path / "report.txt"
+    twin = tmp_path / "copy_of_report.txt"
+    first.write_text(body, encoding="utf-8")
+    twin.write_text(body, encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        done = harness.submit_library_ingest_job(source_path=str(first))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(done.job_id) == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("seed job never completed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen._library_ingest_form.path = str(twin)
+        screen._trigger_library_ingest_preflight(str(twin))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            preflight = screen._library_ingest_form.preflight
+            if preflight is not None:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("pre-flight never applied")
+
+        assert preflight.already_in_library == 1
+        await _wait_for_selector(screen, pilot, "#ingest-duplicate-summary")
+
+
+@pytest.mark.asyncio
+async def test_options_loader_never_calls_get_cli_setting_without_default(
+    tmp_path,
+):
+    """(task-2043 unmasking) ``get_cli_setting`` treats a dotted first arg's
+    second positional as the DEFAULT -- two-arg reads in the options loader
+    returned the field NAME string on fresh profiles, truthy-corrupting
+    every option (analyze flipped on; type_options filled with junk).
+    Latent since PR #717, masked by the old rail-entry form reset. Pin:
+    every loader read passes an explicit default, and a config with nothing
+    stored leaves the form at schema defaults."""
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2043-loader")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        recorded = []
+
+        def _two_shape_stub(section, key=None, default="NO-DEFAULT-PASSED"):
+            recorded.append((section, key, default))
+            # Mimic the real function's trap: a missing explicit default on
+            # a dotted path echoes back a truthy string.
+            if default == "NO-DEFAULT-PASSED":
+                return key
+            return default
+
+        import unittest.mock as _mock
+
+        with _mock.patch.object(
+            screen_module, "get_cli_setting", _two_shape_stub
+        ):
+            screen._library_ingest_form = LibraryIngestFormState()
+            screen._load_library_ingest_options_from_config()
+
+        assert recorded, "loader made no config reads"
+        missing = [c for c in recorded if c[2] == "NO-DEFAULT-PASSED"]
+        assert not missing, f"loader reads without explicit default: {missing}"
+        form = screen._library_ingest_form
+        assert form.analyze is False
+        assert form.chunk is True
+        assert form.type_options.get("generic") in (None, {})

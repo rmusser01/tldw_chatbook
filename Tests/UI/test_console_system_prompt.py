@@ -28,6 +28,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
+)
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
@@ -162,6 +166,57 @@ async def test_console_rail_system_line_click_opens_editor_modal():
         assert len(host.screen_stack) == baseline_depth + 1
         modal = host.screen_stack[-1]
         assert modal.query_one(f"#{TEXT_AREA_ID}", TextArea).text == ""
+
+
+# ---------------------------------------------------------------------------
+# Status-strip System Prompt chip.
+# ---------------------------------------------------------------------------
+
+
+def _system_prompt_chip_text(console) -> str:
+    return _static_plain_text(console.query_one("#console-system-prompt-chip", Static))
+
+
+@pytest.mark.asyncio
+async def test_console_system_prompt_chip_activation_opens_editor_modal():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        baseline_depth = len(host.screen_stack)
+        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+
+        # Activate via keyboard: the test harness loads no stylesheet, so the
+        # chip strip overflows the screen and a mouse click lands out of bounds.
+        console.query_one("#console-system-prompt-chip").focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        assert len(host.screen_stack) == baseline_depth + 1
+        modal = host.screen_stack[-1]
+        assert modal.query_one(f"#{TEXT_AREA_ID}", TextArea).text == ""
+
+
+@pytest.mark.asyncio
+async def test_console_system_prompt_chip_label_reflects_applied_prompt():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
+
+        console._apply_console_session_system_prompt("Be concise.")
+        await pilot.pause(0.2)
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
+
+        console._apply_console_session_system_prompt(None)
+        await pilot.pause(0.2)
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
 
 # ---------------------------------------------------------------------------

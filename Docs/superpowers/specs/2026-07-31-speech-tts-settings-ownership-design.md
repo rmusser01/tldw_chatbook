@@ -6,6 +6,13 @@
 **Canonical ADR:** [ADR-039](../../../backlog/decisions/039-global-and-studio-tts-settings-ownership.md)
 **Related decisions:** [ADR-012](../../../backlog/decisions/012-provider-credential-settings-boundary.md), [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md), [ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md), and [ADR-037](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 
+> **Managed lifecycle amendment (2026-08-02):** This program's External-only
+> audio.cpp exclusions were sequencing constraints, not a permanent product
+> prohibition. They are superseded for the separate managed workstream by the
+> [managed-lifecycle design](2026-08-02-audio-cpp-managed-lifecycle-design.md)
+> and amended ADR-023/ADR-039. Global-versus-Studio ownership remains
+> authoritative.
+
 ## Document purpose
 
 This document is the approved program-level product requirements document for

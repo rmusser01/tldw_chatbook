@@ -31,6 +31,27 @@ DEFAULT_MAX_FILE_BYTES = 10 * 1024**2
 DEFAULT_RETENTION_DAYS = 30
 DEFAULT_MAX_SUB_ROOTS = 20
 
+
+def change_review_enabled_globally() -> bool:
+    """The flat ``[change_review] enabled`` knob, env-overridable, read live.
+
+    Returns:
+        False only when the knob is explicitly 0/false — the feature is
+        opt-out (TASK-1979).
+    """
+    env = os.environ.get("TLDW_CHANGE_REVIEW_ENABLED")
+    if env is not None:
+        return env.strip().lower() not in {"0", "false", "no", "off"}
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        value = get_cli_setting("change_review", "enabled", True)
+    except Exception:  # noqa: BLE001 -- a broken config never disables review
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
 #: Directory names the scan prunes — mirrors the shadow repo's
 #: ``FORCED_EXCLUDES`` (change_tracking.py): untracked trees must not count.
 _SKIP_DIR_NAMES = frozenset(

@@ -496,6 +496,8 @@ _NO_DISPOSITIONS = {
     "withheld": 0,
     "baseline": 0,
     "rebaselined": 0,
+    # task-1394: a URL that raised instead of completing `check_url`.
+    "error": 0,
 }
 
 
@@ -528,6 +530,11 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
     that must not be aggregated -- and the two `REASON_*` constants are pinned
     to their own counters here for the same anti-drift reason the kinds are.
     Collapsing `baseline`/`rebaselined` back into one counter reddens this.
+
+    task-1394 added a sixth pair, `(DISPOSITION_ERROR, None)`, for a `check_url`
+    call that raised instead of returning; it is pinned here too, and by the
+    same reasoning -- a rename of `DISPOSITION_ERROR` that drifted from this
+    binding would `KeyError` on the very run it exists to keep from failing.
     """
     from tldw_chatbook.Subscriptions import monitoring_engine
     from tldw_chatbook.Subscriptions.local_watchlists_service import (
@@ -551,7 +558,11 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
             monitoring_engine.DISPOSITION_BASELINE_STORED,
             monitoring_engine.REASON_EXTRACTION_SETTINGS_CHANGED,
         ),
+        (monitoring_engine.DISPOSITION_ERROR, None),
     }
+    assert (
+        mapping[(monitoring_engine.DISPOSITION_ERROR, None)] == "error"
+    )
     assert mapping[(monitoring_engine.DISPOSITION_CHANGED, None)] == "changed"
     assert mapping[(monitoring_engine.DISPOSITION_UNCHANGED, None)] == "unchanged"
     assert (
@@ -588,6 +599,40 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
     # fills, so a run can never omit a key the Runs pane reads.
     assert set(mapping.values()) == set(_DISPOSITION_COUNTERS)
     assert set(_DISPOSITION_COUNTERS) == set(_NO_DISPOSITIONS)
+
+
+def test_removing_the_error_mapping_keyerrors_instead_of_miscounting(monkeypatch):
+    """task-1394 mutation guard: the `(DISPOSITION_ERROR, None)` pair added to
+    `_disposition_count_keys` is load-bearing, not decorative.
+
+    Proves it the same way the five pre-existing pairs are already proven
+    load-bearing (see `test_disposition_count_keys_are_bound_to_the_real_
+    constants`'s docstring): delete just that one pair from the binding and
+    show `_disposition_counts` blows up on an error disposition instead of
+    silently mis-sorting it, which is the deliberately loud behaviour its own
+    docstring promises for any unlisted `(kind, reason)` pair.
+    """
+    from tldw_chatbook.Subscriptions import local_watchlists_service as service_module
+    from tldw_chatbook.Subscriptions.monitoring_engine import DISPOSITION_ERROR
+
+    original_count_keys = service_module._disposition_count_keys
+
+    def mapping_without_error() -> dict[tuple[str, str | None], str]:
+        mapping = dict(original_count_keys())
+        del mapping[(DISPOSITION_ERROR, None)]
+        return mapping
+
+    monkeypatch.setattr(
+        service_module, "_disposition_count_keys", mapping_without_error
+    )
+
+    error_disposition = {
+        "kind": DISPOSITION_ERROR,
+        "reason": None,
+        "withheld_percentage": None,
+    }
+    with pytest.raises(KeyError):
+        service_module._disposition_counts([error_disposition])
 
 
 async def _url_source(monkeypatch, pages: list[str], **payload):

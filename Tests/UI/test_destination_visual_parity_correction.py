@@ -1105,24 +1105,30 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # structural landmarks instead: the workbench container, and each
         # region wrapper.
         #
-        # CONTENT starts on this screen's default section (Overview), not
-        # Items -- Task 4's fix round 1: per the approved design spec
+        # FEEDS and CONTENT are both unmounted on this screen's default
+        # section (Overview), not Items -- per the approved design spec
         # ("### Tabs"), only Read (this implementation's Items tab) uses the
-        # three-pane split; every other section is gated to CONTENT's
-        # collapsed header regardless of the underlying `region_layout`
-        # default (which IS expanded now -- see
-        # `WatchlistsCollectionsScreen._visible_region_layout`). So the
-        # header, not the body, is asserted here.
+        # three-pane split; every other section gets the full centre width
+        # (TASK-1344 AC#1 widened Task 4's CONTENT-only gating to cover
+        # FEEDS too, and AC#4 unmounts both rather than leaving a one-row
+        # header -- see `WatchlistsCollectionsScreen._hidden_centre_regions`
+        # and `_rendered_region_layout`). ITEMS is the one centre region
+        # that is always present; the tab strip and snapshot markers this
+        # test already asserted above ("Sources"/"State: ready"/... in
+        # `visible_text`) now come from `#wl-centre-status`
+        # (`_build_centre_status_header`) rather than from FEEDS's own body.
         assert screen.query_one("#wl-workbench")
+        assert screen.query_one("#wl-centre-status")
         for region_id in (
             "wl-region-left_rail",
-            "wl-region-feeds",
             "wl-region-items",
             "wl-region-right_rail",
         ):
             assert screen.query_one(f"#{region_id}")
-        assert screen.query_one("#wl-header-content")
+        assert not screen.query("#wl-region-feeds")
+        assert not screen.query("#wl-header-feeds")
         assert not screen.query("#wl-region-content")
+        assert not screen.query("#wl-header-content")
 
 
 @pytest.mark.asyncio
@@ -1199,6 +1205,12 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1),
+        # and this test needs it present for its "every region stays inside
+        # the viewport" sweep.
+        screen.active_section = "items"
+        await pilot.pause()
+
         screen._apply_layout(
             RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}))
         )
@@ -1243,6 +1255,10 @@ async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()
@@ -1289,6 +1305,10 @@ async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()
@@ -2627,7 +2647,13 @@ COMPACT_DESTINATION_CONTRACTS = {
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
         "workbench": "#wl-workbench",
-        "object": "#watchlists-list-pane",
+        # `#watchlists-list-pane` (FEEDS) is gated to the Read tab (TASK-1344
+        # AC#1) and unmounted everywhere else (AC#4), so it is not visible
+        # at this test's default section. `#wl-region-left_rail` (the
+        # watchlist tree) is the rail-as-"object" analogue "chat" and
+        # "library" already use above for the same reason -- always
+        # present, regardless of active section.
+        "object": "#wl-region-left_rail",
         "detail": "#watchlists-detail-pane",
         # `#nav-overview` retired with the left-rail navigator -- see the
         # note on the same key in SOURCE_PREP_WORKBENCHES above.
@@ -2937,6 +2963,9 @@ async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
         screen._tree_watchlists = [{"id": watchlist["id"], "name": "Morning AI Brief"}]
         screen._apply_layout(RegionLayout())
         await pilot.pause()
@@ -3524,13 +3553,24 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
         screen = _active_destination_screen(host)
         await pilot.pause(0.2)
 
-        strip = screen.query_one("#wl-tabs")
-        row = strip.region.y
-        painted = "".join(
-            segment.text for segment in screen._compositor.render_strips()[row]
-        )
-
         for section_id, label in SECTIONS:
+            # Recomputed every iteration, not captured once up front: the
+            # tab strip's own row can legitimately differ between the Read
+            # tab -- where it still lives inside FEEDS's bordered body,
+            # unchanged since before this task -- and every OTHER tab, where
+            # it now lives in the borderless `#wl-centre-status` header
+            # (TASK-1344 AC#1 gates FEEDS to Read; AC#4 unmounts it rather
+            # than leaving a one-row header elsewhere). A stale row/painted
+            # pair captured on one tab and reused after switching to a
+            # structurally different one is exactly the kind of harness
+            # coordinate error this test exists to catch in the *app* --
+            # it must not reintroduce the same class of bug in the *test*.
+            strip = screen.query_one("#wl-tabs")
+            row = strip.region.y
+            painted = "".join(
+                segment.text for segment in screen._compositor.render_strips()[row]
+            )
+
             start = painted.find(label)
             assert start != -1, (
                 f"the {label!r} tab label is not painted at all on row {row}: "
@@ -3712,10 +3752,15 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
             "a profile with no runs still renders the failed-runs table"
         )
 
-        # ...replaced by copy that actually reaches the screen.
+        # ...replaced by copy that actually reaches the screen. Asserting the
+        # actual guidance sentence, not merely the word "watchlist", is the
+        # point of task-1347: the weaker check passed even with the title
+        # blanked, because "Watchlists" appears elsewhere on screen (e.g. the
+        # inspector's own copy) with nothing to do with THIS pane's body.
         painted = _pane_painted_text(screen, overview)
-        assert "watchlist" in painted.lower(), (
-            f"the first-run panel says nothing useful; it paints {painted!r}"
+        assert "a watchlist is a folder of feeds" in painted.lower(), (
+            f"the no-watchlists first-run guidance is missing or empty; it "
+            f"paints {painted!r}"
         )
 
         # AC#2: the guidance must name controls that exist and can be used

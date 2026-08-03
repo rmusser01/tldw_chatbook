@@ -103,6 +103,13 @@ class LibraryIngestPreflightSummary(Vertical):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
+        if state.duplicate_line:
+            yield Static(
+                state.duplicate_line,
+                id="ingest-duplicate-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
 
 
 class LibraryIngestQueuePanel(Vertical):
@@ -184,6 +191,16 @@ class LibraryIngestQueuePanel(Vertical):
                     classes="library-ingest-progress",
                     markup=False,
                 )
+            if row.details_expanded and row.detail_lines:
+                for line_index, detail_line in enumerate(row.detail_lines):
+                    yield Static(
+                        detail_line,
+                        id=(
+                            f"library-ingest-detail-{row.job_id}-{line_index}"
+                        ),
+                        classes="library-ingest-detail-line",
+                        markup=False,
+                    )
             # Row-action buttons are keyed by the job's registry-assigned
             # ``job_id`` -- these ARE click targets and the registry mutates
             # asynchronously between a render and a click; an index-keyed id
@@ -221,7 +238,9 @@ class LibraryIngestQueuePanel(Vertical):
                         )
                     if row.error_detail:
                         yield Button(
-                            "Show details",
+                            "Hide details"
+                            if row.details_expanded
+                            else "Show details",
                             id=f"library-ingest-details-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-details "
@@ -353,6 +372,24 @@ def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
     )
 
 
+class StateGlyphCheckbox(Checkbox):
+    """Checkbox whose glyph carries on/off without color (task-2043).
+
+    Stock ``ToggleButton`` renders ``BUTTON_INNER = "X"`` for BOTH states --
+    on/off is a color change only, invisible in monochrome. The renderer
+    reads ``self.BUTTON_INNER``, so a per-instance shadow tracked in
+    ``watch_value`` gives a glyph-level state: ``✓`` checked, blank not.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.BUTTON_INNER = "✓" if self.value else " "
+
+    def watch_value(self) -> None:
+        self.BUTTON_INNER = "✓" if self.value else " "
+        super().watch_value()
+
+
 def _toggle_label(*, enabled: bool, text: str) -> str:
     """Return a toggle Button's visible label, ``✓``/``○`` convention."""
     marker = "✓" if enabled else "○"
@@ -445,7 +482,7 @@ class LibraryIngestCanvas(VerticalScroll):
             if field.type == "checkbox":
                 self._reported_option_values[(group, field.name)] = bool(value)
                 children.append(
-                    Checkbox(
+                    StateGlyphCheckbox(
                         field.label,
                         value=bool(value),
                         id=widget_id,
@@ -458,6 +495,15 @@ class LibraryIngestCanvas(VerticalScroll):
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
                 self._reported_option_values[(group, field.name)] = select_value
+                # (task-2043) Selects missed task-2012's labeling pass: a
+                # bare "pymupdf4llm" carries no meaning on its own.
+                children.append(
+                    Static(
+                        field.label,
+                        classes="type-group-field-label",
+                        markup=False,
+                    )
+                )
                 children.append(
                     Select(
                         select_options,

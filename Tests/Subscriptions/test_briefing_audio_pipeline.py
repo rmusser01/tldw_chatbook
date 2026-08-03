@@ -509,6 +509,39 @@ async def test_voice_resolution_failure_for_a_deleted_profile_is_a_failed_row(
     assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [row["id"]]
 
 
+async def test_a_voice_resolution_failure_never_touches_the_script(
+    tmp_path, monkeypatch
+) -> None:
+    """The named invariant's OTHER path (task-1719): `test_a_failed_
+    synthesis_never_touches_the_script` only drives a `TurnSynthesisError`
+    from inside the per-turn synthesis loop. `resolve_roster_voices` raising
+    `VoiceResolutionError` is handled by `_record_voice_resolution_failure`
+    -- different code, reached BEFORE that loop ever starts -- and had no
+    script-untouched assertion of its own. Same setup as `test_voice_
+    resolution_failure_for_a_deleted_profile_is_a_failed_row`, plus the
+    before/after comparison the synthesis-path test already makes.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Analyst", voice_profile_id=str(_GUEST_PROFILE_ID))]
+    turns = [{"speaker": "Analyst", "text": "Some analysis."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({})  # the profile no longer exists
+
+    before = db.get_briefing_script(script_id)
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+    after = db.get_briefing_script(script_id)
+
+    assert row["status"] == STATUS_FAILED
+    assert before == after
+
+
 async def test_no_file_left_behind_when_something_fails_after_the_write(
     tmp_path, monkeypatch
 ) -> None:
@@ -524,6 +557,58 @@ async def test_no_file_left_behind_when_something_fails_after_the_write(
         raise briefing_audio.AudioStitchError("could not read duration")
 
     monkeypatch.setattr(briefing_audio, "wav_duration_seconds", _boom)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert row["file_path"] is None
+    assert list(briefing_audio_dir().glob("*.wav")) == []
+
+
+async def test_no_orphan_file_when_the_atomic_write_itself_raises(
+    tmp_path, monkeypatch
+) -> None:
+    """The write path's OTHER failure shape (task-1719): `test_no_file_left_
+    behind_when_something_fails_after_the_write` (above) mocks `wav_duration_
+    seconds` to raise AFTER a real write already succeeded -- a genuine
+    post-write failure. This pins the earlier one: `atomic_private_write_
+    bytes` itself raising, a real write failure, not a downstream read
+    failure.
+
+    `atomic_private_write_bytes` (`Utils/private_paths.py`) writes the
+    payload to a private temporary file and only `os.rename`s it onto the
+    destination once that write, `fsync`, and postcondition check all
+    succeed -- the destination name is never touched before that final
+    rename, and the function's own `finally` unlinks the temporary file on
+    any exit path. So a raise from it, by construction, can never leave
+    anything at the destination path; that mechanism, and its temp-file
+    cleanup under a synthetic OS-level failure, is `private_paths`' own
+    guarantee to prove against its real POSIX write path (`Tests/Utils/
+    test_private_paths.py`, `Tests/Utils/test_private_persistent_
+    artifacts.py`), not this pipeline's -- this test monkeypatches the
+    function itself away rather than forcing a failure inside its real
+    implementation. What THIS test pins is `generate_script_audio`'s own
+    contract at that call site: a raise here must become a `failed` row,
+    exactly like every other in-band failure, never an uncaught exception
+    and never a file this pipeline itself left behind.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(briefing_audio, "atomic_private_write_bytes", _boom)
 
     row = await generate_script_audio(
         db,
@@ -694,9 +779,31 @@ async def test_generate_script_audio_db_work_runs_off_the_event_loop_thread(
 async def test_generate_script_audio_logs_no_turn_content_on_failure(
     tmp_path, monkeypatch
 ) -> None:
-    """Egress pin: this app's file sink runs `diagnose=True`, which dumps a
-    failing frame's locals -- and the frame at a synthesis failure holds
-    the turn text. Only the exception TYPE may reach the log.
+    """Egress pin: an in-band synthesis failure must never put the turn's
+    text (or a traceback that could hold it) into the log.
+
+    Corrected scope (task-1719): this module's own docstring justifies the
+    egress rule by this app's file sink running `diagnose=True`/
+    `backtrace=True`, which annotates a *logged traceback's* lines with any
+    locals those lines reference. That could only matter for a log record
+    that actually carries an exception/traceback -- and the call this test
+    pins, `generate_script_audio`'s `except Exception as exc: logger.warning
+    (f"...: synthesis failed: {type(exc).__name__}")`, never attaches one:
+    it is a plain formatted string, built from the exception's TYPE name
+    alone, with no `logger.exception(...)` and no `logger.opt(exception=...)`
+    anywhere on this path. Verified directly (not merely reasoned about):
+    swapping the fake `synthesize` stub below for the real `synthesize_turn`
+    (so the raise happens several real frames deep, holding the turn text as
+    a live local in `_synthesize_legacy_chunk`/`synthesize_turn` themselves,
+    not just this stub's own thin body) produces a byte-identical captured
+    log line -- there is no traceback in either case for diagnose to dump
+    locals from. So this test does not, and cannot, prove "a deep
+    `synthesize_turn` frame's locals are safe under diagnose" -- there is no
+    such dumped frame to inspect on this path at all. What it does prove,
+    and what `"Traceback" not in log_text` below pins directly rather than
+    only by its consequence: this specific log statement's own shape -- type
+    name only, nothing attached -- is what actually keeps turn content out,
+    independent of which internal frame originally raised.
     """
     _patch_user_data_dir(monkeypatch, tmp_path)
     canary = "ZEBRACANARY"
@@ -727,6 +834,9 @@ async def test_generate_script_audio_logs_no_turn_content_on_failure(
     assert log_text
     assert "synthesis failed" in log_text
     assert "TurnSynthesisError" in log_text
+    # The mechanism itself, not just its consequence: no traceback was ever
+    # attached to this record for diagnose to annotate in the first place.
+    assert "Traceback" not in log_text
     assert canary not in log_text
 
 

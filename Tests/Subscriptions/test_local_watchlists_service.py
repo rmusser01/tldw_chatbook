@@ -1,4 +1,5 @@
 import json
+import logging
 from inspect import isawaitable
 from types import SimpleNamespace
 
@@ -297,6 +298,8 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
         # first check discarded nothing, a settings-change re-baseline threw
         # away a real diff window.
         "rebaselined": 0,
+        # task-1394: no URL raised in this run.
+        "error": 0,
     }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
@@ -391,6 +394,8 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
         "withheld": 0,
         "baseline": 0,
         "rebaselined": 0,
+        # task-1394: no URL raised in this run.
+        "error": 0,
     }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {
@@ -404,6 +409,609 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             "content_hash": "sitemap-hash-2",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_url_list_isolates_one_failing_url(
+    tmp_path, monkeypatch
+):
+    """task-1394 AC#1/#3: one bad URL must not sink the whole `url_list` run.
+
+    Before per-URL isolation, `check_url` raising for ANY url in the loop
+    propagated straight out of `_default_run_executor` uncaught; `execute_run`
+    then caught it at the top level and called `record_run_failure`, which
+    discards the items the OTHER, successful URLs in this same run already
+    collected. A 50-URL source with one dead link used to yield nothing at
+    all. This is the discriminator test: it reds under that old
+    all-or-nothing behaviour (confirmed by reverting the
+    `_check_url_isolated` try/except and re-running -- see the task's
+    Implementation Notes) and passes with the per-URL isolation in place.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    seen_urls = []
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            url = subscription["source"]
+            seen_urls.append(url)
+            if url == "https://example.com/b":
+                # Deliberately NOT a subclass of any of the others -- proves
+                # the isolation catches an arbitrary exception, not just one
+                # anticipated type.
+                raise TimeoutError("connect timed out")
+            return (
+                {
+                    "url": url,
+                    "title": f"Changed {len(seen_urls)}",
+                    "content_hash": f"hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {
+                "urls": [
+                    "https://example.com/a",
+                    "https://example.com/b",
+                    "https://example.com/c",
+                ],
+            },
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    # The run completed -- it did NOT fail via `record_run_failure` merely
+    # because one of its three URLs raised.
+    assert completed["status"] == "completed"
+    # And the loop kept going past the poisoned URL to check the one after it.
+    assert seen_urls == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+    # The two URLs that succeeded persisted their items...
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/a",
+            "title": "Changed 1",
+            "content_hash": "hash-1",
+        },
+        {
+            "url": "https://example.com/c",
+            "title": "Changed 3",
+            "content_hash": "hash-3",
+        },
+    ]
+    # ...and the run's dispositions say exactly one URL errored, rather than
+    # reporting a clean run that simply found less than it should have.
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_sitemap_isolates_one_failing_url(
+    tmp_path, monkeypatch
+):
+    """task-1394: the sitemap arm gets the same per-URL isolation as url_list.
+
+    The sitemap FETCH that produces this URL list (`_urls_for_sitemap`) is a
+    separate concern that this task deliberately leaves alone: it runs once,
+    before this loop starts, so a failure fetching the sitemap itself still
+    fails the whole run. This test is only about the per-URL loop that walks
+    the URLs the sitemap already produced.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    seen_urls = []
+
+    SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://example.com/page-a</loc></url>
+            <url><loc>https://example.com/page-b</loc></url>
+            <url><loc>https://example.com/page-c</loc></url>
+        </urlset>
+        """
+
+    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/xml"},
+            text=SITEMAP_XML,
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.guarded_fetch_httpx_async",
+        fake_guarded,
+    )
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            url = subscription["source"]
+            seen_urls.append(url)
+            if url == "https://example.com/page-b":
+                raise ConnectionError("connection refused")
+            return (
+                {
+                    "url": url,
+                    "title": f"Sitemap page {len(seen_urls)}",
+                    "content_hash": f"sitemap-hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs sitemap",
+            "url": "https://example.com/sitemap.xml",
+            "source_type": "sitemap",
+            "processing_options": {"max_urls": 3},
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert completed["status"] == "completed"
+    assert seen_urls == [
+        "https://example.com/page-a",
+        "https://example.com/page-b",
+        "https://example.com/page-c",
+    ]
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/page-a",
+            "title": "Sitemap page 1",
+            "content_hash": "sitemap-hash-1",
+        },
+        {
+            "url": "https://example.com/page-c",
+            "title": "Sitemap page 3",
+            "content_hash": "sitemap-hash-3",
+        },
+    ]
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_url_list_all_error_advances_breaker_and_pauses(
+    tmp_path, monkeypatch
+):
+    """Fix wave, task-1394 whole-branch review Finding #1 (MAJOR).
+
+    The per-URL isolation above (`_check_url_isolated`) correctly turns one
+    dead URL among many into a single `"error"` disposition instead of failing
+    the whole run -- but `execute_run`'s success path used to call
+    `db.record_check_result(source_id, items=None, stats=stats)` with
+    `error=None` UNCONDITIONALLY, even when every single URL in the run
+    errored. That call's success branch
+    (`DB/Subscriptions_DB.py:1504-1517`) resets `consecutive_failures` and
+    `error_count` to 0 on a run that found nothing and whose every check
+    failed -- so a permanently dead `url_list` source could never reach
+    `auto_pause_threshold` and auto-pause; its failure streak was wiped every
+    single run instead of accumulating.
+
+    Discriminator: this test REDs if `_all_error_check_message` is reverted to
+    always return `None` (the pre-fix-wave behaviour) -- the breaker resets to
+    0 instead of advancing to 2, and the source never pauses.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            raise TimeoutError("connect timed out")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "auto_pause_threshold": 2,
+            "extraction_rules": {
+                "urls": [
+                    "https://example.com/a",
+                    "https://example.com/b",
+                ],
+            },
+        }
+    )
+    source_id = source["source_id"]
+    # One short of the (lowered, for this test) threshold -- the state a
+    # permanently-broken source would already be in from prior all-dead runs.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET consecutive_failures = ?, error_count = ? WHERE id = ?",
+            (1, 1, source_id),
+        )
+    launched = await service.launch_run(source_id=source_id)
+
+    completed = await service.execute_run(launched["run_id"])
+
+    # Honest run status: every URL failed, so the run itself failed -- not a
+    # clean "completed" with zero items.
+    assert completed["status"] == "failed"
+    # AC#2's error-count visibility survives the fix: the dispositions are
+    # still recorded even though the breaker also advanced.
+    assert completed["stats"]["dispositions"] == {
+        "changed": 0,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 2,
+    }
+    row = db.get_subscription(source_id)
+    assert row["consecutive_failures"] == 2, (
+        "the breaker must ADVANCE on an all-error run, not reset"
+    )
+    assert row["error_count"] == 2
+    assert row["is_paused"] == 1, "threshold reached -- the source must auto-pause"
+    assert row["last_error"], "last_error must be set on an all-error run, not cleared"
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_url_list_partial_error_still_resets_breaker(
+    tmp_path, monkeypatch
+):
+    """Fix wave, task-1394 review Finding #1: a PARTIAL run must not over-correct.
+
+    Companion to the all-error test above. One URL succeeds, one errors --
+    a working, reachable source should still be treated as healthy: the
+    breaker resets to 0 (exactly as a clean run would) and the successful
+    URL's item persists. This pins that the all-error fix does not regress
+    into treating ANY per-URL error as a subscription-level failure.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            url = subscription["source"]
+            if url == "https://example.com/b":
+                raise TimeoutError("connect timed out")
+            return (
+                {
+                    "url": url,
+                    "title": "Changed",
+                    "content_hash": "hash-a",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {
+                "urls": [
+                    "https://example.com/a",
+                    "https://example.com/b",
+                ],
+            },
+        }
+    )
+    source_id = source["source_id"]
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET consecutive_failures = ?, error_count = ? WHERE id = ?",
+            (5, 5, source_id),
+        )
+    launched = await service.launch_run(source_id=source_id)
+
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed", (
+        "at least one URL succeeded -- the run stays completed, not failed"
+    )
+    assert completed["stats"]["dispositions"]["error"] == 1
+    assert completed["stats"]["dispositions"]["changed"] == 1
+    stored_items = db.conn.execute(
+        "SELECT url FROM subscription_items WHERE subscription_id = ?",
+        (source_id,),
+    ).fetchall()
+    assert [row["url"] for row in stored_items] == ["https://example.com/a"]
+
+    row = db.get_subscription(source_id)
+    assert row["consecutive_failures"] == 0, (
+        "a working source is healthy -- the breaker resets on ANY successful check"
+    )
+    assert row["error_count"] == 0
+    assert row["last_error"] is None
+    assert row["is_paused"] == 0
+
+
+@pytest.fixture
+def _loguru_to_caplog():
+    """Bridge loguru output into pytest's ``caplog`` for the tests below.
+
+    loguru does not propagate to stdlib ``logging`` (and therefore not to
+    ``caplog``) without an explicit bridge -- the same pattern used in
+    ``Tests/Model_Artifacts/test_credentials_and_boundaries.py``. Scoped to
+    an explicit, non-autouse fixture so it only applies to the tests that
+    request it.
+    """
+    from loguru import logger as loguru_logger
+
+    class PropagateHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            logging.getLogger(record.name).handle(record)
+
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}")
+    yield
+    loguru_logger.remove(handler_id)
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_record_run_failure_auto_pauses_at_threshold(
+    tmp_path, caplog, _loguru_to_caplog
+):
+    """task-1410 AC#2.
+
+    The MAIN failure path -- ``LocalWatchlistsService.record_run_failure``
+    calling ``SubscriptionsDB.record_check_error`` -- previously bumped
+    ``consecutive_failures`` but never consulted ``auto_pause_threshold`` at
+    all, so a source that failed forever would never auto-pause. This drives
+    the fix through the REAL path (``execute_run`` raising ->
+    ``record_run_failure`` -> ``record_check_error``), not by calling
+    ``SubscriptionsDB.record_check_error`` directly -- the AC explicitly
+    forbids that shortcut, since bypassing the service is exactly how this
+    path stayed unreachable in the first place.
+
+    Reds if the threshold check inside the shared
+    ``_advance_failure_and_maybe_pause`` helper is removed or bypassed:
+    ``is_paused`` stays 0 after 3 failures and no WARNING is logged.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+        caplog: pytest log capture, asserts the auto-pause WARNING.
+        _loguru_to_caplog: routes loguru into `caplog` for the assertion.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def always_fails(subscription):
+        raise TimeoutError("connect timed out")
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_fails)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": 3,
+        }
+    )
+    source_id = source["source_id"]
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            launched = await service.launch_run(source_id=source_id)
+            completed = await service.execute_run(launched["run_id"])
+            assert completed["status"] == "failed"
+
+    row = db.get_subscription(source_id)
+    assert row["consecutive_failures"] == 3
+    assert row["is_paused"] == 1, "threshold reached via the real failure path -- must auto-pause"
+
+    auto_pause_warnings = [
+        record for record in caplog.records if "Auto-paused subscription" in record.message
+    ]
+    assert len(auto_pause_warnings) == 1, (
+        "exactly one auto-pause WARNING must fire (on the 3rd failure only), got "
+        f"{[r.message for r in auto_pause_warnings]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_threshold(
+    tmp_path,
+):
+    """task-1410 consistency guard.
+
+    ``record_check_result``'s error branch (reached for an all-error
+    ``url_list``/``sitemap`` run, task-1394) and ``record_check_error`` (the
+    main failure path, reached via ``record_run_failure``) now share
+    ``_advance_failure_and_maybe_pause``. This proves they cannot diverge:
+    an all-error ``url_list`` run AND a plain single-URL failure, each with
+    the same ``auto_pause_threshold``, both end paused after the same
+    number of consecutive failures.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+    """
+    threshold = 2
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            raise TimeoutError("connect timed out")
+
+    async def always_fails(subscription):
+        raise TimeoutError("connect timed out")
+
+    # Path 1: record_check_result's error branch, via an all-error url_list run.
+    service_a = LocalWatchlistsService(db_factory=lambda: db)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+            FakeURLMonitor,
+        )
+        source_a = await service_a.create_source(
+            {
+                "name": "Docs",
+                "source_type": "url_list",
+                "auto_pause_threshold": threshold,
+                "extraction_rules": {"urls": ["https://example.com/a"]},
+            }
+        )
+        source_a_id = source_a["source_id"]
+        for _ in range(threshold):
+            launched = await service_a.launch_run(source_id=source_a_id)
+            await service_a.execute_run(launched["run_id"])
+
+    # Path 2: record_check_error, via a plain source whose executor always raises.
+    service_b = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_fails)
+    source_b = await service_b.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": threshold,
+        }
+    )
+    source_b_id = source_b["source_id"]
+    for _ in range(threshold):
+        launched = await service_b.launch_run(source_id=source_b_id)
+        await service_b.execute_run(launched["run_id"])
+
+    row_a = db.get_subscription(source_a_id)
+    row_b = db.get_subscription(source_b_id)
+    assert row_a["consecutive_failures"] == threshold
+    assert row_b["consecutive_failures"] == threshold
+    assert row_a["is_paused"] == 1, "record_check_result's error branch must pause at threshold"
+    assert row_b["is_paused"] == 1, "record_check_error must pause at threshold"
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paused_source(
+    tmp_path,
+):
+    """Fix wave for the task-1410 review, Finding #1 (the important one).
+
+    Once a source auto-pauses, the scheduler never re-checks it:
+    `get_pending_checks` excludes `is_paused = 1` rows and
+    `WatchlistCheckHandler` skips them too. But `launch_run`/`execute_run`
+    have no paused guard at all -- a MANUAL re-check of a paused source
+    still runs. That is meant to be the source's only recourse, but until
+    this fix wave nothing on the success side ever cleared `is_paused`
+    (the auto-pause helper only ever writes `is_paused = 1`;
+    `reset_subscription_errors` has zero callers app-wide) -- so even a
+    manual re-check that fully succeeded left the source stranded, paused
+    forever.
+
+    Drives the real path end to end: an already-paused source, a manual
+    `launch_run` + `execute_run` whose executor succeeds, and confirms
+    `is_paused` clears with the failure counters reset -- exactly as an
+    ordinary successful check resets them.
+
+    Reds if `record_check_result`'s success branch drops its new
+    `is_paused = 0` write.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def always_succeeds(subscription):
+        return []
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_succeeds)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": 3,
+        }
+    )
+    source_id = source["source_id"]
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscriptions
+            SET is_paused = 1, error_count = 3, consecutive_failures = 3,
+                last_error = 'connection refused'
+            WHERE id = ?
+            """,
+            (source_id,),
+        )
+
+    launched = await service.launch_run(source_id=source_id)
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed"
+    row = db.get_subscription(source_id)
+    assert row["is_paused"] == 0, "a successful manual re-check must resume a paused source"
+    assert row["consecutive_failures"] == 0
+    assert row["error_count"] == 0
+    assert row["last_error"] is None
 
 
 @pytest.mark.asyncio
@@ -565,6 +1173,9 @@ async def test_create_source_persists_check_frequency(tmp_path):
 
     ``WatchlistProjection`` computes ``next_run_at`` from ``check_frequency``, so a
     source that does not carry one is never queued and never checked.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -669,6 +1280,9 @@ async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path)
     A missing row raises rather than returning a falsy status: the guard's
     caller treats an exception as a refusal, and "the item is gone" is an
     unanswered question, not permission to overwrite.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 

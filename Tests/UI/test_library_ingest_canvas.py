@@ -1370,3 +1370,121 @@ async def test_generic_scope_line_reworded_when_no_generic_files_staged():
         assert generic_scope, f"generic scope line missing: {scopes}"
         assert "if this import contains any" in generic_scope[0]
         assert "in this import." not in generic_scope[0]
+
+
+# --- task-2043: P2 batch ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_expanded_details_render_inline_and_flip_button_label():
+    """(task-2043) Expanded rows render their detail lines inline (the old
+    surface was a ~4s uncopyable toast) and the button reads Hide details."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "message": "Failed to process pdf file: PDF Extraction Error.",
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=_default_form(),
+        expanded_details={"ingest-job-1"},
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        detail = pilot.app.query_one("#library-ingest-detail-ingest-job-1-0", Static)
+        assert "Category: parse error" in str(detail.renderable)
+        button = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+        assert str(button.label) == "Hide details"
+
+
+@pytest.mark.asyncio
+async def test_select_fields_carry_visible_labels():
+    """(task-2043) Selects missed task-2012's labeling: 'pymupdf4llm' bare
+    carries no meaning. Every select gets a label Static."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    state.form.expanded_type_groups.add("pdf")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        labels = [
+            str(w.renderable)
+            for w in pilot.app.query(".type-group-field-label").results(Static)
+        ]
+        from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+        select_labels = [
+            f.label for f in get_capabilities("pdf").fields if f.type == "select"
+        ]
+        assert select_labels, "pdf group unexpectedly has no selects"
+        for label in select_labels:
+            assert label in labels, f"select {label!r} has no visible label"
+
+
+@pytest.mark.asyncio
+async def test_checkbox_glyph_tracks_state_without_color():
+    """(task-2043) Stock ToggleButton renders 'X' for both states; the
+    subclass carries on/off in the glyph itself."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        StateGlyphCheckbox,
+    )
+
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    state.form.expanded_type_groups.add("generic")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        analyze = pilot.app.query_one("#opt-generic-analyze", StateGlyphCheckbox)
+        chunk = pilot.app.query_one("#opt-generic-chunk", StateGlyphCheckbox)
+        assert chunk.value is True and chunk.BUTTON_INNER == "✓"
+        assert analyze.value is False and analyze.BUTTON_INNER == " "
+        analyze.value = True
+        await pilot.pause()
+        assert analyze.BUTTON_INNER == "✓"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_forecast_line_renders_in_summary():
+    """(task-2043) The pre-flight duplicate forecast renders as a quiet
+    line in the summary block."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        line = pilot.app.query_one("#ingest-duplicate-summary", Static)
+        assert "already be in your Library" in str(line.renderable)

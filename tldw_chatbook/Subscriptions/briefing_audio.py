@@ -144,6 +144,27 @@ worker wraps it, matching the spec's "Error handling ethos". The parent
 failure -- exactly as a briefing is never touched by a script's own
 outcome.
 
+**Row creation is not one transaction with its completion, and cannot be
+(TASK-1718).** The main pipeline inserts a `generating` `briefing_audio`
+row (`db.create_briefing_audio`), then synthesizes and stitches every turn
+-- seconds to minutes of real provider calls -- then updates that same row
+to `complete`/`failed`. Those two writes are deliberately separate DB
+transactions: a transaction cannot be held open across the long-running
+synthesis between them, and the `generating` row must be visible during it
+(it is what a claim protects and what the UI shows in flight). A hard
+crash in that window leaves a `generating` row with no worker to finish it.
+That is an ACCEPTED trade-off, not a latent wedge:
+`fail_interrupted_audio` sweeps orphaned `generating` rows (row-scoped by
+`active_audio_claim_row_ids`, TASK-1890) on both the Artifacts-load path
+and the next Synthesize attempt, flipping them to `failed`/`"interrupted"`
+so the row surfaces honestly rather than staying invisible forever. The
+two create-and-immediately-fail preflights
+(`_record_voice_resolution_failure`, `_record_missing_pydub_failure`) have
+NO synthesis between create and finalize, so they DO write their finished
+`failed` row atomically in a single insert
+(`create_briefing_audio(status="failed", error=...)`) -- closing that
+window everywhere it can be closed.
+
 **Storage is buffer-then-write-once, not streaming.** A correct
 decode-and-concat (`concat_wav_segments`) must hold every turn's decoded
 audio in memory to join them, so by the time there is anything to write,
@@ -956,8 +977,14 @@ def _record_voice_resolution_failure(db: Any, script_id: int, message: str) -> d
     Returns:
         The finished (`failed`) `briefing_audio` row as a dict.
     """
-    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
-    db.update_briefing_audio(audio_id, status=STATUS_FAILED, error=message)
+    # Atomic (TASK-1718): the row is born `failed` with its error in ONE
+    # insert. This path refuses before any synthesis happens, so unlike the
+    # main pipeline there is no work to do between creating the row and
+    # finalizing it -- and therefore no create-then-update window a crash
+    # could leave a stuck `generating` row in.
+    audio_id = db.create_briefing_audio(
+        script_id, voice_snapshot_json="[]", status=STATUS_FAILED, error=message
+    )
     return db.get_briefing_audio(audio_id)
 
 
@@ -985,8 +1012,15 @@ def _record_missing_pydub_failure(db: Any, script_id: int) -> dict[str, Any]:
     Returns:
         The finished (`failed`) `briefing_audio` row as a dict.
     """
-    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
-    db.update_briefing_audio(audio_id, status=STATUS_FAILED, error=PYDUB_MISSING_MESSAGE)
+    # Atomic (TASK-1718): born `failed` in one insert -- this preflight
+    # refuses before any synthesis, so there is nothing to do between create
+    # and finalize and thus no crashable create-then-update window.
+    audio_id = db.create_briefing_audio(
+        script_id,
+        voice_snapshot_json="[]",
+        status=STATUS_FAILED,
+        error=PYDUB_MISSING_MESSAGE,
+    )
     return db.get_briefing_audio(audio_id)
 
 

@@ -593,3 +593,158 @@ async def test_selecting_a_tree_node_loads_that_files_diff(review_fixture):
             f"diff to switch to {target_change.path} (still showing "
             f"{first_change.path})",
         )
+
+
+def _append_real_write_step(db, run_id: str, path: str) -> None:
+    """Record a write_file step through the PRODUCTION serialization:
+    a real AgentStep dataclass via dataclasses.asdict — the exact shape
+    `AgentService._persist` stores (TASK-1978 AC#4)."""
+    import dataclasses
+
+    from tldw_chatbook.Agents.agent_models import AgentStep
+
+    step = AgentStep(
+        index=0,
+        kind="tool",
+        tool_name="write_file",
+        args={"file_path": path, "content": "x"},
+        result="ok",
+        created_at="2026-08-03T00:00:00.000000Z",
+    )
+    db.append_steps(run_id, [dataclasses.asdict(step)])
+
+
+BADGE_COPY = "⚠ changed outside direct file tools"
+
+
+@pytest.mark.asyncio
+async def test_badge_marks_files_no_write_tool_touched(tmp_path):
+    """TASK-1978 AC#1/#2/#4: tool-written files carry no badge; everything
+    else in the turn does — with the exact spec copy, monochrome."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "tooled.txt").write_text("before\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "tooled.txt").write_text("after\n")
+        (root / "scripted.txt").write_text("a script wrote this\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    _append_real_write_step(db, run, str(root / "tooled.txt"))
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda ls: ls if any("scripted.txt" in l for l in ls) else None)(
+                _tree_labels(tree)
+            ),
+            "turn files",
+        )
+        scripted = next(l for l in labels if "scripted.txt" in l)
+        tooled = next(l for l in labels if "tooled.txt" in l)
+        assert BADGE_COPY in scripted, scripted
+        assert BADGE_COPY not in tooled, (
+            "a write_file-touched file must NOT be badged"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_with_no_recorded_steps_renders_no_badges(review_fixture):
+    """TASK-1978 AC#3: older data without steps must not badge everything."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda ls: ls if any("new.txt" in l for l in ls) else None)(
+                _tree_labels(tree)
+            ),
+            "turn files",
+        )
+        assert not any(BADGE_COPY in l for l in labels), (
+            "a stepless run badged its files"
+        )
+
+
+def test_badge_span_is_monochrome():
+    """TASK-1978 AC#2: the badge renders dim, never colored."""
+    from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+    label = ChangeReviewScreen._leaf_label(
+        {"root": "/r"},
+        ChangedFile(path="a.txt", status="M", adds=1, dels=0),
+        multi_root=False,
+        badge=True,
+    )
+    assert BADGE_COPY in str(label)
+    badge_spans = [s for s in label.spans if s.style]
+    assert badge_spans and all(s.style == "dim" for s in badge_spans), (
+        f"badge must be monochrome dim: {label.spans}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
+    tmp_path,
+):
+    """Qodo #1262: no file tool can delete or rename, so D/R rows badge
+    even when the path itself appears in the run's write_file steps."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "doomed.txt").write_text("tool wrote me\n")
+    (root / "old.txt").write_text("stable rename content\n" * 5)
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "doomed.txt").unlink()
+        (root / "old.txt").rename(root / "new.txt")
+
+    _record_turn(db, tracker, root, run, mutate)
+    # The run DID write these paths earlier — membership alone would
+    # wrongly suppress the badge on their D/R rows.
+    _append_real_write_step(db, run, str(root / "doomed.txt"))
+    _append_real_write_step(db, run, str(root / "new.txt"))
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda ls: ls if any("doomed.txt" in l for l in ls) else None)(
+                _tree_labels(tree)
+            ),
+            "turn files",
+        )
+        doomed = next(l for l in labels if "doomed.txt" in l)
+        renamed = next(l for l in labels if "new.txt" in l)
+        assert BADGE_COPY in doomed, f"deletion unbadged: {doomed}"
+        assert BADGE_COPY in renamed, f"rename unbadged: {renamed}"
