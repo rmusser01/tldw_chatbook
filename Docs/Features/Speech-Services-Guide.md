@@ -317,10 +317,10 @@ delete them.
 | "new paragraph" | inline | Inserts a paragraph break (`\n\n`); capture keeps running. |
 | "new line" | inline | Inserts a line break (`\n`); capture keeps running. |
 | "stop" | capture-ending | Ends the capture and inserts the accumulated text at the caret — the same as pressing the mic button again. |
-| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. |
-| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. |
-| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. |
-| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. |
+| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. **In the hands-free loop:** while listening or counting down, this drives an immediate send (same as the countdown expiring on its own). Said while a reply is already outstanding (only reachable in acoustic mode, the only mode that keeps the mic open mid-reply) it cannot start a second turn on top of the first — the capture still ends, but hands-free exits instead of silently doing nothing. |
+| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
+| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
+| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
 | "hands free" | inline | Enters the hands-free conversation loop, adopting the still-open capture as its first turn — capture keeps running. See "Hands-Free Conversation Loop" below. |
 
 Inline commands leave the capture open; every other command in the table
@@ -482,9 +482,20 @@ already open (the current capture becomes the loop's first turn — nothing
 you already dictated is lost), or press **`Alt+H`** at any time, from an
 open capture or from idle (idle opens a fresh capture). To leave the loop,
 do any one of: press **`Alt+H`** again, press **Esc**, press the mic button,
-or say **"Console, stop."** — all four work from any point in the loop
-(mid-listen, mid-countdown, while the reply is still generating, or while it
-is being spoken) and return the Console to its ordinary, pre-loop behavior.
+say **"Console, stop."**, or say **"Console, discard."** / **"Console, new
+session."** / **"Console, read that back."** — all seven work from any
+point in the loop (mid-listen, mid-countdown, while the reply is still
+generating, or while it is being spoken) and return the Console to its
+ordinary, pre-loop behavior. The last three exit as a side effect of what
+they otherwise do: none of them continues the same conversation (discarding
+throws away what you just said, a new session switches tabs, and reading
+back speaks an *already-completed* reply rather than starting a new turn),
+so hands-free ends rather than being left running with nothing to listen
+for. While the loop is running, **Esc takes priority over any widget-level
+Esc binding elsewhere on the screen** (e.g. the transcript's own
+clear-selection) so it reliably exits from wherever your focus happens to
+be; outside the loop this priority is inert and Esc behaves exactly as it
+always has.
 
 **How a turn works.** Speak normally; when you pause, the composer's voice
 chip counts down ("hands-free · sending in 1.5s…") before sending — say

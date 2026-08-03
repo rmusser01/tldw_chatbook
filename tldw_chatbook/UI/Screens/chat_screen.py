@@ -5655,7 +5655,30 @@ class ChatScreen(BaseAppScreen):
                 # dropped every delta (`state != "awaiting_reply"`) -- the
                 # user asked hands-free to send, it sent, and the loop went
                 # quiet forever.
-                self._console_hands_free_force_immediate_send()
+                controller = self._console_hands_free.controller
+                if controller.state in ("listening", "countdown"):
+                    self._console_hands_free_force_immediate_send()
+                else:
+                    # Task-5 review round 2, D3: reachable only in
+                    # acoustic mode (the only mode with the mic open
+                    # mid-reply) -- `_console_hands_free_force_immediate_
+                    # send`'s own guard correctly refuses here (a send
+                    # cannot happen while a reply is already outstanding;
+                    # it would interleave two turns, which this FSM's
+                    # single-outstanding-reply model cannot represent),
+                    # but silently doing NOTHING -- not even ending the
+                    # capture -- was the actual defect: the chip acked a
+                    # command that then had no effect at all. End the
+                    # capture (whatever was said still lands in the
+                    # draft, same as `_request_console_dictation_stop`
+                    # does for every other non-discard capture-ender
+                    # here) and exit the loop cleanly -- the same honest
+                    # choice already made for discard/new-session/
+                    # read-that-back just below, for the identical reason
+                    # (no FSM input exists for "another send arrived
+                    # mid-reply").
+                    self._request_console_dictation_stop()
+                    controller.on_exit_request()
             elif event.name in ("send", "new-session", "read-that-back"):
                 # Queued, not acted on immediately: `_stop_console_dictation`
                 # runs it once the capture's own transcript has actually
@@ -5892,7 +5915,9 @@ class ChatScreen(BaseAppScreen):
                 # is no pending send whose session/draft state could go
                 # stale in the meantime, so deferring is safe here.
                 self.run_worker(
-                    self._deliver_console_hands_free_capture_ended(False),
+                    self._deliver_console_hands_free_capture_ended(
+                        self._console_hands_free, False
+                    ),
                     exclusive=False,
                     group="console-hands-free-capture-ended",
                     exit_on_error=False,
@@ -5911,7 +5936,7 @@ class ChatScreen(BaseAppScreen):
     _CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS: float = 40.0
 
     async def _deliver_console_hands_free_capture_ended(
-        self, had_segments: bool
+        self, scheduled_for: "_ConsoleHandsFreeSession", had_segments: bool
     ) -> None:
         """Wait for a limit-triggered stop to actually release the
         microphone, THEN deliver `on_capture_ended` (task-5 review B2).
@@ -5921,6 +5946,18 @@ class ChatScreen(BaseAppScreen):
         self-contained addition next to the ONE call site that needs it
         instead of threading a new "was this a limit stop" flag through
         that already-delicate method.
+
+        Task-5 review round 2, D4: `scheduled_for` is the session object
+        captured by the CALLER at schedule time (while the limit-hit
+        capture was still live), not re-read from `self._console_hands_
+        free` after the wait. Re-reading was wrong: if the user exits and
+        re-enters hands-free during the (up to 40s) wait, `self._console_
+        hands_free` now points at a brand-new session/controller for a
+        DIFFERENT loop -- delivering this stale capture-ended to it would
+        silently burn the new loop's own one-time reopen ceiling for an
+        ending that has nothing to do with it. Delivered only when the
+        CURRENT session is still identically the one this was scheduled
+        for.
         """
         deadline = (
             time.monotonic() + self._CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS
@@ -5933,10 +5970,9 @@ class ChatScreen(BaseAppScreen):
                 )
                 return
             await asyncio.sleep(0.05)
-        session = self._console_hands_free
-        if session is None:
+        if self._console_hands_free is not scheduled_for:
             return
-        session.controller.on_capture_ended(
+        scheduled_for.controller.on_capture_ended(
             had_segments=had_segments, limit_hit=True
         )
 
@@ -7449,11 +7485,34 @@ class ChatScreen(BaseAppScreen):
         -- `self.app_instance` (the stored `TldwCli` reference, plain
         attribute access, safe from any thread) is used for both the
         thread-identity check and the marshal call.
+
+        Task-5 review round 2, D1: the tap is installed once and never
+        uninstalled (see `_install_console_hands_free_store_tap`), so
+        EVERY streamed chunk of EVERY message pays for this call, hands-
+        free running or not -- the fast path below (bail out before the
+        thread-identity check, let alone a real `call_from_thread` round
+        trip, when the loop is not running) is what keeps the common
+        case (hands-free never entered this session) cheap: measured
+        ~60us/chunk down to near-zero. Also: `App.call_from_thread` raises
+        `RuntimeError("App is not running")` when the app has no running
+        event loop (e.g. the standard test harness, where `app_instance`
+        is a `TldwCli` that was never `run()`) -- wrapped in `except
+        Exception` so a hands-free plumbing/timing issue can NEVER escape
+        into `store.append_stream_chunk`/`mark_message_*`, which every
+        reply -- hands-free or not -- streams through.
         """
+        if self._console_hands_free is None:
+            return
         if threading.get_ident() == self.app_instance._thread_id:
             callback(*args)
             return
-        self.app_instance.call_from_thread(callback, *args)
+        try:
+            self.app_instance.call_from_thread(callback, *args)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console hands-free: tap marshal failed off-thread; "
+                "dropping this callback"
+            )
 
     def _console_hands_free_try_claim_reply(
         self, session: "_ConsoleHandsFreeSession", message_id: str

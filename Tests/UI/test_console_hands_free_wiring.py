@@ -12,6 +12,7 @@ two-stage send, the reply-identity guard, and the typed-Enter hazard. See
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from typing import Any, Callable
@@ -42,7 +43,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_hands_free import ExitLoop
+from tldw_chatbook.Chat.console_hands_free import ExitLoop, HandsFreeController
 from tldw_chatbook.Chat.console_voice_input import (
     VoiceCommand,
     VoiceVadUnavailable,
@@ -571,6 +572,62 @@ async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
         assert console._console_hands_free is None
 
 
+@pytest.mark.asyncio
+async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
+    monkeypatch,
+):
+    """Task-5 review round 2, D3: spoken "Console, send." while a reply is
+    already outstanding (only reachable in acoustic mode -- the only mode
+    with the mic open mid-reply) must not be a silent no-op -- it must end
+    the capture and exit the loop cleanly, the same honest choice already
+    made for discard/new-session/read-that-back."""
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        chat_screen_module.ChatScreen,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "acoustic_barge_in_enabled", lambda: True
+    )
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        console.action_toggle_console_hands_free()
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_hands_free
+        assert session.controller._acoustic_barge_in is True
+
+        # Drive straight to `awaiting_reply` with the mic reopened
+        # (acoustic mode's own effect of `on_reply_started`), stubbing
+        # `RequestStopAndSend`'s own wiring effect (a real V2 send) --
+        # this test targets ONLY the mid-reply spoken-"send" reaction.
+        console._console_hands_free_request_stop_and_send = lambda: None
+        session.controller._begin_awaiting_reply()
+        # `_begin_awaiting_reply()`'s own `CloseCapture` is real and async
+        # -- `on_reply_started()`'s reopen must wait for it to actually
+        # land on `idle`, or the reopen's own `state == "idle"` guard
+        # no-ops (same ordering B2 already established).
+        await _wait_for(lambda: console._console_dictation_state == "idle", pilot)
+        session.controller.on_reply_started()
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert session.controller.state == "awaiting_reply"
+
+        console._handle_console_dictation_event(
+            chat_screen_module.ConsoleDictationEvent(
+                console._console_dictation_session, VoiceCommand("send")
+            )
+        )
+        await pilot.pause()
+
+        await _wait_for(lambda: console._console_hands_free is None, pilot)
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+
 def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight():
     """Task-5 review M9: a `_speak_status` ack ("Sent.", "Discarded.", ...)
     bypasses the sequencer entirely -- `SilenceSpeech`'s handler must post
@@ -766,12 +823,16 @@ async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thre
     -> None per `_ensure_console_agent_bridge`), so this pins the tap
     boundary directly: call `_console_hands_free_marshal` from a REAL
     background thread and assert it routes through `app_instance.call_
-    from_thread` rather than running the callback in place."""
+    from_thread` rather than running the callback in place. Requires the
+    loop to be running -- see the fast-path test below for the loop-off
+    case (task-5 review round 2, D1)."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
         marshal_calls = Mock()
         console.app_instance.call_from_thread = marshal_calls
         direct_calls: list[tuple] = []
@@ -805,6 +866,8 @@ async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
         marshal_calls = Mock()
         console.app_instance.call_from_thread = marshal_calls
         direct_calls: list[tuple] = []
@@ -815,6 +878,107 @@ async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
 
         assert direct_calls == [("x", "y")]
         marshal_calls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hands_free_marshal_fast_path_when_loop_is_off():
+    """Task-5 review round 2, D1: the tap is installed once and never
+    uninstalled, so EVERY chunk of EVERY message pays for this call
+    whether hands-free is running or not. With the loop off
+    (`_console_hands_free is None`), the marshal must bail out BEFORE the
+    thread-identity check, let alone a real cross-thread call -- neither
+    the callback nor `call_from_thread` may run at all."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        assert console._console_hands_free is None
+        marshal_calls = Mock()
+        console.app_instance.call_from_thread = marshal_calls
+        direct_calls: list[tuple] = []
+
+        console._console_hands_free_marshal(
+            lambda a, b: direct_calls.append((a, b)), "x", "y"
+        )
+
+        assert direct_calls == []
+        marshal_calls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hands_free_marshal_swallows_call_from_thread_failure():
+    """Task-5 review round 2, D1: `App.call_from_thread` raises
+    `RuntimeError("App is not running")` when the app has no running event
+    loop -- reachable from a real worker thread whenever `app_instance`
+    is not (yet, or no longer) the running app, e.g. the standard test
+    harness. The tap sits INSIDE `store.append_stream_chunk`/`mark_
+    message_*`, which every reply streams through -- a marshal failure
+    must never escape into the caller."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+
+        def _raise_not_running(callback, *args):
+            raise RuntimeError("App is not running")
+
+        console.app_instance.call_from_thread = _raise_not_running
+        raised: list[BaseException] = []
+
+        def _from_background_thread() -> None:
+            try:
+                console._console_hands_free_marshal(lambda: None)
+            except BaseException as exc:  # noqa: BLE001 - this IS the pin
+                raised.append(exc)
+
+        worker = threading.Thread(target=_from_background_thread)
+        worker.start()
+        worker.join(timeout=5)
+
+        assert raised == []
+
+
+@pytest.mark.asyncio
+async def test_append_stream_chunk_never_raises_off_thread_even_when_call_from_thread_fails():
+    """The end-to-end shape of D1's exception concern: a background-thread
+    call into the WRAPPED `store.append_stream_chunk` (the exact seam the
+    tap wraps -- not just the marshal helper in isolation) must return
+    normally even when `call_from_thread` fails, and the underlying store
+    write must still have happened (the tap is read-only)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+        store = console._ensure_console_chat_store()
+        message = store.append_message(
+            store.active_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+
+        def _raise_not_running(callback, *args):
+            raise RuntimeError("App is not running")
+
+        console.app_instance.call_from_thread = _raise_not_running
+        raised: list[BaseException] = []
+
+        def _from_background_thread() -> None:
+            try:
+                store.append_stream_chunk(message.id, "hello")
+            except BaseException as exc:  # noqa: BLE001 - this IS the pin
+                raised.append(exc)
+
+        worker = threading.Thread(target=_from_background_thread)
+        worker.start()
+        worker.join(timeout=5)
+
+        assert raised == []
+        assert "hello" in store.get_message(message.id).content
 
 
 # ---------------------------------------------------------------------------
@@ -1361,6 +1525,54 @@ async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
         assert any("dictated before the limit hit" in t for t in sent_user_turns)
         await _wait_for(lambda: bool(tts.calls), pilot)
         assert any("Limit triggered reply" in text for text, _q in tts.calls)
+
+
+@pytest.mark.asyncio
+async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
+    """Task-5 review round 2, D4: if the user exits and re-enters hands-free
+    WHILE a limit-triggered `on_capture_ended` delivery is still waiting
+    for `idle`, the stale delivery must never reach the NEW loop -- it
+    would silently burn the new loop's own one-time reopen ceiling for an
+    ending that has nothing to do with it.
+
+    Drives `_deliver_console_hands_free_capture_ended` directly with full
+    control over the `idle` transition's timing, rather than racing the
+    method's own real 0.05s poll loop against the rest of the test body
+    (a first version of this test raced that poll and was not reliably
+    mutation-sensitive -- caught by running the required mutation check
+    before trusting it)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+
+        session_a = chat_screen_module._ConsoleHandsFreeSession(
+            controller=HandsFreeController(emit=lambda intent: None),
+            sequencer=object(),
+        )
+        session_b = chat_screen_module._ConsoleHandsFreeSession(
+            controller=HandsFreeController(emit=lambda intent: None),
+            sequencer=object(),
+        )
+        b_calls: list[dict] = []
+        session_b.controller.on_capture_ended = lambda **kw: b_calls.append(kw)
+
+        console._console_hands_free = session_a
+        console._console_dictation_state = "recording"  # not idle -- blocks the poll
+
+        task = asyncio.create_task(
+            console._deliver_console_hands_free_capture_ended(session_a, False)
+        )
+        await asyncio.sleep(0)  # let the poll loop start and observe "not idle"
+
+        # Exit loop A, enter loop B -- WHILE the delivery is still waiting.
+        console._console_hands_free = session_b
+
+        console._console_dictation_state = "idle"  # unblocks the poll
+        await asyncio.wait_for(task, timeout=5)
+
+        assert b_calls == []
 
 
 # ---------------------------------------------------------------------------
