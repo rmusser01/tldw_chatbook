@@ -354,6 +354,7 @@ class ConsoleControlState:
     sources_label: str
     tools_label: str
     approvals_label: str
+    system_prompt_label: str = "System Prompt"
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
@@ -373,6 +374,7 @@ class ConsoleControlState:
         tool_count: int = 0,
         mcp_tool_count: int | None = None,
         approval_count: int = 0,
+        system_prompt_set: bool = False,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
@@ -432,6 +434,9 @@ class ConsoleControlState:
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
+            system_prompt_label=(
+                "System Prompt: set" if system_prompt_set else "System Prompt"
+            ),
             sources_active=staged_source_count > 0,
             tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,

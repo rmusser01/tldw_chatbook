@@ -63,6 +63,18 @@ def test_console_control_state_counter_activity_flags():
     )
 
 
+def test_console_control_state_system_prompt_label_defaults_to_unset():
+    state = ConsoleControlState.from_values()
+
+    assert state.system_prompt_label == "System Prompt"
+
+
+def test_console_control_state_system_prompt_label_reflects_set_prompt():
+    state = ConsoleControlState.from_values(system_prompt_set=True)
+
+    assert state.system_prompt_label == "System Prompt: set"
+
+
 def test_console_control_state_tools_chip_includes_mcp_tools():
     """TASK-350: the header Tools chip must count the tools that can actually run
     — built-in AND MCP — not just built-in. It read 'Tools: 0 ready' while the

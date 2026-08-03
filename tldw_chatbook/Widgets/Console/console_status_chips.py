@@ -115,6 +115,29 @@ class ConsoleAssistantChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
 
+class ConsoleSystemPromptChip(ConsoleChip):
+    """System-prompt chip that opens the system-prompt editor when activated.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click, opens the same editor modal ``/system`` and the
+    command palette open (``ChatScreen._open_console_system_prompt_editor``).
+    """
+
+    BINDINGS = [
+        Binding("enter", "edit_system_prompt", "Edit system prompt", show=False),
+        Binding("space", "edit_system_prompt", "Edit system prompt", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the system-prompt chip is activated."""
+
+    def action_edit_system_prompt(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
 class ConsoleScopeChip(ConsoleChip):
     """Retrieval-scope chip that opens the scope picker when activated.
 
@@ -312,6 +335,11 @@ class ConsoleStatusChips(Horizontal):
             self.state.model_label,
             id="console-model-chip",
             chip_class=ConsoleModelChip,
+        )
+        yield self._chip(
+            self.state.system_prompt_label,
+            id="console-system-prompt-chip",
+            chip_class=ConsoleSystemPromptChip,
         )
         yield self._chip(
             self.state.assistant_label,
@@ -577,6 +605,7 @@ class ConsoleStatusChips(Horizontal):
         label_values = {
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
+            "#console-system-prompt-chip": state.system_prompt_label,
             "#console-assistant-chip": state.assistant_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,

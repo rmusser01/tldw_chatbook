@@ -389,6 +389,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleRagChip,
     ConsoleScopeChip,
     ConsoleStatusChips,
+    ConsoleSystemPromptChip,
     ConsoleTemporaryChip,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
@@ -7079,6 +7080,7 @@ class ChatScreen(BaseAppScreen):
             tool_count=self._console_tool_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
+            system_prompt_set=bool(settings.system_prompt),
         )
 
     def _build_console_cost_state(self) -> ConsoleCostState | None:
@@ -7762,6 +7764,18 @@ class ChatScreen(BaseAppScreen):
         """Open the character picker from the Character/Assistant chip."""
         event.stop()
         await self._open_console_character_picker()
+
+    @on(ConsoleSystemPromptChip.OpenRequested)
+    def _console_system_prompt_chip_activated(
+        self, event: ConsoleSystemPromptChip.OpenRequested
+    ) -> None:
+        """Open the system prompt editor from the System Prompt chip.
+
+        A third entry point into the same opener ``/system`` and the
+        command palette use, following the model/assistant-chip precedent.
+        """
+        event.stop()
+        self.action_open_console_system_prompt_editor()
 
     @on(ConsoleRagChip.OpenRequested)
     def _console_rag_chip_activated(
@@ -17523,6 +17537,7 @@ class ChatScreen(BaseAppScreen):
             )
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
+        self._sync_console_control_bar()
 
     async def _open_console_system_prompt_editor(self) -> None:
         """Open the system prompt editor modal for the active Console session."""
