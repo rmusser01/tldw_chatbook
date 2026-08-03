@@ -83,8 +83,11 @@ four" framing:
   `watchlist_count > 0` -> "Your watchlists have no sources yet...") -- the second variant had
   no coverage anywhere before this, so a regression confined to that branch would have passed
   every existing test even after strengthening the other four.
-- Mutation re-verified: blanking `_first_run_body` reds all four of the above plus both new
-  tests (6 failures); reverting restores a byte-exact `overview_pane.py`.
+- Mutation re-verified: blanking `_first_run_body` reds exactly **4** tests total -- the two
+  original first-run tests that assert the copy is PRESENT (now strengthened) plus the two new
+  variant tests. The other two of the original four assert the first-run copy is ABSENT (loaded
+  non-empty / still loading) and correctly stay green -- a copy check there would be vacuous, so
+  they were left untouched. Reverting restores a byte-exact `overview_pane.py`.
 
 **AC#2 (tree/inspector, `#inspector-first-run-hint`).** Only one test exercises this affordance,
 `test_the_inspector_follows_the_same_three_states`
