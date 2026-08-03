@@ -144,3 +144,62 @@ change). `Tests/Watchlists/test_no_side_effecting_predicates.py` green throughou
 `_refuse_region_gesture_off_read_tab` replacing `_refuse_content_toggle_off_read_tab`),
 `tldw_chatbook/css/features/_watchlists.tcss` (+`#wl-centre-status { height: auto; }`,
 bundle regenerated via `build_css.py`), plus the test files listed above.
+
+## Fix wave (whole-branch review, B1)
+
+A whole-branch review of `fix/task-1344-region-gating` found AC#3 still violable: ITEMS is
+never a member of `_hidden_centre_regions()` (it is force-shown off Read as the section's own
+full-width pane, per `_rendered_region_layout`), so `_refuse_region_gesture_off_read_tab` never
+refused a gesture aimed at it. A stale `focused_region == ITEMS` (set by `on_descendant_focus`
+any time focus lands inside the section pane — simply using Sources/Runs/... off Read did it)
+let `z`/`Z` reach `_apply_layout(region_layout.toggle(ITEMS))` against the REAL, persisted
+layout with zero visible feedback (the render already forced ITEMS back out of `collapsed`).
+Combined with FEEDS/CONTENT already collapsed on Read, this persisted a real ITEMS collapse to
+disk, so returning to Read rendered three headers over an empty centre — the exact dead-end
+AC#3 exists to rule out, surviving a restart, un-covered by the AC#3 test that shipped (which
+never drove an off-Read ITEMS gesture).
+
+**Fix:** `_refuse_region_gesture_off_read_tab` now refuses **any** `region in CENTRE_REGIONS`
+off the Read tab (`active_section != "items"`), not only the ones `_hidden_centre_regions`
+unmounts. `_region_hidden_on_active_section` is still consulted, but only to pick truthful
+notify copy: FEEDS/CONTENT keep "only shown on the Read tab" (still true for them); ITEMS —
+visible off Read, just not collapsible from there — gets "The pane layout can only be changed
+on the Read tab." instead, since the old copy would be false for it. Both notify calls now pass
+`markup=False`. `_rendered_region_layout`'s force-show behavior for ITEMS is unchanged (still
+correct); only the gesture gate changed. Docstrings on `_refuse_region_gesture_off_read_tab`,
+`_region_hidden_on_active_section`, `_rendered_region_layout`, and `action_solo_region` updated
+to match — the old text asserted "a gesture aimed at [ITEMS] while off Read is never refused",
+which was the bug, not a design fact.
+
+**Tests.** Added `test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists` and
+`test_solo_on_items_off_the_read_tab_is_refused` (direct units, mirroring the existing FEEDS
+pair) plus `test_off_read_items_toggle_never_empties_the_read_centre_or_persists` (the missing
+AC#3 leg: collapse FEEDS+CONTENT on Read, switch off Read, toggle/solo ITEMS there — both
+refused, `region_layout`/`_last_persisted_collapsed` unchanged, and returning to Read still
+shows an expanded centre) in `Tests/UI/test_watchlists_destination_shell.py`. Three pre-existing
+tests (`test_collapsing_a_region_persists`, `test_focus_drives_which_region_z_collapses`,
+`test_a_real_toggle_performs_exactly_one_write`) had exercised an ITEMS toggle from the default
+`active_section == "overview"` — i.e., they were unwittingly relying on the B1 bug to pass;
+updated each to switch to the Read tab (`active_section = "items"`) before the toggle they
+actually measure, since region-layout gestures are a Read-tab-only concept now.
+
+**Mutation checks (Edit-revert → RED → restore, `git status --short` clean after each):**
+narrowing the gate back to `region in _hidden_centre_regions()` only reds all three new ITEMS
+tests (`assert not True` / real-vs-expected `RegionLayout` mismatch / persisted-set mismatch);
+separately, changing the gate's final `return True` to `return False` (notify still fires, but
+the gesture is accepted anyway) reds the same three tests on their "must be refused" / "must not
+touch the real layout" assertions. Both restored; `test_no_side_effecting_predicates.py` stayed
+green throughout (the refusal is still named as an action and still owns the only `self.notify`
+call in the pair).
+
+**Verification.** `Tests/UI/test_watchlists_destination_shell.py` + `test_region_layout.py` +
+`test_region_layout_store.py` + `test_watchlists_workbench.py` + `test_watchlists_content_pane.py`:
+136 passed. `test_destination_visual_parity_correction.py` + `Tests/Watchlists/test_watchlists_
+collections_screen.py` + `test_watchlists_artifacts_pane.py` + `test_no_side_effecting_
+predicates.py`: 268 passed. `--collect-only Tests/UI Tests/Watchlists`: 8255 collected (+3 vs.
+the review's 8252), no import errors.
+
+**Files touched (this wave):** `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
+(`_refuse_region_gesture_off_read_tab` gate + copy + docstrings), `Tests/UI/test_watchlists_
+destination_shell.py` (3 new tests, 3 pre-existing tests updated to switch to Read before
+their toggle).

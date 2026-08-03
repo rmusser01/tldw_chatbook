@@ -1984,15 +1984,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ITEMS is the one region that still needs a derived view. Off the
         Read tab, ITEMS is not "the middle third of a three-pane split" at
         all -- it is the section's own full-width pane (`SourcesPane`,
-        `RunsPane`, ...), unconditionally shown, with no chevron or `z`
-        route that can reach it on that tab (see
-        `_region_hidden_on_active_section` -- ITEMS is never in the hidden
-        set, so a gesture aimed at it while off Read is never refused
-        either). But `region_layout.collapsed` is still the Read tab's own
-        three-way bookkeeping: a `z` on ITEMS while soloing CONTENT there
+        `RunsPane`, ...), unconditionally shown, with no chevron that can
+        reach it on that tab. `z`/`Z` CAN still reach it, though --
+        `on_descendant_focus` sets `focused_region = ITEMS` for anything
+        inside `#wl-region-items`, so merely interacting with the section
+        pane off Read points a keybinding at it. That is exactly why
+        `_refuse_region_gesture_off_read_tab` refuses every centre region
+        off Read, not just the ones `_hidden_centre_regions` unmounts
+        (task-1344 whole-branch review, B1): before that fix, a `z` here
+        toggled and PERSISTED a real ITEMS collapse with no visible
+        feedback on the current tab (this method already forced it back
+        out of the render), so the damage stayed invisible until the user
+        returned to Read and found the centre empty. With the gate
+        covering ITEMS too, that mutation can no longer happen -- but
+        `region_layout.collapsed` can still legitimately contain ITEMS from
+        a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
         (`solo(CONTENT)` collapses the OTHER two centre regions, ITEMS
         included) leaves `collapsed` containing ITEMS even after the user
-        switches away. Rendering that verbatim would collapse e.g. the
+        switches away, and that is a genuine user preference this method
+        must still honor on Read without rendering it as a dead end
+        elsewhere. Rendering that verbatim would collapse e.g. the
         Sources tab down to a focusable "▸ Items" header over an otherwise
         empty centre -- the exact dead-end AC#3 exists to rule out, just
         reached from CONTENT's solo bookkeeping rather than FEEDS's. Forcing
@@ -2095,13 +2106,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _region_hidden_on_active_section(self, region: Region) -> bool:
         """Whether ``region`` is not rendered at all on the active tab.
 
-        Pure query, no side effects — the single source of truth
-        `_refuse_region_gesture_off_read_tab` (below) consults before
-        notifying, and the only thing that ever answers `True`: a rail
-        (LEFT_RAIL/RIGHT_RAIL) is never tab-dependent, and ITEMS is always
-        the section's own full-width pane on every tab (never hidden,
-        never even collapsible off Read — see `_rendered_region_layout`), so
-        this reduces to "is `region` in `_hidden_centre_regions()`".
+        Pure query, no side effects. Distinct from "is this gesture
+        refused" (`_refuse_region_gesture_off_read_tab`, below, refuses
+        every centre region off Read, not only hidden ones -- task-1344
+        review B1): this predicate answers the narrower "is `region`
+        actually unmounted here", which that refusal consults only to pick
+        which notify copy is truthful. The only thing that ever answers
+        `True`: a rail (LEFT_RAIL/RIGHT_RAIL) is never tab-dependent, and
+        ITEMS is always the section's own full-width pane on every tab
+        (visible, just no longer collapsible off Read), so this reduces to
+        "is `region` in `_hidden_centre_regions()`".
 
         Args:
             region: The region a gesture (chevron click, `z`, `Z`) targets.
@@ -2113,7 +2127,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return region in self._hidden_centre_regions()
 
     def _refuse_region_gesture_off_read_tab(self, region: Region) -> bool:
-        """Refuse a layout change aimed at a region hidden on this tab.
+        """Refuse a layout change aimed at a centre region off the Read tab.
 
         Generalized from `_refuse_content_toggle_off_read_tab` (TASK-1344
         AC#2): that name special-cased `Region.CONTENT`, which was the only
@@ -2155,6 +2169,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         regions around one the user cannot see on this tab, the same class
         of harm as the chevron, through the one route that was still open.
 
+        Whole-branch review round 2 (task-1344 review, B1): the check used
+        to be `region in _hidden_centre_regions()`, so ITEMS -- never
+        hidden, always the section's own full-width pane off Read (see
+        `_rendered_region_layout`) -- was never refused. But
+        `_rendered_region_layout` only forces ITEMS out of `collapsed` for
+        the RENDER; the gesture handlers above still call `_apply_layout`
+        against the real, persisted layout. So an off-Read `z`/`Z` with
+        `focused_region == ITEMS` (reachable any time focus lands inside the
+        section pane -- `on_descendant_focus` sets exactly that while using
+        Sources/Runs/...) toggled and PERSISTED a real ITEMS collapse with
+        zero visible feedback on the current tab, and -- combined with
+        FEEDS+CONTENT already collapsed on Read -- returning to Read
+        rendered three headers over an empty centre: the exact dead-end
+        AC#3 exists to rule out, written to disk, surviving a restart.
+        Region-layout gestures (collapse/solo of the three-pane centre)
+        simply do not apply to ANY centre region off Read, not just the
+        ones that happen to be unmounted there, so the gate now refuses
+        every `region in CENTRE_REGIONS` off Read unconditionally. The
+        notify copy forks on whether the region is actually hidden here:
+        FEEDS/CONTENT keep the "only shown on the Read tab" copy (true for
+        them), while ITEMS -- visible, just not collapsible from this tab
+        -- gets copy that says so honestly instead of claiming it is not
+        shown at all.
+
         Args:
             region: The region the user's gesture targets.
 
@@ -2162,12 +2200,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             `True` when the gesture must be refused (and the user has been
             told why), `False` when it may proceed.
         """
-        if not self._region_hidden_on_active_section(region):
+        if self.active_section == "items" or region not in CENTRE_REGIONS:
             return False
-        self.notify(
-            f"{REGION_TITLES[region]} is only shown on the Read tab. Switch "
-            "to Read to change its layout."
-        )
+        if self._region_hidden_on_active_section(region):
+            self.notify(
+                f"{REGION_TITLES[region]} is only shown on the Read tab. "
+                "Switch to Read to change its layout.",
+                markup=False,
+            )
+        else:
+            self.notify(
+                "The pane layout can only be changed on the Read tab.",
+                markup=False,
+            )
         return True
 
     def action_toggle_region(self) -> None:
@@ -2180,7 +2225,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_solo_region(self) -> None:
         """Isolate the focused centre pane; press again to restore.
 
-        Refused for a region hidden on the active tab, exactly as the
+        Refused for any centre region off the Read tab, exactly as the
         chevron and `z` already are -- see
         `_refuse_region_gesture_off_read_tab`.
         """
