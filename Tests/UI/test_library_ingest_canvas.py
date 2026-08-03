@@ -246,9 +246,13 @@ async def test_preflight_checking_suppresses_summary():
             "#ingest-type-breakdown",
             "#ingest-estimate",
             "#ingest-unsupported-summary",
-            "#type-group-pdf",
         ):
             assert len(pilot.app.query(widget_id)) == 0
+        # (task-2042) Options panels stay mounted during a re-analysis:
+        # hiding them made ``preflight_checking`` a STRUCTURAL flag, and the
+        # resulting full recompose swallowed clicks in flight. A re-check
+        # lasts well under a second; last-known panels are less flicker.
+        assert len(pilot.app.query("#type-group-pdf")) == 1
 
 
 @pytest.mark.asyncio
@@ -1182,7 +1186,11 @@ async def test_intro_gives_way_to_the_real_summary():
     )
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        assert len(pilot.app.query("#library-ingest-intro-0")) == 0
+        # (task-2042) Intro Statics stay mounted (display-managed) so their
+        # appearance/disappearance never changes the canvas structure; the
+        # user-visible contract is that they are not DISPLAYED.
+        intro = pilot.app.query_one("#library-ingest-intro-0")
+        assert intro.display is False
 
 
 @pytest.mark.asyncio
@@ -1191,12 +1199,17 @@ async def test_clear_button_appears_only_with_a_path():
     empty = build_library_ingest_state((), form=LibraryIngestFormState())
     app = _CanvasHost(empty)
     async with app.run_test() as pilot:
-        assert len(pilot.app.query("#library-ingest-clear-path")) == 0
+        # (task-2042) Always mounted, display-managed -- the visible
+        # contract is unchanged (hidden without a path, shown with one),
+        # but the widget STRUCTURE no longer flips while typing.
+        clear = pilot.app.query_one("#library-ingest-clear-path", Button)
+        assert clear.display is False
 
     filled = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(filled)
     async with app.run_test() as pilot:
-        assert pilot.app.query_one("#library-ingest-clear-path", Button)
+        clear = pilot.app.query_one("#library-ingest-clear-path", Button)
+        assert clear.display is True
 
 
 @pytest.mark.asyncio

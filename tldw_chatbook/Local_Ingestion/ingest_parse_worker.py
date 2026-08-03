@@ -96,6 +96,11 @@ def silence_ingest_worker_import_noise() -> None:
     # handlers in a worker) instead of straight to stderr.
     logging.captureWarnings(True)
     warnings.simplefilter("ignore")
+    # (task-2041) A handler-less root logger auto-basicConfigs a stderr
+    # StreamHandler on the first bare ``logging.warning()`` -- the
+    # "WARNING:root:…" flood channel. A NullHandler keeps root non-empty
+    # so neither auto-basicConfig nor lastResort fires.
+    logging.getLogger().addHandler(logging.NullHandler())
 
 
 def classify_parse_failure(exc: Exception) -> bool:
