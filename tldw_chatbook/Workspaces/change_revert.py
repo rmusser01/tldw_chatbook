@@ -67,12 +67,36 @@ class RevertPreflight:
     edited_since: list[str] = field(default_factory=list)
 
 
+def _unsafe_reason(path: str) -> str | None:
+    """Lexical traversal guard for caller-supplied paths.
+
+    Git-relative paths — the only kind a turn's change set contains — are
+    never absolute and never carry a ``..`` segment, so any such request
+    is refused before ANY disk operation touches it.
+
+    Args:
+        path: The requested root-relative path.
+
+    Returns:
+        The refusal copy, or ``None`` when the path is lexically safe.
+    """
+    parts = Path(path)
+    if parts.is_absolute() or ".." in parts.parts:
+        return "absolute or traversal path refused"
+    return None
+
+
 def preflight_revert(
     service: ShadowRepoService,
     row: dict,
     paths: Sequence[str],
 ) -> RevertPreflight:
     """Compare each path's disk state against the turn's E snapshot.
+
+    A rename's revert ALSO restores ``old_path`` from B, so its disk state
+    is compared too — the requested (new) path alone is not the full
+    overwrite set. Lexically unsafe paths are skipped: they will never be
+    reverted, so they cannot overwrite anything.
 
     Args:
         service: Shadow-repo service.
@@ -87,17 +111,33 @@ def preflight_revert(
     repo = service.repo_for_root(row["root"])
     root = Path(str(row["root"]))
     end = str(row["end_sha"])
+    changed = {
+        c.path: c
+        for c in repo.changed_files(
+            str(row["baseline_sha"]), str(row["end_sha"])
+        )
+    }
     edited: list[str] = []
-    for path in paths:
+
+    def _check(path: str) -> None:
+        if path in edited:
+            return
         try:
             at_end = repo.file_bytes(end, path)
-            on_disk: bytes | None
             target = root / path
             on_disk = target.read_bytes() if target.is_file() else None
             if at_end != on_disk:
                 edited.append(path)
         except (OSError, ChangeTrackingError):
             edited.append(path)
+
+    for path in paths:
+        if _unsafe_reason(path) is not None:
+            continue
+        _check(path)
+        change = changed.get(path)
+        if change is not None and change.status == "R" and change.old_path:
+            _check(change.old_path)
     return RevertPreflight(edited_since=edited)
 
 
@@ -138,6 +178,10 @@ def revert_paths(
     outcomes: list[RevertOutcome] = []
     reverted: list[str] = []
     for path in paths:
+        unsafe = _unsafe_reason(path)
+        if unsafe is not None:
+            outcomes.append(RevertOutcome(path=path, ok=False, error=unsafe))
+            continue
         change = changed.get(path)
         if change is None:
             outcomes.append(
@@ -185,17 +229,24 @@ def _guarded_uncreate(repo, root: Path, baseline: str, path: str) -> None:
 
     ``checkout B -- path`` errors on a B-absent path, so un-create is a
     delete; the guard makes it impossible to delete something the baseline
-    actually contained (that case restores instead).
+    actually contained (that case restores instead). A directory now
+    squatting the path is removed only when empty — a non-empty one raises
+    (→ an honest per-path failure), never an rmtree of the user's data.
 
     Args:
         repo: The root's shadow repo.
         root: The root directory.
         baseline: The B snapshot sha.
         path: Root-relative path to un-create.
+
+    Raises:
+        OSError: A non-empty directory occupies the path.
     """
     if repo.file_bytes(baseline, path) is not None:
         repo.restore_paths(baseline, [path])
         return
     target = root / path
-    if target.is_file() or target.is_symlink():
+    if target.is_dir() and not target.is_symlink():
+        target.rmdir()
+    elif target.is_file() or target.is_symlink():
         target.unlink()

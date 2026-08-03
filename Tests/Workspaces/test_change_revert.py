@@ -92,6 +92,82 @@ def test_preflight_names_files_the_user_edited_after_the_turn(turn):
     )
 
 
+def test_preflight_names_the_old_path_of_a_rename(turn):
+    """Reverting a rename ALSO restores old_path from B; if the user put a
+    new file at the old name after the turn, the confirm dialog must name
+    it — the requested (new) path alone is not the full overwrite set."""
+    service, db, root, row = turn
+    (root / "old_name.txt").write_text("USER'S NEW FILE at the old name\n")
+
+    report = preflight_revert(service, row, ["new_name.txt"])
+
+    assert "old_name.txt" in report.edited_since, (
+        "rename revert will overwrite old_name.txt unwarned"
+    )
+
+
+def test_preflight_rename_old_path_untouched_is_not_flagged(turn):
+    """Disk state at old_path matches E (absent) — nothing to warn about."""
+    service, db, root, row = turn
+    report = preflight_revert(service, row, ["new_name.txt"])
+    assert report.edited_since == []
+
+
+def test_uncreate_reports_failure_when_a_nonempty_dir_squats_the_path(turn):
+    """A created-then-reverted path now holding a non-empty directory must
+    surface as a per-path FAILURE — not silent success with the directory
+    left in place (and never an rmtree of the user's data)."""
+    service, db, root, row = turn
+    (root / "new.txt").unlink()
+    (root / "new.txt").mkdir()
+    (root / "new.txt" / "keep.md").write_text("user data\n")
+
+    outcomes = revert_paths(
+        service, db, row, ["new.txt"], run_active=lambda: False
+    )
+
+    assert not outcomes[0].ok and outcomes[0].error, (
+        "silent false success: dir left in place but ok=True"
+    )
+    assert (root / "new.txt" / "keep.md").exists(), "user data must survive"
+
+
+def test_uncreate_removes_an_empty_dir_squatter(turn):
+    service, db, root, row = turn
+    (root / "new.txt").unlink()
+    (root / "new.txt").mkdir()
+
+    outcomes = revert_paths(
+        service, db, row, ["new.txt"], run_active=lambda: False
+    )
+
+    assert outcomes[0].ok and not (root / "new.txt").exists()
+
+
+def test_traversal_paths_are_refused_lexically(turn):
+    """Defense-in-depth: git-relative paths never contain '..' or start
+    absolute, so any such request is refused before ANY disk operation —
+    in revert (per-path failure) and in preflight (skipped, since a path
+    that will not be reverted cannot overwrite anything)."""
+    service, db, root, row = turn
+    outside = root.parent / "outside.txt"
+    outside.write_text("do not touch\n")
+
+    outcomes = revert_paths(
+        service,
+        db,
+        row,
+        ["../outside.txt", str(outside)],
+        run_active=lambda: False,
+    )
+    assert all(not o.ok for o in outcomes)
+    assert all("refused" in o.error for o in outcomes)
+    assert outside.read_text() == "do not touch\n"
+
+    report = preflight_revert(service, row, ["../outside.txt"])
+    assert "../outside.txt" not in report.edited_since
+
+
 def test_revert_refuses_while_a_run_is_active(turn):
     service, db, root, row = turn
     with pytest.raises(RevertRefusedError, match="run"):

@@ -16,7 +16,13 @@ line by line with diff coloring, never markup-parsed: file content is data
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Workspaces.change_revert import (
+        RevertOutcome,
+        RevertPreflight,
+    )
 
 from rich.text import Text
 from textual import on
@@ -167,7 +173,9 @@ class AgentRunsChangeReviewProvider:
         repo = self._service.repo_for_root(row["root"])
         return repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
 
-    def preflight_revert(self, row: dict, paths: list[str]):
+    def preflight_revert(
+        self, row: dict, paths: list[str]
+    ) -> RevertPreflight:
         """The confirm dialog's data: which paths were edited after E.
 
         Args:
@@ -181,7 +189,7 @@ class AgentRunsChangeReviewProvider:
 
         return preflight_revert(self._service, row, paths)
 
-    def revert(self, row: dict, paths: list[str]):
+    def revert(self, row: dict, paths: list[str]) -> list[RevertOutcome]:
         """Restore ``paths`` to the turn's baseline.
 
         Args:
