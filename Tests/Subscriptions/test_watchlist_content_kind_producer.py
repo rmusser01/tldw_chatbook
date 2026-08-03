@@ -905,6 +905,33 @@ def test_added_and_removed_text_helper_isolates_each_side_of_a_change():
     assert removed_only.strip() == "old page gone"
 
 
+def test_pre_segmented_diff_helpers_match_the_self_segmenting_path():
+    """Qodo perf refactor: `check_url` segments each side once and hands the
+    segments to BOTH `build_change_diff` and `added_and_removed_text`, instead
+    of each re-segmenting. That optimization must be behaviour-preserving --
+    passing pre-computed segments must yield byte-identical output to letting
+    each helper segment the text itself. Reds if the shared-segment path ever
+    diverges from the self-segmenting path.
+    """
+    from tldw_chatbook.Subscriptions.monitoring_engine import (
+        _segment_for_diff,
+        added_and_removed_text,
+        build_change_diff,
+    )
+
+    previous = "Alpha stays. Opus 4.1 is available. Gamma end."
+    current = "Alpha stays. Opus 4.5 is available. Delta arrives. Gamma end."
+    old_segments = _segment_for_diff(previous)
+    new_segments = _segment_for_diff(current)
+
+    assert build_change_diff(previous, current) == build_change_diff(
+        previous, current, old_segments=old_segments, new_segments=new_segments
+    )
+    assert added_and_removed_text(previous, current) == added_and_removed_text(
+        previous, current, old_segments=old_segments, new_segments=new_segments
+    )
+
+
 async def _direct_check(db: SubscriptionsDB, source_id: int) -> tuple[dict | None, dict]:
     """Call the real `check_url` directly, bypassing persistence.
 

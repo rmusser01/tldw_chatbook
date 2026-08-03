@@ -1,4 +1,5 @@
 import pytest
+
 from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
 from tldw_chatbook.Subscriptions.watchlist_rule_matching import (
     RULE_MATCH_ADDED_TEXT_KEY,
@@ -106,6 +107,52 @@ def test_appeared_scope_matches_added_text_but_not_an_unchanged_old_phrase(servi
     assert [m["rule_id"] for m in service.evaluate(item, old_phrase_anywhere)] == [3], (
         "the same phrase must still match under scope=anywhere -- it is a "
         "genuine part of the current page"
+    )
+
+
+def test_mixed_scopes_in_one_evaluate_do_not_cross_contaminate(service):
+    """Qodo perf refactor: `evaluate` caches the haystack per scope so a
+    page-wide join is not rebuilt for every rule. The cache must be keyed by
+    scope -- a rule of one scope must never receive another scope's haystack.
+    Drive three rules of three different scopes through ONE call and confirm
+    each sees its own slice. Reds if the cache serves the wrong haystack (e.g.
+    a single shared key).
+    """
+    item = _change_item(**{
+        RULE_MATCH_ADDED_TEXT_KEY: "brand new phrase just landed.",
+        RULE_MATCH_REMOVED_TEXT_KEY: "gone phrase used to be here.",
+    })
+    rules = [
+        {  # appeared: matches added text, not removed, not the old page text
+            "id": 1,
+            "name": "appeared",
+            "conditions": {"type": "keyword", "pattern": "brand new phrase", "scope": "appeared"},
+        },
+        {  # disappeared: matches removed text only
+            "id": 2,
+            "name": "disappeared",
+            "conditions": {"type": "keyword", "pattern": "gone phrase", "scope": "disappeared"},
+        },
+        {  # anywhere: matches the old page phrase (present in RULE_MATCH_TEXT_KEY)
+            "id": 3,
+            "name": "anywhere",
+            "conditions": {"type": "keyword", "pattern": "an old phrase", "scope": "anywhere"},
+        },
+        {  # appeared rule for the GONE phrase -> must NOT match (it's removed, not added)
+            "id": 4,
+            "name": "appeared-for-removed",
+            "conditions": {"type": "keyword", "pattern": "gone phrase", "scope": "appeared"},
+        },
+        {  # disappeared rule for the NEW phrase -> must NOT match (it's added, not removed)
+            "id": 5,
+            "name": "disappeared-for-added",
+            "conditions": {"type": "keyword", "pattern": "brand new phrase", "scope": "disappeared"},
+        },
+    ]
+    matched_ids = sorted(m["rule_id"] for m in service.evaluate(item, rules))
+    assert matched_ids == [1, 2, 3], (
+        "each scope must see only its own text: appeared->added, "
+        "disappeared->removed, anywhere->page; the cross rules (4, 5) must miss"
     )
 
 
