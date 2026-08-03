@@ -467,3 +467,29 @@ async def test_change_review_git_absent_shows_honest_copy(monkeypatch) -> None:
             in _visible_text(screen)
         )
         assert not screen.query("#settings-workspace-change-review-toggle")
+
+
+@pytest.mark.asyncio
+async def test_change_review_global_kill_disclosed_in_settings(
+    monkeypatch,
+) -> None:
+    """Qodo #1264: with the global knob off, the card must say so instead
+    of claiming per-workspace tracking is enabled."""
+    from textual.widgets import Button
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-gk", name="GK WS")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-gk", Button).press()
+        await pilot.pause(0.2)
+
+        text = _visible_text(screen)
+        assert "disabled globally" in text, text
+        assert "Tracking enabled" not in text
+        assert not screen.query("#settings-workspace-change-review-toggle")

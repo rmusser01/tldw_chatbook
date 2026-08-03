@@ -739,11 +739,20 @@ class LocalWorkspaceRegistryService:
         # first agent send must never absorb the cost of hashing a whole
         # tree. Best-effort: failures log and are disclosed on first use.
         try:
+            from tldw_chatbook.Workspaces.change_bounds import (
+                change_review_enabled_globally,
+            )
             from tldw_chatbook.Workspaces.change_turn_tracker import (
                 initial_snapshot_in_background,
             )
 
-            initial_snapshot_in_background(resolved)
+            # TASK-1979 (Qodo #1264): the opt-out gates registration too —
+            # a disabled workspace (or a global kill) must not grow shadow
+            # state when a binding is added.
+            if change_review_enabled_globally() and self.change_review_enabled(
+                workspace_id
+            ):
+                initial_snapshot_in_background(resolved)
         except Exception:  # noqa: BLE001 -- registration must never fail on this
             logger.opt(exception=True).debug(
                 "change_review: initial-snapshot hook failed at registration"

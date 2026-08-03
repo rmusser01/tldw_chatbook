@@ -890,3 +890,77 @@ class TestChangeReviewGating:
         assert wfr.folder_binding_roots("ws-1") == ()
         registry.set_change_review_enabled("ws-1", True)
         assert wfr.folder_binding_roots("ws-1") == (root.resolve(),)
+
+
+class TestGatingCoversRegistrationHook:
+    """Qodo #1264: the opt-out must gate the registration-time snapshot too."""
+
+    def test_disabled_workspace_add_binding_takes_no_snapshot(
+        self, tmp_path, monkeypatch
+    ):
+        import time
+
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
+        )
+        registry.create_workspace(workspace_id="ws-off", name="Off WS")
+        registry.set_change_review_enabled("ws-off", False)
+        root = tmp_path / "offroot"
+        root.mkdir()
+        appdata = tmp_path / "appdata-gate"
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+        registry.add_folder_binding("ws-off", root)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        from tldw_chatbook.Utils.paths import get_user_data_dir
+
+        change_dir = get_user_data_dir() / "change_review"
+        containers = (
+            [d for d in change_dir.iterdir() if d.is_dir()]
+            if change_dir.is_dir()
+            else []
+        )
+        assert containers == [], (
+            "a change-review-disabled workspace still snapshotted on "
+            f"binding add: {containers}"
+        )
+
+    def test_global_kill_gates_the_registration_hook(
+        self, tmp_path, monkeypatch
+    ):
+        import time
+
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg2"))
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces2.db", client_id="t")
+        )
+        registry.create_workspace(workspace_id="ws-g", name="G WS")
+        root = tmp_path / "groot"
+        root.mkdir()
+
+        registry.add_folder_binding("ws-g", root)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        from tldw_chatbook.Utils.paths import get_user_data_dir
+
+        change_dir = get_user_data_dir() / "change_review"
+        containers = (
+            [d for d in change_dir.iterdir() if d.is_dir()]
+            if change_dir.is_dir()
+            else []
+        )
+        assert containers == [], (
+            f"globally-disabled change review still snapshotted: {containers}"
+        )

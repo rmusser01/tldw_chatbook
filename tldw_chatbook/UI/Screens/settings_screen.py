@@ -11183,6 +11183,20 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             return
+        from tldw_chatbook.Workspaces.change_bounds import (
+            change_review_enabled_globally,
+        )
+
+        if not change_review_enabled_globally():
+            # Qodo #1264: the per-workspace toggle is moot under the
+            # global kill switch — say so instead of claiming tracking.
+            yield Static(
+                "Change review is disabled globally "
+                "([change_review] enabled = false).",
+                id="settings-workspace-change-review-global-off",
+                classes="settings-detail-row",
+            )
+            return
         enabled = registry.change_review_enabled(workspace_id)
         yield Static(
             "Tracking enabled: agent runs record per-turn diffs for this "
