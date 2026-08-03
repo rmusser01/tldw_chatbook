@@ -835,6 +835,11 @@ async def test_local_watchlists_service_record_run_failure_auto_pauses_at_thresh
     Reds if the threshold check inside the shared
     ``_advance_failure_and_maybe_pause`` helper is removed or bypassed:
     ``is_paused`` stays 0 after 3 failures and no WARNING is logged.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+        caplog: pytest log capture, asserts the auto-pause WARNING.
+        _loguru_to_caplog: routes loguru into `caplog` for the assertion.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 
@@ -884,6 +889,9 @@ async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_thr
     an all-error ``url_list`` run AND a plain single-URL failure, each with
     the same ``auto_pause_threshold``, both end paused after the same
     number of consecutive failures.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     threshold = 2
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -965,6 +973,9 @@ async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paus
 
     Reds if `record_check_result`'s success branch drops its new
     `is_paused = 0` write.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 
@@ -1162,6 +1173,9 @@ async def test_create_source_persists_check_frequency(tmp_path):
 
     ``WatchlistProjection`` computes ``next_run_at`` from ``check_frequency``, so a
     source that does not carry one is never queued and never checked.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -1266,6 +1280,9 @@ async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path)
     A missing row raises rather than returning a falsy status: the guard's
     caller treats an exception as a refusal, and "the item is gone" is an
     unanswered question, not permission to overwrite.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 

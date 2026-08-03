@@ -50,6 +50,9 @@ def test_record_check_result_persists_full_column_set_via_unified_path(db):
     guard stays exactly as it was -- a second call with the same URL/hash
     must still collapse to one row rather than adopting
     persist_subscription_item's separate (raw-url-based) dedupe rule.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
     """
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/feed"
@@ -109,6 +112,9 @@ def test_record_check_result_collapses_canonical_url_variants_to_one_row(db):
     ``persist_subscription_item``'s own raw-url ``ON CONFLICT`` rule was
     that URLs differing only by case or a trailing slash must still
     collapse to a single row. Nothing pinned that until now.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
     """
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/feed"
@@ -156,6 +162,9 @@ def test_record_check_error_never_unpauses_an_already_paused_subscription(db):
 
     Reds under the pre-fix write: a failure with ``should_pause=False``
     (the only value any caller ever passes) flips ``is_paused`` back to 0.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
     """
     source_id = db.add_subscription(
         name="Docs",
@@ -176,6 +185,50 @@ def test_record_check_error_never_unpauses_an_already_paused_subscription(db):
     assert row["last_error"] == "connection refused"
 
 
+def test_auto_pause_is_a_transition_not_reported_on_every_failure(db):
+    """task-1410 Qodo follow-up: a pause is a state transition, reported once.
+
+    The shared helper returns True (and logs the "Auto-paused" warning) only
+    on the 0->1 transition. A failing MANUAL re-check of an ALREADY-paused
+    source still meets the threshold, but must NOT re-report the pause -- that
+    would over-count a single pause event in the `auto_paused` metric and spam
+    the warning. Reds if the helper reports a pause on an already-paused
+    source.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
+    """
+    source_id = db.add_subscription(
+        name="Dead source",
+        type="rss",
+        source="https://dead.example/feed",
+        auto_pause_threshold=2,
+    )
+    now = "2026-08-02T00:00:00+00:00"
+    # Two failures reach the threshold: the SECOND is the 0->1 transition.
+    with db.transaction() as conn:
+        first = db._advance_failure_and_maybe_pause(
+            conn.cursor(), source_id, "err", now
+        )
+        second = db._advance_failure_and_maybe_pause(
+            conn.cursor(), source_id, "err", now
+        )
+    assert first is False, "below threshold: no pause yet"
+    assert second is True, "the failure that crosses the threshold reports the pause"
+    assert db.get_subscription(source_id)["is_paused"] == 1
+
+    # A third failure (a failing manual re-check of the now-paused source)
+    # still meets the threshold but is NOT a new pause event.
+    with db.transaction() as conn:
+        third = db._advance_failure_and_maybe_pause(
+            conn.cursor(), source_id, "err", now
+        )
+    assert third is False, (
+        "a failure on an already-paused source must not re-report the pause"
+    )
+    assert db.get_subscription(source_id)["is_paused"] == 1
+
+
 def test_record_check_result_success_resumes_an_auto_paused_subscription(db):
     """Fix wave for the task-1410 review, Finding #1 (the important one).
 
@@ -190,6 +243,9 @@ def test_record_check_result_success_resumes_an_auto_paused_subscription(db):
 
     Reds if the success branch's new ``is_paused = 0`` write is reverted:
     ``is_paused`` stays 1 even though the check just succeeded.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
     """
     source_id = db.add_subscription(
         name="Docs",
@@ -235,6 +291,10 @@ def test_advance_failure_and_maybe_pause_never_pauses_on_a_bad_threshold(db, bad
     Reds if the guard is dropped: the ``None`` case raises ``TypeError`` on
     the first failure; the ``0``/``-1`` cases pause after exactly one
     failure instead of never.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
+        bad_threshold: parametrized None/0/-1 threshold values.
     """
     source_id = db.add_subscription(
         name="Docs",
@@ -260,6 +320,10 @@ def test_add_subscription_seeds_auto_pause_threshold_from_config_default(db, mon
     Reds if the seeding in ``add_subscription`` is dropped: the column would
     fall through to the schema's own hardcoded ``DEFAULT 10`` regardless of
     what the config says.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
+        monkeypatch: patches `get_cli_setting` / the executor for the case.
     """
     monkeypatch.setattr(
         "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
@@ -279,6 +343,10 @@ def test_add_subscription_explicit_auto_pause_threshold_overrides_config_default
 ):
     """An explicit ``auto_pause_threshold`` kwarg always wins over the
     config-seeded default (AC#3's stated precedence).
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
+        monkeypatch: patches `get_cli_setting` / the executor for the case.
     """
     monkeypatch.setattr(
         "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
@@ -302,6 +370,10 @@ def test_add_subscription_falls_back_to_schema_default_when_config_is_unusable(
     """A missing/non-numeric config value must not block subscription
     creation (AC#3): it falls back to the same default (10) the schema's own
     ``DEFAULT 10`` already uses, rather than raising or storing garbage.
+
+    Args:
+        db: The in-memory `SubscriptionsDB` fixture.
+        monkeypatch: patches `get_cli_setting` / the executor for the case.
     """
     monkeypatch.setattr(
         "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
@@ -345,6 +417,9 @@ def test_legacy_orphaned_filter_survives_action_check_widening(tmp_path):
     the FK; with enforcement on, the copy failed and the app could not even
     open the database. Already-orphaned rows must not be deleted -- cleanup
     is out of scope -- so the rebuild must tolerate them instead.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     import sqlite3
 
@@ -441,6 +516,9 @@ def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
     ``CREATE TABLE subscription_filters_new`` in ``_ensure_watchlists_schema``
     then raises ``OperationalError: table subscription_filters_new already
     exists`` -- and ``SubscriptionsDB`` can never be constructed again.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     import sqlite3
 

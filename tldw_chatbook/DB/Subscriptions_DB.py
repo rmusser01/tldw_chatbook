@@ -1638,9 +1638,12 @@ class SubscriptionsDB(BaseDB):
                 failure and clear an existing pause (AC#1).
 
         Returns:
-            True if this call paused the subscription, False otherwise --
-            used by `record_check_result`'s metric logging (Finding #4 of
-            the task-1410 review) instead of text-sniffing `error`.
+            True only when this call TRANSITIONED the subscription from
+            not-paused to paused, False otherwise (including a failure on an
+            already-paused source) -- so `record_check_result`'s `auto_paused`
+            metric and the warning count one pause per pause, not per failure
+            (Finding #4 of the task-1410 review, Qodo transition-semantics
+            follow-up) instead of text-sniffing `error`.
         """
         cursor.execute(
             """
@@ -1656,7 +1659,7 @@ class SubscriptionsDB(BaseDB):
 
         cursor.execute(
             """
-            SELECT consecutive_failures, auto_pause_threshold
+            SELECT consecutive_failures, auto_pause_threshold, is_paused
             FROM subscriptions WHERE id = ?
             """,
             (subscription_id,),
@@ -1664,6 +1667,7 @@ class SubscriptionsDB(BaseDB):
         row = cursor.fetchone()
         if row is None:
             return False
+        already_paused = bool(row["is_paused"])
         threshold = row["auto_pause_threshold"]
         # A NULL/non-positive threshold means "auto-pause disabled for this
         # source", not "pause on the very first failure" (0/negative) or a
@@ -1675,7 +1679,15 @@ class SubscriptionsDB(BaseDB):
         should_pause = force_pause or (
             threshold_active and row["consecutive_failures"] >= threshold
         )
-        if should_pause:
+        # Auto-pause is a state TRANSITION, not a per-failure event. A source
+        # that is already paused and gets a failing MANUAL re-check (the
+        # scheduler skips paused sources, so only a manual re-check reaches
+        # here) still meets the threshold, but re-logging "Auto-paused" and
+        # re-counting the metric on every such failure would over-count a
+        # single pause (task-1410 review, Qodo). Only the 0->1 transition
+        # logs and is reported.
+        newly_paused = should_pause and not already_paused
+        if should_pause and not already_paused:
             cursor.execute(
                 "UPDATE subscriptions SET is_paused = 1 WHERE id = ?",
                 (subscription_id,),
@@ -1684,7 +1696,7 @@ class SubscriptionsDB(BaseDB):
                 f"Auto-paused subscription {subscription_id} after "
                 f"{row['consecutive_failures']} failures"
             )
-        return should_pause
+        return newly_paused
 
     def record_check_error(
         self, subscription_id: int, error: str, should_pause: bool = False
