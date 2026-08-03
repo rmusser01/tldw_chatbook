@@ -459,6 +459,85 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_landing_hub_shows_next_actions_counts_and_recents():
+    """F-010: the landing canvas is the wired hub, not a one-line void --
+    actionable next-step rows (Import media / Search / New note) plus the
+    counts and recents the already-implemented helpers derive."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Reading list", "note_id": "n1"}],
+        media=[{"title": "Quarterly report.pdf", "media_id": "m1"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        visible = _visible_text(screen)
+        assert "Notes 1" in visible
+        assert "Media 1" in visible
+        assert "Conversations 2" in visible
+        assert "Reading list" in visible
+        assert "Quarterly report.pdf" in visible
+        assert "Quarterly planning sync" in visible
+        for selector in (
+            "#library-hub-action-import",
+            "#library-hub-action-search",
+            "#library-hub-action-new-note",
+        ):
+            button = screen.query_one(selector)
+            assert button.region.width > 0 and button.region.height > 0
+
+
+@pytest.mark.parametrize(
+    ("button_id", "marker"),
+    [
+        ("#library-hub-action-new-note", "#library-notes-create-blank"),
+        ("#library-hub-action-search", "#library-search-rag-panel"),
+        ("#library-hub-action-import", "#library-ingest-canvas"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_library_landing_hub_action_opens_its_canvas(button_id, marker):
+    """F-010: each hub action row drives the SAME canvas the corresponding
+    rail row opens (the shared `.library-rail-row`-family dispatch)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(button_id).press()
+        await _wait_for_selector(screen, pilot, marker)
+
+
+def test_library_dead_hub_helpers_are_removed():
+    """F-010: the never-called hub helpers are gone -- wired or deleted,
+    no lingering dead code."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+
+    for name in (
+        "_hub_state_summary",
+        "_hub_readiness_summary",
+        "_hub_readiness_counts",
+        "_hub_key_value_row",
+        "_hub_recent_sources_label",
+        "_hub_inventory_readiness_label",
+        "_hub_inventory_console_label",
+        "_hub_inventory_row",
+        "_hub_section_rule",
+        "_hub_console_status",
+        "_source_recent_label",
+    ):
+        assert not hasattr(LibraryScreen, name), name
+    assert not hasattr(library_screen_module, "LIBRARY_EMPTY_NEXT_ACTION_COPY")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_browse_conversations_renders_canvas():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())

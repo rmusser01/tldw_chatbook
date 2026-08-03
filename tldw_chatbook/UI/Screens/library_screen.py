@@ -339,9 +339,6 @@ LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
 )
 LIBRARY_EMPTY_COPY = "No local Library content yet."
-LIBRARY_EMPTY_NEXT_ACTION_COPY = (
-    "Import media, create notes, or open Library Search/RAG after indexing."
-)
 LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
 LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
     "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
@@ -407,10 +404,6 @@ LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
 LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
-LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
-LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
-LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
-LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 # `_refresh_library_rag_results_widgets` tears down every direct child of
 # `#library-rag-results` NOT in this set, then remounts fresh ones from
@@ -1036,6 +1029,26 @@ class LibraryScreen(BaseAppScreen):
     }
 
     .library-hub-spacer {
+        height: 1;
+        min-height: 1;
+    }
+
+    /* F-010: the landing hub's counts/recents lines -- quiet dim meta,
+    same tier as .library-source-action-meta just above. */
+    .library-hub-meta {
+        color: $text-muted;
+        height: auto;
+        min-height: 0;
+        margin-top: 1;
+    }
+    /* F-010: the next-action rows hug their own height inside the
+    ds-toolbar band. */
+    #library-hub-actions {
+        height: auto;
+        min-height: 0;
+        margin-top: 1;
+    }
+    Button.library-hub-action {
         height: 1;
         min-height: 1;
     }
@@ -3339,10 +3352,6 @@ class LibraryScreen(BaseAppScreen):
             },
         )
 
-    def _source_recent_label(self, source_type: str) -> str:
-        recent = self._source_recent_value(source_type)
-        return f"Recent: {recent}"
-
     def _hub_table_cell(
         self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH
     ) -> str:
@@ -3357,93 +3366,10 @@ class LibraryScreen(BaseAppScreen):
             shortened = clean_value[:limit].strip()
         return f"{shortened}{suffix}"
 
-    def _hub_section_rule(self, label: str, widget_id: str) -> Static:
-        rule_width = 74
-        suffix_width = max(3, rule_width - len(label) - 4)
-        return Static(
-            f"-- {label} {'-' * suffix_width}",
-            id=widget_id,
-            classes="destination-section",
-        )
-
     def _hub_source_count_value(self, source_type: str) -> str:
         count = self._local_source_counts.get(source_type, 0)
         suffix = "" if self._local_source_total_known.get(source_type, True) else "+"
         return f"{count}{suffix}"
-
-    def _hub_console_status(self, source_type: str) -> str:
-        if self._local_source_counts.get(source_type, 0) <= 0:
-            return "blocked: no source"
-        workspace_depth_state = self._library_workspace_depth_state()
-        if workspace_depth_state.context_handoff_enabled:
-            return "ready"
-        return "blocked: workspace gate"
-
-    def _hub_recent_sources_label(self) -> str:
-        return "; ".join(
-            (
-                f"Notes: {self._source_recent_value('notes')}",
-                f"Media: {self._source_recent_value('media')}",
-                f"Conversations: {self._source_recent_value('conversations')}",
-            )
-        )
-
-    def _hub_readiness_counts(self) -> tuple[int, int, int]:
-        active_modules = sum(
-            1
-            for source_type in ("notes", "media", "conversations")
-            if self._local_source_counts.get(source_type, 0) > 0
-        )
-        workspace_depth_state = self._library_workspace_depth_state()
-        eligible_modules = (
-            active_modules if workspace_depth_state.context_handoff_enabled else 0
-        )
-        blocked_modules = max(0, active_modules - eligible_modules)
-        return active_modules, eligible_modules, blocked_modules
-
-    def _hub_state_summary(self) -> str:
-        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
-        workspace_depth_state = self._library_workspace_depth_state()
-        console_state = (
-            "ready" if workspace_depth_state.context_handoff_enabled else "blocked"
-        )
-        return "\n".join(
-            (
-                f"State: Local workspace | Browse all workspaces | Console staging {console_state}",
-                (
-                    f"Inventory: Notes {self._hub_source_count_value('notes')} | "
-                    f"Media {self._hub_source_count_value('media')} | "
-                    f"Conversations {self._hub_source_count_value('conversations')} | "
-                    f"Console eligible {eligible_modules} | Blocked {blocked_modules}"
-                ),
-            )
-        )
-
-    def _hub_readiness_summary(self) -> str:
-        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
-        blocked_suffix = "module" if blocked_modules == 1 else "modules"
-        eligible_suffix = "module" if eligible_modules == 1 else "modules"
-        return "\n".join(
-            (
-                self._hub_key_value_row(
-                    "Eligible", f"{eligible_modules} {eligible_suffix}"
-                ),
-                self._hub_key_value_row(
-                    "Blocked",
-                    f"{blocked_modules} workspace-gated {blocked_suffix}",
-                ),
-                self._hub_key_value_row("Recent", self._hub_recent_sources_label()),
-                self._hub_key_value_row(
-                    "Next",
-                    "Link sources to the active workspace or open an owner screen.",
-                ),
-            )
-        )
-
-    def _hub_key_value_row(
-        self, label: str, value: str, *, label_width: int = 14
-    ) -> str:
-        return f"{label:<{label_width}} {value}"
 
     def _source_recent_value(self, source_type: str) -> str:
         titles = self._source_sample_titles(source_type)
@@ -3451,64 +3377,43 @@ class LibraryScreen(BaseAppScreen):
             return "none"
         return self._hub_table_cell(titles[0])
 
-    def _hub_inventory_readiness_label(self, source_type: str, unit: str) -> str:
-        count_label = self._hub_source_count_value(source_type)
-        try:
-            count = int(count_label.rstrip("+"))
-        except ValueError:
-            count = 0
-        if count == 1:
-            return f"{count_label} {unit}"
-        return f"{count_label} {unit}s"
+    def _hub_counts_line(self) -> str:
+        """Per-source counts for the F-010 landing hub.
 
-    def _hub_inventory_console_label(self, source_type: str) -> str:
-        return f"Console {self._hub_console_status(source_type)}"
+        While the local source snapshot is still loading (and no lookup
+        error has been recorded), the counts read "…" rather than the
+        placeholder zeros seeded at construction time -- same honest-
+        loading policy `_build_library_shell_input()` applies to the rail's
+        own count suffixes. `_hub_source_count_value()` appends "+" when
+        the source's total is an estimate, mirroring the rail.
+        """
 
-    def _hub_inventory_row(
-        self,
-        *,
-        source: str,
-        readiness: str,
-        owner: str,
-        action: str,
-        console: str,
-        widget_id: str,
-    ) -> Static:
-        source_cell = self._hub_table_cell(
-            source,
-            LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH,
-        )
-        readiness_cell = self._hub_table_cell(
-            readiness,
-            LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH,
-        )
-        owner_cell = self._hub_table_cell(
-            owner,
-            LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH,
-        )
-        action_cell = self._hub_table_cell(
-            action,
-            LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH,
-        )
-        return Static(
-            "\n".join(
-                (
-                    (
-                        f"{source_cell:<{LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH}} "
-                        f"{readiness_cell:<{LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH}} "
-                        f"{owner_cell:<{LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH}} "
-                        f"{action_cell:<{LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH}}"
-                    ),
-                    f"  {console}",
-                )
-            ),
-            markup=False,
-            id=widget_id,
-            classes="library-hub-card",
+        def value(source_type: str) -> str:
+            if not self._library_loaded and self._library_lookup_error is None:
+                return "…"
+            return self._hub_source_count_value(source_type)
+
+        return (
+            f"Notes {value('notes')} · Media {value('media')} · "
+            f"Conversations {value('conversations')}"
         )
 
-    def _hub_spacer(self, widget_id: str) -> Static:
-        return Static("", id=widget_id, classes="library-hub-spacer")
+    def _hub_recents_line(self) -> str | None:
+        """Recent-item line for the F-010 landing hub, or None when the
+        library has no content yet (a bare 'Recent: none ×3' line on a
+        fresh install would read as broken, not empty)."""
+        parts = [
+            f"{label}: {recent}"
+            for label, source_type in (
+                ("Notes", "notes"),
+                ("Media", "media"),
+                ("Conversations", "conversations"),
+            )
+            if (recent := self._source_recent_value(source_type)) != "none"
+        ]
+        if not parts:
+            return None
+        return f"Recent — {' · '.join(parts)}"
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -4428,6 +4333,51 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-purpose",
                         markup=False,
                     )
+                    # F-010: the landing canvas is the wired hub, not a
+                    # one-line void -- per-source counts and recents from
+                    # the existing helpers, plus quiet next-action rows
+                    # that dispatch exactly like their rail-row
+                    # counterparts (same `@on(.library-hub-action)` path,
+                    # same dirty-edit guards).
+                    yield Static(
+                        self._hub_counts_line(),
+                        id="library-hub-counts",
+                        classes="library-hub-meta",
+                        markup=False,
+                    )
+                    recents_line = self._hub_recents_line()
+                    if recents_line is not None:
+                        yield Static(
+                            recents_line,
+                            id="library-hub-recents",
+                            classes="library-hub-meta",
+                            markup=False,
+                        )
+                    with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
+                        for label, tooltip, row_id, target_id, button_id in (
+                            ("Import media", "Import media files into the Library.",
+                             LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
+                             "library-hub-action-import"),
+                            ("Search", "Search everything in the Library.",
+                             LIBRARY_ROW_BROWSE_SEARCH, "search",
+                             "library-hub-action-search"),
+                            ("New note", "Create a new note.",
+                             LIBRARY_ROW_CREATE_NOTE, "notes-create",
+                             "library-hub-action-new-note"),
+                        ):
+                            action = Button(
+                                label,
+                                id=button_id,
+                                classes="library-hub-action console-action-subdued",
+                                compact=True,
+                                tooltip=tooltip,
+                            )
+                            # Same attributes the rail rows carry -- the
+                            # shared press handler reads them to dispatch.
+                            action.row_id = row_id
+                            action.target_kind = "canvas"
+                            action.target_id = target_id
+                            yield action
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
@@ -7484,8 +7434,15 @@ class LibraryScreen(BaseAppScreen):
                 release_source()
 
     @on(Button.Pressed, ".library-rail-row")
+    @on(Button.Pressed, ".library-hub-action")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
-        """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
+        """Dispatch a Library rail row press: navigate, browse, or open a canvas.
+
+        `.library-hub-action` covers the F-010 landing hub's next-action
+        rows -- they carry the same row_id/target_kind/target_id attributes
+        as rail rows, so both flow through this one dispatch (including its
+        dirty-edit guards).
+        """
         event.stop()
         button = event.button
         target_kind = str(getattr(button, "target_kind", "") or "")
@@ -17665,10 +17622,9 @@ class LibraryScreen(BaseAppScreen):
         at all. The workspace gate is not conversation-specific --
         ``build_library_workspace_depth_state`` computes
         ``context_handoff_enabled`` across every visible Library source
-        (notes, media, and conversations together), and the Library hub's
-        own per-source-type readiness rows (``_hub_console_status``) already
-        treat Media under that same gate -- so media handoff eligibility
-        follows the identical workspace-staging policy as conversations.
+        (notes, media, and conversations together) -- so media handoff
+        eligibility follows the identical workspace-staging policy as
+        conversations.
         """
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()
