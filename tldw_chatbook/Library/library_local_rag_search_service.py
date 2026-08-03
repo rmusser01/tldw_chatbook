@@ -870,17 +870,24 @@ def _rag_mode_unavailable_recovery_state() -> DestinationRecoveryState:
         # alone leaves no next step. Voice mirrors
         # RAG_Search/semantic_availability.py's SEMANTIC_REASON_DEPS_MISSING
         # copy family (that module's own equivalent seam, deliberately
-        # untouched -- see its module docstring).
+        # untouched -- see its module docstring). The durable fix (install)
+        # is paired with the immediate escape ("switch mode to Search"),
+        # matching both sibling RAG-blocked states in this file
+        # (`_rag_index_empty_recovery_state`, `_no_backend_recovery_state`)
+        # -- this is the always-rendered "Next:" line, unlike the
+        # mode-toggle button's hover/focus-only tooltip, so a blocked user
+        # needs the escape spelled out here too (review finding).
         next_action=(
             'Install RAG support: pip install "tldw_chatbook[embeddings_rag]", '
-            "then restart."
+            "then restart, or switch mode to Search."
         ),
         recovery_action="Settings > RAG",
         authority_owner="Library retrieval service",
         stable_selector=LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
         disabled_tooltip=(
             "RAG runtime is unavailable in this app instance. "
-            "Install embeddings support or switch mode to Search."
+            'Install RAG support: pip install "tldw_chatbook[embeddings_rag]", '
+            "then restart, or switch mode to Search."
         ),
     )
 

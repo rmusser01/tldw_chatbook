@@ -467,10 +467,14 @@ async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(
     # (Task-14 enabler) the recovery copy must name the pip extra to
     # install -- "unavailable" alone leaves the user with no next step.
     # Voice mirrors RAG_Search/semantic_availability.py's
-    # SEMANTIC_REASON_DEPS_MISSING copy family.
+    # SEMANTIC_REASON_DEPS_MISSING copy family. Also keeps the immediate
+    # "switch mode to Search" escape (review finding): this is the
+    # always-rendered "Next:" line, and the two sibling RAG-blocked states
+    # in this module (index-empty, no-backend) both pair their durable fix
+    # with an escape too.
     assert result.recovery_state.next_action == (
         'Install RAG support: pip install "tldw_chatbook[embeddings_rag]", '
-        "then restart."
+        "then restart, or switch mode to Search."
     )
     assert result.recovery_state.recovery_action == "Settings > RAG"
     assert getattr(app, "_rag_service", None) is None

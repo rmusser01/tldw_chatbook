@@ -1377,7 +1377,7 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         # `.renderable` directly, before that resolution.
         assert (
             'Install RAG support: pip install "tldw_chatbook\\[embeddings_rag]", '
-            "then restart." in visible_text
+            "then restart, or switch mode to Search." in visible_text
         )
         # The display sanitizer HTML-escapes the recovery route's ">".
         assert "Recovery: Settings &gt; RAG." in visible_text
