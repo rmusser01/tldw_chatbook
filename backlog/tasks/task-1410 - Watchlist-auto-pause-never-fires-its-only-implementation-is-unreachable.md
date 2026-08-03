@@ -1,7 +1,7 @@
 ---
 id: TASK-1410
 title: Watchlist auto-pause never fires; its only implementation is unreachable
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 08:20'
 labels:
@@ -83,3 +83,22 @@ both settings so the app stops promising a feature it does not have.
 - [ ] #2 A source that fails the configured number of times in a row reaches the documented outcome, driven in a test through the real failure path rather than by calling the DB method directly
 - [ ] #3 `auto_pause_threshold` (column) and `auto_pause_after_failures` (`config.py:3553`) are reconciled: either both are read by a live path with a stated precedence, or both are removed together with the dead branch and the docs that advertise them
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Direction (AC#3 fork): COMPLETE auto-pause rather than remove it — the schema column, config knob,
+and dead branch all intend it, and task-1394 already made `record_check_result`'s pause branch
+reachable for all-error runs. Wire it fully and consistently.
+1. **AC#1 (prerequisite):** `record_check_error` must NEVER clear `is_paused`. Change its UPDATE so
+   a failure only ever SETS is_paused (write `is_paused = CASE WHEN <should_pause> THEN 1 ELSE
+   is_paused END`), never 0. A recorded failure can pause but never un-pause.
+2. **AC#2:** `record_check_error` consults `auto_pause_threshold` and pauses when
+   `consecutive_failures` (post-increment) >= threshold — the SAME logic `record_check_result`'s
+   error branch uses (1394 made it live). Factor a shared helper so the two failure paths cannot
+   diverge. Test through the real path (`record_run_failure` → `record_check_error`): a source that
+   fails N times in a row ends `is_paused=1`.
+3. **AC#3:** `auto_pause_after_failures` (config, currently read by nothing) seeds the
+   `auto_pause_threshold` column default for NEW subscriptions; per-subscription column overrides
+   (stated precedence). Document both in the config comment + a module docstring.
+<!-- SECTION:PLAN:END -->
