@@ -1376,7 +1376,10 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
                 recorded["fd_during_construction"] = -1
 
     class _RecordingContext:
-        def Pool(self, processes=None):
+        def Pool(self, processes=None, initializer=None):
+            # (task-2016) The real Pool now receives the worker-noise
+            # silencer; the fake records it so the contract is pinned.
+            recorded["initializer"] = initializer
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -1394,6 +1397,10 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
 
     assert isinstance(pool, _RecordingPool)
     assert recorded["fd_during_construction"] >= 0
+    assert (
+        recorded["initializer"]
+        is app_module.silence_ingest_worker_import_noise
+    )
 
 
 def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
@@ -1410,7 +1417,10 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             recorded["stderr_during_construction"] = sys.stderr
 
     class _RecordingContext:
-        def Pool(self, processes=None):
+        def Pool(self, processes=None, initializer=None):
+            # (task-2016) The real Pool now receives the worker-noise
+            # silencer; the fake records it so the contract is pinned.
+            recorded["initializer"] = initializer
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -1429,6 +1439,10 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
     mixin._create_ingest_parse_pool()
 
     assert recorded["stderr_during_construction"] is ambient_stderr
+    assert (
+        recorded["initializer"]
+        is app_module.silence_ingest_worker_import_noise
+    )
 
 
 @pytest.mark.asyncio
@@ -2779,3 +2793,31 @@ async def test_directory_done_rows_all_carry_media_ids(tmp_path: Path) -> None:
                 f"folder done row without media id: {done.source_path}"
             )
         await _wait_for_runner_idle(app, pilot)
+
+
+def test_worker_initializer_silences_import_noise(tmp_path: Path) -> None:
+    """(task-2016) The pool initializer must stop loguru + warnings output
+    from reaching stderr inside a worker process -- that stderr is the
+    parent's real TTY under Textual, and import noise painted over the UI
+    on every first submit."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import sys
+        from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+            silence_ingest_worker_import_noise,
+        )
+
+        silence_ingest_worker_import_noise()
+
+        import warnings
+        from loguru import logger
+
+        logger.warning("should not reach stderr")
+        warnings.warn("should not reach stderr either", UserWarning)
+        print("MARKER-OK")
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "MARKER-OK" in result.stdout
+    assert "should not reach stderr" not in result.stderr

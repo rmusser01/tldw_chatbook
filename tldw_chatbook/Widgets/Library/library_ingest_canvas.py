@@ -16,6 +16,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed,
     get_capabilities,
 )
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Library.library_ingest_state import (
     QUEUE_EMPTY_COPY,
     LibraryIngestCanvasState,
@@ -108,9 +109,17 @@ class LibraryIngestCanvas(VerticalScroll):
         cap: TypeGroupCapabilities,
         values: dict[str, Any],
         expanded: bool,
+        has_files: bool = True,
     ) -> Collapsible:
         """Build a collapsible options panel for one detected type group."""
-        scope_label = f"Applies to all {cap.label} in this import."
+        # (task-2016) The generic panel is always rendered so global options
+        # stay reachable -- but claiming "Applies to all X in this import."
+        # with zero such files staged was a false statement.
+        scope_label = (
+            f"Applies to all {cap.label} in this import."
+            if has_files
+            else f"Applies to {cap.label} if this import contains any."
+        )
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
         cap_fields_by_name = {f.name: f for f in cap.fields}
@@ -294,10 +303,12 @@ class LibraryIngestCanvas(VerticalScroll):
                     compact=True,
                 )
         for index, line in enumerate(state.intro_lines):
+            # The extra class is the screen's no-recompose handle for hiding
+            # these live while the user types a path (task-2016).
             yield Static(
                 line,
                 id=f"library-ingest-intro-{index}",
-                classes="library-ingest-quiet-line",
+                classes="library-ingest-quiet-line library-ingest-intro",
                 markup=False,
             )
         # Pre-flight summary replaces the old always-visible supported-types
@@ -365,7 +376,10 @@ class LibraryIngestCanvas(VerticalScroll):
                     classes="library-ingest-quiet-line",
                     markup=False,
                 )
-            if state.type_groups:
+            # (task-2016) Bulk expand/collapse over exactly one panel is
+            # noise -- the generic panel is always appended, so a single
+            # entry means there is nothing to expand "all" of.
+            if len(state.type_groups) > 1:
                 with Horizontal(classes="library-ingest-options-bulk"):
                     yield Button(
                         "Expand all",
@@ -379,11 +393,18 @@ class LibraryIngestCanvas(VerticalScroll):
                         classes="library-canvas-action",
                         compact=True,
                     )
+            if state.type_groups:
                 for group in state.type_groups:
                     cap = get_capabilities(group)
                     values = state.form.type_options.get(group, {})
                     expanded = group in state.expanded_type_groups
-                    yield self._compose_type_group(group, cap, values, expanded)
+                    yield self._compose_type_group(
+                        group,
+                        cap,
+                        values,
+                        expanded,
+                        has_files=bool(state.type_group_file_counts.get(group)),
+                    )
         yield Input(
             value=state.form.title,
             placeholder="Title (optional)",
@@ -476,8 +497,19 @@ class LibraryIngestCanvas(VerticalScroll):
             )
             if row.progress:
                 progress_line = row.progress.get("message") if row.progress else ""
+                # (task-2016) The row line above already carries the terminal
+                # state ("✓ done · …"); repeating it here read as stuttering.
+                # Active states keep the prefix -- their progress message is
+                # stage detail, not an outcome.
+                terminal = row.state in (
+                    IngestJobState.DONE,
+                    IngestJobState.FAILED,
+                    IngestJobState.CANCELLED,
+                )
                 yield Static(
-                    f"{row.state.value} {progress_line}",
+                    progress_line
+                    if terminal
+                    else f"{row.state.value} {progress_line}",
                     id=f"library-ingest-progress-{row.job_id}",
                     classes="library-ingest-progress",
                     markup=False,

@@ -12696,6 +12696,15 @@ class LibraryScreen(BaseAppScreen):
             self._invalidate_library_ingest_preflight()
             if had_preflight:
                 self._refresh_library_ingest_canvas_preserving_context()
+        # (task-2016) The state model drops intro lines once a path exists,
+        # but this handler avoids recomposing while typing -- hide/show them
+        # in place so they track the field's content live.
+        show_intros = (
+            not event.value.strip()
+            and self._library_ingest_form.preflight is None
+        )
+        for intro in self.query(".library-ingest-intro"):
+            intro.display = show_intros
         try:
             start_button = self.query_one("#library-ingest-start", Button)
         except (NoMatches, QueryError):
@@ -15257,6 +15266,21 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self.post_message(NavigateToScreen("media"))
+
+    @on(Input.Changed, "#library-search-input")
+    def handle_library_search_changed(self, event: Input.Changed) -> None:
+        """Track rail-search text as the user types it (task-2016).
+
+        Without this the screen's ``_library_rag_query`` echo only moved on
+        SUBMIT, so every rail rebuild -- and the persisted shell state --
+        re-seeded the box from the last submitted query: text the user typed
+        (or deleted) without submitting resurrected on the next recompose or
+        visit. The mount-echo ``Input.Changed`` Textual fires for the
+        ``value=`` kwarg re-announces the same value, so storing it is
+        idempotent.
+        """
+        event.stop()
+        self._library_rag_query = event.value
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:

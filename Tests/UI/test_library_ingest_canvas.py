@@ -354,17 +354,18 @@ async def test_type_group_panels_render_for_detected_groups():
 
 @pytest.mark.asyncio
 async def test_expand_collapse_all_buttons_render_when_type_groups_present():
-    """Bulk expand/collapse buttons render only when there are type groups."""
+    """Bulk expand/collapse buttons render only when MULTIPLE panels exist
+    (task-2016: a single panel has nothing to expand "all" of)."""
     with_groups = build_library_ingest_state(
         (),
         form=_default_form(),
         preflight=PreflightResult(
-            type_groups={"generic": ["/tmp/a.txt"]},
+            type_groups={"pdf": ["/tmp/a.pdf"], "generic": ["/tmp/a.txt"]},
             warnings=[],
             errors=[],
             total_size=0,
             truncated=False,
-            total_files=1,
+            total_files=2,
         ),
     )
     app = _CanvasHost(with_groups)
@@ -1280,3 +1281,79 @@ async def test_unsupported_files_summary_pluralizes_correctly():
             "2 unsupported files will be recorded as failures."
             == str(summary.renderable)
         )
+
+
+# --- task-2016: P3 polish ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_done_row_progress_line_has_no_state_prefix():
+    """(task-2016) The row line already says "✓ done"; prefixing the progress
+    line with "done" again read as stuttering. Terminal states render the
+    message alone; active states keep the prefix (previous test)."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.DONE,
+        media_id=1,
+        progress={"message": "Ingested report.txt"},
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        assert str(progress.renderable) == "Ingested report.txt"
+
+
+@pytest.mark.asyncio
+async def test_expand_collapse_all_hidden_for_single_panel():
+    """(task-2016) Bulk expand/collapse over exactly one panel is noise."""
+    single = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(single)
+    async with app.run_test() as pilot:
+        assert not list(pilot.app.query("#ingest-expand-all"))
+        assert not list(pilot.app.query("#ingest-collapse-all"))
+
+
+@pytest.mark.asyncio
+async def test_generic_scope_line_reworded_when_no_generic_files_staged():
+    """(task-2016) The always-present generic panel claimed "Applies to all
+    Plain text / documents / HTML in this import." even when the import
+    contained zero such files."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    # Expand the generic panel so its scope line mounts.
+    state.form.expanded_type_groups.add("generic")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        scopes = [
+            str(w.renderable)
+            for w in pilot.app.query(".type-group-scope").results(Static)
+        ]
+        generic_scope = [s for s in scopes if "Plain text" in s]
+        assert generic_scope, f"generic scope line missing: {scopes}"
+        assert "if this import contains any" in generic_scope[0]
+        assert "in this import." not in generic_scope[0]
