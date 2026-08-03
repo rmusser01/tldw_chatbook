@@ -1,8 +1,10 @@
 """ConsoleCommandPopup widget behavior; ChatScreen integration (Tasks 3-4)."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -175,3 +177,34 @@ async def test_skill_entries_and_skills_arg_mode():
         await pilot.press("enter")
         await pilot.pause()
         assert composer.draft_text() == "/skills web-search "
+
+
+async def _spy_submit_draft(console) -> AsyncMock:
+    """Wrap the active controller's ``submit_draft`` so real sends still work."""
+    controller = console._ensure_console_chat_controller()
+    spy = AsyncMock(wraps=controller.submit_draft)
+    controller.submit_draft = spy
+    return spy
+
+
+@pytest.mark.asyncio
+async def test_enter_with_popup_closed_sends_normally():
+    """Popup-hidden Enter must reach the normal send path (spec contract)."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        composer.load_draft("hello")
+        await pilot.pause()
+        assert not popup.is_open
+        submit_spy = await _spy_submit_draft(console)
+
+        console.query_one("#console-send-message", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        submit_spy.assert_awaited()

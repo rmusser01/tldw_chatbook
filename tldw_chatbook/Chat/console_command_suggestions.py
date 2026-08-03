@@ -17,9 +17,12 @@ from .console_command_grammar import (
 )
 from .console_skill_resolver import SkillCommandCandidate
 
-_COMMAND_MODE_PATTERN = re.compile(r"^/(\S*)$")
+# `\Z` (not `$`) so a trailing newline — e.g. a Shift+Enter multiline draft —
+# breaks the match and leaves the completion context; the skills-arg separator
+# is `[ \t]+` (not `\s+`) for the same reason, since `\s` also matches `\n`.
+_COMMAND_MODE_PATTERN = re.compile(r"^/(\S*)\Z")
 _SKILLS_ARG_MODE_PATTERN = re.compile(
-    rf"^{COMMAND_PREFIX}{SKILLS_COMMAND_NAME}\s+(\S*)$", re.IGNORECASE
+    rf"^{COMMAND_PREFIX}{SKILLS_COMMAND_NAME}[ \t]+(\S*)\Z", re.IGNORECASE
 )
 
 # `ConsoleCommand` carries no description field, so the three built-ins get
@@ -57,9 +60,9 @@ def suggestions_for_draft(
 
     Returns ``None`` when the draft is in no completion context (caller hides
     the popup); otherwise a possibly-empty list (empty also hides the popup).
-    Two contexts: command mode (``^/\\S*$`` — commands then skills, prefix-
-    filtered) and skills-arg mode (``^/skills\\s+\\S*$`` — skill names for the
-    first argument).
+    Two contexts: command mode (``^/\\S*\\Z`` — commands then skills, prefix-
+    filtered) and skills-arg mode (``^/skills\\s+\\S*\\Z`` — skill names for
+    the first argument).
     """
     skills_arg_match = _SKILLS_ARG_MODE_PATTERN.match(draft_text)
     if skills_arg_match is not None:

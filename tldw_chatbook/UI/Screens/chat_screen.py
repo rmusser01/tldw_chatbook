@@ -3039,6 +3039,11 @@ class ChatScreen(BaseAppScreen):
         if collapsed:
             self._console_unknown_send_armed = None
             composer.reset_pending_unfurl()
+            # Unconditional hide (not _sync_console_command_popup): the draft
+            # may still match a completion context and would re-show it.
+            popup = self._console_command_popup_or_none()
+            if popup is not None:
+                popup.hide()
         composer.set_collapsed(collapsed)
         composer.styles.border = (
             CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
@@ -9701,6 +9706,9 @@ class ChatScreen(BaseAppScreen):
         self._console_skill_candidates = (
             self._console_skill_trusted_candidates_from_context(context)
         )
+        # Pick up newly-arrived skill entries in an open popup without
+        # waiting for the next keystroke.
+        self._sync_console_command_popup()
 
     async def _console_skill_search(self, query: str) -> list[Mapping[str, object]]:
         """Bounded, fresh-fetched trusted-skill search for the skill picker."""
