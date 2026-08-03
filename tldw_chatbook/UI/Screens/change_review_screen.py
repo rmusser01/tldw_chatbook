@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         RevertPreflight,
     )
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -485,9 +486,20 @@ class ChangeReviewScreen(Screen):
                         row
                     )
                 except Exception:  # noqa: BLE001 -- a badge must never break review
+                    logger.opt(exception=True).warning(
+                        "change_review: badge derivation failed for "
+                        f"{row.get('root')!r}; rendering without badges"
+                    )
                     touched_by_row[rid] = None
             touched = touched_by_row[rid]
-            return touched is not None and change.path not in touched
+            if touched is None:
+                return False
+            # Qodo #1262: no file tool can DELETE or RENAME — those rows
+            # badge regardless of path membership (a write_file-created
+            # path later script-deleted must not launder the deletion).
+            if change.status in ("D", "R"):
+                return True
+            return change.path not in touched
 
         known = {code for code, _label in _GROUPS}
         for code, label in _GROUPS:

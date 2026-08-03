@@ -700,3 +700,51 @@ def test_badge_span_is_monochrome():
     assert badge_spans and all(s.style == "dim" for s in badge_spans), (
         f"badge must be monochrome dim: {label.spans}"
     )
+
+
+@pytest.mark.asyncio
+async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
+    tmp_path,
+):
+    """Qodo #1262: no file tool can delete or rename, so D/R rows badge
+    even when the path itself appears in the run's write_file steps."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "doomed.txt").write_text("tool wrote me\n")
+    (root / "old.txt").write_text("stable rename content\n" * 5)
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "doomed.txt").unlink()
+        (root / "old.txt").rename(root / "new.txt")
+
+    _record_turn(db, tracker, root, run, mutate)
+    # The run DID write these paths earlier — membership alone would
+    # wrongly suppress the badge on their D/R rows.
+    _append_real_write_step(db, run, str(root / "doomed.txt"))
+    _append_real_write_step(db, run, str(root / "new.txt"))
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda ls: ls if any("doomed.txt" in l for l in ls) else None)(
+                _tree_labels(tree)
+            ),
+            "turn files",
+        )
+        doomed = next(l for l in labels if "doomed.txt" in l)
+        renamed = next(l for l in labels if "new.txt" in l)
+        assert BADGE_COPY in doomed, f"deletion unbadged: {doomed}"
+        assert BADGE_COPY in renamed, f"rename unbadged: {renamed}"
