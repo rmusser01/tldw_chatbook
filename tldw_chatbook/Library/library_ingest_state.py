@@ -491,6 +491,10 @@ class LibraryIngestCanvasState:
     preflight_checking: bool
     expanded_type_groups: set[str]
     type_groups: list[str]
+    #: (task-2016) Per-supported-group staged-file counts from the active
+    #: pre-flight; the canvas words each panel's scope line from this
+    #: ("Applies to all X in this import." vs the zero-file phrasing).
+    type_group_file_counts: dict[str, int]
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
     #: Which backend a new ingest will target, so the canvas can say so.
@@ -972,6 +976,9 @@ def build_library_ingest_state(
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),
         type_groups=type_groups_list,
+        type_group_file_counts={
+            group: len(paths) for group, paths in type_groups.items()
+        },
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
         transcribe_cpp_configured=transcribe_cpp_configured,

@@ -3364,7 +3364,13 @@ class LibraryIngestQueueMixin:
                             )
                         }
                     else:
-                        progress = {"message": f"Ingested {job.source_path}"}
+                        # (task-2016) The basename, not the absolute path:
+                        # the row line already identifies the file and the
+                        # details surface carries the full path.
+                        source_name = (
+                            Path(job.source_path).name or job.source_path
+                        )
+                        progress = {"message": f"Ingested {source_name}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,

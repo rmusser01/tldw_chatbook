@@ -9534,11 +9534,23 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
 
         # (task-2015) Clearing now takes an arming press plus a confirming
-        # press -- one accidental press must not destroy the receipts.
+        # press -- one accidental press must not destroy the receipts. Poll
+        # for the armed label before the second press: the arm recompose is
+        # async (task-699 state-then-DOM lesson).
         screen.query_one("#library-ingest-clear-finished", Button).press()
-        await pilot.pause()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            button = screen.query_one("#library-ingest-clear-finished", Button)
+            if "again" in str(button.label).lower():
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("first press never armed the button")
         screen.query_one("#library-ingest-clear-finished", Button).press()
-        await pilot.pause()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            counts = harness.library_ingest_jobs.counts()
+            if counts["done"] == 0 and counts["failed"] == 0:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
 
         counts = harness.library_ingest_jobs.counts()
         assert counts["done"] == 0
@@ -12060,13 +12072,96 @@ async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
         await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
 
         screen.query_one("#library-ingest-clear-finished", Button).press()
-        await pilot.pause()
+        # Poll for the armed label -- the arm's context-preserving recompose
+        # is async, and a single pause under full-suite load is not enough
+        # (the task-699 state-then-DOM lesson).
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            button = screen.query_one("#library-ingest-clear-finished", Button)
+            if "again" in str(button.label).lower():
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("first press never armed the button")
         assert harness.library_ingest_jobs.counts()["done"] == 1, (
             "first press must arm, not clear"
         )
-        armed_button = screen.query_one("#library-ingest-clear-finished", Button)
-        assert "again" in str(armed_button.label).lower()
 
-        armed_button.press()
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if harness.library_ingest_jobs.counts()["done"] == 0:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("second press never cleared the queue")
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_intro_lines_hide_while_typing(tmp_path):
+    """(task-2016) The state model already drops intro lines once a path is
+    typed, but the no-recompose typing handler never removed them from the
+    DOM -- they must hide (and return) live with the field's content."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p3-intro")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        intros = list(screen.query(".library-ingest-intro"))
+        assert intros, "fresh canvas must render intro lines"
+        assert all(w.display for w in intros)
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
         await pilot.pause()
-        assert harness.library_ingest_jobs.counts()["done"] == 0
+        path_input.value = "/tmp/somewhere.txt"
+        await pilot.pause()
+        assert all(
+            not w.display for w in screen.query(".library-ingest-intro")
+        ), "intro lines must hide once a path is typed"
+
+        path_input.value = ""
+        await pilot.pause()
+        assert all(w.display for w in screen.query(".library-ingest-intro")), (
+            "intro lines must return when the path is cleared"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
+    """(task-2016) The rail search box had no Input.Changed handler, so a
+    recompose rebuilt it from the last SUBMITTED query -- typed-but-
+    unsubmitted text (including a deletion) resurrected."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p3-search")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-search-input")
+
+        search = screen.query_one("#library-search-input", Input)
+        search.value = "cake"
+        await pilot.pause()
+        # The screen-side echo must track typing: it feeds both every
+        # rail rebuild (query=...) and save_state, which is where stale
+        # queries resurrected from ("cake and pie pla…" in the UAT).
+        assert screen._library_rag_query == "cake"
+
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-search-input")
+        assert (
+            screen.query_one("#library-search-input", Input).value == "cake"
+        ), "typed search text vanished on recompose"
+
+        screen.query_one("#library-search-input", Input).value = ""
+        await pilot.pause()
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-search-input")
+        assert (
+            screen.query_one("#library-search-input", Input).value == ""
+        ), "deleted search text resurrected on recompose"
