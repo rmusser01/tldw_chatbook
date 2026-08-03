@@ -102,9 +102,14 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     await pilot.pause(0.01)
                 else:
                     raise AssertionError("Library contextual footer did not update.")
-                assert (
-                    screen_footer.shortcut_text
-                    == "u use Library context in Console"
+                # Task 12/RAG-36 fix-review: LIBRARY_SHORTCUTS also advertises
+                # the evidence-card `enter`/`o` keys (both `Binding(...,
+                # show=False)`, so this footer registration is their ONLY
+                # on-screen discoverability signal) -- pin the full three-hint
+                # string so a future edit can't silently drop a key.
+                assert screen_footer.shortcut_text == (
+                    "u use Library context in Console | "
+                    "enter select evidence | o open evidence"
                 )
 
                 footer_before = screen_footer
@@ -122,9 +127,9 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     raise AssertionError(
                         "Library footer registration did not survive recompose."
                     )
-                assert (
-                    footer_after.shortcut_text
-                    == "u use Library context in Console"
+                assert footer_after.shortcut_text == (
+                    "u use Library context in Console | "
+                    "enter select evidence | o open evidence"
                 )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
@@ -141,6 +146,19 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 assert list(screen.query(AppFooterStatus)) == [screen_footer]
     finally:
         await _close_production_app(app)
+
+
+def test_library_shortcuts_advertise_the_evidence_card_keys():
+    """Task 12/RAG-36 fix-review: a cheap, direct pin on `LIBRARY_SHORTCUTS`
+    itself (no pilot/app needed) -- both evidence-card `Binding`s
+    (`enter`/`o`) are registered with `show=False`, so this tuple is the
+    ONLY on-screen signal that they exist. A future edit to this tuple that
+    silently drops one of the three entries must fail here."""
+    assert LibraryScreen.LIBRARY_SHORTCUTS == (
+        ("u", "use Library context in Console"),
+        ("enter", "select evidence"),
+        ("o", "open evidence"),
+    )
 
 
 # ---------------------------------------------------------------------------

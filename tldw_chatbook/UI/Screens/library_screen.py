@@ -919,8 +919,21 @@ class LibraryScreen(BaseAppScreen):
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
     #: Footer used to render (task-264 review: per-screen AppFooterStatus
-    #: renders registered contexts, not bindings).
-    LIBRARY_SHORTCUTS = (("u", "use Library context in Console"),)
+    #: renders registered contexts, not bindings). `_register_footer_shortcuts`
+    #: only wires this set in while the Search/RAG canvas is active, so every
+    #: entry here is already scoped correctly -- no new gating needed.
+    #: Task 12/RAG-36 fix-review: the `enter`/`o` evidence-card `Binding`s
+    #: are `show=False` (Textual's own key panel doesn't need them), which
+    #: made this the ONLY on-screen advertisement of those keys -- and it
+    #: was left unedited, so the keys shipped completely undiscoverable.
+    #: That reproduces the exact defect RAG-36 exists to close (a
+    #: keyboard-only user cannot find a hidden key), so both are listed here
+    #: too.
+    LIBRARY_SHORTCUTS = (
+        ("u", "use Library context in Console"),
+        ("enter", "select evidence"),
+        ("o", "open evidence"),
+    )
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
