@@ -1582,3 +1582,59 @@ def test_preflight_duplicate_line_renders_and_suppresses_under_errors():
         ),
     )
     assert with_errors.duplicate_line == ""
+
+
+def test_unsupported_line_names_files_and_matches_gate():
+    """(task-2100) The forecast names the files (count alone forced a
+    submit-and-read round trip); when the gate blocks the whole selection
+    the line stops promising failure rows a blocked submit never records."""
+    mixed = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt"],
+                "unsupported": ["/tmp/x.json"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    assert mixed.unsupported_line == (
+        "1 unsupported file will be recorded as a failure: x.json."
+    )
+
+    blocked = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+            warnings=[],
+            errors=[],
+            total_size=50,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    assert blocked.start_enabled is False
+    assert blocked.unsupported_line == "Unsupported: x.json, y.jpg."
+
+    many = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt"],
+                "unsupported": [f"/tmp/u{i}.bin" for i in range(5)],
+            },
+            warnings=[],
+            errors=[],
+            total_size=500,
+            truncated=False,
+            total_files=6,
+        ),
+    )
+    assert many.unsupported_line.endswith("u0.bin, u1.bin, u2.bin, ....")

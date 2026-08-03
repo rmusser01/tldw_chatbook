@@ -93,12 +93,9 @@ class LibraryIngestPreflightSummary(Vertical):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
-        if state.unsupported_files:
-            count = len(state.unsupported_files)
-            file_noun = "file" if count == 1 else "files"
-            recorded_as = "a failure" if count == 1 else "failures"
+        if state.unsupported_line:
             yield Static(
-                f"{count} unsupported {file_noun} will be recorded as {recorded_as}.",
+                state.unsupported_line,
                 id="ingest-unsupported-summary",
                 classes="library-ingest-quiet-line",
                 markup=False,
@@ -309,15 +306,21 @@ class LibraryIngestQueuePanel(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
-        with Collapsible(
-            title="Recent ingests", collapsed=True, id="library-ingest-recent"
-        ):
-            for job in state.recent_jobs:
-                yield Static(
-                    f"{escape_markup(job.source_path)} — {job.state.value}",
-                    classes="library-ingest-recent-item",
-                    markup=False,
-                )
+        # (task-2100) Hidden when empty: after a clear it expanded to an
+        # unlabeled empty shell (round-3 critique; deliberately flips the
+        # earlier always-visible contract on that evidence).
+        if state.recent_jobs:
+            with Collapsible(
+                title="Recent ingests",
+                collapsed=True,
+                id="library-ingest-recent",
+            ):
+                for job in state.recent_jobs:
+                    yield Static(
+                        f"{escape_markup(job.source_path)} — {job.state.value}",
+                        classes="library-ingest-recent-item",
+                        markup=False,
+                    )
 
 _STT_RECOVERY_ACTIONS = frozenset(
     {"choose_another_gguf", "retry_faster_whisper"}

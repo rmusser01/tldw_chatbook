@@ -512,6 +512,11 @@ class LibraryIngestCanvasState:
     #: already be in your Library…", empty when none were detected (or the
     #: staged types can't be checked pre-parse).
     duplicate_line: str
+    #: (task-2100) The unsupported-files forecast, NAMED (first 3
+    #: basenames) and gate-aware: when the whole selection is blocked
+    #: the gate line carries the policy and this line only names the
+    #: files.
+    unsupported_line: str
     warning_lines: list[str]
     preflight_checking: bool
     expanded_type_groups: set[str]
@@ -1018,6 +1023,33 @@ def build_library_ingest_state(
     else:
         start_quiet_line = ""
 
+    # (task-2100) Name the unsupported files -- a count alone forces a
+    # submit-and-read-the-rows round trip to learn WHICH files. When the
+    # gate has already blocked the whole selection, the gate line carries
+    # the policy and this line only names the offenders (the old copy
+    # promised "will be recorded as a failure" beside a submit that never
+    # runs).
+    if unsupported_files and not errors:
+        unsupported_count = len(unsupported_files)
+        unsupported_names = ", ".join(
+            PurePath(str(f)).name for f in unsupported_files[:3]
+        )
+        if unsupported_count > 3:
+            unsupported_names += ", ..."
+        if nothing_importable:
+            unsupported_line = f"Unsupported: {unsupported_names}."
+        else:
+            file_noun = "file" if unsupported_count == 1 else "files"
+            recorded_as = (
+                "a failure" if unsupported_count == 1 else "failures"
+            )
+            unsupported_line = (
+                f"{unsupported_count} unsupported {file_noun} will be "
+                f"recorded as {recorded_as}: {unsupported_names}."
+            )
+    else:
+        unsupported_line = ""
+
     # Orientation is for an untouched form only: once there is a path or a
     # summary to read, it would just be noise above the real content.
     intro_lines: tuple[str, ...] = ()
@@ -1051,6 +1083,7 @@ def build_library_ingest_state(
         type_breakdown_line=type_breakdown_line,
         estimate_line=estimate_line,
         duplicate_line=duplicate_line,
+        unsupported_line=unsupported_line,
         warning_lines=warning_lines,
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),
