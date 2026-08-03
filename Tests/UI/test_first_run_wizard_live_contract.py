@@ -1028,3 +1028,20 @@ async def test_ctrl_n_ctrl_b_do_not_crash_and_move_one_step(
             await pilot.pause(0.2)
             assert container.is_running, "ctrl+b crashed the wizard"
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
+
+
+def test_setup_wizard_constructs_before_base_init_sets_app_instance():
+    """(task-2040) Step constructors read ``wizard.app_instance`` at
+    ``__init__`` time (SpeechSetupStep pulls ``app_config`` through it),
+    but the container built its steps BEFORE the base ``__init__`` that
+    assigns ``app_instance`` -- so every fresh-profile first boot crashed
+    with ``AttributeError`` inside the wizard and the whole app died."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        SetupWizardContainer,
+    )
+
+    app_instance = SimpleNamespace(app_config={})
+    wizard = SetupWizardContainer(app_instance)
+    assert wizard.app_instance is app_instance

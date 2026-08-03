@@ -2579,6 +2579,14 @@ class SetupWizardContainer(WizardContainer):
     def __init__(self, app_instance, rerun: bool = False, **kwargs):
         self.rerun = rerun
         self.key_entered = False
+        # (task-2040) MUST be set before ``_create_steps()``: step
+        # constructors read ``self.wizard.app_instance`` (SpeechSetupStep
+        # reads ``app_config`` through it at __init__ time), and the base
+        # ``WizardContainer.__init__`` that normally assigns it runs only
+        # AFTER the steps exist -- every fresh-profile first boot crashed
+        # with AttributeError before this line existed. The base class
+        # re-assigns the same value harmlessly.
+        self.app_instance = app_instance
         # TASK-1499: default to the QUICK track — it is the preselected
         # (recommended) Welcome option, so the progress row anchors at
         # "Step 1 of 4" instead of front-loading all nine steps before
