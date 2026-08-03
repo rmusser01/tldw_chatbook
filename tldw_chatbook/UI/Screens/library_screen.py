@@ -4791,20 +4791,26 @@ class LibraryScreen(BaseAppScreen):
             timer.stop()
             self._library_ingest_path_debounce_timer = None
         self._library_ingest_clear_finished_armed = False
+        self._library_ingest_expanded_details.clear()
         self._library_ingest_form = LibraryIngestFormState()
 
     def _pause_library_ingest_transient_ui(self) -> None:
         """Rail-switch hygiene WITHOUT wiping the staged form (task-2043).
 
         Stops the typing debounce (it must not fire while another canvas is
-        showing) and disarms the two-press clear; the typed path, metadata,
-        and pre-flight echo persist for the session so a multi-batch
-        workflow survives a look at another rail row.
+        showing), fences off any in-flight pre-flight worker (its late
+        result would otherwise land while a DIFFERENT canvas is showing --
+        the stored echo persists, only the worker is fenced), and disarms
+        the two-press clear; the typed path, metadata, and pre-flight echo
+        persist for the session so a multi-batch workflow survives a look
+        at another rail row.
         """
         timer = self._library_ingest_path_debounce_timer
         if timer is not None:
             timer.stop()
             self._library_ingest_path_debounce_timer = None
+        self._library_ingest_preflight_generation += 1
+        self._cancel_library_ingest_preflight()
         self._library_ingest_clear_finished_armed = False
 
     # ----- Export canvas -------------------------------------------------
@@ -5930,6 +5936,12 @@ class LibraryScreen(BaseAppScreen):
         runtime header lines -- still take the context-preserving full
         recompose, as does any unexpected canvas shape.
         """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            # (task-2043 review) A late worker result while a DIFFERENT
+            # canvas is showing must not trigger the full-recompose
+            # fallback and disrupt that canvas; the persisted echo renders
+            # on the next ingest entry.
+            return
         new_state = self._build_library_ingest_state()
         try:
             canvas = self.query_one(LibraryIngestCanvas)
@@ -13340,7 +13352,14 @@ class LibraryScreen(BaseAppScreen):
         already = 0
         for candidate in candidates:
             try:
-                candidate_path = Path(str(candidate))
+                # (task-2043 review) Same validator the submit path uses --
+                # candidates come from the pre-flight walk of a validated
+                # root, but every filesystem touch goes through
+                # path_validation regardless (defense in depth, rule
+                # 497145).
+                candidate_path = validate_path_simple(
+                    str(candidate), require_exists=True
+                )
                 if (
                     not candidate_path.is_file()
                     or candidate_path.stat().st_size > 8 * 1024 * 1024
@@ -13924,6 +13943,7 @@ class LibraryScreen(BaseAppScreen):
             # Same id-based no-op safety as retry above -- ``dismiss`` only
             # ever acts on a currently-FAILED, not-yet-hidden job_id.
             dismiss(job_id)
+        self._library_ingest_expanded_details.discard(job_id)
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-ingest-details")
