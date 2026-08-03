@@ -14,7 +14,6 @@ from .library_notes_canvas import LibraryNotesCanvas
 from .library_prompts_canvas import LibraryPromptsListCanvas
 from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
 from .library_search_rag_panel import (
-    LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
     library_rag_coverage_note_children,
     library_rag_history_children,
@@ -59,7 +58,6 @@ __all__ = [
     "LibraryNotesCanvas",
     "LibraryPromptsListCanvas",
     "LibraryRail",
-    "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
     "LibrarySkillsListCanvas",
     "SKILL_MODEL_HINT_COPY",

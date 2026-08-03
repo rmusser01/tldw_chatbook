@@ -229,7 +229,6 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryPromptsListCanvas,
     LibraryRail,
-    LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
     library_dim_label_text,
@@ -16532,8 +16531,6 @@ class LibraryScreen(BaseAppScreen):
         for child in library_rag_scope_recovery_children(panel_state):
             await scope_container.mount(child)
 
-        self._refresh_library_rag_inspector(panel_state)
-
         if not include_results_and_history:
             return
 
@@ -16650,17 +16647,6 @@ class LibraryScreen(BaseAppScreen):
                 await child.remove()
             for row in library_rag_history_children(panel_state):
                 await contents.mount(row)
-
-    def _refresh_library_rag_inspector(
-        self,
-        panel_state: LibraryRagPanelState,
-    ) -> None:
-        inspector_widgets = list(self.query("#library-rag-inspector"))
-        if not inspector_widgets:
-            return
-        inspector = inspector_widgets[0]
-        if isinstance(inspector, LibrarySearchRagInspectorPanel):
-            inspector.refresh_from_state(panel_state)
 
     async def _refresh_library_rag_results_widgets(
         self,
