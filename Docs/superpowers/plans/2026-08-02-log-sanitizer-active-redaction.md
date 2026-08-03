@@ -31,20 +31,25 @@
 - `Tests/ProductionApp/test_llm_destination_actions.py`: direct production helper and mounted-production-app model display/payload behavior.
 - `Tests/Subscriptions/test_watchlist_snapshot_pruning.py`: real `URLMonitor._store_snapshot()` diagnostic omission proof.
 - `Tests/Packaging/test_installed_distribution.py`: extend the existing isolated-wheel probe; do not add another wheel builder.
-- `Docs/security/production-diagnostic-inventory.json`: update only the reviewed `monitoring_engine.py` digest.
+- `Docs/security/production-diagnostic-inventory.json`: first reconcile only
+  the reviewed latest-dev owner/summary drift in a separate baseline commit;
+  later update only the reviewed `monitoring_engine.py` digest relative to that
+  commit.
 - `backlog/tasks/task-856 - Decide-the-fate-of-Utils-log_sanitizer.py-wire-it-in-fixed-or-delete-it.md`: implementation evidence, checked acceptance criteria, ADR link, and closeout notes.
 
 No reduced, fake, simplified, or test-only application may be created. Use direct functions where that is the sharper boundary and the real `TldwCli` tests already present in `Tests/ProductionApp` where mounted behavior matters.
 
 ---
 
-### Task 1: Rebase, record baselines, and implement structured-field classification
+### Task 1: Rebase, reconcile inventory, and implement structured-field classification
 
 **Files:**
 
 - Create: `Tests/Utils/test_log_sanitizer.py`
 - Modify: `Tests/Utils/test_security_enhancements.py`
 - Modify: `tldw_chatbook/Utils/log_sanitizer.py`
+- Modify: `Docs/security/production-diagnostic-inventory.json` (reviewed
+  latest-dev baseline reconciliation only)
 - Reference: `tldw_chatbook/Utils/sensitive_config_keys.py`
 - Reference: `backlog/decisions/029-local-private-data-boundary.md`
 
@@ -67,7 +72,8 @@ git diff --stat origin/dev...HEAD -- \
   Tests/Utils/test_sensitive_config_keys.py \
   Tests/ProductionApp/test_llm_destination_actions.py \
   Tests/Subscriptions/test_watchlist_snapshot_pruning.py \
-  Tests/Packaging/test_installed_distribution.py
+  Tests/Packaging/test_installed_distribution.py \
+  Docs/security/production-diagnostic-inventory.json
 ```
 
 Expected: the worktree is clean except for committed task/spec/plan documents. If latest `dev` changed any listed file, stop and reconcile the spec and plan before writing tests.
@@ -86,7 +92,74 @@ Run:
 
 Expected: 26 tests pass. If the latest-dev count changes, record the new green count; do not proceed through a failure.
 
-- [ ] **Step 3: Capture the diagnostic-inventory no-regression fingerprint**
+- [ ] **Step 3: Reconcile the reviewed latest-dev inventory baseline before production edits**
+
+Run the checker before editing the manifest:
+
+```bash
+../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
+```
+
+At latest-dev commit `c4599b8b1`, expected: exit 1 because the Prompt Workbench
+and Change Review merges changed production diagnostics without committing the
+generated inventory. Compare committed and generated inventories in memory;
+do not run `--write`. The reviewed drift is exactly:
+
+- summary `442/1089/6769/5` becomes `444/1102/6774/5` for
+  owner files/TASK-492 calls/TASK-494 calls/sink files;
+- add `Prompt_Management/prompt_improvement_service.py` with one TASK-494 call;
+- add `Workspaces/change_revert.py` with two TASK-494 calls;
+- update the owner entries for `Chat_Functions.py`,
+  `console_provider_gateway.py`, `Prompts_DB.py`, `LLM_API_Calls.py`,
+  `LLM_API_Calls_Local.py`, `local_llm_provider_catalog_service.py`,
+  `Prompts_Interop.py`, `chat_screen.py`, and `library_screen.py`; and
+- leave persistent-sink topology and `monitoring_engine.py` unchanged.
+
+At that pinned commit the exact generated owner values are:
+
+| Path suffix | Calls | Digest |
+| --- | ---: | --- |
+| `Chat/Chat_Functions.py` | 107 | `f017eaf38022f2d4017f` |
+| `Chat/console_provider_gateway.py` | 1 | `8c26198aaec0ad29e749` |
+| `DB/Prompts_DB.py` | 120 | `15e26a5f1df0fd8482ef` |
+| `LLM_Calls/LLM_API_Calls.py` | 171 | `e5991075a75d934a7e42` |
+| `LLM_Calls/LLM_API_Calls_Local.py` | 41 | `bc790fe8d2f3544203bf` |
+| `LLM_Provider_Catalog/local_llm_provider_catalog_service.py` | 5 | `211e68ecc8c6e816b301` |
+| `Prompt_Management/Prompts_Interop.py` | 93 | `d7ca19fa44acdf1e5289` |
+| `Prompt_Management/prompt_improvement_service.py` | 1 | `f7a441595550015f240a` |
+| `UI/Screens/chat_screen.py` | 148 | `569dd419f351b767b1d4` |
+| `UI/Screens/library_screen.py` | 77 | `35bdc0279c8ae277f42d` |
+| `Workspaces/change_revert.py` | 2 | `2c290c7704b2a652f70b` |
+
+Review the semantic diagnostic-call delta, not only digests. The accepted delta
+must still be: metadata-safe LLM helpers instead of payload/error previews;
+prompt-improvement request/provider/model/count metadata without prompt text;
+two constant change-revert warnings; the Prompts DB v2-to-v3 migration pair;
+and otherwise only line movement/formatting. If latest `dev` differs, stop and
+reconcile the new delta before patching anything.
+
+Use `apply_patch` to change exactly the reviewed summary and owner entries.
+Then run:
+
+```bash
+../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
+../../.venv/bin/python -m pytest \
+  Tests/Architecture/test_persistent_diagnostic_inventory.py \
+  -q
+```
+
+Expected: checker exit 0 with 444 owners, 1,102 TASK-492 calls, 6,774
+TASK-494 calls, and five sink files; all three architecture tests pass.
+
+Commit this prerequisite separately before any sanitizer production edit and
+record the commit ID as the TASK-856 inventory reconciliation boundary:
+
+```bash
+git add Docs/security/production-diagnostic-inventory.json
+git commit -m "chore(security): reconcile diagnostic inventory baseline"
+```
+
+- [ ] **Step 4: Capture the reconciled diagnostic-inventory no-regression fingerprint**
 
 Run this read-only command before production edits:
 
@@ -100,17 +173,17 @@ Expected monitoring entry on the currently approved base:
 {"call_count": 16, "diagnostic_digest": "5bd6f2dfc3a7c56e9aea", "owner": "TASK-494", "path": "tldw_chatbook/Subscriptions/monitoring_engine.py", "reason": "remaining Chatbook production diagnostic owner"}
 ```
 
-Expected non-monitoring SHA-256 at `f5ca03d42`:
+Expected non-monitoring SHA-256 after the reviewed `c4599b8b1` reconciliation:
 
 ```text
-15f2e147c842ca5958ae14f53eeec3081966ba0ec8163f415088c02ad225d455
+854ea4cb694d8849b3f38ae473ca42df5bacbdc61ab5478eebea2b88294f2b6f
 ```
 
 Record the actual output in the plan execution notes. If latest `dev` changes
 either value, reconcile it before proceeding rather than forcing the old
 baseline.
 
-- [ ] **Step 4: Move the existing sanitizer tests to their dedicated owner**
+- [ ] **Step 5: Move the existing sanitizer tests to their dedicated owner**
 
 Create `Tests/Utils/test_log_sanitizer.py` with the existing `TestLogSanitizer` imports and test methods from `Tests/Utils/test_security_enhancements.py`. Remove only that class and its sanitizer imports from `test_security_enhancements.py`; keep every path-validation test unchanged.
 
@@ -125,7 +198,7 @@ Run:
 
 Expected: all relocated baseline tests pass before new assertions are added.
 
-- [ ] **Step 5: Write failing structured-redaction tests**
+- [ ] **Step 6: Write failing structured-redaction tests**
 
 Add imports for `tomllib`, `CONFIG_TOML_CONTENT`, `DEFAULT_APP_TTS_CONFIG`, and `is_sensitive_config_key`. Add a local recursive leaf-key iterator rather than importing a helper from another test module.
 
@@ -180,7 +253,7 @@ Also add direct tests proving:
 - `api_key_env_var`, `max_tokens`, and an ordinary key remain unchanged; and
 - a sensitive key whose value is a dictionary or list replaces the entire container with the marker before recursion.
 
-- [ ] **Step 6: Run the structured tests and verify RED**
+- [ ] **Step 7: Run the structured tests and verify RED**
 
 Run:
 
@@ -190,7 +263,7 @@ Run:
 
 Expected: failures show missing real config/log fields and the current non-string-key `.lower()` exception. Ensure each new test reaches the intended assertion rather than failing during setup.
 
-- [ ] **Step 7: Implement the exact structured classifier**
+- [ ] **Step 8: Implement the exact structured classifier**
 
 In `tldw_chatbook/Utils/log_sanitizer.py`:
 
@@ -220,7 +293,7 @@ def _is_sensitive_log_key(key: object) -> bool:
 
 Delete the drifting `SENSITIVE_FIELDS` set. Change `sanitize_dict()` to call `_is_sensitive_log_key(key)` and use `REDACTION_MARKER`. Preserve the existing type fallback, `deep` branching order, direct-string sanitization, and list recursion exactly. Do not broaden the public functions to tuples, arbitrary mappings, or new container types.
 
-- [ ] **Step 8: Run structured and canonical-predicate tests GREEN**
+- [ ] **Step 9: Run structured and canonical-predicate tests GREEN**
 
 Run:
 
@@ -234,7 +307,7 @@ Run:
 
 Expected: all structured and relocated baseline tests pass; string tests that have not yet been added are not part of this checkpoint.
 
-- [ ] **Step 9: Commit the structured classifier**
+- [ ] **Step 10: Commit the structured classifier**
 
 ```bash
 git add \
@@ -639,11 +712,13 @@ Do not import `_log_origin()` from `Utils.egress`; the origin is unnecessary for
 
 Run the exact command from Step 3.
 
-Expected: 3 tests pass using production helpers and the real snapshot producer.
+Expected: 4 tests pass using production helpers and the real snapshot producer
+(three on Windows because the non-portable filename case is explicitly
+skipped).
 
-- [ ] **Step 7: Prove the branch changes only the monitoring inventory entry**
+- [ ] **Step 7: Prove TASK-856 changes only the monitoring inventory entry after reconciliation**
 
-Re-run the read-only fingerprint command from Task 1, Step 3.
+Re-run the read-only fingerprint command from Task 1, Step 4.
 
 Expected:
 
@@ -651,15 +726,21 @@ Expected:
 - `owner`, `reason`, and `call_count: 16` remain unchanged; and
 - only `diagnostic_digest` differs for `monitoring_engine.py`.
 
-Patch only that digest in `Docs/security/production-diagnostic-inventory.json` with `apply_patch`. Do not run the checker's blanket `--write` mode.
+Patch only that digest in `Docs/security/production-diagnostic-inventory.json`
+with `apply_patch`. Do not run the checker's blanket `--write` mode. Use the
+recorded reconciliation commit—not `origin/dev`—as the comparison boundary for
+TASK-856's inventory delta.
 
 Inspect:
 
 ```bash
-git diff -- Docs/security/production-diagnostic-inventory.json
+git diff <reconciliation-commit>...HEAD -- \
+  Docs/security/production-diagnostic-inventory.json
 ```
 
-Expected: one digest line changes.
+Expected: one digest line changes. The whole branch diff against `origin/dev`
+also contains the separately reviewed upstream reconciliation and must not be
+misreported as a TASK-856 sanitizer change.
 
 - [ ] **Step 8: Run the complete diagnostic-inventory gate GREEN**
 

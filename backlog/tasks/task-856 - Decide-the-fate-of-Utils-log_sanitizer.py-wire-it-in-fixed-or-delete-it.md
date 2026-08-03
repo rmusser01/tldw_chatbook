@@ -41,6 +41,13 @@ that context; attempting to identify every opaque token as a standalone
 credential would corrupt ordinary identifiers. URL-bearing diagnostics must
 omit private URL components instead of treating regex redaction as permission
 to log them.
+
+The latest `dev` baseline also contains reviewed diagnostic changes from the
+Prompt Workbench and Change Review merges whose generated inventory was not
+committed. TASK-856 must reconcile those exact pre-existing owner entries in a
+separate baseline commit before changing sanitizer production code. Its own
+inventory proof is then measured from that reconciled commit, so upstream drift
+cannot be mistaken for or hidden inside the subscription diagnostic change.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -51,16 +58,17 @@ to log them.
 - [ ] #4 Ollama and Transformers model names use bounded single-line input validation, preserve legitimate `claude-*` identifiers, and do not rely on credential redaction for display safety
 - [ ] #5 Subscription snapshot-pruning diagnostics contain useful non-private metadata but omit the monitored URL and all URL credentials, paths, queries, and fragments
 - [ ] #6 Recursive, non-mutating dictionary/list behavior, non-string mapping keys, `deep=False`, formatting fallback, and the installed-wheel import path are covered without introducing a reduced or test-only application
+- [ ] #7 Pre-existing latest-dev diagnostic-inventory drift is reviewed and reconciled in a separate baseline commit, after which TASK-856 changes only `monitoring_engine.py`'s diagnostic digest while preserving every other generated inventory entry and the persistent-sink topology
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Rebase onto current origin/dev, rerun the focused baseline, and capture the non-monitoring diagnostic-inventory fingerprint.
-2. Move sanitizer tests to a dedicated module and use TDD to compose structured redaction from the canonical sensitive-config-key predicate plus exact log/protocol fields.
+1. Rebase onto current origin/dev, rerun the focused baseline, review the exact pre-existing diagnostic-inventory drift, and reconcile only those entries in a separate baseline commit without using blanket write mode.
+2. Capture the reconciled non-monitoring fingerprint, then move sanitizer tests to a dedicated module and use TDD to compose structured redaction from the canonical sensitive-config-key predicate plus exact log/protocol fields.
 3. Use TDD to replace regex-first assignment handling with the monotonic classify-first scanner and bounded standalone rules; extend the existing installed-wheel probe.
 4. Use direct production functions and the full production app to separate Ollama/Transformers display validation and omit the subscription URL at its diagnostic producer.
-5. Prove only monitoring_engine.py’s reviewed diagnostic digest changes relative to the green latest-dev inventory; do not use a blanket inventory rewrite.
+5. Prove only monitoring_engine.py’s reviewed diagnostic digest changes relative to the recorded reconciliation commit; do not use a blanket inventory rewrite.
 6. Run focused, production-app, subscription, installed-wheel, diagnostic-inventory, lint, format, syntax, hygiene, and independent-review gates; complete task notes and status only after verified closeout.
 
 ADR required: yes

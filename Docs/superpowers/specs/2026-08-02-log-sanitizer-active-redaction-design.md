@@ -398,19 +398,32 @@ The subscription diagnostic change necessarily changes the reviewed
 `monitoring_engine.py` digest in
 `Docs/security/production-diagnostic-inventory.json`.
 
-The latest-dev baseline was rechecked after its reviewed inventory refresh at
-`f5ca03d42`. The checker is green with 442 owner files, 1,089 TASK-492
-calls, 6,769 TASK-494 calls, and five sink files; all three inventory
-architecture tests pass. The checked and generated `monitoring_engine.py`
-entries are identical before this task: TASK-494, 16 calls, digest
-`5bd6f2dfc3a7c56e9aea`.
+The inventory was green at `f5ca03d42`, but latest `dev` was rechecked again at
+`c4599b8b1` after the Prompt Workbench and Change Review merges. Those merges
+did not update the checked inventory: generated state has 444 owner files,
+1,102 TASK-492 calls, 6,774 TASK-494 calls, and five sink files, while the
+committed manifest still records 442/1,089/6,769/5. The drift consists of two
+new owner files and nine changed existing owner entries; sink topology is
+unchanged. Semantic call review confirms that the LLM changes replace unsafe
+payload/error diagnostics with the accepted metadata-safe helpers, prompt
+improvement emits request/provider/model/count metadata without prompt text,
+change-revert adds two constant warnings, the prompts DB adds its v2-to-v3
+migration diagnostics, and the remaining digest changes are caused by moved or
+reformatted calls.
 
-Implementation captures generated base and head inventories in memory and
-proves that every entry except `monitoring_engine.py` is identical between
-them. The monitoring entry must retain its owner, reason, and 16-call count;
-only its digest may change. The checked JSON is patched only for that one digest
-rather than accepting unrelated changes through a blanket `--write`.
-Closeout requires the checker and all three architecture tests to remain green.
+Implementation first patches only those reviewed pre-existing owner and
+summary entries and commits that reconciliation separately, without running
+the checker's blanket `--write` mode. The expected reconciled generated state
+has non-monitoring SHA-256
+`854ea4cb694d8849b3f38ae473ca42df5bacbdc61ab5478eebea2b88294f2b6f`.
+The checked and generated `monitoring_engine.py` entry remains TASK-494, 16
+calls, digest `5bd6f2dfc3a7c56e9aea` at that boundary.
+
+TASK-856 then captures the reconciliation commit and generated base inventory,
+and proves that every entry except `monitoring_engine.py` is identical at its
+head. The monitoring entry must retain its owner, reason, and 16-call count;
+only its digest may change. Closeout requires the checker and all three
+architecture tests to be green.
 
 ## Architecture decision record
 
