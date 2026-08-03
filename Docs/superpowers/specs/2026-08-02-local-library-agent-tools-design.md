@@ -691,7 +691,7 @@ and create unnecessary privacy and context-window exposure.
 
 ADR required: **yes**
 
-ADR path: `backlog/decisions/NNN-local-library-agent-tool-boundary.md`
+ADR path: `backlog/decisions/030-local-library-agent-tool-boundary.md`
 
 Reason: the feature introduces a durable cross-module read contract shared by
 Console and MCP, a runtime selection boundary between direct lexical tools and
