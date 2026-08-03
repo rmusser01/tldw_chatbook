@@ -240,6 +240,7 @@ from ...Widgets.Library import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     next_skill_context,
+    scope_toggle_label,
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
@@ -2200,8 +2201,14 @@ class LibraryScreen(BaseAppScreen):
                 # background ingest completing while the user is mid-search
                 # must not eject them from the panel either -- the rail sync
                 # below covers the rail, and the extra call further down
-                # refreshes the panel's own scope-toggle/run-gate widgets in
-                # place with the fresh source counts.
+                # syncs the panel's own scope-toggle counts and Run-gate
+                # label/enabled state (NOT results/history/the query-status
+                # callout -- see
+                # `_sync_library_rag_scope_toggle_and_run_gate_widgets`'s
+                # docstring for why this path deliberately stays a plain,
+                # non-`await`ed attribute sync rather than the shared
+                # `_refresh_search_rag_panel_state_widgets` coroutine every
+                # other caller uses).
                 try:
                     rail = self.query_one("#library-rail", LibraryRail)
                 except (NoMatches, QueryError):
@@ -2215,13 +2222,7 @@ class LibraryScreen(BaseAppScreen):
                     query=self._library_rag_query,
                 )
                 if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-                    self.run_worker(
-                        self._refresh_search_rag_panel_state_widgets(
-                            include_results_and_history=False
-                        ),
-                        exclusive=True,
-                        group="library_rag_panel_snapshot_sync",
-                    )
+                    self._sync_library_rag_scope_toggle_and_run_gate_widgets()
                 return
             self.refresh(recompose=True)
 
@@ -16403,6 +16404,73 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
+
+    def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
+        """Refresh the scope-toggle counts and the Run gate in place, with
+        NO `await` (RAG-27 fix-review).
+
+        Called synchronously from `_apply_local_source_snapshot`'s
+        in-place branch, which fires off the UI thread on every ingest
+        done-count growth -- a moment with no coordination against the
+        panel's four other refresh callers (`update_library_rag_query`,
+        `_start_library_rag_query`, `select_library_rag_result`,
+        `_apply_library_rag_search_outcome`), all of which `await
+        self._refresh_search_rag_panel_state_widgets(...)` directly with
+        no shared lock or exclusive worker group. That coroutine's real
+        yield points (`await widget.remove()` / `await ...mount(...)` for
+        the query-status callout and, when `include_results_and_history`
+        is left True, results/history) make two concurrent invocations
+        unsafe: an ingest snapshot landing mid-keystroke could interleave
+        two remove/mount sequences on the same containers (double-remove
+        or duplicate-id). Restricting the snapshot path to plain
+        attribute writes -- `Button.label`/`.disabled`/`.tooltip`,
+        `Static.update()` -- has no yield points at all, so it can never
+        interleave with anything and needs no coordination.
+
+        Trade-off: the query region's quiet-line/blocked-callout/recovery
+        block (`library_rag_query_status_children`) and the scope
+        container's `has-recovery` class are NOT refreshed here (both
+        require remove/mount or would visually desync from an unrefreshed
+        callout) -- an ingest-driven scope change that flips the run gate's
+        *reason* text (as opposed to just enabled/disabled) stays stale
+        until the next full refresh. Accepted narrowly for this
+        snapshot-driven path only; every other caller above still runs the
+        full `_refresh_search_rag_panel_state_widgets` and is unaffected.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
+        ):
+            return
+        panel_state = self._library_rag_panel_state()
+
+        try:
+            run_button = self.query_one("#library-rag-run-query", Button)
+        except (NoMatches, QueryError):
+            return
+        run_action = panel_state.query_state.run_action
+        run_button.label = run_action.label
+        run_button.disabled = not run_action.enabled
+        run_button.tooltip = run_action.tooltip
+
+        options_by_source_type = {
+            option.source_type: option for option in panel_state.scope.options
+        }
+        for toggle in self.query(".library-rag-scope-toggle"):
+            if not isinstance(toggle, Button) or toggle.id is None:
+                continue
+            source_type = toggle.id.removeprefix("library-rag-scope-toggle-")
+            option = options_by_source_type.get(source_type)
+            if option is None:
+                continue
+            toggle.label = scope_toggle_label(option)
+            toggle.disabled = not option.available
+
+        try:
+            self.query_one("#library-rag-scope-summary", Static).update(
+                self._library_rag_scope_summary(panel_state)
+            )
+        except (NoMatches, QueryError):
+            pass
 
     async def _refresh_search_rag_panel_state_widgets(
         self,

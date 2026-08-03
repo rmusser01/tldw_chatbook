@@ -121,8 +121,17 @@ def _scope_summary(state: LibraryRagPanelState) -> str:
     return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
-def _scope_toggle_label(option: LibraryRagSourceOption) -> str:
-    """Return a toggle Button's visible label for one scope source option."""
+def scope_toggle_label(option: LibraryRagSourceOption) -> str:
+    """Return a toggle Button's visible label for one scope source option.
+
+    Public (RAG-27 fix-review): also imported by the screen's snapshot-
+    driven in-place refresh (`LibraryScreen._sync_library_rag_scope_toggle_and_run_gate_widgets`)
+    so a background ingest's fresh counts can update each toggle's ``(N)``
+    suffix without going through `library_rag_scope_toggle_children`'s
+    full Button rebuild (a mount/remove sequence unsafe to run
+    concurrently with the other refresh callers -- see that method's
+    docstring).
+    """
     marker = "✓" if option.selected else "○"
     return f"{marker} {option.label} ({option.count})"
 
@@ -144,7 +153,7 @@ def library_rag_scope_toggle_children(state: LibraryRagPanelState) -> list[Widge
     """
     return [
         Button(
-            _scope_toggle_label(option),
+            scope_toggle_label(option),
             id=f"library-rag-scope-toggle-{option.source_type}",
             classes="library-rag-scope-toggle",
             disabled=not option.available,

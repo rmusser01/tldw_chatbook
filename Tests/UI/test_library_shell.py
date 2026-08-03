@@ -12174,14 +12174,28 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
 async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_path):
     """(RAG-27) A background ingest done-count growth while the user is on
     the Search/RAG canvas -- mid-search, with results already on screen --
-    must sync the rail and the panel's scope-toggle/run-gate widgets IN
-    PLACE, mirroring the Ingest canvas and Prompts-editor guards
+    must sync the rail and the panel's scope-toggle counts/Run-gate state
+    IN PLACE, mirroring the Ingest canvas and Prompts-editor guards
     (``_apply_local_source_snapshot``'s narrow-path branch, PR #1261). The
     fall-through whole-screen ``refresh(recompose=True)`` this guard
     otherwise takes would remount ``LibrarySearchRagPanel`` (and the rail)
     from scratch -- destroying the just-landed Evidence results and any
     unsubmitted state -- exactly the ejection UAT (critique RAG-27)
     observed live.
+
+    Also covers the fix-review finding that the scope-toggle ``(N)`` counts
+    must actually go live (not just "no recompose"): a second media row is
+    added to the real DB between the initial load and the growth event, and
+    the Media toggle's label is asserted to change from ``(1)`` to ``(2)``
+    -- proving ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` (the
+    plain, non-``await``ed sync that replaced the earlier
+    ``_refresh_search_rag_panel_state_widgets`` worker call -- see that
+    coroutine's docstring for the mount/remove interleaving race the
+    earlier version risked against ``update_library_rag_query`` /
+    ``_start_library_rag_query`` / ``select_library_rag_result`` /
+    ``_apply_library_rag_search_outcome``, all of which await it directly
+    with no shared coordination) actually reads fresh counts, not stale
+    ones.
 
     Mirrors ``test_library_search_typed_text_survives_registry_recompose``
     above: a real ``LibraryIngestQueueMixin``-backed harness, with the
@@ -12231,11 +12245,33 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         results_before = list(results_container.children)
         assert results_before, "the static service result never mounted"
 
+        media_toggle = screen.query_one("#library-rag-scope-toggle-media", Button)
+        media_label_before = str(media_toggle.label)
+        assert media_label_before == "✓ Media (1)", (
+            f"unexpected pre-event toggle label: {media_label_before!r}"
+        )
+
+        # A second real media row -- the next snapshot fetch (triggered by
+        # the growth event below) must pick this up and the toggle label
+        # must reflect it, not just "no recompose happened".
+        db.add_media_with_keywords(
+            title="Storms",
+            content="Storm patterns for the coastal survey.",
+            media_type="article",
+        )
+
         # Spy (not replace) so the real in-place sync still runs -- this
-        # both proves the call happened AND, via the identity checks below,
-        # that its effects (or lack thereof, for results/history) match
-        # what the guard's comment promises.
+        # both proves the call happened AND, via the identity/label checks
+        # below, that its effects match what the guard's comment promises.
         rail.sync_state = Mock(wraps=rail.sync_state)
+        screen._sync_library_rag_scope_toggle_and_run_gate_widgets = Mock(
+            wraps=screen._sync_library_rag_scope_toggle_and_run_gate_widgets
+        )
+        # The shared coroutine every OTHER caller awaits directly (fix-
+        # review finding 2) must NOT be touched by this snapshot-driven
+        # path. Installed fresh here (after the initial query-submit's own
+        # legitimate call already happened), so any call recorded below can
+        # only have come from the ingest-growth event that follows.
         screen._refresh_search_rag_panel_state_widgets = Mock(
             wraps=screen._refresh_search_rag_panel_state_widgets
         )
@@ -12271,13 +12307,13 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         harness.library_ingest_jobs = _DoneGrowthRegistry()
         screen._handle_library_ingest_registry_changed()
 
-        # The done-count growth chains two async workers
-        # (`_refresh_local_source_snapshot` -> `_apply_local_source_snapshot`
-        # -> the new `_refresh_search_rag_panel_state_widgets` worker) --
-        # poll rather than assume a single `pilot.pause()` drains both.
+        # The done-count growth chains an async worker
+        # (`_refresh_local_source_snapshot`) into the new synchronous
+        # `_sync_library_rag_scope_toggle_and_run_gate_widgets` call -- poll
+        # rather than assume a single `pilot.pause()` drains the worker.
         for _ in range(150):
             await pilot.pause(0.02)
-            if screen._refresh_search_rag_panel_state_widgets.called:
+            if screen._sync_library_rag_scope_toggle_and_run_gate_widgets.called:
                 break
 
         # The canvas (and the rail) must be the SAME mounted widget
@@ -12292,22 +12328,39 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
             "done-count growth"
         )
 
-        # Evidence rows must be the SAME Static instances -- proving
-        # `include_results_and_history=False` was actually honored, not
-        # just that no recompose happened.
+        # Evidence rows must be the SAME Static instances -- proving the
+        # snapshot-driven sync never touches results/history.
         results_after = list(screen.query_one("#library-rag-results").children)
         assert len(results_after) == len(results_before) and all(
             before is after
             for before, after in zip(results_before, results_after)
         ), (
-            "Evidence result widgets were rebuilt -- "
-            "include_results_and_history must be False for an "
-            "ingest-driven panel refresh"
+            "Evidence result widgets were rebuilt -- the snapshot-driven "
+            "sync must never touch results/history"
         )
 
         assert rail.sync_state.called, "the rail was not synced in place"
-        screen._refresh_search_rag_panel_state_widgets.assert_called_with(
-            include_results_and_history=False
+        assert screen._sync_library_rag_scope_toggle_and_run_gate_widgets.called, (
+            "the panel's scope-toggle/run-gate sync never ran"
+        )
+
+        # The headline fix-review finding: the toggle count must actually
+        # be fresh, not just "the canvas survived".
+        media_label_after = str(
+            screen.query_one("#library-rag-scope-toggle-media", Button).label
+        )
+        assert media_label_after == "✓ Media (2)", (
+            f"scope-toggle count went stale: {media_label_before!r} -> "
+            f"{media_label_after!r} (expected the Media count to grow "
+            "from 1 to 2)"
+        )
+
+        # Race-avoidance finding: the shared coroutine every other caller
+        # awaits directly must not have been invoked by this path at all.
+        assert screen._refresh_search_rag_panel_state_widgets.call_count == 0, (
+            "the snapshot-driven path called the shared "
+            "_refresh_search_rag_panel_state_widgets coroutine after all -- "
+            "this is exactly the interleaving hazard the fix-review flagged"
         )
 
 

@@ -24,6 +24,7 @@ from .library_search_rag_panel import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     library_rag_scope_toggle_children,
+    scope_toggle_label,
 )
 from .library_skills_canvas import (
     LibrarySkillsListCanvas,
@@ -82,4 +83,5 @@ __all__ = [
     "library_rag_scope_recovery_children",
     "library_rag_scope_shows_recovery",
     "library_rag_scope_toggle_children",
+    "scope_toggle_label",
 ]
