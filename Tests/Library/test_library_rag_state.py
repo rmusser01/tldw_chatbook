@@ -8,6 +8,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+    LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
@@ -216,6 +217,128 @@ def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
     assert "<script" not in row.snippet
     assert row.citation_labels == ("&lt;i&gt;Citation&lt;/i&gt;",)
     assert row.citations[0].url == ""
+
+
+def test_result_row_display_snippet_strips_markdown_structure() -> None:
+    """(RAG-30/31) Evidence rows carry raw Markdown from notes/media -- the
+    on-screen `display_snippet` reads as plain prose, never literal
+    `##`/`**`/`-` notation. The stored `snippet` is untouched (below)."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Project Doc",
+            "snippet": "## Project Overview\n**Status:** Planning\n- item",
+        }
+    )
+
+    assert row.display_snippet == "Project Overview Status: Planning item"
+    # The full, structured snippet is preserved for Console handoff.
+    assert row.snippet == "## Project Overview\n**Status:** Planning\n- item"
+
+
+def test_result_row_display_snippet_strips_links_and_code_syntax() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Doc",
+            "snippet": (
+                "See [the guide](https://example.test/guide) and run "
+                "`make test` for details."
+            ),
+        }
+    )
+
+    assert row.display_snippet == "See the guide and run make test for details."
+
+
+def test_result_row_display_snippet_clamps_long_text_at_word_boundary() -> None:
+    words = [f"word{i}" for i in range(120)]
+    long_text = " ".join(words)  # well over 320 plain-prose chars, no Markdown
+    row = LibraryRagResultRow.from_result({"title": "Long", "snippet": long_text})
+
+    # Stored snippet keeps the full text -- only the display projection clamps.
+    assert row.snippet == long_text
+    assert len(row.snippet) > LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS
+
+    display = row.display_snippet
+    assert len(display) <= LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS
+    assert display.endswith("…")
+    body = display[:-1].rstrip()
+    assert body and not body.endswith(" ")
+    # Clamp lands on a word boundary: every token in the clamped body is a
+    # whole word from the source, never a mid-word cut.
+    assert set(body.split(" ")) <= set(words)
+
+
+def test_result_row_display_snippet_passes_through_short_snippet_unclamped() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Short",
+            "snippet": "Root cause was an expired credential.",
+        }
+    )
+
+    assert row.display_snippet == row.snippet
+    assert "…" not in row.display_snippet
+
+
+def test_sanitize_display_text_unescapes_before_single_html_escape() -> None:
+    """(RAG-30/31) Text arriving already HTML-escaped (e.g. an upstream
+    source that ran html.escape on "R&D") must not be escaped a second time
+    into "R&amp;amp;D" -- unescape first so the single escape pass is a
+    fixed point."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "R&amp;D Report",
+            "snippet": "Budget covers R&amp;D spending this quarter.",
+        }
+    )
+
+    assert row.title == "R&amp;D Report"
+    assert row.title.count("&amp;") == 1
+    assert "&amp;amp;" not in row.title
+
+    assert row.snippet.count("&amp;") == 1
+    assert "&amp;amp;" not in row.snippet
+    assert row.display_snippet.count("&amp;") == 1
+    assert "&amp;amp;" not in row.display_snippet
+
+
+def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_trip() -> (
+    None
+):
+    """Security invariant: the html.unescape pre-step must not open a
+    bypass. A literal <script> block stays fully removed, live Rich markup
+    ([bold]/[red]) stays neutralized behind a backslash, and a payload that
+    ARRIVES already HTML-entity-encoded (&lt;script&gt;...) round-trips
+    through unescape+escape to a single, inert escape -- it never decodes
+    back to a literal '<'/'>' and never double-escapes to '&amp;lt;'."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "[bold]spoof[/] &lt;script&gt;alert(1)&lt;/script&gt;",
+            "snippet": (
+                "<script>alert(1)</script> [red]inject[/] "
+                "&lt;script&gt;alert(2)&lt;/script&gt;"
+            ),
+        }
+    )
+
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "<script" not in text.lower()
+        assert "&amp;lt;" not in text
+        assert "&amp;amp;" not in text
+
+    # Rich markup is escaped (backslash breaks the live "[tag]...[/]" run)
+    # rather than merely present-but-inert-looking.
+    assert "[bold]spoof[/]" not in row.title
+    assert r"\[bold]spoof\[/]" in row.title
+    assert "[red]inject[/]" not in row.snippet
+    assert r"\[red]inject\[/]" in row.snippet
+    assert "[red]inject[/]" not in row.display_snippet
+
+    # The already-encoded payload is a fixed point of unescape+escape: it
+    # stays literally readable as escaped markup, never collapses back to a
+    # raw '<script>' and never grows an extra layer of escaping.
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in row.title
+    assert "&lt;script&gt;alert(2)&lt;/script&gt;" in row.snippet
 
 
 def test_result_row_provenance_is_immutable_snapshot() -> None:

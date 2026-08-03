@@ -52,6 +52,11 @@ LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
+# The on-screen projection of a result row's snippet (`display_snippet`) is
+# far shorter than the stored 4,000-char handoff/evidence payload above --
+# live UAT found a low-relevance result rendering 25+ unclamped lines and
+# burying later results (RAG-30/31). `snippet` itself is never clamped.
+LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS = 320
 LIBRARY_RAG_TOP_K_MAX = 50
 LIBRARY_RAG_PROVENANCE_KEYS = frozenset(
     {
@@ -177,7 +182,74 @@ def _sanitize_display_text(
     text = _collapse_text(scrubbed, preserve_newlines=preserve_newlines)
     if not text:
         return fallback
-    return escape_markup(html.escape(text, quote=False)) if escape else text
+    if not escape:
+        return text
+    # Undo any HTML-entity escaping the text already carries (e.g. an
+    # upstream source that stored "R&amp;D" for a literal "R&D") before the
+    # single escape pass below -- otherwise re-escaping already-escaped text
+    # doubles it into "R&amp;amp;D" on screen (RAG-30/31).
+    return escape_markup(html.escape(html.unescape(text), quote=False))
+
+
+# `_strip_markdown_syntax` structural patterns. This is deliberately a small
+# regex pass, not a Markdown parser: it removes structural notation (link
+# syntax keeps its visible text) while leaving the underlying text content
+# alone. Applied to `LibraryRagResultRow.snippet`, which is already
+# HTML/Rich-markup escaped, so `[` may already carry the escape_markup
+# backslash (`\[`); the link pattern below accepts either form.
+_MARKDOWN_LINK_PATTERN = re.compile(r"\\?\[([^\]]*)\]\([^)]*\)")
+_MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^#{1,6}[ \t]+")
+_MARKDOWN_LIST_MARKER_PATTERN = re.compile(r"(?m)^(?:[-*+]|\d+[.)])[ \t]+")
+_MARKDOWN_BACKTICK_PATTERN = re.compile(r"`+")
+_MARKDOWN_EMPHASIS_PATTERN = re.compile(r"\*{1,3}|_{1,3}")
+
+
+def _strip_markdown_syntax(text: str) -> str:
+    """Strip common Markdown structural syntax, preserving the text content.
+
+    Not a full Markdown parser -- a small, pure regex pass that removes
+    heading markers, list bullets, emphasis markers (`**`/`__`/`*`/`_`), code
+    fences/backticks, and link syntax (keeping the link's visible text, e.g.
+    `[label](url)` -> `label`), so raw Markdown from ingested notes/media
+    reads as plain prose on screen instead of literal notation (RAG-30/31).
+
+    Args:
+        text: Text to strip Markdown structure from.
+
+    Returns:
+        `text` with Markdown structural syntax removed.
+    """
+    if not text:
+        return text
+    stripped = _MARKDOWN_LINK_PATTERN.sub(r"\1", text)
+    stripped = _MARKDOWN_HEADING_PATTERN.sub("", stripped)
+    stripped = _MARKDOWN_LIST_MARKER_PATTERN.sub("", stripped)
+    stripped = _MARKDOWN_BACKTICK_PATTERN.sub("", stripped)
+    stripped = _MARKDOWN_EMPHASIS_PATTERN.sub("", stripped)
+    return stripped
+
+
+def _clamp_display_text(
+    text: str, max_chars: int = LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS
+) -> str:
+    """Clamp `text` to `max_chars`, breaking at a word boundary.
+
+    Args:
+        text: Text to clamp.
+        max_chars: Maximum length of the returned string, ellipsis included.
+
+    Returns:
+        `text` unchanged when it already fits; otherwise a word-boundary
+        prefix followed by a single trailing "…".
+    """
+    if len(text) <= max_chars:
+        return text
+    budget = max(max_chars - 1, 0)
+    truncated = text[:budget].rstrip()
+    last_space = truncated.rfind(" ")
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    return f"{truncated.rstrip()}…"
 
 
 def _sanitize_query(value: Any) -> tuple[str, bool]:
@@ -621,6 +693,22 @@ class LibraryRagResultRow:
     @property
     def citation_labels(self) -> tuple[str, ...]:
         return tuple(citation.label for citation in self.citations)
+
+    @property
+    def display_snippet(self) -> str:
+        """On-screen projection of `snippet`: Markdown-stripped and clamped.
+
+        `snippet` itself -- and its 4,000-char cap used for Console
+        handoff/evidence bundles -- is unchanged; this is a display-only
+        derivation (RAG-30/31): raw Markdown structure is stripped to plain
+        prose and the result is flattened to one line and clamped to
+        `LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS` at a word boundary, so a
+        single low-relevance result can't render 25+ lines and bury the
+        rest of the evidence list.
+        """
+        stripped = _strip_markdown_syntax(self.snippet)
+        flattened = _collapse_text(stripped, preserve_newlines=False)
+        return _clamp_display_text(flattened)
 
     @property
     def source_type_badge_label(self) -> str:

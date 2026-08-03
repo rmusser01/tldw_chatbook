@@ -316,7 +316,11 @@ def library_rag_result_row_children(
             id=f"library-rag-result-badges-{index}",
             classes="library-rag-result-badges",
         ),
-        Static(row.snippet, id=f"library-rag-result-snippet-{index}"),
+        Static(
+            row.display_snippet,
+            id=f"library-rag-result-snippet-{index}",
+            classes="library-rag-result-snippet",
+        ),
     ]
     if row.citation_labels:
         children.append(
