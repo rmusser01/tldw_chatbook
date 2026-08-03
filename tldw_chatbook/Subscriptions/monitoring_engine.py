@@ -51,7 +51,11 @@ from .item_persist import (
     CONTENT_KIND_CHANGE,
 )
 from .noise_defaults import extraction_fingerprint, selector_parse_errors
-from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
+from .watchlist_rule_matching import (
+    RULE_MATCH_ADDED_TEXT_KEY,
+    RULE_MATCH_REMOVED_TEXT_KEY,
+    RULE_MATCH_TEXT_KEY,
+)
 from ..Utils.egress import (
     EgressBlockedError,
     EgressFetchError,
@@ -378,7 +382,13 @@ def _segment_for_diff(text: str) -> List[str]:
     return segments
 
 
-def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
+def build_change_diff(
+    previous_text: str,
+    current_text: str,
+    *,
+    old_segments: List[str] | None = None,
+    new_segments: List[str] | None = None,
+) -> tuple[str, str]:
     """Produce the stored diff body and its one-line summary for a site change.
 
     Before TASK-1343 the site-change path stored the *entire new page text* as
@@ -389,6 +399,13 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
     Args:
         previous_text: The previous snapshot's ``extracted_content``.
         current_text: The freshly fetched extracted text.
+        old_segments: ``previous_text`` already run through ``_segment_for_diff``.
+            Optional: ``check_url`` also feeds the same segments to
+            ``added_and_removed_text`` for the "appeared"/"disappeared" scopes
+            (TASK-1363), so segmenting each side once and passing the result to
+            both avoids a redundant pass over pages up to 10 MB (Qodo). Segmented
+            here when omitted, so every other caller is unchanged.
+        new_segments: ``current_text`` likewise.
 
     Returns:
         ``(diff_body, diff_summary)``. ``diff_body`` is a bounded unified-diff
@@ -398,8 +415,10 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         *whole* diff so it stays true even when the body is truncated, and
         saying so when it was.
     """
-    old_segments = _segment_for_diff(previous_text)
-    new_segments = _segment_for_diff(current_text)
+    if old_segments is None:
+        old_segments = _segment_for_diff(previous_text)
+    if new_segments is None:
+        new_segments = _segment_for_diff(current_text)
 
     # The generator is consumed ONCE and never materialized (PR #1092 review,
     # Bug #1): `list(unified_diff(...))` bounded what was *stored* but left peak
@@ -467,6 +486,57 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         )
         summary += _DIFF_TRUNCATION_SUMMARY_SUFFIX
     return "\n".join(kept), summary
+
+
+def added_and_removed_text(
+    previous_text: str,
+    current_text: str,
+    *,
+    old_segments: List[str] | None = None,
+    new_segments: List[str] | None = None,
+) -> tuple[str, str]:
+    """Split a site change into its added and removed text (TASK-1363).
+
+    Feeds a content-alert rule scoped to "appeared" or "disappeared" (see
+    ``watchlist_rule_matching.build_rule_haystack``) rather than the diff
+    body ``build_change_diff`` renders for the reader -- the two exist for
+    different consumers, but reuse the same ``_segment_for_diff``
+    segmentation so "added"/"removed" line up with what the reader's diff
+    pane shows, rather than a raw character-level diff that could slice a
+    matched phrase mid-word.
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+        old_segments: ``previous_text`` already segmented; ``new_segments``
+            likewise. Optional, and shared with ``build_change_diff`` by
+            ``check_url`` so the same page is segmented once, not twice (Qodo).
+            Segmented here when omitted, so callers passing only the texts are
+            unchanged.
+        new_segments: See ``old_segments``.
+
+    Returns:
+        ``(added, removed)``: the new-side segments of every ``insert`` and
+        ``replace`` opcode, and the old-side segments of every ``delete`` and
+        ``replace`` opcode, each joined by a single space (matching the
+        joining `build_rule_haystack` already uses). Either half is the empty
+        string when nothing was added, or nothing was removed, respectively.
+    """
+    if old_segments is None:
+        old_segments = _segment_for_diff(previous_text)
+    if new_segments is None:
+        new_segments = _segment_for_diff(current_text)
+    matcher = SequenceMatcher(None, old_segments, new_segments)
+
+    added: List[str] = []
+    removed: List[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            added.extend(new_segments[j1:j2])
+        if tag in ("delete", "replace"):
+            removed.extend(old_segments[i1:i2])
+
+    return " ".join(added), " ".join(removed)
 
 
 def classify_change_type(previous_text: str, current_text: str) -> str:
@@ -1272,8 +1342,23 @@ class URLMonitor:
             # reader's `[full page]` / `[previous snapshot]` affordances read
             # from; storing it a second time here bought nothing and left the
             # reader unable to see what had actually changed.
+            # Segment each side ONCE and share it with both consumers: the
+            # reader's diff body and the "appeared"/"disappeared" added/removed
+            # text (TASK-1363) are different outputs of the same segmentation,
+            # and a page can be up to 10 MB (Qodo -- do not segment it twice).
+            _old_segments = _segment_for_diff(previous_text)
+            _new_segments = _segment_for_diff(current_content["text"])
             diff_body, diff_summary = build_change_diff(
-                previous_text, current_content["text"]
+                previous_text,
+                current_content["text"],
+                old_segments=_old_segments,
+                new_segments=_new_segments,
+            )
+            added_text, removed_text = added_and_removed_text(
+                previous_text,
+                current_content["text"],
+                old_segments=_old_segments,
+                new_segments=_new_segments,
             )
             change_info = {
                 "type": "url_change",
@@ -1310,6 +1395,12 @@ class URLMonitor:
                 # for matching only; it is not a persisted column (see
                 # `watchlist_rule_matching`).
                 RULE_MATCH_TEXT_KEY: current_content["text"],
+                # A per-rule opt-in (TASK-1363): a rule scoped to "appeared" or
+                # "disappeared" matches against just one of these instead of
+                # the whole page above. Matching-only, like
+                # `RULE_MATCH_TEXT_KEY` -- see `watchlist_rule_matching`.
+                RULE_MATCH_ADDED_TEXT_KEY: added_text,
+                RULE_MATCH_REMOVED_TEXT_KEY: removed_text,
             }
 
             # Store new snapshot
