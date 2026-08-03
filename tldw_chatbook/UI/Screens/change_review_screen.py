@@ -163,6 +163,46 @@ class AgentRunsChangeReviewProvider:
             )
         return turns
 
+    def tool_touched_relpaths(self, row: dict) -> "set[str] | None":
+        """Root-relative paths the run's recorded WRITE tools touched.
+
+        TASK-1978: the badge derivation. Uses the SAME extractor the
+        force-add carve-out runs over the SAME persisted step shape, so
+        the badge and the carve-out can never disagree about provenance.
+
+        Args:
+            row: One ``change_snapshots`` row.
+
+        Returns:
+            The touched set, or ``None`` when the run has no recorded
+            steps (older data) — callers must then render NO badges
+            rather than badging everything.
+        """
+        run = self._db.get_run(str(row.get("run_id") or ""))
+        steps = (run or {}).get("steps") or []
+        if not steps:
+            return None
+        from pathlib import Path as _P
+
+        from tldw_chatbook.Workspaces.change_turn_tracker import (
+            ChangeTurnTracker,
+        )
+
+        root = _P(str(row["root"]))
+        rel: set[str] = set()
+        for raw in ChangeTurnTracker.tool_touched_paths(steps):
+            try:
+                rel.add(
+                    _P(raw)
+                    .expanduser()
+                    .resolve()
+                    .relative_to(root)
+                    .as_posix()
+                )
+            except (ValueError, OSError):
+                continue
+        return rel
+
     def snapshots_pruned(self, row: dict) -> bool:
         """Whether a row's snapshots no longer exist (retention reset).
 
@@ -435,6 +475,20 @@ class ChangeReviewScreen(Screen):
                         f"⚠ diff unavailable for {row['root']}: {exc}"
                     )
 
+        touched_by_row: dict[int, "set[str] | None"] = {}
+
+        def _badged(row: dict, change: ChangedFile) -> bool:
+            rid = id(row)
+            if rid not in touched_by_row:
+                try:
+                    touched_by_row[rid] = self._provider.tool_touched_relpaths(
+                        row
+                    )
+                except Exception:  # noqa: BLE001 -- a badge must never break review
+                    touched_by_row[rid] = None
+            touched = touched_by_row[rid]
+            return touched is not None and change.path not in touched
+
         known = {code for code, _label in _GROUPS}
         for code, label in _GROUPS:
             entries = grouped.get(code, [])
@@ -445,7 +499,9 @@ class ChangeReviewScreen(Screen):
                 # TASK-2032: the node carries its leaf index so a MOUSE
                 # selection can load the diff (j/k was the only loader).
                 branch.add_leaf(
-                    self._leaf_label(row, change, multi_root),
+                    self._leaf_label(
+                        row, change, multi_root, badge=_badged(row, change)
+                    ),
                     data=len(self._leaves),
                 )
                 self._leaves.append((row, change))
@@ -461,7 +517,9 @@ class ChangeReviewScreen(Screen):
                 # TASK-2032: the node carries its leaf index so a MOUSE
                 # selection can load the diff (j/k was the only loader).
                 branch.add_leaf(
-                    self._leaf_label(row, change, multi_root),
+                    self._leaf_label(
+                        row, change, multi_root, badge=_badged(row, change)
+                    ),
                     data=len(self._leaves),
                 )
                 self._leaves.append((row, change))
@@ -481,7 +539,12 @@ class ChangeReviewScreen(Screen):
             self._show_empty("No file changes in this turn.")
 
     @staticmethod
-    def _leaf_label(row: dict, change: ChangedFile, multi_root: bool) -> Text:
+    def _leaf_label(
+        row: dict,
+        change: ChangedFile,
+        multi_root: bool,
+        badge: bool = False,
+    ) -> Text:
         """Build one leaf label as a PLAIN rich Text.
 
         Tree labels are markup-PARSED when given as strings — "[binary]"
@@ -500,7 +563,16 @@ class ChangeReviewScreen(Screen):
             from pathlib import Path as _P
 
             parts.append(f"· {_P(str(row['root'])).name}")
-        return Text("  ".join(parts))
+        label = Text("  ".join(parts))
+        if badge:
+            # TASK-1978: exact spec copy — 'outside direct file tools',
+            # never 'not by the agent' (script writes are agent work too,
+            # and badge absence is not proof of tool provenance). Dim,
+            # monochrome.
+            label.append(
+                "  ⚠ changed outside direct file tools", style="dim"
+            )
+        return label
 
     def _show_empty(self, copy: str) -> None:
         self.query_one("#change-review-diff-content", Static).update(copy)
