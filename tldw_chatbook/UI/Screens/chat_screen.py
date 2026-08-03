@@ -12437,7 +12437,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
-                # inspector handle (3) must fit a 100-column terminal.
+                # three-cell inspector handle must fit a 100-column terminal.
                 # TASK-2154.1 (LY-08/LY-09): below 100 columns the rail state
                 # force-collapses the left rail instead (rendering override;
                 # see console_rail_state), and below
