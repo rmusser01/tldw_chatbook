@@ -10,8 +10,11 @@ from types import SimpleNamespace
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostSnapshot,
+    PayloadFingerprint,
     build_cost_snapshot,
     build_cost_state,
+    fingerprint_break_reason,
+    fingerprint_payload,
 )
 from tldw_chatbook.Chat.console_session_settings import _estimate_tokens_locally
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -204,3 +207,47 @@ def test_tokens_only_tooltip_narrates_cache_state():
     cache_idx = state.tooltip.index("system prompt changed")
     pricing_idx = state.tooltip.index("[pricing]")
     assert tokens_idx < cache_idx < pricing_idx
+
+
+# --- Payload fingerprinting (cache-break detection) -------------------------
+
+
+def _fp(messages, provider="anthropic", model="m"):
+    return fingerprint_payload(provider, model, messages)
+
+
+BASE = [
+    {"role": "system", "content": "be terse"},
+    {"role": "user", "content": "q1"},
+    {"role": "assistant", "content": "a1"},
+]
+
+
+def test_appended_turn_is_not_a_break():
+    baseline = _fp(BASE)
+    current = _fp(BASE + [{"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}])
+    assert fingerprint_break_reason(baseline, current) is None
+
+
+def test_each_component_yields_its_reason_with_priority():
+    baseline = _fp(BASE)
+    assert fingerprint_break_reason(baseline, _fp(BASE, model="other")) == "model or provider changed"
+    changed_system = [{"role": "system", "content": "be verbose"}] + BASE[1:]
+    assert fingerprint_break_reason(baseline, _fp(changed_system)) == "system prompt changed"
+    edited = [BASE[0], {"role": "user", "content": "EDITED"}, BASE[2]]
+    assert fingerprint_break_reason(baseline, _fp(edited)) == "earlier history changed"
+    # model beats system when both changed
+    assert (
+        fingerprint_break_reason(baseline, _fp(changed_system, model="other"))
+        == "model or provider changed"
+    )
+
+
+def test_truncated_history_is_a_break():
+    baseline = _fp(BASE)
+    assert fingerprint_break_reason(baseline, _fp(BASE[:2])) == "earlier history changed"
+
+
+def test_list_content_rows_hash_stably():
+    rows = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    assert _fp(rows) == _fp([dict(r) for r in rows])

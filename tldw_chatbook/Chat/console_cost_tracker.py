@@ -24,9 +24,11 @@ to a safe fallback value rather than raising, mirroring
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from loguru import logger
 
@@ -107,6 +109,31 @@ class ConsoleCostState:
     tooltip: str
     alert: bool
     cold: bool
+
+
+@dataclass(frozen=True)
+class PayloadFingerprint:
+    """A digest of one provider payload's shape, for cache-break detection.
+
+    Recorded at dispatch time (the baseline: what was actually sent) and
+    recomputed on demand (the current: what would be sent right now) so
+    :func:`fingerprint_break_reason` can tell the cost chip WHY a warm
+    Anthropic prompt cache is about to miss its shared prefix -- a provider/
+    model swap, an edited system prompt, or edited/truncated earlier
+    history. Appending new turns to the tail is the normal case and is
+    never a break (see :func:`fingerprint_break_reason`).
+
+    Attributes:
+        provider_model: Digest of ``(provider, model)``.
+        system: Digest of the leading system row's content, or the digest
+            of ``""`` when there is no leading system row.
+        history: Per-row digest of ``(role, content)`` for every row after
+            the leading system row, oldest first.
+    """
+
+    provider_model: str
+    system: str
+    history: tuple[str, ...]
 
 
 #
@@ -215,6 +242,107 @@ def _cache_state_line(
                 cache_line += f" (~+${_format_amount(abs(projected_delta_usd))})"
         return cache_line
     return "Cache: none"
+
+
+#
+#######################################################################################################################
+#
+# Payload fingerprinting (cache-break detection)
+#
+
+
+def _digest(value: Any) -> str:
+    """Return a stable sha1 digest of ``value`` via canonical JSON.
+
+    ``sort_keys=True`` makes dict-key order irrelevant and ``default=str``
+    covers any non-JSON-native content (e.g. enum roles) without raising,
+    so the same logical row always hashes the same way regardless of which
+    code path built the dict.
+    """
+    canonical = json.dumps(value, sort_keys=True, default=str)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+
+def fingerprint_payload(
+    provider: str,
+    model: Optional[str],
+    provider_messages: Sequence[Mapping[str, Any]],
+) -> PayloadFingerprint:
+    """Digest a provider payload's shape for later cache-break comparison.
+
+    Only ``role``/``content`` are hashed per row -- any other keys a row
+    might carry (e.g. the private native-id thread key used to anchor
+    ``/rewind`` compaction) are ignored, so a fingerprint taken from an
+    annotated payload compares equal to one taken from the same payload
+    stripped of that key.
+
+    Args:
+        provider: The provider this payload would be/was sent to.
+        model: The model this payload would be/was sent to, or ``None``.
+        provider_messages: The message rows, in send order. A leading row
+            with ``role == "system"`` is treated as the system prompt and
+            excluded from ``history``; every other row contributes to
+            ``history`` in order.
+
+    Returns:
+        A :class:`PayloadFingerprint` digesting the three components.
+    """
+    rows = list(provider_messages)
+    system_content: Any = ""
+    history_rows = rows
+    if rows and str(rows[0].get("role", "")) == "system":
+        system_content = rows[0].get("content", "")
+        history_rows = rows[1:]
+
+    history = tuple(
+        _digest({"role": row.get("role"), "content": row.get("content")})
+        for row in history_rows
+    )
+
+    return PayloadFingerprint(
+        provider_model=_digest({"provider": provider, "model": model}),
+        system=_digest(system_content),
+        history=history,
+    )
+
+
+def fingerprint_break_reason(
+    baseline: PayloadFingerprint, current: PayloadFingerprint
+) -> Optional[str]:
+    """Return why ``current`` would break the prompt cache seeded by ``baseline``.
+
+    Anthropic's prompt cache keys off the payload's shared PREFIX -- so a
+    longer ``current.history`` whose leading rows still match
+    ``baseline.history`` (the normal case: turns were appended since the
+    baseline was recorded) is NOT a break. Only an actual prefix mismatch
+    (edited or truncated earlier history) is.
+
+    Checked in priority order -- the first mismatch found is the reason
+    reported, even when more than one component changed:
+        1. ``provider_model`` (a provider/model switch invalidates the
+           cache outright; whatever else changed no longer matters).
+        2. ``system`` (the system prompt is always the first bytes of the
+           payload, so any edit there breaks every row after it too).
+        3. ``history`` prefix (an edit or truncation somewhere in the
+           already-sent turns).
+
+    Args:
+        baseline: The fingerprint recorded when the cache was last warmed.
+        current: The fingerprint of what would be sent right now.
+
+    Returns:
+        ``None`` when ``current`` is cache-compatible with ``baseline``
+        (identical, or only appended new turns); otherwise one of
+        ``"model or provider changed"``, ``"system prompt changed"``, or
+        ``"earlier history changed"``.
+    """
+    if baseline.provider_model != current.provider_model:
+        return "model or provider changed"
+    if baseline.system != current.system:
+        return "system prompt changed"
+    if current.history[: len(baseline.history)] != baseline.history:
+        return "earlier history changed"
+    return None
 
 
 #

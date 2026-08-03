@@ -59,6 +59,10 @@ from tldw_chatbook.Chat.console_chat_store import (
     TerminalCitationFinalizer,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
+from tldw_chatbook.Chat.console_cost_tracker import (
+    PayloadFingerprint,
+    fingerprint_payload,
+)
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
@@ -92,6 +96,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import is_vision_capable
 
@@ -974,6 +979,23 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
+        # cost chip. All three are process-local and best-effort -- a missed
+        # write means a stale chip, never a broken send.
+        #   - `_payload_fingerprint_baselines`: the fingerprint of the
+        #     payload actually dispatched on this session's most recent
+        #     send, recorded at the SAME pre-compaction stage
+        #     `compute_current_fingerprint` recomputes from, so the two are
+        #     always comparable (see `_stream_assistant_response_inner`).
+        #   - `_cache_warm_until`: monotonic deadline the Anthropic prompt
+        #     cache is expected to stay warm until, stamped only after a
+        #     send that actually showed cache activity (see
+        #     `_attach_stream_usage`).
+        #   - `_cache_last_activity`: whether the session's most recent
+        #     Anthropic send reported any cache read/write at all.
+        self._payload_fingerprint_baselines: dict[str, PayloadFingerprint] = {}
+        self._cache_warm_until: dict[str, float] = {}
+        self._cache_last_activity: dict[str, bool] = {}
         #: The composed MCP provider for the current agent run, captured
         #: on the main loop in ``_run_agent_reply`` so ``build_context_snapshot``
         #: can read tool metadata later without recomposing.
@@ -1156,6 +1178,67 @@ class ConsoleChatController:
             map, including entries for sessions the store has since closed.
         """
         return dict(self._run_states)
+
+    def payload_fingerprint_baseline(self, session_id: str) -> PayloadFingerprint | None:
+        """Return the fingerprint of the last payload actually sent for a session.
+
+        Recorded at dispatch time by ``_stream_assistant_response_inner``,
+        from the same pre-compaction stage ``compute_current_fingerprint``
+        recomputes from. A failed or blocked send never reaches that
+        recording site, so this always reflects what was genuinely
+        transmitted -- there is nothing to roll back on failure.
+
+        Args:
+            session_id: The session id to look up.
+
+        Returns:
+            The recorded :class:`PayloadFingerprint`, or ``None`` when the
+            session has never sent (or the process-local record was lost,
+            e.g. across a restart).
+        """
+        return self._payload_fingerprint_baselines.get(session_id)
+
+    def compute_current_fingerprint(self, session_id: str) -> PayloadFingerprint:
+        """Fingerprint what a send RIGHT NOW would dispatch for a session.
+
+        Uses ``_provider_messages_for_session`` -- the same pre-compaction,
+        pre-window stage the baseline above was recorded from -- so the two
+        are directly comparable via ``fingerprint_break_reason`` without
+        either side needing to account for compaction/windowing drift.
+
+        Args:
+            session_id: The session id to fingerprint.
+
+        Returns:
+            The current :class:`PayloadFingerprint`.
+        """
+        messages = self._provider_messages_for_session(session_id)
+        return fingerprint_payload(
+            self.provider, self.model or self.configured_model, messages
+        )
+
+    def cache_ttl_snapshot(self, session_id: str) -> tuple[float | None, bool]:
+        """Return the session's recorded Anthropic prompt-cache TTL ground truth.
+
+        Both values are stamped by ``_attach_stream_usage`` only for
+        Anthropic sends with prompt caching enabled -- every other provider/
+        session reads back ``(None, False)``.
+
+        Args:
+            session_id: The session id to look up.
+
+        Returns:
+            A ``(warm_until, had_cache_activity)`` pair: ``warm_until`` is
+            the ``time.monotonic()`` deadline the cache is expected to stay
+            warm until (``None`` when never stamped, e.g. no cache activity
+            has been observed yet), and ``had_cache_activity`` is whether
+            the session's most recent Anthropic send reported any cache
+            read/write at all.
+        """
+        return (
+            self._cache_warm_until.get(session_id),
+            self._cache_last_activity.get(session_id, False),
+        )
 
     def _live_busy_session_ids(self) -> list[str]:
         """Busy session ids that still exist in the store, insertion-ordered.
@@ -5896,6 +5979,27 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.assistant_kind == "character"
+        # Cost-ticker PR3: record this send's payload-fingerprint baseline
+        # from `provider_messages` BEFORE any of the transforms below run --
+        # the same pre-compaction, pre-window stage `_provider_messages_for_
+        # session` produces and `compute_current_fingerprint` recomputes
+        # from, so a baseline and a later "current" fingerprint are always
+        # comparable. This is the single dispatch choke point covering BOTH
+        # the direct-provider and agent paths (they branch further down).
+        # Deliberately conservative: a compaction fold or a token-window
+        # trim can each shrink what actually gets sent relative to this
+        # snapshot, but neither is a payload EDIT -- the chip's alert is
+        # about the shared prefix Anthropic's cache keyed off changing
+        # underneath it, not about a routine, expected drop, so compaction/
+        # window drops never trigger a spurious cache-break alert.
+        try:
+            self._payload_fingerprint_baselines[owner_id] = fingerprint_payload(
+                self.provider, self.model or self.configured_model, provider_messages
+            )
+        except Exception as exc:
+            logger.bind(session_id=owner_id, error=repr(exc)).warning(
+                "cost_fingerprint_record_failed"
+            )
         # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
         # (agent + direct both flow through here), fold the session's boundary
         # summary into the payload -- but ONLY when the boundary message is
@@ -6047,8 +6151,10 @@ class ConsoleChatController:
             total = usage if total is None else total.plus(usage)
         if total is None:
             return
+        attached = False
         try:
             self.store.set_message_usage(assistant_message_id, total)
+            attached = True
         except KeyError:
             pass
         except Exception as exc:
@@ -6063,6 +6169,27 @@ class ConsoleChatController:
             logger.bind(
                 message_id=assistant_message_id, error=repr(exc)
             ).warning("usage_attach_failed")
+        if not attached:
+            return
+        # Cost-ticker PR3: cache-TTL ground truth, Anthropic prompt-caching
+        # only -- other providers/gateways never set `prompt_caching`, and a
+        # non-Anthropic `provider` string has no cache-warm concept to
+        # stamp. Same never-fail posture as the attach above: this is
+        # read by the chip, never by send control flow.
+        try:
+            if (
+                provider_config_key(provider) == "anthropic"
+                and getattr(resolution, "prompt_caching", None)
+            ):
+                sid = self.store.session_id_for_message(assistant_message_id)
+                had_cache_activity = (total.cache_read + total.cache_write) > 0
+                self._cache_last_activity[sid] = had_cache_activity
+                if had_cache_activity:
+                    self._cache_warm_until[sid] = time.monotonic() + 300.0
+        except Exception as exc:
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("cost_fingerprint_record_failed")
 
     async def _run_direct_provider_reply(
         self,

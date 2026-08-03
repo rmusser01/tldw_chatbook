@@ -4403,3 +4403,43 @@ async def test_billed_turn_without_visible_content_still_records_usage():
     # contentless rows is a store-wide semantics change, out of scope here.
     assert persistence.usage_values() == []
     assert [entry["sender"] for entry in persistence.created] == ["user"]
+
+
+# --- Cost-ticker PR3: payload-fingerprint baseline + cache TTL --------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_records_fingerprint_baseline_and_cache_snapshot():
+    class CacheUsageGateway(StreamingGateway):
+        async def resolve_for_send(self, selection):
+            resolution = await super().resolve_for_send(selection)
+            resolution.provider = "anthropic"
+            resolution.prompt_caching = True
+            return resolution
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            signals = kwargs.get("signals")
+            yield "hi"
+            if signals is not None:
+                signals.record_usage_payload(
+                    {"input_tokens": 10, "output_tokens": 2,
+                     "cache_creation_input_tokens": 900}
+                )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=CacheUsageGateway())
+    session = store.ensure_session(title="Chat 1")
+    assert controller.payload_fingerprint_baseline(session.id) is None
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+
+    baseline = controller.payload_fingerprint_baseline(session.id)
+    assert baseline is not None
+    warm_until, had_activity = controller.cache_ttl_snapshot(session.id)
+    assert had_activity is True
+    assert warm_until is not None  # monotonic deadline stamped
+
+    current = controller.compute_current_fingerprint(session.id)
+    from tldw_chatbook.Chat.console_cost_tracker import fingerprint_break_reason
+    assert fingerprint_break_reason(baseline, current) is None
