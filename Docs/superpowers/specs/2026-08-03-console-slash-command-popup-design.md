@@ -1,7 +1,7 @@
 # Console Slash-Command Popup — Design
 
 Date: 2026-08-03
-Status: Approved (design)
+Status: Implemented
 
 ## Summary
 
