@@ -15,7 +15,10 @@ from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
 )
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_SEARCH,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
@@ -964,6 +967,224 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
     assert payload["query"] == query
     assert payload["source_id"] == "note-shortcut"
     assert payload["chunk_id"] == "chunk-u"
+    app.open_chat_with_handoff.assert_not_called()
+
+
+# --- Task 12/RAG-36: keyboard-traversable evidence cards --------------------
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_tab_reaches_and_focuses_evidence_card() -> None:
+    """Tab from the query input eventually lands on the first evidence
+    card, and the card itself (not just its buttons) is the focus target --
+    the flat Static+Button rows evidence used to render gave keyboard users
+    no row-level cursor at all (RAG-36)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "First result",
+                    "snippet": "alpha evidence",
+                    "source_id": "note-1",
+                },
+                {
+                    "document_title": "Second result",
+                    "snippet": "beta evidence",
+                    "source_id": "note-2",
+                },
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "alpha or beta"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-0")
+
+        query_input.focus()
+        await pilot.pause()
+
+        for _ in range(40):
+            focused = screen.focused
+            if focused is not None and focused.id == "library-rag-result-card-0":
+                break
+            await pilot.press("tab")
+        else:
+            raise AssertionError(
+                "Tab from the query input never reached the first evidence card."
+            )
+
+        card = screen.query_one("#library-rag-result-card-0")
+        assert card.has_focus is True
+        assert "focus" in card.pseudo_classes
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_enter_on_focused_card_selects_evidence() -> None:
+    """Enter on a focused evidence card selects it, same as clicking its
+    "Select evidence" button -- and the incremental results refresh that
+    selection triggers must not steal focus off the card the user just
+    acted on (the refresh-path lockstep hazard the largest part of this
+    change has to get right)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "First result",
+                    "snippet": "alpha evidence",
+                    "source_id": "note-1",
+                },
+                {
+                    "document_title": "Second result",
+                    "snippet": "beta evidence",
+                    "source_id": "note-2",
+                },
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "alpha or beta"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-1")
+
+        card = screen.query_one("#library-rag-result-card-1")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_evidence_selected(screen, pilot, "Second result")
+
+        assert screen.query_one("#library-rag-result-1").has_class("is-selected")
+        # The refresh triggered by selection remounts the results region --
+        # the SAME card index must still hold keyboard focus afterward.
+        assert screen.query_one("#library-rag-result-card-1").has_focus is True
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
+    """`o` on a focused evidence card routes to the same open path as the
+    row's "Open" button (mirrors ``test_library_shell.py``'s
+    Open-button-lands-in-viewer pilots)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": "media-1",
+                    "document_title": "Transcript A",
+                    "snippet": "audio transcript",
+                    "provenance": {"source_type": "media"},
+                }
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "transcript"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-open-result-0")
+
+        card = screen.query_one("#library-rag-result-card-0")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("o")
+
+        for _ in range(120):
+            if (
+                screen._selected_media_id == "media-1"
+                and screen._library_media_view == "viewer"
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "`o` on the focused card never opened the media evidence item."
+            )
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_u_on_focused_card_selects_then_stages() -> None:
+    """The focused-card fast path: `u` on a focused-but-not-yet-selected
+    card selects that evidence AND stages it in one keystroke, instead of
+    requiring Enter (select) then u (stage) as two separate actions."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Fast-path Evidence",
+                    "snippet": "u selects then stages",
+                    "source_id": "note-fastpath",
+                    "chunk_id": "chunk-fp",
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Does u select then stage?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-0")
+
+        # No prior Enter/select -- the card is only focused, never activated.
+        assert not screen.query(".library-rag-result-row.is-selected")
+
+        card = screen.query_one("#library-rag-result-card-0")
+        card.focus()
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert payload["source_id"] == "note-fastpath"
+    assert payload["chunk_id"] == "chunk-fp"
     app.open_chat_with_handoff.assert_not_called()
 
 

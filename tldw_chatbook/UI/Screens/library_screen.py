@@ -19,6 +19,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
@@ -395,6 +396,15 @@ LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
+# `_refresh_library_rag_results_widgets` tears down every direct child of
+# `#library-rag-results` NOT in this set, then remounts fresh ones from
+# `library_rag_results_body_children` -- the same function `compose()`
+# uses, so the two paths cannot drift. Task 12/RAG-36 wrapped each row's
+# several flat sibling widgets into ONE `.library-rag-result-card`
+# container per row; that reduces the child COUNT under
+# `#library-rag-results` but does not change this set's membership, since
+# every row-level id (old flat widgets or the new card) was already being
+# removed and remounted here -- only the always-kept heading is listed.
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 
 LIBRARY_STUDY_HANDOFF_MODES = {
@@ -881,6 +891,20 @@ class LibraryScreen(BaseAppScreen):
         # everywhere else on the screen.
         ("ctrl+s", "library_skill_save", "Save skill"),
         ("escape", "library_skill_back", "Back to skills list"),
+        # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
+        # cards. Both actions gate on the currently FOCUSED widget being one
+        # of the per-result `.library-rag-result-card` containers (see
+        # `_focused_library_rag_result_card_index`) -- Button and Input
+        # already own "enter" via their own BINDINGS (press / submit
+        # respectively), which are resolved before a Screen-level binding
+        # ever sees the key, so this never fires while a button or the
+        # query input is focused. `show=False`: contextual to a focused
+        # evidence card, not a screen-wide shortcut worth surfacing in the
+        # key/command palette.
+        Binding(
+            "enter", "library_rag_result_card_select", "Select evidence", show=False
+        ),
+        Binding("o", "library_rag_result_card_open", "Open evidence", show=False),
     ]
 
     #: Whether the media item open in the viewer lives on the SERVER. Set only
@@ -16131,6 +16155,18 @@ class LibraryScreen(BaseAppScreen):
         """Select an evidence row for inspector review and Console handoff."""
         event.stop()
         result_index = self._trailing_index(event.button.id)
+        await self._select_library_rag_result_by_index(result_index)
+
+    async def _select_library_rag_result_by_index(
+        self, result_index: int | None
+    ) -> None:
+        """Shared select-evidence implementation (Task 12).
+
+        Used by the "Select evidence" button handler above AND by the
+        focused-card Enter key path (`action_library_rag_result_card_select`)
+        so both routes run the exact same selection logic -- no duplicated
+        implementation between the mouse and keyboard paths.
+        """
         if result_index is None or result_index >= len(self._library_rag_results):
             return
         self._library_rag_selected_result_id = self._library_rag_results[
@@ -16143,11 +16179,64 @@ class LibraryScreen(BaseAppScreen):
         """Open a Search/RAG evidence result straight to its Library detail surface."""
         event.stop()
         index = self._trailing_index(event.button.id)
+        await self._open_library_rag_result_by_index(index)
+
+    async def _open_library_rag_result_by_index(self, index: int | None) -> None:
+        """Shared open-evidence implementation (Task 12).
+
+        Used by the "Open" button handler above AND by the focused-card `o`
+        key path (`action_library_rag_result_card_open`) so both routes run
+        the exact same open logic -- no duplicated implementation between
+        the mouse and keyboard paths.
+        """
         rows = self._library_rag_results
         if index is None or not (0 <= index < len(rows)):
             return
         row = rows[index]
         await self._open_library_item_by_id(row.open_source_type, row.source_id)
+
+    def _focused_library_rag_result_card_index(self) -> int | None:
+        """Return the evidence index of the focused `.library-rag-result-card`.
+
+        Task 12/RAG-36: Enter/`o`/the `u` fast path all gate on the
+        CURRENTLY FOCUSED widget being one of the per-result cards (not
+        just any Button.Pressed/global key) -- this is the single place
+        that resolves "which card" via the same `_trailing_index` helper
+        the button handlers already use on their own ids. Returns `None`
+        when nothing is focused or the focused widget isn't a result card
+        (e.g. the query Input, a Button, or nothing at all), which every
+        caller treats as a no-op.
+        """
+        focused = self.focused
+        if focused is None or not focused.id:
+            return None
+        if not focused.id.startswith("library-rag-result-card-"):
+            return None
+        return self._trailing_index(focused.id)
+
+    async def action_library_rag_result_card_select(self) -> None:
+        """Enter on a focused evidence card: select it (Task 12/RAG-36).
+
+        Mirrors clicking the row's own "Select evidence" button -- routes
+        through the identical `_select_library_rag_result_by_index` no
+        matter which input method triggered it.
+        """
+        index = self._focused_library_rag_result_card_index()
+        if index is None:
+            return
+        await self._select_library_rag_result_by_index(index)
+
+    async def action_library_rag_result_card_open(self) -> None:
+        """`o` on a focused evidence card: open it (Task 12/RAG-36).
+
+        Mirrors clicking the row's own "Open" button -- routes through the
+        identical `_open_library_rag_result_by_index` no matter which input
+        method triggered it.
+        """
+        index = self._focused_library_rag_result_card_index()
+        if index is None:
+            return
+        await self._open_library_rag_result_by_index(index)
 
     async def _open_library_item_by_id(self, source_type: str, record_id: str) -> None:
         """Open a Library item straight to its detail surface by id.
@@ -16327,10 +16416,25 @@ class LibraryScreen(BaseAppScreen):
         """Stage selected evidence from the center results lane."""
         self._use_library_rag_result_in_console(event)
 
-    def action_library_rag_use_in_console(self) -> None:
-        """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
+    async def action_library_rag_use_in_console(self) -> None:
+        """Keyboard shortcut for staging selected Search/RAG evidence in Console.
+
+        Task 12/RAG-36 focused-card fast path: when a `.library-rag-result-
+        card` currently holds keyboard focus, `u` selects THAT evidence
+        (same as Enter would) and then stages it, in one keystroke --
+        instead of requiring the user to Tab to the card, press Enter to
+        select, then press `u` to stage. This does not change `u`'s
+        meaning when no card is focused (still stages whatever evidence
+        was already selected, unchanged from before this task); it only
+        adds a shortcut for the case where the user is looking straight at
+        the evidence they want staged but hasn't explicitly selected it
+        yet -- the same "act on what's focused" idiom Enter/`o` use.
+        """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             return
+        index = self._focused_library_rag_result_card_index()
+        if index is not None:
+            await self._select_library_rag_result_by_index(index)
         self._stage_library_rag_result_in_console()
 
     def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
@@ -16657,11 +16761,36 @@ class LibraryScreen(BaseAppScreen):
         Shared with `LibrarySearchRagPanel.compose()` (C1): both build rows,
         the searching line, recovery copy, and the empty state from the
         same function, closing the compose-vs-refresh duplication that
-        previously let the two paths drift apart.
+        previously let the two paths drift apart. Each row is now ONE
+        `.library-rag-result-card` (Task 12/RAG-36) instead of several flat
+        sibling widgets, but that card is still just another direct child
+        of `results_container` -- the remove/remount loop below (skip
+        `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tear down everything else,
+        remount from `library_rag_results_body_children`) needed no change
+        to stay in lockstep with the new structure.
+
+        What DOES need explicit handling: this remove/remount cycle
+        destroys and recreates the card widget INSTANCES, including
+        whichever one currently holds keyboard focus (e.g. the user just
+        pressed Enter on a card, which calls this via
+        `_select_library_rag_result_by_index`). Textual does not carry
+        focus across a removed widget being replaced by a same-id
+        successor, so without the save/restore below, every keyboard
+        selection would silently drop focus back to nothing -- breaking
+        the "Enter selects, then keep going" keyboard flow this task exists
+        to add.
         """
         results_container = self.query_one("#library-rag-results", Vertical)
         self.query_one("#library-rag-results-heading", Static).update(
             results_heading_text(panel_state)
+        )
+        focused = self.focused
+        focused_card_id = (
+            focused.id
+            if focused is not None
+            and focused.id
+            and focused.id.startswith("library-rag-result-card-")
+            else None
         )
         for child in list(results_container.children):
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
@@ -16669,6 +16798,15 @@ class LibraryScreen(BaseAppScreen):
             await child.remove()
         for child in library_rag_results_body_children(panel_state):
             await results_container.mount(child)
+        if focused_card_id is not None:
+            try:
+                self.query_one(f"#{focused_card_id}").focus()
+            except (NoMatches, QueryError):
+                # The just-focused card's result can legitimately be gone
+                # after the rebuild (e.g. a re-run landed a shorter result
+                # set) -- falling back to no focus is correct there, not a
+                # bug to paper over.
+                pass
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:

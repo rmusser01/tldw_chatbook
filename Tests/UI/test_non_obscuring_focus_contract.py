@@ -1620,6 +1620,32 @@ def test_library_rag_query_input_uses_stable_thin_contracts():
     assert "background: $ds-input-focus-bg;" in focus
 
 
+@pytest.mark.unit
+def test_library_rag_result_card_focus_uses_stable_border_geometry():
+    """Task 12/RAG-36: the focusable evidence-row card border only changes
+    COLOR on focus (never adds a border edge the base rule doesn't already
+    reserve, per the stable-border-geometry rule from Task 5 -- otherwise
+    Tab/Shift+Tab through the results list would visibly jitter). Also
+    confirms focus is distinguished from `.library-rag-result-row.is-
+    selected`'s own $ds-focus-bg/$ds-focus-fg treatment by NOT touching
+    background/color, so "keyboard is here" never reads as "this evidence
+    is selected"."""
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, ".library-rag-result-card")
+        focus = css_block(text, ".library-rag-result-card:focus")
+        assert_stable_solid_border_geometry(base, focus)
+        assert "border: solid $ds-focus-accent;" in focus
+        assert "border-bottom: solid $ds-focus-accent;" in focus
+        assert "outline: heavy" not in focus
+        assert "$primary" not in focus
+        assert "$accent" not in focus
+        assert "background:" not in focus
+        assert "color:" not in focus
+
+
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
     from tldw_chatbook.Widgets.Tamagotchi.base_tamagotchi import BaseTamagotchi
 

@@ -4969,6 +4969,33 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: none;
 }
 
+/* Task 12/RAG-36: each evidence row's content+actions is wrapped in one
+ * focusable card so Tab gives keyboard users a per-row cursor (previously
+ * only the row's buttons were focusable, with no indication of "where"
+ * keyboard focus sat among results). Idiom mirrors
+ * `#console-native-transcript`/`#library-rag-query-input`: the base rule
+ * already reserves a `border: solid` + `border-bottom: solid` box, so the
+ * `:focus` rule only swaps the border COLOR to `$ds-focus-accent` -- never
+ * adding a border edge the base didn't already have reserved, which is
+ * what causes layout jitter on focus/blur (see the stable-border-geometry
+ * contract in `Tests/UI/test_non_obscuring_focus_contract.py`). Left
+ * without background/color changes on purpose: `.library-rag-result-row.
+ * is-selected` below already owns the $ds-focus-bg/$ds-focus-fg "this
+ * evidence is selected" treatment, so a plain border-color change keeps
+ * "keyboard is here" and "this is the selected evidence" visually
+ * distinct even though both reuse the same focus token family. */
+.library-rag-result-card {
+    width: 100%;
+    height: auto;
+    border: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
+}
+
+.library-rag-result-card:focus {
+    border: solid $ds-focus-accent;
+    border-bottom: solid $ds-focus-accent;
+}
+
 .library-rag-result-row {
     padding: 0 1;
     margin: 1 0 0 0;

@@ -295,11 +295,22 @@ def library_rag_result_row_children(
     index: int,
     selected_result_id: str,
 ) -> list[Widget]:
-    """Return one evidence row's child widgets (C1): content first, Open primary.
+    """Return one evidence row as a single focusable card (C1/Task 12).
 
     Shared by the panel's own `compose()` and the screen's incremental DOM
     refresh (`_refresh_library_rag_results_widgets`) so both build identical
     rows from the same state.
+
+    RAG-36 (live UAT, keyboard-only persona Sam): evidence rows used to be a
+    flat list of sibling Statics plus a per-row `Horizontal` of buttons,
+    mounted directly into the results container -- Tab only ever reached
+    the buttons, with no row-level cursor and nothing indicating which row
+    keyboard focus was "on". Every row's children are now wrapped in one
+    `Vertical` card (`.library-rag-result-card`, `#library-rag-result-card-
+    {index}`) that is itself a Tab stop; `LibraryScreen`'s Enter/`o`
+    handlers resolve this card's index the same way the button handlers do
+    (`_trailing_index` on the id) and call the exact same underlying
+    selection/open methods -- no duplicated logic.
 
     Args:
         row: The evidence row to render.
@@ -308,13 +319,14 @@ def library_rag_result_row_children(
         selected_result_id: The panel's currently selected result id, if any.
 
     Returns:
-        Title -> badges -> snippet -> citations (when present) -> an action
-        row with Open first (primary emphasis, when the row is openable)
-        then Select evidence.
+        A single-element list holding the row's card: title -> badges ->
+        snippet -> citations (when present) -> an action row with Open
+        first (primary emphasis, when the row is openable) then Select
+        evidence.
     """
     selected = row.result_id == selected_result_id
     score = library_rag_score_suffix(row.score)
-    children: list[Widget] = [
+    card_children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",
             id=f"library-rag-result-{index}",
@@ -336,7 +348,7 @@ def library_rag_result_row_children(
         ),
     ]
     if row.citation_labels:
-        children.append(
+        card_children.append(
             Static(
                 f"Citations: {', '.join(row.citation_labels)}",
                 id=f"library-rag-result-citations-{index}",
@@ -360,8 +372,18 @@ def library_rag_result_row_children(
             tooltip="Select this evidence result for Console handoff.",
         )
     )
-    children.append(Horizontal(*actions, classes="library-rag-result-actions"))
-    return children
+    card_children.append(Horizontal(*actions, classes="library-rag-result-actions"))
+    card = Vertical(
+        *card_children,
+        id=f"library-rag-result-card-{index}",
+        classes="library-rag-result-card",
+    )
+    # `Vertical.__init__` has no `can_focus` kwarg (only
+    # `VerticalScroll`/`ScrollableContainer` accept it) -- set the instance
+    # attribute directly, the same idiom already used elsewhere in this
+    # screen (e.g. `left_rail.can_focus = True` in `library_screen.py`).
+    card.can_focus = True
+    return [card]
 
 
 def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widget]:
