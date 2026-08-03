@@ -9847,7 +9847,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued"
+        assert str(counts_line.renderable) == "1 queued — all ingests"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 
@@ -12691,3 +12691,50 @@ async def test_preflight_forecasts_already_ingested_text_files(tmp_path):
 
         assert preflight.already_in_library == 1
         await _wait_for_selector(screen, pilot, "#ingest-duplicate-summary")
+
+
+@pytest.mark.asyncio
+async def test_options_loader_never_calls_get_cli_setting_without_default(
+    tmp_path,
+):
+    """(task-2043 unmasking) ``get_cli_setting`` treats a dotted first arg's
+    second positional as the DEFAULT -- two-arg reads in the options loader
+    returned the field NAME string on fresh profiles, truthy-corrupting
+    every option (analyze flipped on; type_options filled with junk).
+    Latent since PR #717, masked by the old rail-entry form reset. Pin:
+    every loader read passes an explicit default, and a config with nothing
+    stored leaves the form at schema defaults."""
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2043-loader")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        recorded = []
+
+        def _two_shape_stub(section, key=None, default="NO-DEFAULT-PASSED"):
+            recorded.append((section, key, default))
+            # Mimic the real function's trap: a missing explicit default on
+            # a dotted path echoes back a truthy string.
+            if default == "NO-DEFAULT-PASSED":
+                return key
+            return default
+
+        import unittest.mock as _mock
+
+        with _mock.patch.object(
+            screen_module, "get_cli_setting", _two_shape_stub
+        ):
+            screen._library_ingest_form = LibraryIngestFormState()
+            screen._load_library_ingest_options_from_config()
+
+        assert recorded, "loader made no config reads"
+        missing = [c for c in recorded if c[2] == "NO-DEFAULT-PASSED"]
+        assert not missing, f"loader reads without explicit default: {missing}"
+        form = screen._library_ingest_form
+        assert form.analyze is False
+        assert form.chunk is True
+        assert form.type_options.get("generic") in (None, {})

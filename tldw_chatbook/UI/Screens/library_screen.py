@@ -13625,13 +13625,21 @@ class LibraryScreen(BaseAppScreen):
             cap = get_capabilities(group)
             prefix = f"library.ingest_options.{group}"
             stored: dict[str, Any] = {}
+            # (task-2043 unmasking) ``get_cli_setting`` has two call shapes:
+            # with a DOTTED first arg the second positional is the DEFAULT,
+            # not a key -- ``get_cli_setting("library.ingest_options.generic",
+            # "analyze")`` on a fresh profile returned the string "analyze",
+            # so every option loaded truthy-corrupted (analyze flipped on,
+            # type_options filled with field-name strings). Latent since
+            # PR #717; masked until now by the rail-entry form reset. The
+            # explicit ``None`` default disambiguates.
             for name in cap.field_names:
-                value = get_cli_setting(prefix, name)
+                value = get_cli_setting(prefix, name, None)
                 if value is not None:
                     stored[name] = value
             if group == "generic":
                 for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
-                    value = get_cli_setting(prefix, name)
+                    value = get_cli_setting(prefix, name, None)
                     if value is None:
                         continue
                     if name == "analyze":
