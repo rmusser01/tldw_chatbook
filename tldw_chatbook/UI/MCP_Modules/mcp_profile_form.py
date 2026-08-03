@@ -64,7 +64,7 @@ class MCPProfileForm(Vertical):
         title = "Edit server" if self.is_edit else "Add local server (stdio)"
         yield Static(title, classes="destination-section", markup=False)
         profile = self._profile or {}
-        yield Static("Profile id", classes="form-label")
+        yield Static("Name", classes="form-label")
         id_input = Input(
             value=str(profile.get("profile_id") or ""),
             id="mcp-form-id",

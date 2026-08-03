@@ -217,6 +217,11 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 "Manage MCP servers, scoped tools, permissions, and audit readiness."
                 in mcp_text
             )
+            # F-052/F-060: plain-language onramp under the purpose line.
+            assert (
+                "MCP lets chatbook use external tools — most people never "
+                "need to change anything here." in mcp_text
+            )
             assert (
                 "Next: select Inventory to inspect tools and actions." not in mcp_text
             )

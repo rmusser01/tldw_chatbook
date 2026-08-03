@@ -1187,7 +1187,7 @@ async def test_local_source_overview_omits_scope_column_and_shows_env_var_copy()
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
         columns = [str(col.label) for col in table.ordered_columns]
-        assert columns == ["Name", "Transport", "Status", "Tools", "Auth"]
+        assert columns == ["Name", "Connection", "Status", "Tools", "Auth"]
         row0 = table.get_row_at(0)
         assert len(row0) == 5
         assert str(row0[4]) == "1 env var"
@@ -1205,7 +1205,7 @@ async def test_server_source_overview_keeps_scope_column():
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
         columns = [str(col.label) for col in table.ordered_columns]
-        assert columns == ["Name", "Transport", "Status", "Tools", "Auth", "Scope"]
+        assert columns == ["Name", "Connection", "Status", "Tools", "Auth", "Scope"]
         row0 = table.get_row_at(0)
         assert len(row0) == 6
         assert str(row0[5]) == "Team"

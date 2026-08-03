@@ -40,7 +40,7 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
 _IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
 
-_TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
+_TABLE_COLUMNS = ("Name", "Connection", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
 # stdio-only; local profiles are always "Personal") -- the overview table
 # omits the column entirely there instead of rendering a column of dashes.
@@ -886,7 +886,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # `show_server_mutations()` instead (see
             # `MCPWorkbench._show_selected_detail()`).
             raw = detail["raw"]
-            lines.append(f"Transport · {snapshot.transport}")
+            lines.append(f"Connection · {snapshot.transport}")
             lines.append(f"Enabled · {'yes' if raw.get('enabled', True) else 'no'}")
             lines.append(f"Credentials · {snapshot.auth_display}")
             # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):

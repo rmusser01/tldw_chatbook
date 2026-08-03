@@ -57,6 +57,17 @@ async def test_build_payload_splits_env_into_placeholders_and_literals():
 
 
 @pytest.mark.asyncio
+async def test_form_labels_use_plain_language():
+    """F-052: the profile form's field label is plain 'Name', not the
+    jargon 'Profile id' (the internal key stays `profile_id`)."""
+    app = FormApp()
+    async with app.run_test():
+        labels = [str(label.renderable) for label in app.query(".form-label")]
+        assert "Name" in labels
+        assert "Profile id" not in labels
+
+
+@pytest.mark.asyncio
 async def test_malformed_env_line_raises_with_line_number():
     app = FormApp()
     async with app.run_test():

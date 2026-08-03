@@ -142,6 +142,12 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         text-align: left;
         content-align: left middle;
     }
+    /* F-060: the zero-servers empty state reads as quiet guidance, not a
+    row -- dim it and align its left edge with the rows' padding. */
+    #mcp-rail-empty {
+        color: $text-muted;
+        padding: 0 1;
+    }
     """
 
     class SourceChanged(Message, namespace="mcp_rail"):
@@ -250,6 +256,15 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         all_row.tooltip = "Show every server in the overview table."
         all_row.set_class(self.selected_server_key is None, "is-active")
         yield all_row
+        # F-060: at zero servers the rail needs an empty state in plain
+        # language pointing at the Add-server action, not a bare "All
+        # servers" row over nothing.
+        if not self.snapshots:
+            yield Static(
+                "No servers yet — Add server to connect one.",
+                id="mcp-rail-empty",
+                markup=False,
+            )
         # A6: the count column's pad width is computed per compose() call as
         # the longest CURRENT row's RENDERED width (post-truncate, still
         # unescaped -- see `_row_prefix_and_label()`'s docstring for why
@@ -333,12 +348,20 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
                     ref_options = [("No scope entities", Select.BLANK)]
                     ref_value = Select.BLANK
                 self._displayed_scope_ref_value = ref_value
-                yield Select(
+                scope_ref_select = Select(
                     ref_options,
                     id="mcp-rail-scope-ref",
                     value=ref_value,
                     disabled=not self.scope_ref_options,
                 )
+                if not self.scope_ref_options:
+                    # F-060: a disabled Select with no explanation reads as
+                    # broken -- say why there is nothing to pick.
+                    scope_ref_select.tooltip = (
+                        "No scope entities to pick for this scope — the "
+                        "select stays disabled until one exists."
+                    )
+                yield scope_ref_select
         else:
             # No scope selects rendered for this source -- nothing to guard
             # a mount-echo against until the next compose().

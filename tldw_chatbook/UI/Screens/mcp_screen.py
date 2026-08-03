@@ -121,6 +121,14 @@ class MCPScreen(BaseAppScreen):
                 id="mcp-purpose",
                 classes="destination-purpose",
             )
+            # F-052/F-060: plain-language onramp under the jargon purpose
+            # line -- what MCP is for, and reassurance that it is optional.
+            yield Static(
+                "MCP lets chatbook use external tools — most people never "
+                "need to change anything here.",
+                id="mcp-purpose-explainer",
+                classes="destination-purpose",
+            )
             with DestinationModeStrip(
                 id="mcp-mode-strip", classes="destination-mode-strip"
             ):

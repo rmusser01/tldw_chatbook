@@ -107,7 +107,7 @@ class MCPServerMutationsPanel(Vertical):
         )
 
         if not self.is_edit:
-            yield Static("Transport", classes="form-label")
+            yield Static("Connection", classes="form-label")
             yield Select(
                 _TRANSPORT_OPTIONS,
                 id="mcp-srv-transport",
@@ -267,7 +267,7 @@ class MCPServerMutationsPanel(Vertical):
             "" if _blank(transport_select.value) else str(transport_select.value)
         )
         if not transport:
-            raise ValueError("Transport is required.")
+            raise ValueError("Connection is required.")
         url = self.query_one("#mcp-srv-url", Input).value.strip()
         # F2 fix: an unvalidated URL flows straight into the create payload
         # and on to `run_action()` -- reject an invalid/unsupported-scheme
