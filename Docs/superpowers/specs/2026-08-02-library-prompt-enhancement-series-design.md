@@ -1,7 +1,7 @@
 # Library Prompt Enhancement Series Design
 
 **Date:** 2026-08-02  
-**Status:** Approved in conversation; specification pending review  
+**Status:** Approved in conversation; review findings addressed, re-review pending
 **Scope:** `tldw_chatbook` TASK-202, TASK-196, TASK-198, TASK-199,
 TASK-197, and TASK-203 as six sequential, merge-gated pull requests
 
@@ -101,7 +101,7 @@ Important baseline findings shape the design:
 | --- | --- | --- | --- |
 | TASK-202 | No new ADR | ADR-011 and ADR-040 | UI grouping and bug repair preserve existing boundaries. |
 | TASK-196 | Yes | Allocate the next available `backlog/decisions/NNN-local-prompt-retained-version-history.md` when the task starts | Makes retained sync-log payloads a user-visible history source and defines restore, pruning, keyword, and concurrency semantics. |
-| TASK-198 | No new ADR | ADR-011 and ADR-040 | Surfaces already-established collection storage and source routing. |
+| TASK-198 | No new ADR | ADR-011 and ADR-040 | Surfaces existing local collection storage through the existing scope; case-fold duplicate prevention is explicitly service-level and makes no schema or migration change. |
 | TASK-199 | Yes | Allocate the next available `backlog/decisions/NNN-prompt-variable-grammar-and-guarded-insertion.md` when the task starts | Defines a durable placeholder grammar and a cross-module Console application contract. |
 | TASK-197 | Yes | Allocate the next available `backlog/decisions/NNN-chatbook-prompt-record-contract.md` when the task starts | Changes the portable archive record and import/export service contract. |
 | TASK-203 | No new ADR | ADR-011, ADR-040, and TASK-197's Chatbook ADR | Adds UI selection and uses already-decided bulk service boundaries. |
@@ -133,7 +133,8 @@ from its Backlog implementation plan and notes.
 New UI state is immutable where practical and separates observed state from
 intent:
 
-- `PromptBrowseScope`: source, query, collection ID, sort, page, and page size.
+- `PromptBrowseScope`: the fixed local backend, query, collection ID, sort,
+  page, and page size. The Library exposes no source selector in this series.
 - `PromptBrowseResult`: normalized items, exact total, page metadata, and scope
   fingerprint.
 - `PromptHistoryState`: retained version summaries, selected preview, paging,
@@ -197,9 +198,14 @@ the unsaved working copy will be discarded.
 ### Scope correction
 
 TASK-202 absorbs the directly overlapping defects in TASK-1640 and TASK-1641.
-Those tasks are closed as implemented by the TASK-202 PR after their acceptance
-criteria are verified. TASK-1642, the broader dirty-navigation feedback issue,
-remains separate.
+All three task records travel in the same PR. Before code changes, TASK-202,
+TASK-1640, and TASK-1641 are each put In Progress and receive their own concise
+implementation plan and ADR check; the two defect plans link to the TASK-202
+series plan instead of creating separate branches. Before the PR is declared
+complete, each record receives its own checked acceptance criteria,
+verification evidence, implementation notes, and Done transition. This is one
+implementation PR, not three PRs and not an exception to Backlog hygiene.
+TASK-1642, the broader dirty-navigation feedback issue, remains separate.
 
 ### Updated acceptance boundary
 
@@ -237,8 +243,10 @@ field. Collection membership, usage counters, and deletion state are not
 versioned by this UI.
 
 `PromptScopeService.list_prompt_versions` routes both local and server sources
-to their adapters and normalizes one version envelope. The Library currently
-uses the local path; server behavior remains available through the same seam.
+to their adapters and normalizes one version envelope. The Library uses only
+the local path in this six-PR series. Server history behavior may remain
+available to other consumers through the same seam, but no Library source
+selector or server-history UI is introduced.
 
 Restore accepts the target snapshot version and the expected current version.
 Local restore calls the ordinary conditional Prompt update with the snapshot's
@@ -255,6 +263,15 @@ A version row shows version, timestamp, artifact type, and changed-field
 summary. Selecting it shows normalized read-only metadata and System/User
 previews. Malformed, foreign-v1, and unsupported definitions use the existing
 compatibility states rather than being interpreted as v2.
+
+Restore is enabled only for a snapshot that normalizes as valid legacy text or
+as a valid structured-v2 Prompt/Recipe under the current local capability and
+ADR-040 rules. Malformed JSON, definition/compiled-field mismatch,
+artifact-type/kind mismatch, unknown format or schema version, unsupported
+future artifact type, and foreign structured-v1 snapshots remain preview-only;
+Restore is disabled with the exact compatibility reason. Foreign-v1 content is
+never reparsed, converted, or written through Restore. Its existing explicit
+Save-as-new conversion remains the only path into an editable v2 artifact.
 
 Viewing is allowed while the working copy is dirty. Restore is disabled until
 the user saves or discards the working copy. Confirmation states that restore
@@ -302,10 +319,12 @@ tuple to its own browse state. Search is debounced, scope-token guarded, and
 shows exact page/total information. The existing rail count may continue using
 the lightweight local count seam.
 
-Server collection CRUD remains routed and normalized through
-`PromptScopeService`. A server feature is shown only where the connected
-contract can complete it honestly; no partial client filter is presented as a
-complete server collection.
+The Library Prompt canvas remains local-only throughout this series and calls
+the scope with `mode="local"`; it adds no source selector and never presents
+server rows as part of an All or collection result. Existing server collection
+methods remain routed through `PromptScopeService` for their current callers,
+but TASK-198 adds no server collection UI. Cross-source browsing, membership,
+and export require a separate end-to-end contract and remain out of scope.
 
 ### Collection management
 
@@ -316,19 +335,24 @@ The list toolbar contains:
 - search, sort, and page controls.
 
 Search applies within the active collection. Changing collection, query, sort,
-page, or source creates a new browse-scope fingerprint.
+or page creates a new browse-scope fingerprint.
 
 Collection create and rename use a compact in-canvas management state. Names
-are non-empty and case-insensitively unique within one source. Collection
-deletion is not exposed because there is no complete source-parity delete
-contract.
+are non-empty. Every successful create or rename through
+`PromptScopeService` is checked case-insensitively against other active local
+collections inside the same write transaction; rename excludes its own ID.
+This is a service-level user-facing validation contract, not a storage
+migration or claim that the existing case-sensitive `UNIQUE` constraint has
+changed. Pre-existing case-fold collisions are not silently renamed or
+deleted: both remain visible by ID, new conflicting writes are blocked, and
+the user can resolve them by renaming. Collection deletion is not exposed.
 
 Membership is a separate action from Prompt Save. The editor shows current
 collections and opens the same membership manager, but `Apply membership`
 produces its own outcome. Local membership replacement is one transaction.
-Collection-centric editing updates one collection at a time. A server path
-that cannot guarantee the requested operation is disabled with an explicit
-reason instead of approximated with an undisclosed series of writes.
+Collection-centric editing updates one collection at a time. All membership
+IDs are validated as active local Prompt/Recipe rows before settlement; a
+failed validation rolls back the local membership change.
 
 ### Updated acceptance boundary
 
@@ -337,8 +361,8 @@ reason instead of approximated with an undisclosed series of writes.
   paginated.
 - One artifact may belong to multiple collections.
 - Prompt content Save and membership Apply are visibly separate outcomes.
-- Local and server collection calls remain routed through
-  `PromptScopeService`.
+- Library collection calls remain local and route through
+  `PromptScopeService`; no server or mixed-source result is implied.
 
 ## TASK-199 — Shared Prompt Variables and Guarded Insertion
 
@@ -353,9 +377,15 @@ One pure module defines the durable grammar:
 - Other braces, including ordinary JSON/XML braces, remain literal.
 - Rendering is single-pass. Braces introduced by a value are never reparsed.
 - The parser is deterministic, preserves first-occurrence order across the
-  active lanes, and bounds the number and length of unique variable names.
+  active lanes, and accepts at most 64 unique variables with names no longer
+  than 64 characters.
 - Invalid or unmatched non-variable brace text remains literal; it is not an
   expression error.
+
+A syntactically valid placeholder beyond either limit produces a validation
+state rather than silently becoming literal or being truncated. The dialog
+offers `Use original placeholders` or Cancel; it does not render a partial
+variable set.
 
 The implementation uses a lexer/state machine rather than repeated regular
 expression substitution so escaped braces cannot reveal an inner variable.
@@ -451,9 +481,28 @@ The canonical record preserves:
 - a compatibility `content` projection for older readers.
 
 The compatibility projection is explicitly lossy and exists only so older
-Chatbook importers do not create an empty Prompt. Modern readers dispatch by
-the record-version field and use the canonical fields. A missing record version
-uses the existing legacy flattened importer.
+Chatbook importers do not create an empty Prompt. It is constructed exactly by
+this formula, where a missing lane is the empty string and lane text is not
+trimmed or line-ending-normalized:
+
+```python
+content = (
+    "### SYSTEM ###\n"
+    + system_prompt
+    + "\n### USER ###\n"
+    + user_prompt
+    + "\n"
+)
+```
+
+The inserted section delimiters use LF. If a preserved lane already ends in a
+newline, the formula intentionally produces an empty line before the next
+delimiter or record end. No metadata or structured definition is added to
+`content`, and no lane is chosen over the other. An older importer will still
+flatten this whole projection into its System field; that known loss is
+preferable to silently discarding either lane. Modern readers never parse
+`content`: they dispatch by the record-version field and use the canonical
+fields. A missing record version uses the existing legacy flattened importer.
 
 Semantic round trip does not preserve local row ID/UUID, version number,
 sync-log history, usage counters, timestamps, or collection membership. Import
@@ -512,9 +561,10 @@ an artifact whose type changed is classified correctly.
 
 Selection is deliberately bounded to visible rows in the current browse scope.
 The toolbar says `Select visible`, and the scope copy distinguishes displayed
-rows from total matches. Changing query, collection, page, source, or sort
-clears selection. This prevents hidden destructive selection and avoids
-claiming cross-page selection support.
+rows from total matches. Changing query, collection, page, or sort clears
+selection. The Library is local-only in this series, so there is no source
+transition to retain or clear. This prevents hidden destructive selection and
+avoids claiming cross-page selection support.
 
 In select mode:
 
@@ -537,11 +587,12 @@ Delete selected uses the shared Prompt deletion confirmation. It states the
 Prompt/Recipe count and shows a bounded name preview. Confirmation captures a
 selection fingerprint; any selection or scope change invalidates it.
 
-`PromptScopeService.bulk_delete_prompts` owns routing. Local deletion produces
-per-ID success/failure outcomes and uses existing soft-delete behavior. A
-server bulk path is used only when supported. Successful identities clear;
-failed identities remain selected for retry. The active browse result and
-collection count refresh after settlement.
+`PromptScopeService.bulk_delete_prompts` owns routing, and this local-only
+Library surface calls it with local identities. Local deletion produces per-ID
+success/failure outcomes and uses existing soft-delete behavior. Successful
+identities clear; failed identities remain selected for retry. The active
+browse result and collection count refresh after settlement. Server and mixed-
+source bulk actions are not exposed by this series.
 
 ### Updated acceptance boundary
 
@@ -643,8 +694,10 @@ For each task:
 
 1. Fetch and confirm the latest merged `origin/dev`.
 2. Create a fresh ignored `.worktrees/` worktree and `codex/` branch.
-3. Mark only that Backlog task In Progress and add its implementation plan,
-   including the required ADR path/reason.
+3. Mark that Backlog task In Progress and add its implementation plan,
+   including the required ADR path/reason. TASK-202 additionally puts its two
+   absorbed defect records, TASK-1640 and TASK-1641, In Progress and gives each
+   the linked one-PR plan described above.
 4. If an ADR is required, write and commit it before implementation code.
 5. Add or update acceptance criteria before implementing any newly approved
    behavior.
@@ -680,6 +733,10 @@ the authority for the next PR's baseline.
 Each task PR updates its own Backlog file only after marking it In Progress and
 before implementation. Approved acceptance-criteria expansions in this spec
 must be copied into the task before the corresponding code is written.
+
+This approved umbrella specification is carried into the first TASK-202 branch
+and committed in the TASK-202 PR. It does not receive a separate design-only
+PR, so the user-visible delivery remains exactly six PRs.
 
 Expected documentation updates include:
 
