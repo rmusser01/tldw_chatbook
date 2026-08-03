@@ -94,10 +94,12 @@ def test_no_logging_call_has_an_unevaluated_brace_placeholder():
 
 
 def test_anthropic_debug_log_interpolates_payload_values(monkeypatch):
-    """task-2116 AC#1: the fixed line must show REAL payload values (and
-    never the source text of the dict comprehension that used to be
-    printed literally), while still honoring its own "(excluding messages)"
-    promise -- user message content must never appear in the log."""
+    """Confirm the request-payload log shows real values, not comprehension source text or message content.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading, the debug
+            logger, and the outgoing HTTP session.
+    """
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     debug_messages: list[str] = []

@@ -7,7 +7,7 @@ import inspect
 import logging
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import httpx
 import pytest
@@ -32,6 +32,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     llm_retry_count,
     safe_llm_error_detail,
     safe_llm_log_value,
+    safe_llm_request_payload_summary,
     safe_llm_url_host,
     sensitive_llm_request,
 )
@@ -50,6 +51,13 @@ CANARIES = (
     "ENDPOINT-PATH-CANARY",
     "ENDPOINT-USER-CANARY",
     "ENDPOINT-PASSWORD-CANARY",
+    # task-2117 Qodo round: prompt-bearing fields the old messages/contents
+    # denylist never accounted for.
+    "OPENAI-RESPONSES-INPUT-CANARY",
+    "ANTHROPIC-SYSTEM-FIELD-CANARY",
+    "GOOGLE-SYSTEM-INSTRUCTION-CANARY",
+    "UNKNOWN-PAYLOAD-FIELD-CANARY",
+    "TOOL-SCHEMA-DESCRIPTION-CANARY",
 )
 
 
@@ -484,6 +492,235 @@ def test_sensitive_google_request_content_and_error_body_are_not_logged(
             )
 
     _assert_canaries_absent(logs, exc_info.value)
+
+
+# ---- task-2117 Qodo round: allowlist, not denylist -------------------------
+#
+# TASK-2116 made the "Request Payload" debug logs above actually
+# interpolate. The redaction added alongside them only stripped
+# `messages`/`contents` -- a denylist that has now failed twice: it never
+# accounted for OTHER prompt-bearing fields providers carry outside those
+# two keys (OpenAI Responses API `input`, Anthropic `system`, Google
+# `system_instruction`). These tests pin the allowlist that replaced it:
+# only known-safe scalar metadata is logged, everything else -- including a
+# payload key nobody has seen yet -- is dropped by default.
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_openai_responses_api_input_field_is_never_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """Confirm the Responses API's input field never reaches debug logs.
+
+    The Responses API (used whenever ``reasoning_effort`` is set) carries
+    the whole conversation -- system message included -- under ``input``,
+    not ``messages``. The old messages-only denylist never accounted for
+    this field.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+        sensitive: Whether to also exercise the sensitive-auxiliary logging
+            path alongside the ordinary path.
+    """
+    # The response body deliberately avoids any CANARIES entry: this test's
+    # concern is the request-payload allowlist, not error-detail redaction
+    # (already covered elsewhere) -- an ordinary, non-sensitive request is
+    # expected to surface a real HTTP error detail.
+    session = _FakeSession(
+        _FakeResponse({}, status_code=500, text="non-sensitive-path-http-failure")
+    )
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "openai_api": {
+                "api_base_url": "https://api.openai.test/v1",
+                "api_retries": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    def _invoke() -> None:
+        with pytest.raises(Exception):
+            cloud_adapters.chat_with_openai(
+                input_data=[
+                    {"role": "user", "content": "OPENAI-RESPONSES-INPUT-CANARY"}
+                ],
+                api_key="key",
+                system_message="SYSTEM-CANARY OPTIMIZER-CANARY",
+                model="gpt-test",
+                streaming=False,
+                reasoning_effort="medium",
+            )
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _captured_logs() as logs, context:
+        _invoke()
+
+    _assert_canaries_absent(logs)
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_anthropic_system_field_is_never_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """Confirm Anthropic's top-level system field never reaches debug logs.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+        sensitive: Whether to also exercise the sensitive-auxiliary logging
+            path alongside the ordinary path.
+    """
+    # See the OpenAI test above for why the response body avoids CANARIES.
+    session = _FakeSession(
+        _FakeResponse({}, status_code=500, text="non-sensitive-path-http-failure")
+    )
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "anthropic_api": {
+                "api_key": "key",
+                "api_base_url": "https://anthropic.test/v1",
+                "api_retries": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    def _invoke() -> None:
+        with pytest.raises(Exception):
+            cloud_adapters.chat_with_anthropic(
+                input_data=[{"role": "user", "content": "USER-CANARY"}],
+                api_key="key",
+                system_prompt="ANTHROPIC-SYSTEM-FIELD-CANARY",
+                model="claude-test",
+                streaming=False,
+            )
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _captured_logs() as logs, context:
+        _invoke()
+
+    _assert_canaries_absent(logs)
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_google_system_instruction_field_is_never_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """Confirm Google's system_instruction field never reaches debug logs.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+        sensitive: Whether to also exercise the sensitive-auxiliary logging
+            path alongside the ordinary path.
+    """
+    # See the OpenAI test above for why the response body avoids CANARIES.
+    session = _FakeSession(
+        _FakeResponse({}, status_code=500, text="non-sensitive-path-http-failure")
+    )
+    monkeypatch.setattr(
+        cloud_adapters,
+        "get_runtime_config_snapshot",
+        lambda: _runtime_config("google", {"api_key": "key", "api_retries": 0}),
+    )
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    def _invoke() -> None:
+        with pytest.raises(Exception):
+            cloud_adapters.chat_with_google(
+                input_data=[{"role": "user", "content": "USER-CANARY"}],
+                api_key="key",
+                system_message="GOOGLE-SYSTEM-INSTRUCTION-CANARY",
+                model="gemini-test",
+                streaming=False,
+            )
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _captured_logs() as logs, context:
+        _invoke()
+
+    _assert_canaries_absent(logs)
+
+
+def test_safe_llm_request_payload_summary_drops_unrecognized_payload_keys() -> None:
+    """Confirm the allowlist drops any payload key it does not explicitly recognize.
+
+    This is the property that stops a third recurrence of this bug class: a
+    provider payload growing a brand-new field must be safe by default, not
+    exposed by default, even before anyone updates the allowlist.
+    """
+    payload = {
+        "model": "gpt-test",
+        "stream": False,
+        "messages": [{"role": "user", "content": "hi"}],
+        "a_field_no_provider_has_shipped_yet": "UNKNOWN-PAYLOAD-FIELD-CANARY",
+    }
+
+    summary = safe_llm_request_payload_summary(payload)
+
+    assert "a_field_no_provider_has_shipped_yet" not in summary
+    assert "UNKNOWN-PAYLOAD-FIELD-CANARY" not in str(summary)
+    assert summary["model"] == "gpt-test"
+    assert summary["message_count"] == 1
+
+
+def test_tool_definitions_log_names_only_never_schema_or_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirm tool debug logs carry only names, never descriptions or JSON-schema parameters.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub config loading and the
+            outgoing HTTP session.
+    """
+    # See test_openai_responses_api_input_field_is_never_logged for why the
+    # response body avoids CANARIES.
+    session = _FakeSession(
+        _FakeResponse({}, status_code=500, text="non-sensitive-path-http-failure")
+    )
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "openai_api": {
+                "api_base_url": "https://api.openai.test/v1",
+                "api_retries": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+
+    with _captured_logs() as logs:
+        with pytest.raises(Exception):
+            cloud_adapters.chat_with_openai(
+                input_data=[{"role": "user", "content": "hello"}],
+                api_key="key",
+                model="gpt-test",
+                streaming=False,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_weather",
+                            "description": "TOOL-SCHEMA-DESCRIPTION-CANARY",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            )
+
+    rendered = "\n".join(logs)
+    _assert_canaries_absent(logs)
+    assert "lookup_weather" in rendered
 
 
 def test_sensitive_huggingface_error_body_endpoint_and_exception_are_not_logged(

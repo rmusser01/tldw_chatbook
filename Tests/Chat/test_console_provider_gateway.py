@@ -2846,13 +2846,7 @@ def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:
 
 
 def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
-    """task-2114: a configured `[api_settings.anthropic].api_base_url` must
-    reach the PRIMARY Console send path's kwargs, mirroring what
-    `_auxiliary_chat_api_kwargs` already did for the auxiliary/one-shot
-    path -- `resolve_for_send` resolves the effective endpoint into
-    `resolution.base_url`; before this fix `_chat_api_kwargs` never
-    forwarded it, so a configured proxy/relay was a silent no-op on the
-    sends that matter most."""
+    """Confirm a configured Anthropic api_base_url reaches the primary send path's kwargs."""
     resolution = ConsoleProviderResolution(
         provider="anthropic",
         base_url="https://proxy.example.test/v1",
@@ -2871,11 +2865,7 @@ def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
 
 
 def test_chat_api_kwargs_omits_api_base_url_for_non_anthropic() -> None:
-    """task-2114 AC#4: the fix is scoped to Anthropic only -- other
-    provider adapters sharing the same auxiliary-honors/primary-ignores
-    split are identified but not fixed here (see task-2114's
-    Implementation Notes), so their `_chat_api_kwargs` output must stay
-    exactly what it was before this change."""
+    """Confirm the api_base_url forwarding fix is scoped to Anthropic only."""
     resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://proxy.example.test/v1",
@@ -3077,11 +3067,15 @@ class _FakeAnthropicPostResponse:
 
 @pytest.mark.asyncio
 async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) -> None:
-    """task-2114 end-to-end: drives the REAL gateway -> `chat_api_call` ->
-    `chat_with_anthropic` chain (no `chat_api_call_fn` stand-in) and proves
-    the actual HTTP URL posted honors a configured
-    `[api_settings.anthropic].api_base_url` on the PRIMARY Console send
-    path, not just the auxiliary/one-shot path."""
+    """Confirm the real gateway-to-adapter chain posts to a configured Anthropic api_base_url.
+
+    Drives the real gateway -> ``chat_api_call`` -> ``chat_with_anthropic``
+    chain (no ``chat_api_call_fn`` stand-in) on the primary Console send
+    path, not just the auxiliary/one-shot path.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}
@@ -3122,9 +3116,11 @@ async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) ->
 async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
     monkeypatch,
 ) -> None:
-    """task-2114 AC#2: with no `api_base_url` configured, the posted URL on
-    the primary Console send path is byte-identical to today's default
-    endpoint -- no behavior change for the common case."""
+    """Confirm the default Anthropic endpoint is unchanged when api_base_url is not configured.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}

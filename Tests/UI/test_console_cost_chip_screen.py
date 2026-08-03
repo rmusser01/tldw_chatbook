@@ -365,18 +365,11 @@ async def _mount_and_send_warm_system_prompt(console, pilot):
 
 @pytest.mark.asyncio
 async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm():
-    """task-2115 (real-provider live verification, 2026-08-03): a warm cache,
-    a system-prompt edit (alert), then a revert of that exact edit -- with
-    NO clock manipulation, so the 300s TTL recorded by the original send is
-    still comfortably in the future the whole time (mirrors the spec's own
-    TTL model: "reverting an edit is not a send, so the deadline itself
-    should be untouched by step 3").
+    """Confirm reverting a system-prompt edit with TTL time remaining returns the chip to warm, not cold.
 
-    This is the scripted reproduction that settled task-2115: it pins that
-    the chip returns to plain warm ``●`` (not cold ``○``) with a correct
-    remaining countdown, proving the live-verify's observed "lands on
-    expired" was not caused by the revert path itself -- see the task's
-    Implementation Notes for the full determination.
+    No clock manipulation happens here, so the 300s TTL recorded by the
+    original send is still comfortably in the future throughout -- the
+    scripted reproduction that settled task-2115.
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
@@ -429,14 +422,12 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
 
 @pytest.mark.asyncio
 async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expired():
-    """task-2115, AC#5: the companion case to the test above -- once the
-    recorded deadline has GENUINELY passed (simulated the same way
-    ``test_ttl_timer_expires_the_chip_and_stops_itself`` does: pushing the
-    controller's own ``_cache_warm_until`` entry into the past, never by
-    freezing/jumping the real monotonic clock a running app also depends
-    on), a break -> revert sequence must still report the chip as expired/
-    cold, not warm -- proving the fix for the "revert restores warm" case
-    above did not also make the chip forget a real TTL lapse.
+    """Confirm a break-then-revert sequence still reports expired once the TTL deadline has genuinely passed.
+
+    The companion case to the test above: the deadline lapse is simulated
+    by pushing the controller's own ``_cache_warm_until`` entry into the
+    past (never by freezing or jumping the real monotonic clock a running
+    app also depends on).
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()

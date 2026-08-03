@@ -59,6 +59,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     llm_retry_count,
     safe_llm_error_detail,
     safe_llm_exception_message,
+    safe_llm_request_payload_summary,
     safe_llm_url_host,
 )
 #
@@ -729,9 +730,12 @@ def chat_with_openai(
         # -- the payload can carry a caller-supplied system prompt or other
         # request content that must never reach a log in that context (see
         # Tests/Chat/test_sensitive_llm_logging.py).
+        # task-2117 Qodo round: an allowlisted summary, not a denylist -- the
+        # Responses API puts the WHOLE conversation under "input", which the
+        # old "excluding messages" denylist never accounted for.
         logger.debug(
-            f"OpenAI Request Payload (excluding messages): "
-            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+            "OpenAI Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload, content_keys=('input', 'messages'))}"
         )
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
@@ -1478,9 +1482,11 @@ def chat_with_anthropic(
     ).rstrip("/") + "/messages"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary -- "system" carries the
+        # actual system-prompt text and must never be logged verbatim.
         logger.debug(
-            f"Anthropic Request Payload (excluding messages): "
-            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+            "Anthropic Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data, system_keys=('system',))}"
         )
 
     start_time = time.time()
@@ -2909,9 +2915,11 @@ def chat_with_deepseek(
     ).rstrip("/") + "/chat/completions"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"DeepSeek Request Payload (excluding messages): "
-            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+            "DeepSeek Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
         )
 
     try:
@@ -3324,9 +3332,18 @@ def chat_with_google(
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary -- "system_instruction"
+        # carries the actual system-prompt text and must never be logged
+        # verbatim. generationConfig is flattened to the top level first so
+        # its (camelCase) sampling params can be picked up by the allowlist.
+        google_log_payload = {
+            **payload,
+            **payload.get("generationConfig", {}),
+            "streaming": current_streaming,
+        }
         logger.debug(
-            f"Google Gemini Request Payload (excluding contents): "
-            f"{ {k: v for k, v in payload.items() if k != 'contents'} }"
+            "Google Gemini Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(google_log_payload, content_keys=('contents',), system_keys=('system_instruction',))}"
         )
     logger.debug(
         "Google Gemini request content metadata: "
@@ -3918,9 +3935,11 @@ def chat_with_groq(
     ).rstrip("/") + "/chat/completions"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"Groq Request Payload (excluding messages): "
-            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+            "Groq Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
         )
     try:
         if current_streaming:
@@ -4686,9 +4705,11 @@ def chat_with_mistral(
     ).rstrip("/") + "/chat/completions"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"Mistral Request Payload (excluding messages): "
-            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+            "Mistral Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
         )
 
     try:
@@ -4937,9 +4958,11 @@ def chat_with_openrouter(
     ).rstrip("/") + "/chat/completions"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"OpenRouter Request Payload (excluding messages): "
-            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+            "OpenRouter Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
         )
 
     try:
@@ -5305,9 +5328,11 @@ def chat_with_moonshot(
     }
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"Moonshot Request Payload (excluding messages): "
-            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+            "Moonshot Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
         )
 
     # Determine API endpoint based on config (default to international)
@@ -5629,9 +5654,11 @@ def chat_with_zai(
 
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
         logger.debug(
-            f"Z.AI Request Payload (excluding messages): "
-            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+            "Z.AI Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
         )
 
     start_time = time.time()
