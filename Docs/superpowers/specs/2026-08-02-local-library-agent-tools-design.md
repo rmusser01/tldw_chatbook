@@ -352,10 +352,12 @@ The serializer measures the actual encoded JSON bytes. If mandatory fields
 would exceed their reserved budget, it deterministically shortens display
 titles/names further, never below a 32-byte display floor, and sets the
 corresponding truncation flag.
+
 The ASCII ID and fixed-field bounds guarantee that a 50-item mandatory page
 fits below the reserve. If optional data would cross the full ceiling, the
 serializer trims in this fixed order: additional keyword values, previews,
 then optional metadata.
+
 It preserves every item in the requested page and always preserves each item's
 `id`, `type`, bounded title/name, and keyword counts. The envelope then returns
 `response_truncated: true` plus `omitted_fields`; otherwise it returns
@@ -369,7 +371,18 @@ omitted values.
 
 Get responses return metadata plus one bounded content segment or child page.
 The default text budget is 8,000 characters and the maximum caller-selectable
-budget is 16,000 characters.
+budget is 16,000 characters. These are requested character ceilings, not a
+promise that every response contains that many characters. After bounded
+metadata is assembled, the serializer measures the actual UTF-8 JSON bytes and
+shortens returned text at a Unicode character boundary until the complete
+response fits below 32 KiB. It uses the largest prefix that fits. The returned
+`end`, `has_more`, and continuation cursor are computed from the actual
+character prefix, never the requested ceiling.
+
+Content metadata includes `requested_max_chars` and `returned_chars`. `start`,
+`end`, and `total_chars` are canonical text character offsets; they are not
+byte offsets. JSON escaping and multibyte characters therefore cannot make a
+cursor skip or repeat text.
 
 Text continuation metadata includes:
 
@@ -380,6 +393,8 @@ Text continuation metadata includes:
     "start": 0,
     "end": 8000,
     "total_chars": 24000,
+    "requested_max_chars": 8000,
+    "returned_chars": 8000,
     "revision": "opaque-revision",
     "has_more": true,
     "next_cursor": "opaque-cursor"
@@ -418,7 +433,10 @@ Type-specific get behavior:
   message page with an exact `message_total`. The structured continuation
   state identifies message offset, stable message ID, and within-message
   character offset so a single long message can be continued without losing
-  message boundaries.
+  message boundaries. `message_limit` is a maximum: a response may stop before
+  that many messages, or shorten the final included message, to honor the byte
+  ceiling. It reports `returned_message_count`, the next message offset, and
+  any within-message cursor from the actual returned content.
   `include_rag_context` is always false.
 - **Collections:** returns Collection metadata and a paginated direct-membership
   page with an exact `member_total`. Each member includes its stable
@@ -591,7 +609,10 @@ skill directories. They must cover:
   `response_truncated` identifies omitted optional fields below the hard
   ceiling.
 - Text chunk sizes, serialized hard ceiling, cursor continuation, terminal
-  chunks, tampered cursors, and revision-change rejection.
+  chunks, tampered cursors, and revision-change rejection. Multibyte and
+  JSON-escaped content tests prove the final serialized get response stays
+  below 32 KiB, returned character offsets reflect byte-driven shortening, and
+  continuation neither skips nor repeats text.
 - Conversation message totals, message pagination, long-message continuation,
   exclusion of RAG-context messages, and proof that message image BLOBs are not
   selected or returned.
