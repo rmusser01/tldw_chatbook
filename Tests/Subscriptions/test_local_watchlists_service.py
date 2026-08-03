@@ -425,6 +425,10 @@ async def test_local_watchlists_service_url_list_isolates_one_failing_url(
     all-or-nothing behaviour (confirmed by reverting the
     `_check_url_isolated` try/except and re-running -- see the task's
     Implementation Notes) and passes with the per-URL isolation in place.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -522,6 +526,10 @@ async def test_local_watchlists_service_sitemap_isolates_one_failing_url(
     before this loop starts, so a failure fetching the sitemap itself still
     fails the whole run. This test is only about the per-URL loop that walks
     the URLs the sitemap already produced.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -637,6 +645,10 @@ async def test_local_watchlists_service_url_list_all_error_advances_breaker_and_
     Discriminator: this test REDs if `_all_error_check_message` is reverted to
     always return `None` (the pre-fix-wave behaviour) -- the breaker resets to
     0 instead of advancing to 2, and the source never pauses.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -710,6 +722,10 @@ async def test_local_watchlists_service_url_list_partial_error_still_resets_brea
     breaker resets to 0 (exactly as a clean run would) and the successful
     URL's item persists. This pins that the all-error fix does not regress
     into treating ANY per-URL error as a subscription-level failure.
+
+    Args:
+        tmp_path: pytest tmp dir for the on-disk `SubscriptionsDB`.
+        monkeypatch: patches the URL monitor so one URL raises.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
