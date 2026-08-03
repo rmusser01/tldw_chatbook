@@ -2141,6 +2141,14 @@ ConsoleRunLogModal {
     text-style: bold;
 }
 
+/* task-4 (PR3 cost ticker): the cost chip's "cache expired" state -- not
+   an alert (nothing needs the user's attention) and not a plain dim
+   readiness pill either, so it gets its own informational color rather
+   than reusing either. */
+.console-chip-cold {
+    color: $ds-status-info;
+}
+
 /* task-7: the temporary-chat chip -- distinct from the neutral readiness
    chips above so "this chat is not saved" reads as a state worth noticing,
    not just another setting pill. */
