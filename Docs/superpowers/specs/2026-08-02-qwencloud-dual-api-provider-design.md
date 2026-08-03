@@ -1,7 +1,7 @@
 # QwenCloud Dual-API Provider Design
 
 Date: 2026-08-02
-Status: Approved for implementation planning
+Status: Independently reviewed; pending final user approval
 Backlog task: [TASK-1336](../../../backlog/tasks/task-1336%20-%20Add-QwenCloud-dual-API-provider-support.md)
 
 ## Purpose
@@ -34,7 +34,7 @@ Primary references:
 - Default `api_mode` to `responses`; permit exactly `responses` and `chat_completions`.
 - Support streaming and non-streaming text responses in both modes.
 - Support only Chatbook's existing function tools in both modes, including multi-call turns and tool-result continuation.
-- Normalize both external APIs into the OpenAI-style chat/tool shape already consumed by Chatbook's gateway and tool executor.
+- Normalize both external APIs into the OpenAI-style chat/tool shape consumed by both Console and the main Chat/CCP worker paths.
 - Keep QwenCloud endpoint and credential overrides configurable, including Token Plan or future compatible endpoints.
 - Add QwenCloud to the existing cached model-discovery pipeline.
 - Fail before network I/O for invalid local configuration or unsupported request shapes.
@@ -45,7 +45,7 @@ Primary references:
 - Do not add a QwenCloud SDK dependency.
 - Do not generalize or migrate every OpenAI-compatible provider in this slice.
 - Do not infer model/API compatibility from model-name patterns.
-- Do not promise multimodal support for every Qwen model. Valid media content must not be silently dropped, but each selected model remains responsible for accepting its documented media inputs.
+- Do not promise multimodal support for every Qwen model. The first slice supports text and user-role `image_url` parts only; audio, video, file, and unknown content parts fail locally and remain future work.
 - Do not persist Responses server state, adopt `previous_response_id`, or change Chatbook's conversation storage contract.
 - Do not make paid QwenCloud calls in the default automated test suite.
 
@@ -62,13 +62,12 @@ api_key_env_var = "DASHSCOPE_API_KEY"
 api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 api_mode = "responses"
 model = "qwen3.8-max"
+api_timeout = 120
+api_retries = 2
+api_retry_base_delay = 1.0
 ```
 
-The effective API mode resolves in this order:
-
-1. Explicit adapter argument, when a caller supplies one.
-2. `[api_settings.qwencloud].api_mode`.
-3. Hard default `responses`.
+The effective API mode resolves from `[api_settings.qwencloud].api_mode`, then falls back to the hard default `responses`. There is no Console session or per-request API-mode override in this slice.
 
 Mode values are normalized for surrounding whitespace and case, then validated against the two canonical values. Aliases are not accepted. An invalid value raises a typed provider-configuration error before any request is attempted.
 
@@ -79,6 +78,8 @@ Credential resolution follows the existing provider credential boundary:
 3. Default environment variable `DASHSCOPE_API_KEY`.
 
 Credentials are never logged, returned in readiness copy, written to model-catalog caches, or embedded in exception text.
+
+`api_timeout` is a per-attempt request timeout in seconds, valid from 1 through 600. `api_retries` is the number of additional attempts after the first request, valid from 0 through 5. `api_retry_base_delay` is the exponential-backoff base in seconds, valid from 0 through 30. Defaults therefore permit at most three total attempts with delays beginning at one second. Backoff is capped at eight seconds; a valid `Retry-After` value takes precedence but is capped at 30 seconds.
 
 ## Provider Identity And Registration
 
@@ -116,10 +117,17 @@ Chatbook messages + function tools
       +-------+--------+
               |
               v
- OpenAI-style chat chunks/messages/tool_calls
+ Complete OpenAI-style chat chunks/messages/tool_calls
+              |
+      +-------+--------+
+      |                |
+      v                v
+ Console gateway   Chat/CCP workers
+      |                |
+      +-------+--------+
               |
               v
- Existing Console gateway + tool executor
+      Existing tool executor
 ```
 
 The adapter owns:
@@ -131,7 +139,11 @@ The adapter owns:
 - Streaming and non-streaming response normalization.
 - QwenCloud-specific error classification and safe retry policy.
 
-The existing dispatcher, gateway, accumulator, transcript store, and tool executor continue to own provider selection, tool approval/execution, and conversation persistence.
+The existing dispatcher, transcript stores, and tool executor continue to own provider selection, tool approval/execution, and conversation persistence. The two consumer paths require explicit compatibility work:
+
+- Console already accumulates OpenAI-style tool-call deltas and preserves assistant/tool messages; QwenCloud output must remain compatible with it.
+- Chat/CCP currently appends streamed tool fragments without merging them and its non-streaming parser misses `choices[0].message.tool_calls`. QwenCloud streaming therefore emits each complete normalized tool call exactly once, and the shared parser is extended to inspect the standard choices envelope.
+- Chat/CCP's existing textual `[Tool Results]` continuation is insufficient for Responses. For QwenCloud only, continuation must append the normalized assistant `tool_calls` message plus one `role = "tool"` message per result to the in-memory request history, persist the existing tool-message records, and submit the continuation without creating a synthetic visible user message. Other providers retain their current continuation behavior in this slice.
 
 The initial implementation should remain QwenCloud-focused. Pure helpers may be extracted only when their behavior is demonstrably identical and existing OpenAI tests protect the extraction. Adding QwenCloud must not change OpenAI request or response behavior incidentally.
 
@@ -161,7 +173,10 @@ Chatbook's canonical conversation remains chat-shaped. Translation is pure and m
 
 - Preserve supported roles and message order.
 - Collapse a content array containing only text parts into one string. This prevents text-only Qwen models from rejecting array-shaped text input.
-- Preserve non-text content; never discard media parts while simplifying text.
+- Accept text parts and user-role `image_url` parts only. Never discard accepted image parts while simplifying adjacent text.
+- For Chat Completions, preserve `{ "type": "image_url", "image_url": { "url": ... } }`.
+- For Responses, convert it to `{ "type": "input_image", "image_url": ... }`; adjacent text becomes `input_text` when structured content is required.
+- Reject images on non-user roles and reject audio, video, file, or unknown part types before network I/O.
 - Reject malformed content parts with a configuration/request error that identifies the message index but does not include private content.
 - Preserve empty assistant content when the assistant message carries tool calls.
 
@@ -170,13 +185,12 @@ Chatbook's canonical conversation remains chat-shaped. Translation is pure and m
 - Send ordinary `system`, `user`, and `assistant` messages in chat shape.
 - Send assistant tool calls under `assistant.tool_calls`.
 - Send tool results as `role = "tool"` with `tool_call_id` and string content.
-- Retain valid OpenAI-compatible media parts for models that support them.
+- Retain validated user-role `image_url` parts for models that support them.
 
 ### Responses input
 
 - Convert ordinary messages into documented Responses input messages.
-- Convert text content types to the destination input/output text types required by role and context.
-- Convert recognized OpenAI-compatible media parts to documented Responses input media parts without losing URLs or inline data.
+- Keep simple text messages string-shaped. For mixed user text/image input, convert text to `input_text` and `image_url` to `input_image` without losing the URL or inline data URL.
 - Convert every prior assistant tool call into a `function_call` item.
 - Convert every prior Chatbook tool result into a `function_call_output` item whose `call_id` equals the originating Chatbook `tool_call_id`.
 - Reject orphaned tool results whose `tool_call_id` cannot be associated with a prior function call.
@@ -219,7 +233,7 @@ Validation rules:
 - Require a non-empty function name and object-shaped JSON Schema parameters.
 - Preserve descriptions and JSON Schema without mutating them.
 - Reject duplicate function names.
-- Validate `tool_choice` per API mode. `auto` and `none` are accepted in both modes. Additional documented values or constrained function choices are accepted only when their destination shape can be represented without ambiguity; otherwise fail clearly before network I/O.
+- Accept an absent `tool_choice`, `auto`, or `none` in both modes. Reject `required`, forced-function objects, and every other string/object before network I/O in this first slice.
 
 ### Tool-call identity
 
@@ -251,7 +265,7 @@ Forward documented values when non-null and valid, including:
 - supported `tool_choice`
 - `reasoning.effort` when selected and documented for the chosen API
 
-Do not send Chatbook's generic maximum-token, seed, repetition/frequency/presence penalty, response-format, verbosity, reasoning-summary, or stop fields unless QwenCloud's Responses documentation explicitly supports them at implementation time. Omission is intentional, not an error.
+Do not send Chatbook's generic maximum-token, seed, repetition/frequency/presence penalty, response-format, verbosity, reasoning-summary, or stop fields. Omission is intentional, not an error, even when generic saved defaults populated those fields. Supporting another field requires a later spec change rather than an implementation-time interpretation of this design.
 
 ### Chat Completions mode
 
@@ -263,11 +277,11 @@ Changing API mode updates concise help text in Settings. Responses mode must exp
 
 ## Response Normalization
 
-Both APIs normalize into the chat-shaped contract already consumed by the Console gateway and tool-call accumulator.
+Both APIs normalize into the complete chat-shaped contract consumed by Console and Chat/CCP. Adapter tests alone are insufficient; each normalized path requires a consumer-level test.
 
 ### Non-streaming Chat Completions
 
-Validate the response envelope, preserve assistant text, and preserve `message.tool_calls`. A success response without usable text or tool calls is a malformed-provider-response error.
+Validate the response envelope, preserve assistant text, and preserve `message.tool_calls`. The shared Chat/CCP parser must recognize the complete `choices[0].message.tool_calls` envelope in addition to its existing direct-message and provider-specific shapes. A success response without usable text or tool calls is a malformed-provider-response error.
 
 ### Non-streaming Responses
 
@@ -283,7 +297,7 @@ Text and tool calls may coexist in one response and neither may be dropped.
 
 ### Streaming Chat Completions
 
-Pass validated OpenAI-compatible SSE chat chunks through the existing gateway contract. Preserve incremental `delta.content` and `delta.tool_calls` fragments.
+Preserve and emit text deltas incrementally. Accumulate each tool call's name, ID, and argument fragments inside the adapter, then emit each complete normalized tool call exactly once before the terminal finish chunk. Do not expose partial `delta.tool_calls` fragments to Chatbook consumers.
 
 ### Streaming Responses
 
@@ -295,7 +309,9 @@ Use a stateful event translator. It tracks each output item by output index and/
 - Incremental argument fragments.
 - Completion state.
 
-It converts documented QwenCloud events such as text deltas, output-item additions, function-argument deltas/done events, response completion, and provider errors into ordered OpenAI-style chat SSE chunks. It emits `[DONE]` exactly once.
+It converts documented QwenCloud events such as text deltas, output-item additions, function-argument deltas/done events, and response completion into ordered OpenAI-style chat SSE chunks. Text remains incremental; tool calls are buffered and each complete normalized call is emitted exactly once. A successful stream emits `[DONE]` exactly once.
+
+A QwenCloud terminal provider-error event is not serialized as an SSE `{ "error": ... }` chunk because Chat/CCP can ignore an envelope without `choices`. Instead, the generator raises the project's typed `ChatProviderError(provider="qwencloud", ...)` with sanitized recovery text. It does not emit `[DONE]` after the error. If any response byte or event was already consumed, it does not retry the request.
 
 Unknown informational event types are ignored only when they cannot affect text, tool-call identity, arguments, errors, or completion. A terminal response with an incomplete function-call identity or invalid arguments is a malformed-provider-response error.
 
@@ -312,7 +328,7 @@ Settings adds an `API mode` selector to the provider connection block.
 - Invalid persisted values render a visible validation state and cannot be used for connection testing or chat submission.
 - Mode-specific help explains parameter differences without implying that the selected model supports both APIs.
 
-QwenCloud readiness requires:
+The shared `ProviderReadiness` contract retains its current credential-readiness meaning. QwenCloud-specific send validation is layered after shared credential readiness in Settings connection testing, Console send resolution, and Chat/CCP submission. That validation requires:
 
 - A non-empty model.
 - A valid base URL.
@@ -326,6 +342,7 @@ Readiness and connection-test copy identifies QwenCloud, never OpenAI, and never
 QwenCloud joins the existing ADR-002/ADR-020 model-catalog path:
 
 - Discovery endpoint: authenticated `GET {normalized_base}/models`.
+- Discovery eligibility and URL construction explicitly accept `/compatible-mode/v1`, `/compatible-mode/v1/responses`, and `/compatible-mode/v1/chat/completions`, normalizing all three to `/compatible-mode/v1/models` without constraining the host.
 - Provider identity: `qwencloud`.
 - Cache contents: model IDs and timestamps only.
 - Existing TTL, capped selector merge, search popover, refresh notification, and optional append-only write-through behavior remain unchanged.
@@ -340,8 +357,9 @@ Classify failures into the project's existing typed provider error categories wh
 - Invalid mode, endpoint, tool schema, message history, or unsupported local request shape: fail before network I/O.
 - Authentication/authorization errors: do not retry; point to the configured credential environment variable.
 - Model/mode incompatibility or invalid parameter errors: do not retry; recommend changing model or API mode.
-- Rate limits and transient server errors: bounded retries with capped backoff and `Retry-After` support when available.
-- Connection establishment failures and timeouts: bounded retries where no response has been consumed.
+- Rate limits (`429`) and transient server errors (`500`, `502`, `503`, `504`): retry up to `api_retries` additional attempts with the configured capped backoff and bounded `Retry-After` handling.
+- Connection establishment failures and timeouts: retry up to `api_retries` additional attempts where no response has been consumed.
+- Other `4xx` responses do not retry.
 - Streaming: never replay a request after the first response event or content byte has been consumed.
 - Successful HTTP status with malformed body: raise a provider-response error rather than returning an empty assistant message.
 
@@ -355,7 +373,7 @@ Follow test-driven development. Each behavior begins with a failing focused test
 
 - Dispatcher registration and provider identity aliases/casing.
 - Embedded config defaults.
-- API-mode precedence and strict validation.
+- Config-to-default API-mode resolution and strict validation.
 - Credential and endpoint resolution without cross-provider leakage.
 - Readiness success and each blocked state.
 
@@ -363,7 +381,7 @@ Follow test-driven development. Each behavior begins with a failing focused test
 
 - Responses and Chat Completions URLs, headers, timeouts, and payload allowlists.
 - Text-only content-array collapse without source mutation.
-- Preservation/conversion of valid non-text parts.
+- Exact user-role `image_url` conversion plus local rejection of unsupported roles/types.
 - Flat versus nested tool definitions.
 - Assistant tool-call and tool-result history conversion.
 - Orphaned tool-result, duplicate-tool, unsupported built-in-tool, and invalid `tool_choice` failures before HTTP.
@@ -373,23 +391,26 @@ Follow test-driven development. Each behavior begins with a failing focused test
 
 - Text-only, tool-only, and mixed text/tool non-streaming responses in both modes.
 - Multiple function calls and `call_id` round-trip.
-- Chat tool-call deltas.
+- Chat tool-call fragment buffering and exactly-once complete-call emission.
 - Responses text and interleaved function-argument events.
 - `[DONE]` emitted exactly once.
 - Provider error events and malformed terminal responses.
+- Midstream provider-error propagation through Console and Chat/CCP, with no `[DONE]` and no retry after prior bytes/events.
+- Chat/CCP choices-envelope parsing and QwenCloud native assistant/tool continuation.
+- Console and Chat/CCP consumer-level function-call tests in both modes.
 
 ### Settings and model catalog
 
 - QwenCloud-only API-mode visibility, draft preservation, save behavior, validation, and help copy.
 - Other providers remain unchanged.
-- Authenticated `/models` discovery, cache merge, refresh failure fallback, and endpoint normalization.
+- Authenticated `/models` discovery, cache merge, refresh failure fallback, and exact normalization of all three `/compatible-mode/v1` endpoint forms.
 
 ### Reliability
 
-- Retryable and non-retryable HTTP failures.
+- Exact retry defaults, bounds, statuses, attempt counts, backoff cap, and `Retry-After` cap.
 - No retry after streaming begins.
 - Timeout propagation and secret redaction.
-- Regression tests for OpenAI and existing Console function-tool execution.
+- Regression tests for OpenAI plus existing Console and Chat/CCP function-tool execution.
 
 ### Optional live tests
 
@@ -407,7 +428,7 @@ Update provider-facing documentation with:
 
 - QwenCloud setup and credential environment variable.
 - Default international compatible base URL.
-- `api_mode` values, precedence, and default.
+- `api_mode` values, config-to-default resolution, and default.
 - Mode-specific parameter limitations.
 - Function-tool support and built-in-tool non-goal.
 - Configurable Token Plan/custom endpoint guidance.
@@ -428,4 +449,4 @@ Reason: This feature adds a provider/runtime boundary and a persisted provider-s
 
 ## Acceptance Summary
 
-The feature is ready only when QwenCloud can be configured and selected, both API modes support text and existing Chatbook function tools in streaming and non-streaming flows, invalid or unsupported behavior fails explicitly, model discovery uses the existing cache pipeline, Settings persists API mode safely, relevant documentation is updated, and the focused automated suite passes without paid network calls.
+The feature is ready only when QwenCloud can be configured and selected, both API modes support text and existing Chatbook function tools through Console and Chat/CCP in streaming and non-streaming flows, unsupported generic generation settings are intentionally omitted with visible mode guidance, invalid request shapes fail explicitly, model discovery uses the existing cache pipeline, Settings persists API mode safely, relevant documentation is updated, and the focused automated suite passes without paid network calls.
