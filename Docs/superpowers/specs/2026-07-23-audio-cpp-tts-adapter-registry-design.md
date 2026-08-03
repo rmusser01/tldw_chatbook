@@ -6,6 +6,12 @@
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Upstream contract reviewed:** `0xShug0/audio.cpp` commit `d3d748179e5ace353386fbf17bcaedfacf482d75`
 
+> **Managed lifecycle amendment (2026-08-02):** The deferred managed-mode
+> configuration, supervisor, UI, and verification sections are superseded by
+> the [managed-lifecycle design](2026-08-02-audio-cpp-managed-lifecycle-design.md)
+> and the amended ADR-023/ADR-039. Landed external behavior remains governed by
+> this document.
+
 ## Goal
 
 Replace Chatbook's partial TTS backend registry with an app-scoped adapter

@@ -2,6 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-31
+Amended: 2026-08-02
 Related Task: N/A — program task decomposition follows the approved PRD
 Extends:
 [ADR-012 Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md),
@@ -46,6 +47,11 @@ This is a significant storage, data-ownership, provider-runtime, precedence,
 credential, and long-lived navigation decision. A canonical ADR is therefore
 required before task planning or implementation.
 
+The 2026-08-02 managed audio.cpp workstream now exercises the runtime-
+initialization ownership that this ADR deliberately reserved for Global
+Settings. This amendment replaces the prior program's External-only deferral;
+it does not change Studio or character-profile ownership.
+
 ## Decision
 
 ### Four explicit owners
@@ -53,8 +59,8 @@ required before task planning or implementation.
 Chatbook will use four non-overlapping product owners:
 
 - **Settings → Speech & TTS** owns durable application-wide defaults,
-  credentials, endpoints, runtime initialization resources, external
-  audio.cpp configuration, and provider safety limits.
+  credentials, endpoints, runtime initialization resources, audio.cpp
+  External/Managed configuration, and provider safety limits.
 - **Lab → Speech → Studio TTS Preferences** owns separately persisted,
   provider-scoped, request-level Studio overrides and the current Studio
   generation draft.
@@ -81,9 +87,11 @@ provider's setup form rather than mounting every provider's full form.
 Global Settings will expose connection, credential, or runtime-initialization
 fields for all existing providers:
 
-- audio.cpp: external server origin, connection and synthesis timeouts, input
-  and response bounds, metadata/catalog/voice/identifier bounds, and privacy
-  disclosure;
+- audio.cpp: explicit External/Managed mode, external server origin, managed
+  executable and `server.json` paths, managed lifecycle timing, connection and
+  synthesis timeouts, input and response bounds,
+  metadata/catalog/voice/identifier bounds, trust/privacy disclosure, and a
+  link to Speech Lab operations;
 - OpenAI: API key, base URL, and organization ID;
 - ElevenLabs: API key;
 - Kokoro: device, ONNX choice, model file, and voices file;
@@ -105,22 +113,41 @@ Persistence and targeted provider reconfiguration have separate, truthful
 outcomes. A configuration may be Saved while runtime is Not checked,
 Unavailable, Stale, or Reconfiguring.
 
-### External-only audio.cpp boundary
+When a managed audio.cpp child is live, a valid Save may advance the durable
+configuration generation without applying it to that child. This staged
+result is shown as Restart required or a pending mode switch. Save itself does
+not start, stop, restart, probe, or reconnect. Speech Lab owns explicit
+application of the latest saved generation.
 
-This program supports connecting to one independently started external
-`audiocpp_server`. The global form will not accept or expose a binary,
-`server.json`, bind address, launch policy, restart action, log supervisor, or
-process status. Chatbook does not launch, adopt, restart, supervise, or stop an
-audio.cpp process in this program.
+### audio.cpp mode and lifecycle ownership
+
+External mode continues connecting to one independently started
+`audiocpp_server` through its canonical HTTP(S) origin. Chatbook does not
+discover, adopt, supervise, restart, or stop that independently owned process.
+
+Managed mode accepts one user-provided executable and one user-provided
+`server.json`, requires an explicit `127.0.0.1` bind and valid port, and may
+lazily launch one app-owned child on a deliberate Test, Refresh, Generate,
+Console, or Roleplay operation. Global Settings owns only the durable mode,
+paths, lifecycle timing, and shared safety limits. Speech Lab owns process
+state, Start/Test, Restart, Shutdown, and bounded memory-only diagnostics.
+
+Mounting, searching, editing, saving, reverting, restoring, navigating, and
+passive status rendering never launch a child. Chatbook does not download or
+build audio.cpp, edit `server.json`, accept a non-loopback managed bind, adopt
+an existing listener, expose arbitrary launch arguments, or run an automatic
+restart loop.
 
 The native adapter retains its accepted complete-WAV asynchronous response
 contract, WAV-only output, speed exactly `1.0`, one active instance, and
 explicit no-fallback behavior from ADR-023.
 
-The configured audio.cpp value is a canonical HTTP(S) origin without userinfo,
-query, fragment, or a non-origin path. A non-loopback plain-HTTP origin remains
-supported but receives an explicit warning that submitted text and returned
-audio are not transport-encrypted.
+The configured External value remains a canonical HTTP(S) origin without
+userinfo, query, fragment, or a non-origin path. A non-loopback plain-HTTP
+origin remains supported but receives an explicit warning that submitted text
+and returned audio are not transport-encrypted. Managed HTTP is derived only
+from the validated loopback JSON host/port and never follows redirects or
+environment proxies.
 
 ### Studio persistence
 
@@ -201,9 +228,12 @@ disk catalog.
 When no catalog exists, audio.cpp offers only `First available` and `Server
 default` plus a link to an explicit Lab refresh. Fresh and stale observations
 are labeled distinctly. A saved exact choice absent from the latest complete
-observation remains visible and invalid; it is never automatically cleared,
-substituted, or converted to a dynamic mode. Ambiguous voice discovery is
-Unverified rather than authoritative empty success.
+observation for the same provider-configuration revision remains visible and
+invalid; it is never automatically cleared, substituted, or converted to a
+dynamic mode. An observation for a different applied or staged revision cannot
+invalidate the choice, which remains Unverified until matching evidence exists.
+Ambiguous voice discovery is Unverified rather than authoritative empty
+success.
 
 Runtime observations are associated with canonical provider ID,
 provider-configuration revision, catalog revision when relevant, model,
@@ -219,10 +249,16 @@ Configuration uses the primary states `Inherited`, `Default`, `Saved`,
 Runtime uses the primary states `Not checked`, `Checking`, `Ready`, `Stale`,
 `Unavailable`, and `Reconfiguring`.
 
+Managed audio.cpp additionally exposes a separate process row with `Stopped`,
+`Starting`, `Running`, `Unhealthy`, `Draining`, `Stopping`, and `Unavailable`.
+`Restart required` and a pending mode switch describe the relation between
+saved and applied generations; they do not replace provider health or process
+state.
+
 The UI will report provider configuration, selected-provider runtime,
 catalog/voice freshness, and STT/local dependency status independently. It will
 never treat `Not checked` as Ready or a missing unrelated local dependency as
-proof that external audio.cpp is unavailable.
+proof that External or Managed audio.cpp is unavailable.
 
 ### Credential boundary
 
@@ -269,8 +305,9 @@ down-migration.
 
 - Users gain one discoverable global setup surface and one explicitly isolated
   Studio preference surface.
-- First-time audio.cpp setup becomes a URL-first Settings flow followed by
-  explicit Lab verification and generation.
+- First-time audio.cpp setup becomes a mode-specific Settings flow—external
+  origin or user-provided managed binary plus JSON—followed by explicit Lab
+  verification and generation.
 - The Settings category can truthfully save configuration while a provider is
   offline because persistence no longer implies readiness.
 - Studio experiments stop changing application-wide defaults.
@@ -303,12 +340,13 @@ down-migration.
 | Replace a missing exact choice with the first available item | Can generate with the wrong voice/model and hides a broken character or global selection. |
 | Fully redesign every provider behind one schema now | Expands the program into a legacy adapter rewrite and speculative form framework before those providers have native capability contracts. |
 | Put credentials in Studio for convenience | Violates ADR-012, duplicates write paths, and risks secret leakage into Studio persistence. |
-| Add managed audio.cpp setup now | Reintroduces binary trust, `server.json`, process ownership, supervision, and lifecycle concerns explicitly deferred from the external-integration workstream. |
+| Combine managed audio.cpp with the earlier external/settings rollout | Would have coupled binary trust and subprocess supervision to an already broad ownership migration. Managed mode is therefore delivered as the separate 2026-08-02 workstream while preserving this ADR's owners. |
 | Persist catalog data to disk for Settings selectors | Adds a new cache lifecycle and privacy/invalidation contract that is unnecessary when explicit Lab refresh plus in-memory observations is sufficient. |
 
 ## Links
 
 - [Product requirements and design](../../Docs/superpowers/specs/2026-07-31-speech-tts-settings-ownership-design.md)
+- [Managed audio.cpp lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md)
 - [ADR-012](012-provider-credential-settings-boundary.md)
 - [ADR-023](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 - [ADR-028](028-character-tts-generation-profile-ownership.md)

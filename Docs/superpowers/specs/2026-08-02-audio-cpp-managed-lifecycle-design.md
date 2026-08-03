@@ -1,6 +1,6 @@
 # audio.cpp Managed Lifecycle — Product Requirements and Design
 
-Status: Approved design; pending written-specification review
+Status: Approved design; independent specification review passed; pending user artifact approval
 
 Date: 2026-08-02
 
@@ -240,8 +240,11 @@ The current settings-publication path must support this narrow staged outcome:
 - the latest valid saved configuration replaces any older staged value;
 - new operations against the live child record the applied provider
   generation as well as the saved settings generation;
-- exact model/voice integrity still blocks a newly saved selection that is not
-  valid for the active catalog;
+- exact model/voice integrity may reject a saved selection only against a
+  complete catalog observation for that same candidate configuration
+  generation; a catalog from the active generation cannot reject a different
+  staged generation, so the selection remains Unverified until explicit apply
+  validates it, without fallback;
 - **Restart & Apply Settings** drains the active generation, applies only the
   latest staged generation, and launches/tests the replacement;
 - **Shut down server** drains and stops the child, then promotes the latest
@@ -412,16 +415,17 @@ unknown configuration keys.
 
 ### ML-LAUNCH-003 — Environment isolation
 
-The environment policy starts from the application environment but removes:
+The child environment starts empty. Chatbook copies only an explicit allowlist
+of ordinary OS, executable-discovery, locale, temporary-directory,
+dynamic-library, CPU-threading, and GPU/runtime variables needed by local
+binaries. Tests cover representative CUDA, Metal, Vulkan, OpenMP, BLAS, and
+platform variables.
 
-- credential names from the repository's provider-credential inventory; and
-- conservatively recognized key, token, secret, password, credential, and
-  authentication variables.
-
-It preserves an explicit set of ordinary OS, executable-discovery, locale,
-temporary-directory, dynamic-library, CPU-threading, and GPU/runtime variables
-needed by local binaries. Tests cover representative CUDA, Metal, Vulkan,
-OpenMP, BLAS, and platform variables.
+As defense in depth, allowlisted names are still rejected when they collide
+with the repository's provider-credential inventory or conservative key,
+token, secret, password, credential, and authentication patterns. An
+application variable that is not explicitly allowlisted never reaches the
+child even when its name does not look sensitive.
 
 Environment names and values are never included in command displays,
 diagnostics, notifications, or general logs. Settings warns that selecting a
@@ -807,7 +811,9 @@ persistent file.
 3. Speech Lab reports Unavailable and retains bounded diagnostics.
 4. No retry occurs in the background.
 5. A later deliberate Test, Refresh, Generate, Console, or Roleplay operation
-   applies the latest saved configuration and starts one replacement.
+   applies the latest saved configuration. It starts one replacement only when
+   the latest eligible saved mode is Managed; when External is latest, it
+   applies External and starts no child.
 
 ### Journey 5 — Switch to External
 
@@ -915,6 +921,8 @@ injectable. Controlled events/fake clocks—not timing sleeps—cover:
 Tests prove:
 
 - known credential/secret variables are removed;
+- a non-allowlisted application variable is omitted even when its name does not
+  match a secret pattern;
 - PATH, locale, temporary directory, dynamic-library, CPU, and representative
   GPU/runtime variables remain;
 - environment contents never enter diagnostics or logs;
@@ -938,6 +946,10 @@ Tests cover:
 - explicit apply drains before replacement;
 - shutdown promotes staged config without launching;
 - crash recovery applies latest saved config;
+- a crash while a switch to External is pending applies External and starts no
+  replacement child;
+- a staged exact model/voice is not rejected by catalog evidence from a
+  different applied configuration generation;
 - switch to External stops the child and never relaunches managed;
 - no overlap between old and new children;
 - external adapter behavior remains unchanged; and
@@ -1018,12 +1030,18 @@ paths, synthesis text, environment values, or child output.
 
 These are approved delivery seams, not pre-created Backlog tasks.
 
+### Documentation prerequisite
+
+The accepted amendments to ADR-023 and ADR-039 must land on `dev` before Slice
+4 implementation planning or Backlog task implementation begins. The
+amendments are design prerequisites, not implementation deliverables hidden
+inside Slice 4.
+
 ### Slice 4 — Managed runtime core
 
 One PR delivers:
 
 - backward-compatible managed configuration projection;
-- amendments to ADR-023 and ADR-039;
 - app-owned `AudioCppSupervisor`;
 - strict JSON/loopback/path/environment validation;
 - launch, health, generation, diagnostics, restart, and shutdown core;
@@ -1102,8 +1120,10 @@ Backlog's dependency-order rules.
   generation tasks while preserving bounded recent diagnostics.
 - [ ] ML-AC-007: Periodic bounded health supervision detects failure and
   recovery without automatic restart or catalog overclaiming.
-- [ ] ML-AC-008: Unexpected exit invalidates the generation, reports
-  Unavailable, and permits exactly one later lazy replacement.
+- [ ] ML-AC-008: Unexpected exit invalidates the generation and reports
+  Unavailable; a later deliberate operation starts exactly one replacement
+  only when the latest eligible saved mode is Managed, while saved External
+  applies without launching a child.
 - [ ] ML-AC-009: Saving while managed is live preserves the child, advances the
   saved generation, and exposes Restart required until explicit apply.
 - [ ] ML-AC-010: Manual restart/shutdown drain admitted work, reject new work,
@@ -1141,8 +1161,9 @@ explicitly External-only; it must be amended to admit globally owned managed
 initialization fields and Speech-Lab-owned operational controls while
 preserving its four-owner model. No third ADR is needed.
 
-Both amendments must land in Slice 4 before implementation code. Each Backlog
-task and implementation plan links this specification and the applicable ADRs.
+Both accepted amendments must land before Slice 4 implementation planning
+begins. Each Backlog task and implementation plan links this specification and
+the applicable ADRs.
 
 ## References
 

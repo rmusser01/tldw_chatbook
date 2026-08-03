@@ -2,6 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
+Amended: 2026-08-02
 Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710, TASK-763
 Supersedes: N/A
 
@@ -21,8 +22,8 @@ in either of two modes:
 - Lazily launch and supervise a user-provided binary with a user-provided
   `server.json`.
 
-Managed mode is loopback-only and, for the pinned contract, accepts only
-audio.cpp's default or explicit `127.0.0.1` IPv4 bind. Chatbook will not
+Managed mode is loopback-only and requires explicit `127.0.0.1` host plus an
+explicit valid port in the selected `server.json`. Chatbook will not
 download or build audio.cpp, generate or modify its configuration, adopt an
 existing process, expose arbitrary server-side voice paths, or provide true
 client streaming in the first milestone.
@@ -47,6 +48,57 @@ an omnibus task.
 This ADR supersedes the registration direction in the non-canonical historical
 Higgs backend-registration document. That material remains historical context
 but no longer governs new TTS provider integration.
+
+### Managed lifecycle amendment (2026-08-02)
+
+The separately deferred managed lifecycle is now fully decided. Global
+Settings owns the explicit External/Managed mode, external origin, managed
+binary path, managed `server.json` path, lifecycle timing values, and shared
+safety limits. Speech Lab owns Start/Test, Refresh, Restart, Shutdown,
+generation, and in-memory process diagnostics. Saving or mounting either
+surface never launches, stops, restarts, or probes a process.
+
+Managed mode accepts only a user-provided executable and user-provided strict
+JSON configuration with explicit `host = "127.0.0.1"` and a valid explicit
+port. It launches the direct argument vector
+`[binary_path, "--config", server_json_path]` without a shell, from the JSON
+file's parent directory, using an allowlisted non-credential child
+environment. Chatbook never edits the file, passes arbitrary command-line
+arguments, accepts a non-loopback managed bind, or adopts a listener.
+
+The application owns one `AudioCppSupervisor` and at most one managed child.
+Its process states are Stopped, Starting, Running, Unhealthy, Draining,
+Stopping, and Unavailable; TTS capability is tracked separately. Concurrent
+first use shares one retained startup. Every child, HTTP client, health probe,
+exit monitor, output drain, and state publication is process-generation-bound.
+Two failed periodic health probes mark a live child Unhealthy, one later
+success restores its process state, and no failure starts an automatic restart
+loop.
+
+A failed pre-Running launch terminates only its exact child and joins every
+generation task. Manual Restart/Shutdown use the registry's exclusive provider
+transition, reject new work, and drain admitted leases. Application shutdown
+uses the existing bounded service/registry deadline, caps child termination by
+the remaining time, and cannot complete while an owned child or lifecycle task
+remains.
+
+Durable and applied configurations may temporarily differ. Saving while a
+managed child is live stages the latest desired generation without disturbing
+the applied generation. Speech Lab exposes Restart required or a pending mode
+switch. Explicit apply, manual shutdown, a later start after exit, or the next
+application session promotes the newest eligible saved generation. Catalog
+evidence from one configuration generation cannot reject an exact selection
+for another generation; that selection remains Unverified until the matching
+configuration is explicitly applied and checked.
+
+Child stdout/stderr are continuously drained into a bounded, memory-only,
+best-effort-sanitized diagnostic ring, never general logs or persistent
+storage. Managed synthesis otherwise retains the existing native HTTP contract
+and yields one complete validated WAV response through the async-stream
+interface.
+
+The detailed normative behavior and acceptance criteria are in the
+[managed-lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md).
 
 ## Implementation status
 
@@ -128,10 +180,11 @@ voice discovery remains a selector compatibility projection, but it is not
 authority for profile availability or exact-voice removal. Legacy bridge
 adapters do not implement this optional profile-capability contract.
 
-Slices 4–5 remain user-provided prebuilt binary plus user-provided
-`server.json` launch/supervision and managed UI. Slices 1–3 do not launch,
-monitor, restart, or stop audio.cpp and expose no managed process settings or
-actions.
+Slices 4–5 remain unimplemented. Their accepted scope is the user-provided
+prebuilt binary plus user-provided `server.json` supervisor core, followed by
+the globally owned managed fields and Speech-Lab-owned lifecycle UI described
+in the 2026-08-02 managed-lifecycle design. Slices 1–3 do not launch, monitor,
+restart, or stop audio.cpp and expose no managed process settings or actions.
 
 ## Context
 
@@ -220,7 +273,7 @@ policy, and a cross-module interface.
   only the latest pending generation is eligible for activation. New
   operations are blocked while active leases drain, the old adapter closes
   before a replacement adapter can be created, and the replacement remains
-  lazy. Future managed mode applies the same rule to an owned child.
+  lazy. Managed mode applies the same rule to an owned child.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
   is their only shared legacy state.
@@ -233,14 +286,14 @@ policy, and a cross-module interface.
   marked as approximate until migrated. Descriptor reads remain non-
   materializing; independent catalog, voice, generation, and playback
   ownership prevents one operation from cancelling another.
-- Future managed mode (Slices 4–5) launches only a user-provided executable and
-  configuration using the pinned server's default or explicit `127.0.0.1`
-  bind; `localhost` and `::1` are not accepted by that server version.
-- Future managed process ownership is explicit: Chatbook stops only children it
+- Managed mode (Slices 4–5) launches only a user-provided executable and
+  configuration with explicit `127.0.0.1` host and explicit valid port;
+  omitted host/port, `localhost`, and `::1` are not accepted.
+- Managed process ownership is explicit: Chatbook stops only children it
   started and never silently adopts an existing listener.
-- A future managed failure before first readiness rolls back the owned child
+- A managed failure before first Running rolls back the owned child
   and joins its monitor and log drains. A live child that becomes unhealthy
-  after reaching Ready remains available for explicit restart.
+  after reaching Running remains available for explicit restart.
 - The first audio.cpp contract supports complete WAV output and default speed
   only. Upstream streaming metadata does not imply client streaming support.
 - The complete response is fully buffered, bounded, and structurally validated
@@ -330,6 +383,7 @@ policy, and a cross-module interface.
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
+- [Managed-lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md)
 - [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 - [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
 - [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
