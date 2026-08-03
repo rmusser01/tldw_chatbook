@@ -17969,6 +17969,46 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    def _console_change_review_run_id(
+        self, store: ConsoleChatStore, message_id: str
+    ) -> str | None:
+        """Resolve the run id a review-changes action should open (TASK-2030).
+
+        The transcript's display model is checked FIRST: the ✎ summary row
+        is a display-only TOOL marker that the store's tree lookup can never
+        resolve. The store remains the fallback for tree-node rows.
+
+        Args:
+            store: The native Console chat store.
+            message_id: The action button's message id.
+
+        Returns:
+            The run id to review, or ``None`` when no rendered or stored
+            row with that id carries one.
+        """
+        try:
+            transcript = self.query_one(
+                "#console-native-transcript", ConsoleTranscript
+            )
+        except QueryError:
+            transcript = None
+        if transcript is not None:
+            row = transcript.display_message(message_id)
+            run_id = (
+                getattr(row, "change_review_run_id", None)
+                if row is not None
+                else None
+            )
+            if run_id:
+                return str(run_id)
+        try:
+            run_id = getattr(
+                store.get_message(message_id), "change_review_run_id", None
+            )
+        except KeyError:
+            return None
+        return str(run_id) if run_id else None
+
     def _open_change_review(self, run_id: str | None = None) -> None:
         """Push the Change Review screen for the active conversation.
 
@@ -18077,6 +18117,28 @@ class ChatScreen(BaseAppScreen):
 
         event.stop()
         store = self._ensure_console_chat_store()
+
+        if action_id == "review-changes":
+            # TASK-2030 (live-UAT headline defect): the ✎ summary row is a
+            # display-only TOOL marker — deliberately NOT a tree node — so
+            # `store.get_message` can NEVER resolve it, and the pre-dispatch
+            # lookup below killed the row's own advertised affordance
+            # ("review with `v`") with the not-found toast on every press.
+            # The run id is display data already ON the rendered row:
+            # resolve it from the transcript's display model, falling back
+            # to the store for tree-node rows. Every other action keeps the
+            # store resolution (and its failure toast) untouched.
+            self._pending_console_delete_message_id = None
+            run_id = self._console_change_review_run_id(store, message_id)
+            if run_id is None:
+                self.app_instance.notify(
+                    "Console message action target no longer exists.",
+                    severity="warning",
+                )
+                return True
+            self._open_change_review(run_id)
+            return True
+
         try:
             message = store.get_message(message_id)
         except KeyError:
@@ -18087,11 +18149,6 @@ class ChatScreen(BaseAppScreen):
 
         if action_id != "delete":
             self._pending_console_delete_message_id = None
-
-        if action_id == "review-changes":
-            run_id = getattr(message, "change_review_run_id", None)
-            self._open_change_review(run_id)
-            return True
 
         if action_id == "save-as":
             destinations = self._console_save_as_destinations(message)

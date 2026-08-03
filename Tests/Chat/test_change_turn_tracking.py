@@ -726,6 +726,127 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
         assert [t.run_id for t in turns] == [run_id]
 
 
+@pytest.mark.asyncio
+async def test_the_summary_rows_own_review_action_opens_the_screen(
+    tmp_path, root, tracker
+):
+    """TASK-2030 (live-UAT headline defect): selecting the rendered ✎ row
+    and invoking its review action must open the Review screen.
+
+    The defect class: TOOL markers are display-only rows, deliberately NOT
+    tree nodes, so `store.get_message(marker_id)` ALWAYS raises -- and the
+    action handler resolved the store row before dispatching, killing the
+    row's own advertised affordance ("review with `v`") on the live app
+    while the direct-call opener test stayed green. This test goes through
+    the REAL chain the user does: transcript render -> row selection ->
+    `invoke_selected_action("review-changes")` -> button dispatch ->
+    handler -> pushed screen.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from textual.app import App
+
+    from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        ConsoleTranscript,
+    )
+
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made.txt").write_text("x\n"),
+    )
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+    import asyncio as _asyncio
+
+    run_id, outcome = await _asyncio.to_thread(_run, bridge, session, aid, root)
+    assert outcome.status not in ("error",), outcome.steps
+    marker = next(
+        m for m in _tool_rows(store, session) if m.content.startswith("✎")
+    )
+    assert marker.change_review_run_id == run_id
+
+    class _ConsoleHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self.app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(ChatScreen(self.app_instance))
+
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "local-model",
+            },
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    harness = _ConsoleHarness(app)
+    async with harness.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        chat_screen = harness.screen_stack[-1]
+        assert isinstance(chat_screen, ChatScreen)
+        # The run's rows live in THIS test's store -- make it the screen's
+        # store before the lazy controller builds, then render it for real.
+        chat_screen._console_chat_store = store
+        chat_screen._ensure_console_agent_bridge = lambda: bridge
+        chat_screen._ensure_console_chat_controller()
+        controller = chat_screen._console_chat_controller
+        assert controller is not None
+        chat_screen._console_chat_controller._agent_conversation_id = (
+            lambda _sid: "conv-1"
+        )
+        await chat_screen._sync_native_console_transcript()
+        await pilot.pause()
+
+        transcript = chat_screen.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        rendered = [
+            m
+            for m in transcript._messages
+            if str(getattr(m, "content", "")).startswith("✎")
+        ]
+        assert rendered, "precondition: the ✎ row rendered in the transcript"
+        transcript.select_message(rendered[0].id)
+        await pilot.pause()
+        transcript.action_invoke_selected_action("review-changes")
+        await pilot.pause()
+
+        review = await _wait_for_screen(harness, pilot, ChangeReviewScreen)
+        assert review is not None, (
+            "the ✎ row's own review action never opened the Review screen"
+        )
+        turns = review._provider.turns()
+        assert [t.run_id for t in turns] == [run_id]
+
+        # AC#3: a genuinely-unknown target still gets the failure toast --
+        # the display-model path is not a blanket bypass of resolution.
+        harness.pop_screen()
+        await pilot.pause()
+        toasts: list[str] = []
+        app.notify = lambda msg, **kw: toasts.append(str(msg))
+
+        class _Btn:
+            id = "console-message-action-review-changes-not-a-row"
+
+        class _Ev:
+            button = _Btn()
+
+            def stop(self) -> None:
+                pass
+
+        handled = await chat_screen.handle_console_message_action(_Ev())
+        assert handled is True
+        assert any("no longer exists" in t for t in toasts), toasts
+        assert not isinstance(harness.screen, ChangeReviewScreen)
+
+
 async def _wait_for_screen(harness, pilot, screen_type, timeout: float = 8.0):
     import time as _t
 

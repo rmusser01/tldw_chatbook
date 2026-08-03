@@ -955,6 +955,22 @@ class ConsoleTranscript(VerticalScroll):
         """
         return tuple(self._message_signature_cache)
 
+    def display_message(self, message_id: str) -> "ConsoleChatMessage | None":
+        """Return the RENDERED row for ``message_id`` — tree node or not.
+
+        TASK-2030: display-only TOOL markers (the ✎/⚙ rows) are never tree
+        nodes, so the STORE cannot resolve them by id; the transcript's own
+        display model is the authority for what the user actually selected.
+
+        Args:
+            message_id: Identifier of a rendered transcript row.
+
+        Returns:
+            The display-model message, or ``None`` when nothing rendered
+            carries that id.
+        """
+        return self._message_by_id(message_id)
+
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
         if message_id not in {message.id for message in self._messages}:
