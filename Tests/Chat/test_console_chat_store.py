@@ -2934,3 +2934,63 @@ def test_narrow_persistence_without_usage_kwarg_still_works():
 
     completed = store.mark_message_complete(message.id)  # must not raise
     assert completed.status == "complete"
+
+
+def test_payload_revision_bumps_on_payload_mutations():
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    r0 = store.payload_revision(session.id)
+
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hi"
+    )
+    r1 = store.payload_revision(session.id)
+    assert r1 > r0
+
+    store.update_message_content(message.id, "edited")
+    r2 = store.payload_revision(session.id)
+    assert r2 > r1
+
+    reply = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="yo"
+    )
+    r3 = store.payload_revision(session.id)
+    store.set_message_usage(
+        reply.id, ProviderUsage(uncached_input=1, provider="anthropic", model="m")
+    )
+    # usage attach is NOT payload-affecting
+    assert store.payload_revision(session.id) == r3
+
+
+def test_payload_revision_bumps_on_settings_and_system_prompt():
+    from dataclasses import replace
+
+    store = ConsoleChatStore()
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    r0 = store.payload_revision(session.id)
+    store.set_session_system_prompt(session.id, "be terse")
+    r1 = store.payload_revision(session.id)
+    assert r1 > r0
+    store.replace_session_settings(
+        session.id, replace(session.settings, model="claude-sonnet-4-6")
+    )
+    assert store.payload_revision(session.id) > r1
+
+
+def test_payload_revision_not_bumped_per_stream_chunk():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    r0 = store.payload_revision(session.id)
+    store.append_stream_chunk(message.id, "a")
+    store.append_stream_chunk(message.id, "b")
+    assert store.payload_revision(session.id) == r0  # chunks don't churn
+    store.mark_message_complete(message.id)
+    assert store.payload_revision(session.id) > r0  # completion does
