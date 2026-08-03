@@ -770,6 +770,38 @@ def test_panel_state_searching_status_overrides_run_action_only_when_reached() -
     assert searching_blocked.query_state.run_action.enabled is False
 
 
+def test_panel_state_answering_status_overrides_run_action_only_when_reached() -> None:
+    """PR-3 Task 3: the new "answering" retrieval status (set while the RAG
+    Answer worker's provider call is in flight) mirrors "searching" -- see
+    `test_panel_state_searching_status_overrides_run_action_only_when_reached`
+    above -- one more explicit-status branch in the same normalizer, not a
+    forked copy of it. It overrides an otherwise-open run gate with a
+    disabled, distinctly-labeled run action, but a query that's ALSO
+    blocked (e.g. no source scope) keeps its real blocked label, since the
+    gate ladder never reaches the answering branch for it.
+    """
+    answering_ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert answering_ready.retrieval_status == "answering"
+    assert answering_ready.query_state.run_action.label == "Answering…"
+    assert answering_ready.query_state.run_action.enabled is False
+    assert answering_ready.query_state.run_action.widget_id == "library-rag-run-query"
+
+    answering_blocked = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert answering_blocked.retrieval_status == "blocked"
+    assert answering_blocked.query_state.run_action.label == "Run"
+    assert answering_blocked.query_state.run_action.enabled is False
+
+
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
     failed = LibraryRagPanelState.from_values(
         source_counts={"notes": 1},

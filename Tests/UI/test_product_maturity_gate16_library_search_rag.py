@@ -331,6 +331,301 @@ def test_history_row_tooltip_names_current_mode_and_tracks_mode_changes() -> Non
     )
 
 
+# --- PR-3 Task 3: answer region ---------------------------------------------
+#
+# `library_rag_answer_children` builds `Vertical#library-rag-answer`, mounted
+# in `LibrarySearchRagPanel.compose()` as its own sibling BETWEEN
+# `#library-rag-source-scope` and `#library-rag-results` -- never inside the
+# latter, whose own teardown/remount loop
+# (`LibraryScreen._refresh_library_rag_results_widgets`) only ever touches
+# ITS OWN children (skip `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tear down
+# the rest, remount from `library_rag_results_body_children`) and would
+# otherwise destroy an answer region mounted inside it on every refresh. This
+# also keeps `library_rag_results_body_children` itself unchanged, so
+# `test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional`
+# above -- whose `rag_children[0] is coverage_statics[0]` assertion pins the
+# coverage note as the FIRST results-body child -- stays true.
+
+
+def _answer_region_children(region) -> list:
+    """Return `region`'s constructor-time children without mounting it.
+
+    `Widget.__init__(*children, ...)` stores its positional `children` args
+    as `_pending_children` -- `.children` (`_nodes`) stays empty until the
+    real Textual mount cycle processes them, which these pure
+    builder-function tests never trigger (matching the unmounted style
+    already used by every other test in this "Task N" block, e.g.
+    `test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional`
+    above). This reads the widgets straight back from the constructor input
+    `library_rag_answer_children` built them with, instead.
+    """
+    return list(region._pending_children)
+
+
+def test_answer_region_ready_text_is_escaped_against_markup_injection() -> None:
+    """PR-2's app-crash class (`[*/etc/hosts*]`) plus a plain `[bold]x`
+    payload: the model's answer text is untrusted output like any other
+    Library Search/RAG display text, rendered through a `Static` -- i.e.
+    TEXTUAL's own markup tokenizer, which (unlike Rich's narrower
+    `escape_markup`) opens a tag on ANY unescaped `[`. Escaping must be the
+    TERMINAL step (no transform runs after it); this pins both halves: the
+    payload parses as no markup at all, and the words a user needs to read
+    the answer survive."""
+    from rich.text import Text
+
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    for payload, preserved in (
+        ("[bold]x", ("bold", "x")),
+        ("An expired credential [*/etc/hosts*] caused the incident.", ("etc", "hosts")),
+    ):
+        answer = LibraryRagAnswer(
+            status=ANSWER_STATUS_READY,
+            text=payload,
+            citation_status="validated",
+            citation_recovery="",
+        )
+        state = LibraryRagPanelState.from_values(
+            source_counts={"notes": 1},
+            query="Why did the incident happen?",
+            mode="rag",
+            answer=answer,
+        )
+        region = library_rag_answer_children(state)[0]
+        text_static = next(
+            child
+            for child in _answer_region_children(region)
+            if child.id == "library-rag-answer-text"
+        )
+        rendered = Text.from_markup(str(text_static.renderable))
+        assert rendered.spans == []
+        for word in preserved:
+            assert word in rendered.plain
+
+
+def test_answer_region_ready_status_branches_on_citation_status_before_clean_render() -> (
+    None
+):
+    """Carried ruling (Task 1 review): `status == "ready"` must NEVER render
+    as a clean grounded answer without branching on `citation_status` --
+    `uncited`/`unverified` show their `citation_recovery` copy at least as
+    prominently as the answer text (a bordered callout ABOVE it, not a
+    footnote below). `validated` gets a neutral note that never claims the
+    citation is "verified" -- `build_answer_citation_validation` only checks
+    that a citation label RESOLVES to a staged reference, never that the
+    snippet actually supports the claim."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    for citation_status, recovery in (
+        ("uncited", "The answer does not cite available staged evidence."),
+        (
+            "unverified",
+            "Some citation markers do not match available staged evidence.",
+        ),
+    ):
+        answer = LibraryRagAnswer(
+            status=ANSWER_STATUS_READY,
+            text="An expired credential caused the incident.",
+            citation_status=citation_status,
+            citation_recovery=recovery,
+        )
+        state = LibraryRagPanelState.from_values(
+            source_counts={"notes": 1},
+            query="Why did the incident happen?",
+            mode="rag",
+            answer=answer,
+        )
+        region = library_rag_answer_children(state)[0]
+        region_children = _answer_region_children(region)
+        ids_in_order = [child.id for child in region_children]
+        assert ids_in_order.index("library-rag-answer-caution") < ids_in_order.index(
+            "library-rag-answer-text"
+        )
+        caution = next(
+            child
+            for child in region_children
+            if child.id == "library-rag-answer-caution"
+        )
+        assert caution.has_class("library-rag-callout")
+        assert caution.has_class("is-caution")
+        assert str(caution.renderable) == recovery
+
+    clean_answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="An expired credential caused the incident [S1].",
+        citation_status="validated",
+        citation_recovery="",
+    )
+    clean_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=clean_answer,
+    )
+    clean_region = library_rag_answer_children(clean_state)[0]
+    clean_region_children = _answer_region_children(clean_region)
+    assert not any(
+        child.id == "library-rag-answer-caution" for child in clean_region_children
+    )
+    note = next(
+        child
+        for child in clean_region_children
+        if child.id == "library-rag-answer-citation-note"
+    )
+    note_text = str(note.renderable).lower()
+    assert "verified" not in note_text
+    assert "resolve" in note_text
+
+
+def test_answer_region_abstained_and_no_evidence_render_quiet_register() -> None:
+    """Carried ruling (Task 1 review): abstention -- and the no-evidence
+    path, which never called a provider at all -- are NOT errors. Both
+    render in the same `.library-rag-quiet-line` register this panel
+    already uses elsewhere for "nothing went wrong, there's just nothing to
+    show" (RAG-29/33), not a bordered callout or a recovery dump."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_ABSTAINED,
+        ANSWER_STATUS_NO_EVIDENCE,
+        LIBRARY_RAG_NO_EVIDENCE_TEXT,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    for status, text in (
+        (ANSWER_STATUS_ABSTAINED, "I can't answer that from the evidence given."),
+        (ANSWER_STATUS_NO_EVIDENCE, LIBRARY_RAG_NO_EVIDENCE_TEXT),
+    ):
+        answer = LibraryRagAnswer(status=status, text=text)
+        state = LibraryRagPanelState.from_values(
+            source_counts={"notes": 1},
+            query="Why did the incident happen?",
+            mode="rag",
+            answer=answer,
+        )
+        region = library_rag_answer_children(state)[0]
+        region_children = _answer_region_children(region)
+        text_static = next(
+            child for child in region_children if child.id == "library-rag-answer-text"
+        )
+        assert text_static.has_class("library-rag-quiet-line")
+        assert str(text_static.renderable) == text
+        assert not any(
+            child.has_class("library-rag-callout") for child in region_children
+        )
+
+
+def test_answer_region_failed_status_renders_quiet_error_and_retry_hint() -> None:
+    """A failed generation attempt is not an error dump either (carried
+    ruling) -- one quiet line naming what went wrong, plus a retry hint.
+    Task 3 ships hint copy rather than a bespoke retry Button: the existing
+    Run button already re-triggers retrieval + answer generation, so a
+    second, not-yet-wired button would be a dead click until Task 4 lands --
+    worse than no button at all."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_FAILED,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_FAILED,
+        text="",
+        error="Provider timed out after 30s",
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    error_static = next(
+        child for child in region_children if child.id == "library-rag-answer-error"
+    )
+    assert error_static.has_class("library-rag-quiet-line")
+    assert "Provider timed out after 30s" in str(error_static.renderable)
+    assert not any(child.has_class("library-rag-callout") for child in region_children)
+
+    retry_hint = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-retry-hint"
+    )
+    assert retry_hint.has_class("library-rag-quiet-line")
+    assert "again" in str(retry_hint.renderable).lower()
+
+
+def test_answer_region_shows_generating_indicator_while_answering() -> None:
+    """The in-flight "answering" retrieval_status (Task 3's normalizer
+    addition) renders a quiet generating-indicator line under the same
+    "Answer" heading -- distinct from the final answer/abstention/failure
+    presentations, and gone once one of those lands."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    region = library_rag_answer_children(state)[0]
+    assert region.id == "library-rag-answer"
+    status_static = next(
+        child
+        for child in _answer_region_children(region)
+        if child.id == "library-rag-answer-status"
+    )
+    assert str(status_static.renderable) == "Generating answer…"
+
+
+def test_answer_region_absent_outside_rag_mode_and_before_any_answer() -> None:
+    """Keyword (search) mode never shows an answer region at all, even if a
+    stale `LibraryRagAnswer` is still sitting on state (e.g. a mode flip
+    after a landed rag answer) -- this is deliberately NOT keyed off
+    `state.results`/`state.retrieval_status` alone. The idle canvas (rag
+    mode, no query run yet) also renders nothing: there is no answering
+    status and no answer to show."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    stale_answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="grounded answer",
+        citation_status="validated",
+    )
+    search_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="search",
+        answer=stale_answer,
+    )
+    assert library_rag_answer_children(search_state) == []
+
+    idle_rag_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        mode="rag",
+    )
+    assert library_rag_answer_children(idle_rag_state) == []
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> (
     None

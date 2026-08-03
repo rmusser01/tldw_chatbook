@@ -9,6 +9,12 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
+from ...Library.library_rag_answer_service import (
+    ANSWER_STATUS_ABSTAINED,
+    ANSWER_STATUS_FAILED,
+    ANSWER_STATUS_NO_EVIDENCE,
+    ANSWER_STATUS_READY,
+)
 from ...Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
@@ -16,6 +22,7 @@ from ...Library.library_rag_state import (
     LibraryRagResultRow,
     LibraryRagScopeState,
     LibraryRagSourceOption,
+    library_rag_answer_display_text,
     library_rag_empty_state_quiet_copy,
     library_rag_score_suffix,
     library_rag_scope_summary,
@@ -76,6 +83,20 @@ class LibrarySearchRagPanel(VerticalScroll):
                 yield toggle
             for child in library_rag_scope_recovery_children(self.state):
                 yield child
+
+        # PR-3 Task 3: the Answer region is its own sibling here, BETWEEN
+        # source-scope and results -- never yielded inside the
+        # `#library-rag-results` block below. That block's own teardown/
+        # remount loop (`LibraryScreen._refresh_library_rag_results_widgets`)
+        # only ever touches ITS OWN children (it skips
+        # `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tears down the rest, and
+        # remounts from `library_rag_results_body_children`); an answer
+        # region mounted inside it would be destroyed on every results
+        # refresh. `library_rag_answer_children` returns `[]` (nothing
+        # yielded) outside rag mode and before any answer/in-flight state
+        # exists, so the idle and keyword-mode canvases are unaffected.
+        for child in library_rag_answer_children(self.state):
+            yield child
 
         with Vertical(id="library-rag-results", classes="library-rag-region"):
             yield Static(
@@ -178,6 +199,140 @@ def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Wid
             tooltip="Open Library Import media to add sources.",
         ),
     ]
+
+
+def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the Answer region (`Vertical#library-rag-answer`), or none (PR-3 Task 3).
+
+    Rag mode's headline: the RAG Answer worker's grounded-answer outcome
+    (Task 1's `LibraryRagAnswer`), rendered as its own region -- see the
+    mount-point comment in `compose()` for why this must never be yielded
+    inside `#library-rag-results`.
+
+    Nothing renders in keyword (search) mode -- Task 1's answer service is
+    never invoked there, and this checks `state.query_state.mode` directly
+    rather than only `state.answer`, so a stale answer left over from a
+    mode flip can never leak through either. Nothing renders before any
+    query has run in rag mode either (`state.answer is None` and
+    `state.retrieval_status != "answering"`): the idle canvas has nothing
+    to say yet.
+
+    Visual hierarchy (design call, PR-3 Task 3): the answer IS the headline
+    of rag mode, so a clean `ready` answer renders as plain, unmuted
+    "headline" text (`#library-rag-answer-text`, a raised card, styled in
+    CSS) -- but `abstained`/`no_evidence`/`failed` are NOT errors, and
+    render in the same `.library-rag-quiet-line` register this panel
+    already uses elsewhere (RAG-29/33) for "nothing went wrong, there's
+    just nothing to show". `failed` additionally gets a one-line retry
+    HINT, not a bespoke retry Button: the existing Run button already
+    re-triggers retrieval + answer generation on the next press, so a
+    second button not yet wired to anything (Task 4 owns that wiring) would
+    be a dead click in the meantime -- worse than no button at all.
+
+    Carried ruling (Task 1 review): `status == "ready"` never renders as a
+    clean answer without branching on `citation_status` first.
+    `uncited`/`unverified` (in fact, anything other than the literal
+    `"validated"`) shows `citation_recovery` in a bordered callout ABOVE
+    the answer text -- at least as prominent as the answer, not a footnote
+    below it, since a plausible-looking wrong answer is the single most
+    dangerous failure mode this feature exists to prevent. `validated` gets
+    a neutral one-line note instead -- and that note, like every other
+    string this module builds, never calls it "verified":
+    `build_answer_citation_validation` only checks that a citation label
+    RESOLVES to a staged reference, never that the cited snippet actually
+    supports the claim.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        `[]` outside rag mode or when there is nothing to show yet;
+        otherwise a single-element list holding the answer region.
+    """
+    if state.query_state.mode != "rag":
+        return []
+
+    heading = Static(
+        "Answer", id="library-rag-answer-heading", classes="destination-section"
+    )
+
+    if state.retrieval_status == "answering":
+        return [
+            Vertical(
+                heading,
+                Static(
+                    "Generating answer…",
+                    id="library-rag-answer-status",
+                    classes="library-rag-quiet-line",
+                ),
+                id="library-rag-answer",
+                classes="library-rag-region",
+            )
+        ]
+
+    answer = state.answer
+    if answer is None:
+        return []
+
+    body: list[Widget] = [heading]
+    if answer.status == ANSWER_STATUS_READY:
+        clean = answer.citation_status == "validated"
+        if not clean and answer.citation_recovery:
+            body.append(
+                Static(
+                    library_rag_answer_display_text(answer.citation_recovery),
+                    id="library-rag-answer-caution",
+                    classes="library-rag-callout is-caution",
+                )
+            )
+        body.append(
+            Static(
+                library_rag_answer_display_text(answer.text),
+                id="library-rag-answer-text",
+            )
+        )
+        if clean:
+            body.append(
+                Static(
+                    "Citations resolve to staged evidence.",
+                    id="library-rag-answer-citation-note",
+                    classes="library-rag-quiet-line",
+                )
+            )
+    elif answer.status in (ANSWER_STATUS_ABSTAINED, ANSWER_STATUS_NO_EVIDENCE):
+        body.append(
+            Static(
+                library_rag_answer_display_text(answer.text),
+                id="library-rag-answer-text",
+                classes="library-rag-quiet-line",
+            )
+        )
+    elif answer.status == ANSWER_STATUS_FAILED:
+        error_text = (
+            library_rag_answer_display_text(answer.error)
+            or "The answer could not be generated."
+        )
+        body.append(
+            Static(
+                f"Answer failed: {error_text}",
+                id="library-rag-answer-error",
+                classes="library-rag-quiet-line",
+            )
+        )
+        body.append(
+            Static(
+                "Run the query again to retry.",
+                id="library-rag-answer-retry-hint",
+                classes="library-rag-quiet-line",
+            )
+        )
+    else:
+        # An answer status this module does not recognize -- nothing
+        # well-formed to show here is safer than guessing at a
+        # presentation for it.
+        return []
+
+    return [Vertical(*body, id="library-rag-answer", classes="library-rag-region")]
 
 
 def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
