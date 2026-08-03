@@ -527,6 +527,7 @@ def test_typed_device_failure_retries_once_on_cpu_in_fresh_generation() -> None:
         assert callbacks.results[0].generation > first_generation
         assert callbacks.results[0].attempt_id == "retry"
         assert callbacks.results[0].payload["device"] == "cpu"
+        assert callbacks.results[0].payload["cpu_fallback_requested_device"] == "metal"
     finally:
         executor.close()
 
@@ -560,6 +561,7 @@ def test_real_worker_typed_provider_failure_reloads_on_effective_cpu() -> None:
             closure_fingerprint=None,
             device=ExecutionDevice.CPU,
         )
+        assert callbacks.results[0].payload["cpu_fallback_requested_device"] == "metal"
     finally:
         executor.close()
 

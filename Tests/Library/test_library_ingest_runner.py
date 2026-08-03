@@ -1516,6 +1516,45 @@ async def test_executor_cpu_retry_generation_is_accepted_after_preparing_event(
 
 
 @pytest.mark.asyncio
+async def test_executor_terminal_can_bind_before_submitted_callback(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+
+        app._on_ingest_local_stt_failure(
+            job.job_id,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        app._on_ingest_local_stt_submitted(job.job_id, 1, attempt_id)
+
+        terminal = app.library_ingest_jobs.get_job(job.job_id)
+        assert terminal is not None
+        assert terminal.state is IngestJobState.FAILED
+        assert job.job_id not in app._ingest_local_stt_jobs
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("code", "expected_state"),
     [

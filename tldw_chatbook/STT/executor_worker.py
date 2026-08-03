@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.connection import Connection
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -13,8 +13,10 @@ from .contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
     TranscriptionFailureCode,
+    TranscriptionWarningCode,
 )
 from .executor import (
+    _CPU_FALLBACK_REQUESTED_DEVICE_OPTION,
     ExecutorEvent,
     ExecutorFailure,
     ExecutorRequest,
@@ -323,6 +325,32 @@ def _transcribe_cpp_provider(
             language=kwargs.get("language") or "en",
             timestamps=bool(kwargs.get("timestamps", True)),
         )
+        fallback_value = request.options.get(_CPU_FALLBACK_REQUESTED_DEVICE_OPTION)
+        if request.identity.device is ExecutionDevice.CPU and isinstance(
+            fallback_value, str
+        ):
+            try:
+                requested_device = ExecutionDevice(fallback_value)
+            except ValueError:
+                requested_device = None
+            if (
+                requested_device is not None
+                and requested_device is not ExecutionDevice.CPU
+            ):
+                warning = TranscriptionWarningCode.DEVICE_FALLBACK_TO_CPU
+                warnings = (
+                    normalized.warnings
+                    if warning in normalized.warnings
+                    else (*normalized.warnings, warning)
+                )
+                normalized = replace(
+                    normalized,
+                    provenance=replace(
+                        normalized.provenance,
+                        requested_device=requested_device,
+                    ),
+                    warnings=warnings,
+                )
         provenance = build_transcription_provenance_document(
             normalized,
             failed_attempt=kwargs.get("retry_source_failure_provenance"),

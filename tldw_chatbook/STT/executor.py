@@ -33,6 +33,7 @@ from .executor_process_tree import (
 
 _MAX_RECOVERY_ACTIONS = 8
 _MAX_RECOVERY_ACTION_LENGTH = 80
+_CPU_FALLBACK_REQUESTED_DEVICE_OPTION = "_local_stt_cpu_fallback_requested_device"
 
 
 def _require_generation_and_attempt(generation: int, attempt_id: str) -> None:
@@ -478,13 +479,15 @@ class LocalSTTExecutor:
             assert self._connection is not None
             assert self._cancellation_event is not None
             self._cancellation_event.clear()
+            request_options = dict(options)
+            request_options.pop(_CPU_FALLBACK_REQUESTED_DEVICE_OPTION, None)
             request = ExecutorRequest(
                 generation=self._worker_generation,
                 attempt_id=attempt_id,
                 job_id=job_id,
                 source_path=source_path,
                 identity=identity,
-                options=dict(options),
+                options=request_options,
                 local_source=local_source,
                 managed_store_root=managed_store_root,
                 managed_artifact_ref=managed_artifact_ref,
@@ -788,6 +791,12 @@ class LocalSTTExecutor:
                         request,
                         generation=self._worker_generation,
                         identity=retry_identity,
+                        options={
+                            **request.options,
+                            _CPU_FALLBACK_REQUESTED_DEVICE_OPTION: (
+                                request.identity.device.value
+                            ),
+                        },
                     )
                     self._active_request = retry_request
                     self._active_callbacks = callbacks

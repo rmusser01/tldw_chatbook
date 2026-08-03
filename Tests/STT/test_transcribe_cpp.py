@@ -10,6 +10,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.STT.contracts import (
+    DeviceFailureOrigin,
+    ExecutionDevice,
+    TranscriptionWarningCode,
+)
+from tldw_chatbook.STT.executor import ExecutorRequest, ModelIdentity
+from tldw_chatbook.STT.executor_worker import (
+    _failure_from_exception,
+    _transcribe_cpp_provider,
+)
+
 
 def _write_pcm_wav(path: Path) -> None:
     with wave.open(str(path), "wb") as wav_file:
@@ -191,6 +202,152 @@ def test_reusable_runtime_passes_explicit_cpu_backend_to_native_model(
     runtime.close()
 
     assert ("model", (str(model_path), "cpu")) in calls
+
+
+def test_native_backend_load_failure_is_typed_for_one_cpu_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    model_path = tmp_path / "private-model.gguf"
+    model_path.write_bytes(b"fixture")
+
+    class BackendError(RuntimeError):
+        pass
+
+    class FailingModel:
+        def __init__(self, _path: str, *, backend: str = "auto") -> None:
+            assert backend == "auto"
+            raise BackendError("private native backend detail")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transcribe_cpp",
+        SimpleNamespace(
+            BackendError=BackendError,
+            Model=FailingModel,
+            backends=lambda: (SimpleNamespace(kind="metal"),),
+            set_log_callback=lambda _callback: None,
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
+
+    with pytest.raises(module.TranscribeCppFailure) as raised:
+        module.TranscribeCppRuntime.load(
+            model_path=model_path,
+            attempt_id="attempt-metal",
+            device=ExecutionDevice.AUTO,
+        )
+
+    assert raised.value.code.value == "provider_unavailable"
+    assert (
+        raised.value.device_failure_origin
+        is DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION
+    )
+    assert raised.value.failed_device is ExecutionDevice.METAL
+    assert "private native backend detail" not in str(raised.value)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-metal",
+        job_id="job-metal",
+        source_path=tmp_path / "audio.wav",
+        identity=ModelIdentity(
+            provider_id="transcribe-cpp",
+            model_id="local-gguf:whisper",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision="native",
+            device=ExecutionDevice.AUTO,
+        ),
+        options={},
+    )
+    worker_failure = _failure_from_exception(request, raised.value)
+    assert (
+        worker_failure.device_failure_origin
+        is DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION
+    )
+    assert worker_failure.failed_device is ExecutionDevice.METAL
+
+
+@pytest.mark.parametrize(
+    ("backend_override", "registered_kinds"),
+    [
+        ("cpu", ("metal",)),
+        ("not-a-backend", ("metal",)),
+        (None, ("metal", "cuda")),
+    ],
+)
+def test_auto_failure_candidate_fails_closed_when_device_is_not_unambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+    backend_override: str | None,
+    registered_kinds: tuple[str, ...],
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    runtime = SimpleNamespace(
+        backends=lambda: tuple(SimpleNamespace(kind=kind) for kind in registered_kinds)
+    )
+    if backend_override is None:
+        monkeypatch.delenv("TRANSCRIBE_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("TRANSCRIBE_BACKEND", backend_override)
+
+    assert module._failed_accelerator_candidate(runtime, ExecutionDevice.AUTO) is None
+
+
+def test_successful_cpu_retry_records_warning_and_original_requested_device(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    audio_path = tmp_path / "audio.wav"
+    model_path = tmp_path / "private-model.gguf"
+    _write_pcm_wav(audio_path)
+    model_path.write_bytes(b"fixture")
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setitem(sys.modules, "transcribe_cpp", _fake_runtime(calls))
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
+    request = ExecutorRequest(
+        generation=2,
+        attempt_id="attempt-cpu-retry",
+        job_id="job-cpu-retry",
+        source_path=audio_path,
+        identity=ModelIdentity(
+            provider_id="transcribe-cpp",
+            model_id="local-gguf:whisper",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision="native",
+            device=ExecutionDevice.CPU,
+        ),
+        options={"_local_stt_cpu_fallback_requested_device": "auto"},
+    )
+
+    provider = _transcribe_cpp_provider(request, model_path)
+    try:
+        payload = provider.runner(str(audio_path), timestamps=True)
+    finally:
+        provider.close()
+
+    provenance = payload["transcription_provenance"]
+    assert provenance["requested_device"] == "auto"
+    assert provenance["effective_device"] == "cpu"
+    assert provenance["warnings"] == [
+        TranscriptionWarningCode.DEVICE_FALLBACK_TO_CPU.value
+    ]
 
 
 def test_reusable_runtime_loads_once_transcribes_twice_and_closes_once(

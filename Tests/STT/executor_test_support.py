@@ -57,10 +57,14 @@ def _fake_parse_job(
         str(file_path),
         provider=options.get("transcription_provider"),
     )
-    return {
+    payload = {
         "content": transcription["text"],
         "runtime_load_number": transcription["runtime_load_number"],
     }
+    fallback_device = options.get("_local_stt_cpu_fallback_requested_device")
+    if fallback_device is not None:
+        payload["cpu_fallback_requested_device"] = fallback_device
+    return payload
 
 
 def resident_executor_worker(
@@ -308,15 +312,17 @@ def fake_executor_worker(
                 )
             )
             continue
-        result = ExecutorResult(
-            generation,
-            request.attempt_id,
-            {
-                "content": "transcript",
-                "worker_pid": os.getpid(),
-                "device": request.identity.device.value,
-            },
+        payload = {
+            "content": "transcript",
+            "worker_pid": os.getpid(),
+            "device": request.identity.device.value,
+        }
+        fallback_device = request.options.get(
+            "_local_stt_cpu_fallback_requested_device"
         )
+        if fallback_device is not None:
+            payload["cpu_fallback_requested_device"] = fallback_device
+        result = ExecutorResult(generation, request.attempt_id, payload)
         if mode == "stale_then_succeed":
             connection.send(
                 ExecutorResult(generation + 1, request.attempt_id, {"content": "stale"})

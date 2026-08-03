@@ -2800,6 +2800,24 @@ class LibraryIngestQueueMixin:
             envelope.attempt_id,
         )
 
+    def _local_stt_terminal_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        """Adopt the first controller-fenced generation before submit returns."""
+
+        if self._local_stt_callback_matches(job_id, envelope):
+            return True
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if binding == (0, envelope.attempt_id) and envelope.generation > 0:
+            self._ingest_local_stt_jobs[job_id] = (
+                envelope.generation,
+                envelope.attempt_id,
+            )
+            return True
+        return False
+
     def _on_ingest_local_stt_event(
         self,
         job_id: str,
@@ -2830,7 +2848,7 @@ class LibraryIngestQueueMixin:
         job_id: str,
         result: ExecutorResult,
     ) -> None:
-        if self._ingest_shutdown or not self._local_stt_callback_matches(
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
             job_id, result
         ):
             return
@@ -2844,7 +2862,7 @@ class LibraryIngestQueueMixin:
         job_id: str,
         failure: ExecutorFailure,
     ) -> None:
-        if self._ingest_shutdown or not self._local_stt_callback_matches(
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
             job_id, failure
         ):
             return

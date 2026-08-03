@@ -23,6 +23,7 @@ from tldw_chatbook.Model_Artifacts.gguf_admission import validate_local_gguf
 
 from .contracts import (
     CancellationGranularity,
+    DeviceFailureOrigin,
     ExecutionDevice,
     FileAudioSource,
     InputKind,
@@ -71,7 +72,9 @@ class TranscribeCppFailure(Exception):
     __slots__ = (
         "actions",
         "code",
+        "device_failure_origin",
         "error_detail",
+        "failed_device",
         "model_id",
         "stt_failure_provenance",
     )
@@ -83,10 +86,25 @@ class TranscribeCppFailure(Exception):
         model_id: str = "local-gguf:unavailable",
         actions: tuple[str, ...] = (),
         failed_attempt: dict[str, Any] | None = None,
+        device_failure_origin: DeviceFailureOrigin | None = None,
+        failed_device: ExecutionDevice | None = None,
     ) -> None:
+        if (device_failure_origin is None) != (failed_device is None):
+            raise ValueError(
+                "device_failure_origin and failed_device must be provided together"
+            )
+        if (
+            device_failure_origin is not None
+            and type(device_failure_origin) is not DeviceFailureOrigin
+        ):
+            raise TypeError("device_failure_origin must be a DeviceFailureOrigin")
+        if failed_device is not None and type(failed_device) is not ExecutionDevice:
+            raise TypeError("failed_device must be an ExecutionDevice")
         self.code = code
         self.model_id = model_id
         self.actions = actions
+        self.device_failure_origin = device_failure_origin
+        self.failed_device = failed_device
         message = _failure_message(code)
         self.error_detail = {
             "category": "stt_failure",
@@ -113,11 +131,8 @@ def _failure_message(code: TranscriptionFailureCode) -> str:
     return "transcribe.cpp could not complete this transcription."
 
 
-def _device_from_model(model: object) -> ExecutionDevice:
-    device = getattr(getattr(model, "device", None), "kind", None)
-    if not isinstance(device, str):
-        device = getattr(model, "backend", None)
-    normalized = device.casefold() if isinstance(device, str) else ""
+def _device_from_native_kind(value: object) -> ExecutionDevice:
+    normalized = value.casefold() if isinstance(value, str) else ""
     mapping = {
         "cpu": ExecutionDevice.CPU,
         "accel": ExecutionDevice.CPU,
@@ -130,6 +145,55 @@ def _device_from_model(model: object) -> ExecutionDevice:
     if normalized not in mapping:
         raise ValueError("unsupported transcribe.cpp execution device")
     return mapping[normalized]
+
+
+def _device_from_model(model: object) -> ExecutionDevice:
+    device = getattr(getattr(model, "device", None), "kind", None)
+    if not isinstance(device, str):
+        device = getattr(model, "backend", None)
+    return _device_from_native_kind(device)
+
+
+def _failed_accelerator_candidate(
+    runtime: object,
+    requested: ExecutionDevice,
+) -> ExecutionDevice | None:
+    """Return a concrete requested or unambiguous auto-selected accelerator."""
+
+    accelerators = {
+        ExecutionDevice.CUDA,
+        ExecutionDevice.METAL,
+        ExecutionDevice.VULKAN,
+    }
+    if requested in accelerators:
+        return requested
+    if requested is not ExecutionDevice.AUTO:
+        return None
+    backend_override = os.environ.get("TRANSCRIBE_BACKEND")
+    if backend_override and backend_override.casefold() != "auto":
+        try:
+            override_device = _device_from_native_kind(backend_override)
+        except ValueError:
+            return None
+        return override_device if override_device in accelerators else None
+    backends = getattr(runtime, "backends", None)
+    if not callable(backends):
+        return None
+    try:
+        devices = backends()
+    except Exception:
+        return None
+    if not isinstance(devices, (list, tuple)):
+        return None
+    candidates: list[ExecutionDevice] = []
+    for descriptor in devices:
+        try:
+            candidate = _device_from_native_kind(getattr(descriptor, "kind", None))
+        except ValueError:
+            continue
+        if candidate in accelerators and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _timestamp_capabilities(maximum: object) -> frozenset[TimestampGranularity]:
@@ -425,6 +489,8 @@ def _runtime_failure(
     job_id: str | None = None,
     actions: tuple[str, ...] | None = None,
     requested_device: ExecutionDevice = ExecutionDevice.AUTO,
+    device_failure_origin: DeviceFailureOrigin | None = None,
+    failed_device: ExecutionDevice | None = None,
 ) -> TranscribeCppFailure:
     selected_actions = _failure_actions(code) if actions is None else actions
     normalized_language = (language or "en").strip().lower()
@@ -432,6 +498,8 @@ def _runtime_failure(
         code,
         model_id=model_id,
         actions=selected_actions,
+        device_failure_origin=device_failure_origin,
+        failed_device=failed_device,
         failed_attempt=_failed_attempt_document(
             code=code,
             attempt_id=attempt_id,
@@ -519,6 +587,7 @@ class TranscribeCppRuntime:
         model: object | None = None
         adapter: TranscribeCppAdapter | None = None
         model_id = f"local-gguf:{admission.metadata.architecture}"
+        failed_accelerator = _failed_accelerator_candidate(runtime, device)
         try:
             set_log_callback = getattr(runtime, "set_log_callback", None)
             if callable(set_log_callback):
@@ -557,22 +626,42 @@ class TranscribeCppRuntime:
                 maximum_timestamps=maximum_timestamps,
                 requested_device=device,
             )
-        except Exception:
+        except Exception as error:
             if adapter is not None:
                 adapter.close()
             elif model is not None:
                 close = getattr(model, "close", None)
                 if callable(close):
                     close()
+            backend_error = getattr(runtime, "BackendError", None)
+            typed_backend_failure = bool(
+                failed_accelerator is not None
+                and isinstance(backend_error, type)
+                and isinstance(error, backend_error)
+            )
             raise _runtime_failure(
-                code=TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                code=(
+                    TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+                    if typed_backend_failure
+                    else TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+                ),
                 attempt_id=attempt_id,
                 batch_id=batch_id,
                 job_id=job_id,
                 model_id=model_id,
                 language=language,
-                actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+                actions=(
+                    (_RETRY_FASTER_WHISPER,)
+                    if typed_backend_failure
+                    else (_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER)
+                ),
                 requested_device=device,
+                device_failure_origin=(
+                    DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION
+                    if typed_backend_failure
+                    else None
+                ),
+                failed_device=failed_accelerator if typed_backend_failure else None,
             ) from None
 
     def transcribe(
