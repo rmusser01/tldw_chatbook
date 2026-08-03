@@ -56,3 +56,9 @@ def test_skill_named_like_a_command_is_deduplicated():
     skills = (SkillCommandCandidate(name="prompt", description="clash"),)
     result = suggestions_for_draft("/", default_console_registry(), skills)
     assert _labels(result) == ["/prompt", "/system", "/skills"]
+
+
+def test_trailing_newline_leaves_completion_contexts():
+    registry = default_console_registry()
+    assert suggestions_for_draft("/sy\n", registry, SKILLS) is None
+    assert suggestions_for_draft("/skills \n", registry, SKILLS) is None
