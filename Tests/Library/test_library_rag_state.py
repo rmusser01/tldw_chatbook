@@ -437,17 +437,29 @@ def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_tri
 ):
     """Security invariant: the html.unescape pre-step must not open a
     bypass. A literal <script> block stays fully removed, live Rich markup
-    ([bold]/[red]) stays neutralized behind a backslash, and a payload that
-    ARRIVES already HTML-entity-encoded (&lt;script&gt;...) round-trips
-    through unescape+escape to a single, inert escape -- it never decodes
-    back to a literal '<'/'>' and never double-escapes to '&amp;lt;'.
+    ([bold]/[red]) stays neutralized behind a backslash.
 
-    Unchanged by the 2026-08-03 finding-1 fix (`_sanitize_display_text` no
-    longer re-escapes with `html.escape` for display) -- this test must
-    keep passing verbatim, because the dangerous-pattern scrubber now runs
-    a second time AFTER unescaping (see the sequencing-gap test below) and
-    still fully removes both the literal and the entity-encoded <script>
-    blocks before the final markup-escape."""
+    2026-08-03 task-15 finding-1 fix, ROUND-2 CORRECTION: this test was
+    briefly (and wrongly) reported as "left unmodified" by the fix. It was
+    NOT -- a scoping error in that edit orphaned this function's last 7
+    assertions and 2 comments outside its body, and a later cleanup pass
+    deleted them believing them to be stray leftovers, instead of
+    recognizing they were this test's own tail. Reconstructed from git
+    history (commit 3f65de5d4) and re-verified line by line against the
+    fix: 5 of those 7 assertions still hold and are restored below
+    unchanged. The other 2 pinned that an entity-encoded payload
+    (`&lt;script&gt;...&lt;/script&gt;`) was a "fixed point" of
+    unescape+escape -- it round-tripped back to the SAME single-escaped,
+    visually-inert text, still literally readable as
+    "&lt;script&gt;...". That is no longer true and is not restored: under
+    the fix, `_sanitize_display_text` no longer re-escapes for display, and
+    its dangerous-pattern scrubber now runs a SECOND time after unescaping
+    (closing the sequencing gap the fix targets -- see the sequencing-gap
+    test below), so an entity-encoded <script> payload is decoded and then
+    stripped outright by that second pass, exactly like a literal one. The
+    new, explicit contract: encoded and literal <script> payloads both end
+    up fully removed -- neither survives anywhere, encoded, decoded, or
+    escaped."""
     row = LibraryRagResultRow.from_result(
         {
             "title": "[bold]spoof[/] &lt;script&gt;alert(1)&lt;/script&gt;",
@@ -462,6 +474,22 @@ def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_tri
         assert "<script" not in text.lower()
         assert "&amp;lt;" not in text
         assert "&amp;amp;" not in text
+
+    # Restored verbatim from the original (commit 3f65de5d4) -- still hold
+    # under the fix: Rich markup is escaped (backslash breaks the live
+    # "[tag]...[/]" run) rather than merely present-but-inert-looking.
+    assert "[bold]spoof[/]" not in row.title
+    assert r"\[bold]spoof\[/]" in row.title
+    assert "[red]inject[/]" not in row.snippet
+    assert r"\[red]inject\[/]" in row.snippet
+    assert "[red]inject[/]" not in row.display_snippet
+
+    # NEW (round-2 correction): the already-encoded payload is no longer a
+    # fixed point of unescape+escape -- it must not survive at all, encoded
+    # or decoded, in any of the three text fields.
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "script" not in text.lower()
+        assert "alert(" not in text
 
 
 def test_sanitize_display_text_rescrubs_dangerous_patterns_unescaping_reveals() -> None:
