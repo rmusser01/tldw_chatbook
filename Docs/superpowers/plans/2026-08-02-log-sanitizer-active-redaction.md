@@ -256,6 +256,21 @@ git commit -m "fix(security): centralize structured credential fields"
 
 - [ ] **Step 1: Add failing assignment-scanner and standalone-rule tests**
 
+First update the relocated baseline assertions to the approved neutral-marker
+contract before adding the new RED cases:
+
+- `Bearer sk-...` expects `Bearer ***REDACTED***`, not
+  `Bearer ***OPENAI_KEY***`;
+- standalone `sk-...` in `create_safe_log_message()` expects
+  `***REDACTED***`, not `***OPENAI_KEY***`; and
+- URL userinfo expects `https://***REDACTED***@example.com`, not the legacy
+  `https://***:***@example.com` split marker.
+
+Replace any other provider-specific marker expectation carried over from
+`TestLogSanitizer` with `***REDACTED***`. These assertion changes are part of
+the approved contract and must happen before the RED run, so a later GREEN run
+cannot be blocked by stale expectations from the implementation being removed.
+
 Add parameterized and focused cases with conspicuous fake sentinels:
 
 ```python
@@ -288,6 +303,10 @@ Add separate tests proving:
 - already-redacted strings, dictionaries, and lists are idempotent;
 - non-string input retains the current `str()` fallback;
 - `create_safe_log_message()` formatting failure returns the sanitized template and never interpolates raw arguments; and
+- `safe_log()` invokes its supplied callback exactly once with only the fully
+  sanitized final message, for example by collecting calls from
+  `safe_log(calls.append, "api_key={}", "PRIVATE_CALLBACK")` and asserting
+  `calls == ["api_key=***REDACTED***"]`; and
 - a 100,000-character non-matching string completes and remains unchanged without a wall-clock timing assertion.
 
 - [ ] **Step 2: Extend the existing installed-wheel probe before implementation**
@@ -467,7 +486,7 @@ In `test_ollama_success_payloads_are_bounded_and_redacted`, strengthen the paylo
 names = ollama_events._safe_ollama_model_names(
     [
         {"name": "claude-opus-4-20250514"},
-        {"name": "org/model\r\ninjected"},
+        {"name": "org/model\r\n\tinjected"},
     ]
 )
 assert names == ["claude-opus-4-20250514", "org/model injected"]
@@ -487,11 +506,33 @@ def test_transformers_model_scan_preserves_claude_ids_as_one_line(tmp_path: Path
     ]
 ```
 
+Add a second direct Transformers filesystem test for single-line normalization.
+Because CR/LF/tab characters in a directory name are not portable to Windows,
+skip only this test there with `@pytest.mark.skipif(os.name == "nt", ...)`:
+
+```python
+@pytest.mark.skipif(os.name == "nt", reason="Windows filenames reject CR/LF/tab")
+def test_transformers_model_scan_normalizes_multiline_names(tmp_path: Path) -> None:
+    model_root = tmp_path / "models--org--line\r\n\tname"
+    model_root.mkdir()
+    (model_root / "config.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").touch()
+
+    assert transformers_events.scan_transformers_local_models(tmp_path) == [
+        "org/line name"
+    ]
+```
+
 Use direct production functions; do not construct a test app.
 
 - [ ] **Step 2: Write the failing real snapshot-pruning diagnostic test**
 
 In `Tests/Subscriptions/test_watchlist_snapshot_pruning.py`, use the existing real DB/source helpers and `URLMonitor._store_snapshot()`:
+
+While touching this file, remove its pre-existing unused `_serve` import. A
+latest-dev scoped Ruff baseline reports that single `F401`; `_serve` has no
+references in the module, so removal is mechanical test hygiene rather than a
+behavioral change.
 
 ```python
 @pytest.mark.asyncio
@@ -549,11 +590,15 @@ Run:
 ../../.venv/bin/python -m pytest \
   Tests/ProductionApp/test_llm_destination_actions.py::test_ollama_success_payloads_are_bounded_and_redacted \
   Tests/ProductionApp/test_llm_destination_actions.py::test_transformers_model_scan_preserves_claude_ids_as_one_line \
+  Tests/ProductionApp/test_llm_destination_actions.py::test_transformers_model_scan_normalizes_multiline_names \
   Tests/Subscriptions/test_watchlist_snapshot_pruning.py::test_prune_diagnostic_omits_the_monitored_url \
   -q
 ```
 
-Expected: Ollama/Transformers fail because model names still use credential redaction or retain multiple lines; the subscription test fails because the full sanitized URL is still present.
+Expected: Ollama/Transformers fail because model names still use credential
+redaction or retain CR/LF/tab whitespace; the subscription test fails because
+the full sanitized URL is still present. On Windows only the explicitly
+non-portable Transformers filename case is skipped.
 
 - [ ] **Step 4: Split Ollama and Transformers display validation from redaction**
 
@@ -709,7 +754,12 @@ Expected: pass from the isolated installed target with target hashes unchanged.
 
 ../../.venv/bin/python -m ruff format --check \
   tldw_chatbook/Utils/log_sanitizer.py \
-  Tests/Utils/test_log_sanitizer.py
+  tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_ollama.py \
+  tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_transformers.py \
+  Tests/Utils/test_log_sanitizer.py \
+  Tests/Utils/test_security_enhancements.py \
+  Tests/ProductionApp/test_llm_destination_actions.py \
+  Tests/Packaging/test_installed_distribution.py
 
 ../../.venv/bin/python -m py_compile \
   tldw_chatbook/Utils/log_sanitizer.py \
@@ -718,7 +768,33 @@ Expected: pass from the isolated installed target with target hashes unchanged.
   tldw_chatbook/Subscriptions/monitoring_engine.py
 ```
 
-Expected: all commands pass. If whole-file Ruff format is pre-existingly red for a changed legacy file, prove the base revision has the same result and format only the edited region/file when safe; do not mass-format unrelated code.
+For each edited hunk in the two legacy files with recorded whole-file format
+drift, derive the enclosing post-edit logical block from
+`git diff --unified=0 origin/dev...HEAD -- <file>`, then run one range check per
+edited block (Ruff accepts one range per invocation):
+
+```bash
+../../.venv/bin/python -m ruff format --check --range=<start>-<end> \
+  tldw_chatbook/Subscriptions/monitoring_engine.py
+../../.venv/bin/python -m ruff format --check --range=<start>-<end> \
+  Tests/Subscriptions/test_watchlist_snapshot_pruning.py
+```
+
+Include the import block and the new test as separate snapshot-test ranges if
+they are separate hunks. Record the exact ranges and passing output in the
+execution notes.
+
+Expected: lint, every full-file format check, every edited-range format check,
+and syntax compilation pass. Do not accept a new formatting failure merely
+because a file had unrelated baseline drift.
+
+Recorded latest-dev format baseline: Ruff would reformat
+`Tests/Subscriptions/test_watchlist_snapshot_pruning.py` and
+`tldw_chatbook/Subscriptions/monitoring_engine.py` before TASK-856. Do not
+mass-format either legacy file in this task; scoped lint must be green after the
+unused import is removed. Every currently formatted changed Python file must
+pass a full-file format check, and every edited block in the two legacy files
+must pass an explicit range check.
 
 - [ ] **Step 5: Run hygiene and scope review**
 
