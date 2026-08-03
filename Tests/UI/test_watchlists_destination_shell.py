@@ -2213,3 +2213,105 @@ async def test_off_read_items_toggle_never_empties_the_read_centre_or_persists()
         assert screen.query("#wl-region-items"), (
             "ITEMS specifically must still be the expanded centre region"
         )
+
+
+# --- task-1344 fix wave (Qodo correctness): `z`/`Z` while focus is in the --
+# centre header/tab strip -----------------------------------------------
+#
+# `#wl-centre-status`/`#wl-tabs` (`_build_centre_status_header`) are mounted
+# directly under `#wl-centre`, outside every `wl-region-*`/`wl-header-*`
+# wrapper -- so `on_descendant_focus` never updates `focused_region` while
+# focus sits there, leaving it naming whatever region the user last actually
+# visited.
+
+
+@pytest.mark.asyncio
+async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region():
+    """Before this fix, a user who last focused the left rail (setting
+    `focused_region = LEFT_RAIL`), then tabbed into the tab strip and
+    pressed `z`, collapsed -- and PERSISTED -- the rail anyway:
+    `_refuse_region_gesture_off_read_tab` only gates `CENTRE_REGIONS`, so a
+    rail's toggle was never refused there regardless of where real focus
+    was. This is the one gesture the header-focus guard actually prevents
+    from mutating anything (unlike solo below, whose CENTRE-region path was
+    already refused by the existing off-Read gate regardless of focus).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # Default section is "overview" -- not Read, so the header exists
+        # (`_build_centre_status_header`) and FEEDS/CONTENT are hidden.
+        screen.query_one("#wl-region-left_rail").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        assert not screen._focus_in_centre_header
+        before = screen.region_layout
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, (
+            "precondition: the tab strip must be recognized as the centre "
+            "header"
+        )
+
+        await pilot.press("z")
+        await pilot.pause(0.2)
+
+        assert screen.region_layout == before, (
+            "z with focus in the tab strip must not act on the stale "
+            "focused_region left over from the rail"
+        )
+        assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        assert screen._last_persisted_collapsed == before.collapsed_for_persistence()
+
+
+@pytest.mark.asyncio
+async def test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region():
+    """The solo half of the test above.
+
+    Unlike the toggle case, ITEMS's solo off the Read tab is ALREADY
+    refused by `_refuse_region_gesture_off_read_tab` regardless of focus
+    (task-1344 whole-branch review, B1), so `region_layout` never had a
+    path to actually mutate here either way. What this fix changes instead:
+    without it, that refusal still fires its `self.notify(...)`, keyed to
+    a region (`focused_region`, stale) the user is not looking at and has
+    no reason to associate with the tab strip they actually pressed `Z`
+    in. With the fix, focus-in-header short-circuits before that notify.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.ITEMS, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        before = screen.region_layout
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, (
+            "precondition: the tab strip must be recognized as the centre "
+            "header"
+        )
+
+        screen.notify = Mock()
+        await pilot.press("Z")
+        await pilot.pause(0.2)
+
+        assert screen.region_layout == before, (
+            "Z with focus in the tab strip must not solo the stale "
+            "focused_region left over from ITEMS"
+        )
+        assert screen.region_layout.solo_region is None
+        screen.notify.assert_not_called()

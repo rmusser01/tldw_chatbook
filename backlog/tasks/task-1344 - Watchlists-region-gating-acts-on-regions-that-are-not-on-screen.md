@@ -203,3 +203,97 @@ the review's 8252), no import errors.
 (`_refuse_region_gesture_off_read_tab` gate + copy + docstrings), `Tests/UI/test_watchlists_
 destination_shell.py` (3 new tests, 3 pre-existing tests updated to switch to Read before
 their toggle).
+
+## Fix wave 2 (Qodo correctness, two findings)
+
+Two more Qodo findings against the same restructure (the always-rendered centre header
+extracted for AC#1, `#wl-centre-status`/`#wl-tabs` via `WatchlistsWorkbench(header=...)`).
+
+**Finding 1: stale off-Read header on a tree-scope change.** Off the Read tab,
+`#wl-centre-status` renders the snapshot summary (`_watchlists_status_marker_widgets`), but
+`watch_tree_scope` only ever called `_refresh_feeds_region_for_scope`, which rebuilds FEEDS --
+unmounted off Read, so the call was a silent `NoMatches` no-op there. The header kept showing
+the PREVIOUS scope's summary until some unrelated recompose came along. **Fix:** added
+`WatchlistsWorkbench.refresh_header_content()`, mirroring `refresh_region_content` (rebuilds
+`#wl-centre-status` in place from a fresh call to `self._header()`, never a full
+`region_layout` recompose, for the same Inspector-preservation reason `watch_tree_scope`
+already documents). `watch_tree_scope` now also calls a new worker,
+`_refresh_centre_header_for_scope`, whenever `active_section != "items"` -- mirroring
+`compose_content`'s own `header=` condition. Given its own exclusive worker GROUP
+(`wc_header_scope_refresh`, distinct from `_refresh_feeds_region_for_scope`'s
+`wc_feeds_scope_refresh`): both are called unconditionally-per-branch from the same watcher,
+and a shared group would let whichever lands second cancel the other before it finishes.
+
+**Finding 2: `z`/`Z` act on a stale region while focus is in the header.** The header/tab
+strip (`#wl-centre-status`/`#wl-tabs`) is mounted directly under `#wl-centre`, outside every
+`wl-region-*`/`wl-header-*` wrapper, so `on_descendant_focus` never updates `focused_region`
+while focus sits there -- it keeps naming whatever region the user last actually visited. A
+stale `focused_region == LEFT_RAIL` (from an earlier real focus), followed by tabbing into the
+tab strip and pressing `z`, collapsed -- and PERSISTED -- the rail anyway:
+`_refuse_region_gesture_off_read_tab` only gates `CENTRE_REGIONS`, so a rail's toggle was never
+refused regardless of where real focus was. **Fix (chosen approach: on_descendant_focus sets a
+sentinel, actions check it):** `on_descendant_focus` now also recognizes landing on
+`#wl-centre-status` and sets a new flag, `_focus_in_centre_header` (cleared back to `False`
+whenever focus lands in a real `wl-region-*`/`wl-header-*` match instead). `action_toggle_
+region` and `action_solo_region` both check the flag first and silently no-op when it is set.
+Chose the "flag on the widget" shape (option (a) from the review) over "actions re-derive
+whether real focus is currently inside the named region" (option (b)): the latter would also
+have had to treat every existing test that pokes `screen.focused_region = Region.X` directly
+(without ever moving real focus) as "not live", which would have broken several pre-existing
+AC#2/B1 tests that rely on exactly that pattern to reach `_refuse_region_gesture_off_read_tab`'s
+own notify. The flag only changes behavior when a REAL `DescendantFocus` event lands in the
+header, leaving every direct-`focused_region`-assignment test unaffected. `watch_active_section`
+resets the flag to `False` unconditionally on every tab switch (a full recompose invalidates
+whatever the old DOM's focus fact was; the header may not even exist on the new tab), so a
+stale `True` can never wrongly refuse a legitimate gesture on a tab visited later.
+
+Note: for `action_solo_region`, no scenario in the current codebase lets a stale
+header-focused region actually MUTATE `region_layout` even without this guard --
+`_refuse_region_gesture_off_read_tab` already refuses every `CENTRE_REGIONS` member off Read
+unconditionally (task-1344 B1 above), and the header only exists off Read, so a centre-region
+solo was always going to be refused anyway; a rail-focused solo was already blocked by solo's
+own `focused_region not in CENTRE_REGIONS` check. The guard's only observable effect for solo
+is suppressing an extraneous `self.notify(...)` keyed to a region the user is not looking at.
+The toggle guard, by contrast, prevents a real, persisted mutation (rails are never gated by
+`_refuse_region_gesture_off_read_tab` at all).
+
+**Tests.** `Tests/Watchlists/test_watchlists_workbench.py`:
+`test_refresh_header_content_rebuilds_the_header_in_place` and `test_refresh_header_content_
+is_a_noop_without_a_header_factory` (workbench-level primitive, independent of the screen).
+`Tests/Watchlists/test_watchlists_collections_screen.py`:
+`test_centre_header_summary_follows_the_tree_scope_off_the_read_tab` (off Read, change
+`tree_scope`, assert `#wc-watchlists-summary`'s text names the NEW scope, not the old).
+`Tests/UI/test_watchlists_destination_shell.py`:
+`test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region` (focus the left rail,
+then the tab strip, press `z` -- `region_layout` and the persisted collapse set are both
+unchanged) and `test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region`
+(same shape for `Z`/ITEMS, asserting `notify` is never called).
+
+**Mutation checks (Edit-revert -> RED -> restore, `git status --short` clean after each):**
+(1) skipped the `_refresh_centre_header_for_scope()` call in `watch_tree_scope` ->
+`test_centre_header_summary_follows_the_tree_scope_off_the_read_tab` REDs (summary still names
+"All sources", the old scope). (2) short-circuited the `_focus_in_centre_header` check in
+`action_toggle_region` to `False and ...` -> `test_z_with_focus_in_the_centre_header_does_not_
+toggle_a_stale_region` REDs -- the log shows `collapsed_regions = ['left_rail']` actually
+persisted. (3) same short-circuit in `action_solo_region` ->
+`test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region` REDs on
+`notify.assert_not_called()` (one call: `"The pane layout can only be changed on the Read
+tab."`) -- confirming the "notify-only" finding above, not a `region_layout` mutation. All
+three restored; `git status --short` clean after each.
+
+**Verification.** `Tests/UI/test_watchlists_destination_shell.py` + `test_region_layout.py` +
+`test_region_layout_store.py` + `test_watchlists_workbench.py` + `test_no_side_effecting_
+predicates.py` + `Tests/Watchlists/test_watchlists_collections_screen.py`: 129 passed (run
+twice, once before and once after the mutation/revert cycles). `--collect-only Tests/UI
+Tests/Watchlists`: 8260 collected (+5 vs. this wave's starting 8255), no import errors.
+`test_no_side_effecting_predicates.py` green throughout -- `_focus_in_centre_header` is a plain
+attribute, not a predicate-named function, and no new predicate-named function was added.
+
+**Files touched (this wave):**
+`tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py` (`refresh_header_content`),
+`tldw_chatbook/UI/Screens/watchlists_collections_screen.py` (`_refresh_centre_header_for_scope`,
+`watch_tree_scope` calls it off Read, `_focus_in_centre_header` init + `on_descendant_focus` +
+`watch_active_section` reset + `action_toggle_region`/`action_solo_region` guards),
+`Tests/Watchlists/test_watchlists_workbench.py` (2 new tests),
+`Tests/Watchlists/test_watchlists_collections_screen.py` (1 new test),
+`Tests/UI/test_watchlists_destination_shell.py` (2 new tests).

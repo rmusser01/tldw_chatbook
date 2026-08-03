@@ -355,6 +355,48 @@ class WatchlistsWorkbench(Horizontal):
             await child.remove()
         await container.mount(replacement)
 
+    async def refresh_header_content(self) -> None:
+        """Rebuild the header in place from a fresh call to its factory.
+
+        The header's twin of `refresh_region_content` above (task-1344 fix
+        wave, Qodo correctness): `region_layout` is `recompose=True`, so
+        picking up a header-only change (the tree scope moving while FEEDS
+        is hidden off the Read tab -- see
+        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
+        layout would tear down and remount every region, including the
+        Inspector, which `watch_tree_scope` deliberately avoids (see its
+        own docstring). `refresh_region_content` only ever reaches FEEDS's
+        OWN inline copy of this content, and FEEDS is unmounted whenever
+        `self._header` is not `None` (`header=` is wired only off Read,
+        exactly where FEEDS is also in `hidden` -- see
+        `WatchlistsCollectionsScreen.compose_content`), so a header-only
+        tab had no OTHER path that picked up a scope change; the header
+        kept showing the PREVIOUS scope's summary until some unrelated
+        recompose came along and rebuilt it for a different reason.
+
+        A no-op when this workbench was built with no `header` factory
+        (the Read tab): nothing to refresh, and no `#wl-centre-status` to
+        query for either.
+        """
+        if self._header is None:
+            return
+        try:
+            centre = self.query_one("#wl-centre")
+        except NoMatches:
+            return
+        try:
+            stale = self.query_one("#wl-centre-status")
+        except NoMatches:
+            stale = None
+        # Build the replacement before detaching the old header, for the
+        # identical reason `refresh_region_content` does: a factory that
+        # raises must leave the previously mounted header standing rather
+        # than removing it and never replacing it.
+        replacement = self._header()
+        if stale is not None:
+            await stale.remove()
+        await centre.mount(replacement, before=0)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.
 

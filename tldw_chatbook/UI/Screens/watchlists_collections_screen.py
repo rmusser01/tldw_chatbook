@@ -454,6 +454,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._wc_lookup_error: str | None = None
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
+        # Whether focus currently sits in the centre header/tab strip
+        # (`#wl-centre-status`), outside every `wl-region-*`/`wl-header-*`
+        # wrapper -- see `on_descendant_focus` and `action_toggle_region`/
+        # `action_solo_region` (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         self._pending_open_create_form = False
         self._pending_open_import_opml = False
         self._pending_delete_entity: dict[str, Any] | None = None
@@ -2216,7 +2221,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return True
 
     def action_toggle_region(self) -> None:
-        """Collapse or expand whichever region currently has focus."""
+        """Collapse or expand whichever region currently has focus.
+
+        Silently refused while focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness):
+        `focused_region` there names wherever the user last actually
+        visited, not where they are now, and a rail (LEFT_RAIL/RIGHT_RAIL)
+        is never gated by `_refuse_region_gesture_off_read_tab` below (it
+        only covers `CENTRE_REGIONS`), so without this check a stale
+        `focused_region` pointing at a rail would still collapse -- and
+        persist -- it from a keypress that has no visible relationship to
+        either the rail or the tab strip the user is actually looking at.
+        """
+        if self._focus_in_centre_header:
+            return
         region = self.focused_region
         if self._refuse_region_gesture_off_read_tab(region):
             return
@@ -2227,10 +2245,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Refused for any centre region off the Read tab, exactly as the
         chevron and `z` already are -- see
-        `_refuse_region_gesture_off_read_tab`.
+        `_refuse_region_gesture_off_read_tab`. Also silently refused while
+        focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness),
+        for the same reason `action_toggle_region` checks it just above --
+        `focused_region` is stale there. Checked after the `CENTRE_REGIONS`
+        guard, not before: solo never applies to a rail regardless of
+        focus, so that refusal (and its notify) stays exactly as it was;
+        this only silences the CENTRE-region case, which -- off the Read
+        tab, where the header exists at all -- `_refuse_region_gesture_
+        off_read_tab` below would otherwise refuse anyway, just with a
+        notify keyed to a region the user is not looking at.
         """
         if self.focused_region not in CENTRE_REGIONS:
             self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        if self._focus_in_centre_header:
             return
         if self._refuse_region_gesture_off_read_tab(self.focused_region):
             return
@@ -2751,7 +2781,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
 
     def watch_tree_scope(self) -> None:
-        """Rebuild FEEDS in place so it follows the tree selection (Task 7).
+        """Rebuild FEEDS (or the centre header) in place so it follows the
+        tree selection (Task 7; header half added task-1344 fix wave).
 
         Deliberately does NOT do what `watch_active_section` does
         (`self.refresh(recompose=True)`): that rebuilds every region,
@@ -2766,18 +2797,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         task makes scope-dependent -- leaving the Tree and Inspector
         instances untouched.
 
+        Off the Read tab, FEEDS is unmounted (`_hidden_centre_regions`) and
+        `_build_centre_status_header` carries the SAME scoped summary
+        instead (`_watchlists_status_marker_widgets`), so
+        `_refresh_feeds_region_for_scope` alone is a silent no-op there --
+        `WatchlistsWorkbench.refresh_region_content` cannot find
+        `#wl-region-feeds` to replace, since it is not mounted. Before this
+        fix the header was left showing the PREVIOUS scope's summary until
+        some unrelated recompose came along and rebuilt it for a different
+        reason. `_refresh_centre_header_for_scope` is the header's
+        equivalent, called only when the header actually exists
+        (`active_section != "items"`, mirroring `compose_content`'s own
+        `header=` condition).
+
         Also pushes the new scope into the still-mounted `WatchlistTree`
         (task-876): since this watcher is the single reconciliation point
         for BOTH a real tree click and a breadcrumb promotion (the latter
         never touches the tree widget at all -- see
         `handle_breadcrumb_scope_selected`), and neither one rebuilds the
-        Tree instance (only FEEDS refreshes above), the tree's own
+        Tree instance (only FEEDS/the header refresh above), the tree's own
         `active_scope` would otherwise go stale the moment the scope changes
         by any path other than a fresh `_build_tree_pane` construction.
         """
         if not self.is_mounted:
             return
         self._refresh_feeds_region_for_scope()
+        if self.active_section != "items":
+            self._refresh_centre_header_for_scope()
         try:
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
         except NoMatches:
@@ -2815,6 +2861,35 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "Failed to refresh the Feeds region for the new scope."
             )
 
+    @work(exclusive=True, group="wc_header_scope_refresh")
+    async def _refresh_centre_header_for_scope(self) -> None:
+        """Worker wrapper mirroring `_refresh_feeds_region_for_scope`, for
+        the centre header that carries the scoped summary off the Read tab.
+
+        Own exclusive worker GROUP, deliberately not shared with
+        `_refresh_feeds_region_for_scope`: `watch_tree_scope` calls both
+        from the same reactive watcher (this one only when the header
+        exists at all), and a shared `exclusive=True` group would let
+        whichever call lands second cancel the other before it finishes,
+        even though in practice only one of the two ever does real work for
+        a given tab. `exclusive=True` here still collapses a fast burst of
+        tree clicks to the last one requested, the same reasoning
+        `_refresh_feeds_region_for_scope` and `_schedule_layout_persist`
+        both already document for their own workers.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            workbench = self.query_one(WatchlistsWorkbench)
+        except NoMatches:
+            return
+        try:
+            await workbench.refresh_header_content()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to refresh the centre header for the new scope."
+            )
+
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.
 
@@ -2822,6 +2897,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         happened to default to, regardless of where the user actually is.
         Both id prefixes are checked so that focusing a *collapsed* region's
         header targets that region rather than expanding some other one.
+
+        Also tracks `_focus_in_centre_header` (task-1344 fix wave, Qodo
+        correctness): the centre header/tab strip (`#wl-centre-status`,
+        mounted directly under `#wl-centre` by `_build_centre_status_header`
+        -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
+        `wl-header-*` wrapper, so neither prefix above ever matches while
+        focus is in it. Without this branch `focused_region` would keep
+        naming whatever region the user last actually visited, silently
+        indistinguishable here from a live selection: a user who tabs into
+        the tab strip and presses `z`/`Z` would act on that stale reference
+        with no visible relationship to where they are.
+        `action_toggle_region`/`action_solo_region` consult
+        `_focus_in_centre_header` to refuse exactly that.
         """
         node = event.widget
         while node is not None:
@@ -2832,10 +2920,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         self.focused_region = Region(node_id[len(prefix):])
                     except ValueError:
                         pass
+                    self._focus_in_centre_header = False
                     return
+            if node_id == "wl-centre-status":
+                self._focus_in_centre_header = True
+                return
             node = node.parent
 
     def watch_active_section(self) -> None:
+        # A tab switch always fully recomposes the centre (below): whatever
+        # `_focus_in_centre_header` was tracking about the OLD DOM is moot
+        # the instant that DOM is torn down, and the header itself may not
+        # even exist on the new tab at all (`header=None` on Read). Reset
+        # to "not in the header" rather than leave a stale `True` standing
+        # -- `on_descendant_focus` will set it again the moment a fresh
+        # focus event actually lands there, but nothing guarantees one
+        # fires if the new tab happens to auto-focus nothing trackable, and
+        # a stale `True` would wrongly refuse a legitimate `z`/`Z` on the
+        # new tab (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:

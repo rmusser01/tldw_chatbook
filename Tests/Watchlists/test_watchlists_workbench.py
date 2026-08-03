@@ -571,3 +571,74 @@ async def test_refresh_region_content_never_leaves_the_region_empty_on_a_build_f
         assert app.query_one("#feeds-content", Label), (
             "a failed rebuild must leave the previous content mounted"
         )
+
+
+# --- task-1344 fix wave (Qodo correctness): `refresh_header_content` -------
+#
+# Off the Read tab, FEEDS is unmounted (`hidden=`) and `header=` carries the
+# section tab strip plus the snapshot summary instead
+# (`WatchlistsCollectionsScreen._build_centre_status_header`). Nothing used
+# to rebuild that header in place when its content went stale (e.g. the tree
+# scope moving) -- `refresh_region_content` only ever reaches FEEDS's own
+# inline copy, which is unmounted exactly when `header` exists at all. These
+# pin the primitive independent of the screen, the same way Task 7's
+# `refresh_region_content` tests above do for FEEDS.
+
+
+@pytest.mark.asyncio
+async def test_refresh_header_content_rebuilds_the_header_in_place():
+    from textual.widgets import Label
+
+    calls = {"n": 0}
+
+    def header_factory():
+        calls["n"] += 1
+        return Label(f"header-{calls['n']}", id="wl-centre-status")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.ITEMS: lambda: Label("items", id="items-content")},
+                hidden=frozenset({Region.FEEDS, Region.CONTENT}),
+                header=header_factory,
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+        first = app.query_one("#wl-centre-status", Label)
+        assert str(first.renderable) == "header-1"
+
+        await workbench.refresh_header_content()
+        await pilot.pause()
+
+        refreshed = app.query_one("#wl-centre-status", Label)
+        assert str(refreshed.renderable) == "header-2", (
+            "the factory should run again, reflecting whatever changed"
+        )
+        assert refreshed is not first, (
+            "the old header widget should be replaced, not mutated in place"
+        )
+        assert calls["n"] == 2
+        # An unrelated region's content must survive the header refresh.
+        assert app.query_one("#items-content", Label)
+
+
+@pytest.mark.asyncio
+async def test_refresh_header_content_is_a_noop_without_a_header_factory():
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(RegionLayout(), id="wl-workbench")
+
+    app = _App()
+    async with app.run_test():
+        workbench = app.query_one(WatchlistsWorkbench)
+        assert not app.query("#wl-centre-status")
+
+        await workbench.refresh_header_content()
+
+        assert not app.query("#wl-centre-status"), (
+            "refreshing with no header factory must not mount one"
+        )
