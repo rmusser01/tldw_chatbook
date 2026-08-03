@@ -416,3 +416,90 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
         modal_text = _visible_text(host.screen_stack[-1])
         assert "Cost breakdown" in modal_text
         assert "Total" in modal_text
+
+
+# --- Per-session state isolation across session tabs -------------------
+
+
+@pytest.mark.asyncio
+async def test_cost_chip_state_isolated_across_session_tabs():
+    """Design spec's PR3 testing checklist item: "per-session state
+    isolation across session tabs."
+
+    Two native Console sessions with different cost profiles -- A gets a
+    priced send (real dollar total), B is never sent to (no usage at all,
+    so it renders the tokens-only fallback) -- switched between through
+    ``_activate_native_console_session``, the same shared tab-click/Ctrl+K/
+    Alt+1..9 activation entry point already exercised by
+    ``test_switch_between_resumed_sessions_refreshes_stale_workspace_scope``
+    (Tests/UI/test_console_scope_row.py) and
+    ``test_activate_native_console_session_clears_stale_drilldown``
+    (Tests/UI/test_console_agent_rail.py) -- never a raw store mutation.
+
+    ``store.create_session`` activates the session it creates, so B is
+    already the active session immediately after creation; calling the
+    activation helper with B's own id right then would no-op (its sync
+    branch only runs when the requested id differs from the CURRENT active
+    session -- see its docstring). The two transitions this test actually
+    needs to prove -- "switching TO B shows B's state" and "switching BACK
+    to A restores A's state, not a ghost of B's" -- both require a real
+    active-session change, so the sequence below hops B -> A -> B -> A,
+    each hop through the real entry point.
+    """
+    gateway = _AnthropicCostGateway(PRICED_USAGE, reply="priced on A")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+
+        session_a = console._active_native_console_session()
+        assert session_a is not None
+        await _send_and_settle(console, pilot, "hello", "priced on A")
+        state_a = console._last_console_cost_state
+        assert state_a is not None and "$" in state_a.label
+        revision_a = console._console_cost_fp_revisions.get(session_a.id)
+        assert revision_a is not None
+
+        session_b = store.create_session(title="Session B")
+        assert store.active_session_id == session_b.id
+
+        # Hop 1: B (active from creation) -> back to A, through the real
+        # switch entry point -- proves restoring an EXISTING session's
+        # state on the very first real activation isn't a ghost of
+        # whatever the chip last happened to show.
+        await console._activate_native_console_session(session_a.id)
+        await pilot.pause()
+        assert console._active_native_console_session().id == session_a.id
+        assert console._last_console_cost_state == state_a
+
+        # Hop 2: A -> B -- the "switching TO B shows B's state" case.
+        await console._activate_native_console_session(session_b.id)
+        await pilot.pause()
+        assert console._active_native_console_session().id == session_b.id
+        state_b = console._last_console_cost_state
+        assert state_b is not None
+        assert state_b != state_a
+        # B was never sent to -- no priced total, so no dollar glyph at all
+        # (build_cost_state's tokens-only fallback for an all-zero snapshot).
+        assert "$" not in state_b.label
+
+        # Hop 3: B -> A again -- A's state must come back EXACTLY, not a
+        # ghost of B's (e.g. a stale single shared memo instead of a
+        # per-session one).
+        await console._activate_native_console_session(session_a.id)
+        await pilot.pause()
+        assert console._active_native_console_session().id == session_a.id
+        assert console._last_console_cost_state == state_a
+
+        # Fingerprint/revision memos are keyed per session and must not
+        # cross-contaminate: both ids present as distinct dict keys, and
+        # A's own entry is exactly what it was right after the original
+        # send -- visiting B in between never touched it.
+        assert session_a.id in console._console_cost_fp_revisions
+        assert session_b.id in console._console_cost_fp_revisions
+        assert session_a.id != session_b.id
+        assert console._console_cost_fp_revisions[session_a.id] == revision_a
