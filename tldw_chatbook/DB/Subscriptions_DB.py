@@ -2394,6 +2394,7 @@ class SubscriptionsDB(BaseDB):
         *,
         voice_snapshot_json: str,
         status: str = "generating",
+        error: str | None = None,
     ) -> int:
         """Create a new `briefing_audio` row for a cast script.
 
@@ -2410,15 +2411,25 @@ class SubscriptionsDB(BaseDB):
                 `insert_briefing_script`'s reasoning -- the row exists
                 before the synthesis call is even made, so a crash before
                 the first write still leaves a `generating` row behind.
+            error: Optional terminal error text, written in the SAME insert.
+                For a create-and-immediately-fail path (a preflight that
+                refuses before any synthesis happens, e.g. an unresolvable
+                voice or a missing pydub), passing `status="failed"` +
+                `error=...` here writes the finished row atomically, so
+                there is no create-then-separate-update window a crash could
+                land in (TASK-1718). The long-running synthesis path leaves
+                this `None` and finalizes later via `update_briefing_audio` --
+                that separation is inherent (see the module docstring).
 
         Returns:
             The new row's `id`.
         """
         with self.transaction() as conn:
             cursor = conn.execute(
-                "INSERT INTO briefing_audio (script_id, voice_snapshot_json, status) "
-                "VALUES (?, ?, ?)",
-                (script_id, voice_snapshot_json, status),
+                "INSERT INTO briefing_audio "
+                "(script_id, voice_snapshot_json, status, error) "
+                "VALUES (?, ?, ?, ?)",
+                (script_id, voice_snapshot_json, status, error),
             )
             return cursor.lastrowid
 
