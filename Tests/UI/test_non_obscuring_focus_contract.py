@@ -1800,3 +1800,46 @@ def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
     bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
     assert_native_row_hover_state_contract(bundled_blocks[-1])
+
+
+def test_library_notes_focus_cues_are_visible_without_obscuring_content():
+    """Database Notes gives scroll surfaces and conflict recovery real focus cues."""
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+
+        for selector in (
+            "#library-note-preview-region:focus",
+            "#library-note-context-region:focus",
+        ):
+            block = css_block(text, selector)
+            assert "outline: heavy" not in block
+            assert "reverse" not in block
+            assert "border: solid $ds-input-focus-accent;" in block
+            assert "background: $ds-input-focus-bg;" in block
+
+        conflict = css_block(text, "#library-note-conflict-copy:focus")
+        assert_non_obscuring_focus(conflict)
+        assert "background: $ds-focus-bg;" in conflict
+        assert "color: $ds-focus-fg;" in conflict
+
+
+def test_library_notes_labeled_fields_keep_stable_non_semantic_focus_geometry():
+    """Filter, title, body, and both keyword editors use the shared thin cue."""
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "Input:focus",
+        "TextArea:focus",
+        "Select:focus",
+    ):
+        assert_thin_input_focus(css_block(text, selector))
+
+    for selector in (
+        "#library-notes-filter:focus",
+        "#library-note-title:focus",
+        "#library-note-keywords:focus",
+    ):
+        block = css_block(text, selector)
+        assert "outline: heavy" not in block
+        assert "reverse" not in block
+        assert "background: $ds-input-focus-bg;" in block
+        assert "color: $ds-text-primary;" in block

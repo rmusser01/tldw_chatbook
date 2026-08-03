@@ -3462,6 +3462,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+#library-note-context-region {
+    border: solid $ds-grid-line;
+}
+
+#library-note-preview-region:focus,
+#library-note-context-region:focus {
+    border: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
 #library-note-preview-body {
     height: auto;
     min-height: 0;
@@ -3486,6 +3496,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
     color: $ds-text-muted;
     margin: 0 0 1 0;
+}
+
+#library-note-conflict-copy:focus {
+    outline: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Prompt editor (library_prompts_canvas.py): same field/meta/conflict look

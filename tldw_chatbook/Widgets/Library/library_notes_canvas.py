@@ -420,7 +420,7 @@ class LibraryNotesCanvas(Vertical):
             id="library-note-context-status",
             markup=False,
         )
-        with VerticalScroll(id="library-note-context-region"):
+        with VerticalScroll(id="library-note-context-region", can_focus=True):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
                 yield Static(

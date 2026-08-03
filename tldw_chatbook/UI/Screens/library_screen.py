@@ -1649,6 +1649,41 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
+    #library-note-preview-region {
+        height: auto;
+        min-height: 12;
+        max-height: 20;
+        margin: 0 0 1 0;
+        border: solid $surface-lighten-1;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    #library-note-context-region {
+        border: solid $surface-lighten-1;
+    }
+
+    #library-note-preview-region:focus,
+    #library-note-context-region:focus {
+        border: solid $accent;
+        background: $boost;
+    }
+
+    #library-note-conflict-copy:focus {
+        background: $boost;
+        color: $text;
+        text-style: bold underline;
+    }
+
+    #library-note-preview-body {
+        height: auto;
+        min-height: 0;
+        margin: 0;
+        padding: 0 1;
+        border: none;
+        overflow-y: hidden;
+        overflow-x: hidden;
+    }
     /* Database Notes compact geometry: at the measured compact breakpoint,
        the shell becomes a single 15-row workbench and every Notes state
        assigns surplus height to exactly one scroll owner. */
@@ -3995,7 +4030,12 @@ class LibraryScreen(BaseAppScreen):
         )
         focus_identity = pending_focus or restore.focus
         may_restore_focus = pending_focus is not None or presentation_matches
-        if self._library_notes_compact and may_restore_focus:
+        explicit_stage_intent = self._library_notes_explicit_stage_intent
+        if (
+            self._library_notes_compact
+            and may_restore_focus
+            and not explicit_stage_intent
+        ):
             self._library_notes_stage = focus_identity.stage
         self._apply_library_notes_stage_visibility()
         if snapshot is not None and session_matches:
@@ -4024,6 +4064,8 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity,
                 guard,
             )
+        if explicit_stage_intent:
+            self._library_notes_explicit_stage_intent = False
 
     def refresh(
         self,
@@ -4491,6 +4533,10 @@ class LibraryScreen(BaseAppScreen):
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
+        if self._library_notes_autosave_timer is not None:
+            self._library_notes_autosave_timer.stop()
+            self._library_notes_autosave_timer = None
+        self._cancel_library_notes_auto_sync_timer()
         super().on_unmount()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -10863,8 +10909,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = row_id
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
-        self._library_notes_explicit_stage_intent = False
-        if row_id in {LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE}:
+        self._library_notes_explicit_stage_intent = row_id in {
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_CREATE_NOTE,
+        }
+        if self._library_notes_explicit_stage_intent:
             self._library_notes_stage = "notes"
         elif self._library_notes_compact and self._library_notes_stage == "rail":
             # Unrelated canvases retain their incumbent compact composition;
