@@ -66,11 +66,13 @@ def test_create_briefing_audio_accepts_an_explicit_status():
 
 
 def test_create_briefing_audio_writes_status_and_error_in_one_insert():
-    """TASK-1718: a create-and-immediately-fail preflight writes the finished
-    `failed` row atomically -- status AND error in a single insert -- so there
-    is no create-then-separate-update window a crash could leave a stuck
+    """A create-and-immediately-fail preflight writes the finished row atomically.
+
+    TASK-1718: status AND error land in a single insert, so there is no
+    create-then-separate-update window a crash could leave a stuck
     `generating` row in. Reds if `create_briefing_audio` drops the `error`
-    argument (the row would come back with `error is None`)."""
+    argument (the row would come back with `error is None`).
+    """
     db = SubscriptionsDB(":memory:", "test")
     script_id = _make_script(db)
 

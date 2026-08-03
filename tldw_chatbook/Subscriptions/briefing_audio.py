@@ -152,17 +152,18 @@ to `complete`/`failed`. Those two writes are deliberately separate DB
 transactions: a transaction cannot be held open across the long-running
 synthesis between them, and the `generating` row must be visible during it
 (it is what a claim protects and what the UI shows in flight). A hard
-crash in that window leaves a `generating` row with no worker to finish
-it. That is an ACCEPTED trade-off, not a latent wedge: `fail_interrupted_
-audio` sweeps orphaned `generating` rows (row-scoped by
+crash in that window leaves a `generating` row with no worker to finish it.
+That is an ACCEPTED trade-off, not a latent wedge:
+`fail_interrupted_audio` sweeps orphaned `generating` rows (row-scoped by
 `active_audio_claim_row_ids`, TASK-1890) on both the Artifacts-load path
 and the next Synthesize attempt, flipping them to `failed`/`"interrupted"`
 so the row surfaces honestly rather than staying invisible forever. The
-two create-and-immediately-fail preflights (`_record_voice_resolution_
-failure`, `_record_missing_pydub_failure`) have NO synthesis between create
-and finalize, so they DO write their finished `failed` row atomically in a
-single insert (`create_briefing_audio(status="failed", error=...)`) --
-closing that window everywhere it can be closed.
+two create-and-immediately-fail preflights
+(`_record_voice_resolution_failure`, `_record_missing_pydub_failure`) have
+NO synthesis between create and finalize, so they DO write their finished
+`failed` row atomically in a single insert
+(`create_briefing_audio(status="failed", error=...)`) -- closing that
+window everywhere it can be closed.
 
 **Storage is buffer-then-write-once, not streaming.** A correct
 decode-and-concat (`concat_wav_segments`) must hold every turn's decoded
