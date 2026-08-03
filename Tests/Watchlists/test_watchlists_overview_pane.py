@@ -98,8 +98,11 @@ async def test_overview_pane_first_run_guidance_for_a_brand_new_profile():
 
 @pytest.mark.asyncio
 async def test_overview_pane_first_run_guidance_for_a_watchlist_with_no_sources():
-    """`watchlist_count > 0`: telling this user to make a watchlist is the
-    same dead end the copy exists to remove, one step further along."""
+    """The has-watchlists first-run variant shows the sources guidance.
+
+    `watchlist_count > 0`: telling this user to make a watchlist is the same
+    dead end the copy exists to remove, one step further along.
+    """
     app = OverviewPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(OverviewPane)
