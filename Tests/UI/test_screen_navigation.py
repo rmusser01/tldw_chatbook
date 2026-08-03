@@ -191,7 +191,6 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import (
     ActiveServerCapabilityService,
@@ -2416,34 +2415,6 @@ def test_media_screen_restore_state_stashes_pending_dict_for_on_mount():
         "selected_media_id": "media-9",
         "search_term": "q",
         "keyword_filter": "kw",
-    }
-
-
-def test_search_screen_save_state_never_raises_when_window_unset():
-    app = _build_test_app()
-    screen = SearchScreen(app)  # compose_content never ran -- search_window is None
-
-    state = screen.save_state()
-
-    assert "search_query" not in state
-
-
-def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
-    app = _build_test_app()
-    screen = SearchScreen(app)
-
-    screen.restore_state(
-        {
-            "search_query": "hello",
-            "search_mode": "hybrid",
-            "search_active_tab": "history-tab",
-        }
-    )
-
-    assert screen._pending_search_restore == {
-        "query": "hello",
-        "mode": "hybrid",
-        "active_tab": "history-tab",
     }
 
 

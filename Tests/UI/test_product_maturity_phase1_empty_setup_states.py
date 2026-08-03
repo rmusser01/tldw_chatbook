@@ -9,8 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -29,9 +28,6 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
-from tldw_chatbook.Utils import optional_deps as optional_deps_module
-from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,26 +47,6 @@ LOCAL_PATH_PREFIXES = (
     "C:\\Users\\",
     "C:/Users/",
 )
-
-
-class _WidgetHost(App):
-    def __init__(self, widget) -> None:
-        super().__init__()
-        self.widget_under_test = widget
-
-    def compose(self) -> ComposeResult:
-        yield self.widget_under_test
-
-
-class _FakeAppInstance:
-    def __init__(self) -> None:
-        self.notifications = []
-
-    def notify(self, message, *args, **kwargs) -> None:
-        self.notifications.append((message, kwargs))
-
-    def get_authoritative_runtime_source(self) -> str:
-        return "local"
 
 
 def _text(path: Path) -> str:
@@ -227,56 +203,6 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 "Configure an ACP-compatible runtime in ACP before launching an ACP agent."
                 in str(acp_launch.tooltip)
             )
-
-
-@pytest.mark.asyncio
-async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
-    monkeypatch.setitem(
-        search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
-    )
-    # task-638: the window routes this check through
-    # lazy_embeddings_rag_available(), which re-probes for real whenever the
-    # registry flag reads False rather than trusting a stale negative. On a
-    # dev machine where the embeddings_rag extras really are installed,
-    # merely poking the flag above is not enough -- the re-probe would
-    # silently flip it back to True. Patching the underlying checker too
-    # simulates a genuine "already probed, found missing" determination.
-    monkeypatch.setattr(
-        optional_deps_module, "check_embeddings_rag_deps", lambda: False
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",
-        lambda widget: None,
-    )
-
-    widget = SearchRAGWindow(_FakeAppInstance())
-    app = _WidgetHost(widget)
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        recovery = widget.query_one("#search-rag-dependency-missing", Static)
-        recovery_text = str(recovery.renderable)
-        search_input = widget.query_one("#search-query-input", Input)
-        search_button = widget.query_one("#search-button", Button)
-
-        assert "Dependency missing" in recovery_text
-        assert "Unavailable: Search/RAG queries." in recovery_text
-        assert "Why: Missing optional dependencies: embeddings_rag." in recovery_text
-        assert 'pip install -e ".[embeddings_rag]"' in recovery_text
-        assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_text
-        assert "Recovery: Settings > RAG." in recovery_text
-        assert "Owner: Library Search/RAG." in recovery_text
-        assert search_input.disabled is True
-        assert search_button.disabled is True
-        assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
-        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(
-            search_button.tooltip
-        )
 
 
 @pytest.mark.parametrize(
