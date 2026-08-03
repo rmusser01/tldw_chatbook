@@ -201,7 +201,18 @@ _MARKDOWN_LINK_PATTERN = re.compile(r"\\?\[([^\]]*)\]\([^)]*\)")
 _MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^#{1,6}[ \t]+")
 _MARKDOWN_LIST_MARKER_PATTERN = re.compile(r"(?m)^(?:[-*+]|\d+[.)])[ \t]+")
 _MARKDOWN_BACKTICK_PATTERN = re.compile(r"`+")
-_MARKDOWN_EMPHASIS_PATTERN = re.compile(r"\*{1,3}|_{1,3}")
+# Matched pair of emphasis delimiters (1-3 `*`/`_`), simplified CommonMark
+# left/right-flanking: the delimiter run must not be immediately preceded or
+# followed by a word char (or another delimiter char) on the "outside" and
+# must not be immediately adjacent to whitespace on the "inside". This is a
+# capture-and-keep substitution (like the link pattern above), not a
+# delete-all -- a bare `_`/`*` embedded in an identifier (`top_k`,
+# `my_notes_2026.md`, `OPENAI_API_KEY`) never satisfies the flanking rule on
+# both sides, so it is left untouched rather than deleted (RAG-30/31 review:
+# the earlier delete-all version corrupted technical content).
+_MARKDOWN_EMPHASIS_PATTERN = re.compile(
+    r"(?<![\w*_])([*_]{1,3})(?!\s)(.+?)(?<!\s)\1(?![\w*_])"
+)
 
 
 def _strip_markdown_syntax(text: str) -> str:
@@ -225,7 +236,7 @@ def _strip_markdown_syntax(text: str) -> str:
     stripped = _MARKDOWN_HEADING_PATTERN.sub("", stripped)
     stripped = _MARKDOWN_LIST_MARKER_PATTERN.sub("", stripped)
     stripped = _MARKDOWN_BACKTICK_PATTERN.sub("", stripped)
-    stripped = _MARKDOWN_EMPHASIS_PATTERN.sub("", stripped)
+    stripped = _MARKDOWN_EMPHASIS_PATTERN.sub(r"\2", stripped)
     return stripped
 
 

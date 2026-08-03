@@ -249,6 +249,31 @@ def test_result_row_display_snippet_strips_links_and_code_syntax() -> None:
     assert row.display_snippet == "See the guide and run make test for details."
 
 
+def test_result_row_display_snippet_preserves_technical_identifiers() -> None:
+    """(RAG-30/31 review) The emphasis-marker strip must not delete `_`/`*`
+    characters embedded in real content -- snippets exist so a user can
+    judge relevance from quoted source text, and a snake_case identifier, a
+    filename, or an env-var name silently losing its underscores defeats
+    that. Pins the strip-vs-preserve boundary from the preserve side; the
+    strip side is pinned above and by the `**bold**`/`_italic_` cases."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Config Notes",
+            "snippet": (
+                "Call chat_api_call() with top_k tuned via OPENAI_API_KEY; "
+                "see my_notes_2026.md for user_id=42 details."
+            ),
+        }
+    )
+
+    assert row.display_snippet == row.snippet
+    assert "chat_api_call()" in row.display_snippet
+    assert "top_k" in row.display_snippet
+    assert "OPENAI_API_KEY" in row.display_snippet
+    assert "my_notes_2026.md" in row.display_snippet
+    assert "user_id=42" in row.display_snippet
+
+
 def test_result_row_display_snippet_clamps_long_text_at_word_boundary() -> None:
     words = [f"word{i}" for i in range(120)]
     long_text = " ".join(words)  # well over 320 plain-prose chars, no Markdown
