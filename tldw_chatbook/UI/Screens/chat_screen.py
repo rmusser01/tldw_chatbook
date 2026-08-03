@@ -7335,9 +7335,27 @@ class ChatScreen(BaseAppScreen):
 
     def _console_hands_free_mode_changed(self, state: str) -> None:
         """`ModeChanged`: reset per-reply state on entering `awaiting_reply`,
+        seed the countdown's first-paint value on entering `countdown`,
         then repaint the chip for whatever state this is."""
         if state == "awaiting_reply":
             self._begin_console_hands_free_reply()
+        elif state == "countdown":
+            session = self._console_hands_free
+            if session is not None:
+                # Task-5 final review I1: `ModeChanged("countdown")` fires
+                # from `_transition`, itself called from `on_voice_final()`
+                # -- BEFORE the first real `CountdownTick` (which only
+                # arrives on the next `tick()` call) ever writes `session.
+                # countdown_remaining`. Without this, the repaint below
+                # would show the dataclass default `0.0` on turn 1 ("sending
+                # in 0.0s…", reading as "sending NOW") or the PREVIOUS
+                # countdown's last value on later turns. Seeded from the
+                # controller's own configured delay -- exactly what the
+                # first tick would compute anyway (`remaining = send_delay
+                # - 0`).
+                session.countdown_remaining = (
+                    session.controller._send_delay_seconds
+                )
         self._repaint_console_hands_free_chip()
 
     def _begin_console_hands_free_reply(self) -> None:
@@ -7370,16 +7388,30 @@ class ChatScreen(BaseAppScreen):
     def _repaint_console_hands_free_chip(self) -> None:
         """Paint the hands-free loop's mode into the composer's voice chip.
 
-        `listening` is deliberately left untouched -- the ordinary
-        dictation pipeline (`VoicePartial`/`VoiceFinal`/the elapsed ticker)
-        already paints an accurate "recording" chip for it, and this loop's
-        own capture uses that SAME pipeline, unmodified. The other three
-        states either close the mic (default mode) or otherwise have
-        nothing else painting the chip, so they are driven directly through
-        `ConsoleComposerBar.set_voice_status`, which -- unlike
-        `set_voice_partial`/`sync_dictation_state` -- is not gated on the
-        one-shot dictation lifecycle state, so it keeps painting correctly
-        even once `_console_dictation_state` has already reached `idle`.
+        `listening` RESTORES the ordinary dictation chip rather than being
+        left untouched (task-5 final review I1): the ordinary pipeline
+        (`VoicePartial`/`VoiceFinal`/the elapsed ticker) does paint an
+        accurate "recording" chip for it on its OWN -- but only the very
+        first time, before this loop has ever borrowed the chip for
+        `countdown`/`awaiting_reply`/`speaking`. By the time control
+        returns HERE to `listening` (a cancelled countdown, a barge-in, a
+        drained reply), the chip is showing whatever borrowed text was
+        painted last, and nothing else was going to overwrite it -- a
+        cancelled countdown kept reading "sending in 0.0s…" for the
+        user's entire next utterance (PROBE A). `composer.sync_dictation_
+        state(...)`, re-applied with the composer's OWN currently-tracked
+        partial/elapsed/segment-transcribing values (not this loop's),
+        is the same idiom `_teardown_console_hands_free_loop` already uses
+        to clear a borrowed chip on exit -- safe to call redundantly (the
+        widget's own `entering_recording`/`state_changed` guards no-op
+        when nothing actually changed), so calling it on every 0.1s tick
+        while `listening` is cheap. The other three states either close
+        the mic (default mode) or otherwise have nothing else painting
+        the chip, so they are driven directly through `ConsoleComposerBar.
+        set_voice_status`, which -- unlike `set_voice_partial`/`sync_
+        dictation_state` -- is not gated on the one-shot dictation
+        lifecycle state, so it keeps painting correctly even once
+        `_console_dictation_state` has already reached `idle`.
         """
         session = self._console_hands_free
         if session is None:
@@ -7389,6 +7421,7 @@ class ChatScreen(BaseAppScreen):
             return
         state = session.controller.state
         if state == "listening":
+            composer.sync_dictation_state(self._console_dictation_state)
             return
         if state == "countdown":
             composer.set_voice_status(
@@ -7405,29 +7438,47 @@ class ChatScreen(BaseAppScreen):
             composer.set_voice_status("speaking", message="hands-free · speaking")
 
     def _install_console_hands_free_store_tap(self) -> None:
-        """Wrap the store's delta/completion seams, once, for this screen's life.
+        """Wrap the store's creation/delta/completion seams, once, for this
+        screen's life.
 
         `Chat/console_agent_bridge.py`'s streaming adapter (and
         `ConsoleChatController`'s own non-agent streaming path) both call
-        `store.append_stream_chunk`/`store.mark_message_complete`/
-        `store.mark_message_failed`/`store.mark_message_stopped` directly --
-        there is no existing observer/subscription mechanism on the store,
-        so this wraps the bound methods on the store itself (a lazily-
-        created singleton for this screen instance --
-        `_ensure_console_chat_store` only ever builds one). Read-only:
+        `store.append_message`/`store.append_stream_chunk`/`store.mark_
+        message_complete`/`store.mark_message_failed`/`store.mark_message_
+        stopped` directly -- there is no existing observer/subscription
+        mechanism on the store, so this wraps the bound methods on the
+        store itself (a lazily-created singleton for this screen instance
+        -- `_ensure_console_chat_store` only ever builds one). Read-only:
         every wrapper calls the original method FIRST and returns its
         result unchanged; the tap only observes. Idempotent -- installed at
         most once per screen instance, and stays installed across loop
         exit/re-entry (uninstalling would need to reach back into a store
-        that outlives any one loop session).
+        that outlives any one loop session). `append_message` is the
+        EARLIEST of the five seams -- it fires the instant the assistant
+        row is created, before any streaming (task-5 final review I3).
         """
         if self._console_hands_free_store_tap_installed:
             return
         store = self._ensure_console_chat_store()
+        original_append_message = store.append_message
         original_append = store.append_stream_chunk
         original_complete = store.mark_message_complete
         original_failed = store.mark_message_failed
         original_stopped = store.mark_message_stopped
+
+        def _append_message(*args: Any, **kwargs: Any):
+            result = original_append_message(*args, **kwargs)
+            # Task-5 final review I3: the EARLIEST observable "generation
+            # truly begins" signal -- filtered to ASSISTANT rows here,
+            # before the marshal, so a user/system append (far more
+            # frequent) never pays a cross-thread round trip for nothing.
+            # See `_on_console_hands_free_assistant_row_created`.
+            if result.role is ConsoleMessageRole.ASSISTANT:
+                self._console_hands_free_marshal(
+                    self._on_console_hands_free_assistant_row_created,
+                    result.id,
+                )
+            return result
 
         def _append_stream_chunk(message_id: str, chunk: str):
             result = original_append(message_id, chunk)
@@ -7457,6 +7508,7 @@ class ChatScreen(BaseAppScreen):
             )
             return result
 
+        store.append_message = _append_message
         store.append_stream_chunk = _append_stream_chunk
         store.mark_message_complete = _mark_message_complete
         store.mark_message_failed = _mark_message_failed
@@ -7498,13 +7550,25 @@ class ChatScreen(BaseAppScreen):
         event loop (e.g. the standard test harness, where `app_instance`
         is a `TldwCli` that was never `run()`) -- wrapped in `except
         Exception` so a hands-free plumbing/timing issue can NEVER escape
-        into `store.append_stream_chunk`/`mark_message_*`, which every
-        reply -- hands-free or not -- streams through.
+        into `store.append_message`/`append_stream_chunk`/`mark_message_
+        *`, which every reply -- hands-free or not -- streams through.
+
+        Task-5 final review I2: the UI-thread branch used to call
+        `callback(*args)` bare -- the "NEVER escape" claim two paragraphs
+        up was therefore false on the (also supported, non-agent-runtime)
+        direct-provider path, which calls this tap from the UI thread
+        directly. Both branches now share the identical guarantee.
         """
         if self._console_hands_free is None:
             return
         if threading.get_ident() == self.app_instance._thread_id:
-            callback(*args)
+            try:
+                callback(*args)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console hands-free: tap callback failed on the UI "
+                    "thread; dropping this callback"
+                )
             return
         try:
             self.app_instance.call_from_thread(callback, *args)
@@ -7565,6 +7629,41 @@ class ChatScreen(BaseAppScreen):
             return False
         session.reply_id = message_id
         return True
+
+    def _on_console_hands_free_assistant_row_created(self, message_id: str) -> None:
+        """`store.append_message`'s ASSISTANT-role tap (task-5 final review
+        I3): the EARLIEST observable "generation truly begins" signal.
+
+        Before this, the only `on_reply_started()` call sites were the
+        first streamed delta and the terminal tap -- both downstream of
+        the model actually producing VISIBLE output. On the DEFAULT
+        agent-runtime path, `console_agent_bridge.py`'s streaming adapter
+        only forwards fence-gated PRIMARY-turn output, so a run that does
+        tool round-trips first (or opens with a fenced code block the
+        sequencer skips by design, or is a sealed/non-streaming turn)
+        could blow the `awaiting_reply` watchdog's `AWAITING_REPLY_
+        DEADLINE_SECONDS` before a single visible token arrived -- the
+        FSM's own docstring calls that "routine," not exceptional, and
+        promises the watchdog does not punish it. `store.append_message`
+        creates the assistant row ONCE, synchronously, before any
+        streaming (agent or not) begins -- reusing it here makes the
+        watchdog measure what its docstring actually says it measures
+        (send -> `on_reply_started()`), not send -> first visible token.
+
+        Reuses the SAME reply-identity guard the delta/completion taps
+        use (`_console_hands_free_try_claim_reply`): a claim made here
+        for the WRONG session or a pre-existing id is refused exactly
+        like a claim from a delta would be, so this cannot weaken the B1
+        guarantee -- a non-assistant append never reaches here at all
+        (filtered in the wrapper, before the marshal), and an assistant
+        append for an unrelated/background session's OWN reply fails the
+        SAME session+novelty checks a delta for it would.
+        """
+        session = self._console_hands_free
+        if session is None or session.reply_id is not None:
+            return
+        if self._console_hands_free_try_claim_reply(session, message_id):
+            session.controller.on_reply_started()
 
     def _on_console_hands_free_delta(self, message_id: str, chunk: str) -> None:
         """Delta tap: feed one streamed chunk into the loop's sentence sequencer.

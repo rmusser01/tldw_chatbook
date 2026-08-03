@@ -297,7 +297,17 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
 
         service.emit_final("hello from hands free")
         await pilot.pause()
-        assert console._console_hands_free.controller.state == "countdown"
+        session = console._console_hands_free
+        assert session.controller.state == "countdown"
+        # Task-5 final review I1: `ModeChanged("countdown")` seeds `session.
+        # countdown_remaining` synchronously with `on_voice_final()` --
+        # BEFORE the first real `CountdownTick` (only delivered by the
+        # NEXT `tick()` call) ever writes it. Asserted directly on the
+        # session field, not the rendered text, since the 0.1s tick timer
+        # could plausibly have already advanced the visible value by the
+        # time a poll observes it -- this pins the SEED itself,
+        # deterministically, not "eventually shows some countdown text".
+        assert session.countdown_remaining == 0.3
 
         deadline = time.monotonic() + 4
         painted = False
@@ -344,6 +354,44 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         assert any(
             m.role == "assistant" and "First sentence" in m.content
             for m in messages
+        )
+
+
+@pytest.mark.asyncio
+async def test_countdown_cancel_restores_the_chip(monkeypatch):
+    """Task-5 final review I1 (PROBE A): cancelling an armed countdown
+    (`on_speech_resumed()`, the primary cancel route) must restore the
+    ordinary listening chip immediately -- not leave "sending in ...s…"
+    on screen advertising a send that was already cancelled, which used
+    to persist through the user's entire next utterance."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=5.0)  # generous -- must not expire
+    _, host = _ready_host()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        session = console._console_hands_free
+
+        service.emit_final("hello from hands free")
+        await pilot.pause()
+        assert session.controller.state == "countdown"
+        await _wait_for(lambda: "sending in" in _visible_text(console), pilot)
+
+        session.controller.on_speech_resumed()
+        assert session.controller.state == "listening"
+        await pilot.pause()
+
+        assert "sending in" not in _visible_text(console), _visible_text(
+            console
         )
 
 
@@ -943,6 +991,38 @@ async def test_hands_free_marshal_swallows_call_from_thread_failure():
 
 
 @pytest.mark.asyncio
+async def test_hands_free_marshal_swallows_a_raising_callback_on_the_ui_thread():
+    """Task-5 final review I2: the docstring claims a hands-free plumbing
+    failure can NEVER escape into `store.append_message`/`append_stream_
+    chunk`/`mark_message_*` -- but only the OFF-thread branch was wrapped;
+    the UI-thread branch (the whole direct-provider, non-agent-runtime
+    send path -- a supported configuration, not hypothetical) called
+    `callback(*args)` bare. A raising callback on THAT branch must be
+    swallowed too, making the "NEVER" claim actually true."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+
+        def _raising_callback() -> None:
+            raise RuntimeError("tap callback blew up")
+
+        raised: list[BaseException] = []
+        try:
+            # Called directly, on the UI thread (the test's own async
+            # body -- no background thread involved), exercising the
+            # UI-thread branch specifically.
+            console._console_hands_free_marshal(_raising_callback)
+        except BaseException as exc:  # noqa: BLE001 - this IS the pin
+            raised.append(exc)
+
+        assert raised == []
+
+
+@pytest.mark.asyncio
 async def test_append_stream_chunk_never_raises_off_thread_even_when_call_from_thread_fails():
     """The end-to-end shape of D1's exception concern: a background-thread
     call into the WRAPPED `store.append_stream_chunk` (the exact seam the
@@ -1297,6 +1377,76 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
         console._on_console_hands_free_delta(new_reply.id, "New reply sentence.")
         assert session.reply_id == new_reply.id
         assert spoken == ["Old reply first sentence.", "New reply sentence."]
+
+
+@pytest.mark.asyncio
+async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token():
+    """Task-5 final review I3: the `awaiting_reply` watchdog's own
+    docstring says it guards only the send -> `on_reply_started()` gap,
+    never generation already in progress -- but before this fix the ONLY
+    `on_reply_started()` call sites were the first streamed delta and the
+    terminal tap, both downstream of the model producing VISIBLE output.
+    A reply that tool-round-trips first, opens with a fenced code block
+    the sequencer skips by design, or is a sealed/non-streaming turn could
+    blow `AWAITING_REPLY_DEADLINE_SECONDS` before a single visible token
+    ever arrived, even though generation had started immediately -- the
+    FSM's own docstring calls that "routine," not exceptional.
+
+    `store.append_message`'s ASSISTANT-role tap (`_on_console_hands_free_
+    assistant_row_created`) now fires `on_reply_started()` at row
+    CREATION -- synchronously, before any streaming, on both the agent-
+    runtime and direct-provider paths -- so the watchdog disarms long
+    before the first delta. This pins that: the watchdog must already be
+    disarmed the instant the (real, wrapped) `append_message` call
+    returns, well past the OLD 30s mark with zero visible content must
+    NOT abandon the reply, and the eventually-late first token must still
+    feed and complete the turn normally.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._enter_console_hands_free_loop(capture_live=True)
+        await pilot.pause()
+        session = console._console_hands_free
+        sending_session_id = _prime_hands_free_send(console, session)
+        assert session.controller._awaiting_watchdog_disarmed is False
+
+        # The real send path appends the assistant row up front, before
+        # any streaming begins -- going through the REAL wrapped `append_
+        # message` (not calling the handler directly) exercises the
+        # actual tap installed by `_install_console_hands_free_store_tap`.
+        store = console._ensure_console_chat_store()
+        real = store.append_message(
+            sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        await pilot.pause()
+        assert session.reply_id == real.id
+        assert session.controller._awaiting_watchdog_disarmed is True
+
+        # The model takes its time producing anything VISIBLE -- a tool
+        # round-trip, a fenced-code opener the sequencer skips, a sealed
+        # turn -- well past the OLD 30s deadline, with zero deltas
+        # delivered yet. A real `tick()` call (the wiring's own 0.1s
+        # timer would eventually make one) must be a no-op now: the
+        # watchdog is disarmed, so elapsed time no longer matters.
+        session.controller.tick(time.monotonic() + 120.0)
+        assert session.controller.state == "awaiting_reply"
+        assert session.controller._reply_abandoned_by_watchdog is False
+
+        # The first VISIBLE token, arriving "late", still feeds and
+        # completes the turn normally -- nothing was abandoned.
+        fed: list[str] = []
+        session.sequencer.feed = fed.append
+        console._on_console_hands_free_delta(real.id, "Finally, some text. ")
+        assert fed == ["Finally, some text. "]
+
+        finished: list[Any] = []
+        session.sequencer.reply_completed = lambda: finished.append("sequencer")
+        session.controller.on_reply_finished = lambda: finished.append("controller")
+        console._on_console_hands_free_terminal(real.id, False)
+        assert finished == ["sequencer", "controller"]
 
 
 @pytest.mark.asyncio

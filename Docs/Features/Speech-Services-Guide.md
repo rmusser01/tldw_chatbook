@@ -480,22 +480,34 @@ or mouse required once it's running.
 **Entering and exiting.** Say **"Console, hands free."** while a capture is
 already open (the current capture becomes the loop's first turn — nothing
 you already dictated is lost), or press **`Alt+H`** at any time, from an
-open capture or from idle (idle opens a fresh capture). To leave the loop,
-do any one of: press **`Alt+H`** again, press **Esc**, press the mic button,
-say **"Console, stop."**, or say **"Console, discard."** / **"Console, new
-session."** / **"Console, read that back."** — all seven work from any
-point in the loop (mid-listen, mid-countdown, while the reply is still
-generating, or while it is being spoken) and return the Console to its
-ordinary, pre-loop behavior. The last three exit as a side effect of what
-they otherwise do: none of them continues the same conversation (discarding
-throws away what you just said, a new session switches tabs, and reading
-back speaks an *already-completed* reply rather than starting a new turn),
-so hands-free ends rather than being left running with nothing to listen
-for. While the loop is running, **Esc takes priority over any widget-level
-Esc binding elsewhere on the screen** (e.g. the transcript's own
-clear-selection) so it reliably exits from wherever your focus happens to
-be; outside the loop this priority is inert and Esc behaves exactly as it
-always has.
+open capture or from idle (idle opens a fresh capture).
+
+To leave the loop, **`Alt+H`** again, **Esc**, or the mic button work from
+**any point** in the loop (mid-listen, mid-countdown, while the reply is
+still generating, or while it is being spoken) and return the Console to
+its ordinary, pre-loop behavior. While the loop is running, **Esc takes
+priority over any widget-level Esc binding elsewhere on the screen** (e.g.
+the transcript's own clear-selection) so it reliably exits from wherever
+your focus happens to be; outside the loop this priority is inert and Esc
+behaves exactly as it always has.
+
+Four spoken commands also end the loop — **"Console, stop."**, **"Console,
+discard."**, **"Console, new session."**, and **"Console, read that
+back."** — but, like every spoken command, they need an open microphone to
+be heard. In the default (non-acoustic) mode the mic is open only while
+listening or counting down, not while the reply is generating or being
+spoken, so these four are reachable during those two states only;
+acoustic mode (see "Barge-in" below) reopens the mic as soon as the reply
+starts generating, so it widens their availability to the whole turn. The
+last three exit as a side effect of what they otherwise do: none of them
+continues the same conversation (discarding throws away what you just
+said, a new session switches tabs, and reading back speaks an
+*already-completed* reply rather than starting a new turn), so hands-free
+ends rather than being left running with nothing to listen for. There is
+an **eighth** way the loop ends: saying **"Console, send."** while a reply
+is already outstanding cannot start a second turn on top of the first —
+there is no way to interleave them — so the capture still ends and
+hands-free exits rather than silently doing nothing.
 
 **How a turn works.** Speak normally; when you pause, the composer's voice
 chip counts down ("hands-free · sending in 1.5s…") before sending — say
