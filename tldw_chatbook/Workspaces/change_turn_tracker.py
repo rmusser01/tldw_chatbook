@@ -103,6 +103,9 @@ class TurnHandle:
         #: TASK-1976: each root's nested-repo set at B, from the SAME walk
         #: the budget gate already runs — new holes disclose even cardless.
         self.baseline_nested: dict[str, tuple[str, ...]] = {}
+        #: TASK-1977: per-root REL paths auto-registered as sub-roots this
+        #: turn — excluded from that root's nested-repo disclosure.
+        self.auto_registered: dict[str, tuple[str, ...]] = {}
         self._thread: threading.Thread | None = None
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
@@ -165,9 +168,21 @@ class ChangeTurnTracker:
         )
 
         def _baseline() -> None:
-            from tldw_chatbook.Workspaces.change_bounds import scan_root
+            from tldw_chatbook.Workspaces.change_bounds import (
+                DEFAULT_MAX_SUB_ROOTS,
+                scan_root,
+            )
 
-            for root in handle.roots:
+            # TASK-1977: nested repos found inside a GIVEN root become
+            # tracked sub-roots of their own (bounded by max_sub_roots).
+            # Depth is 1 by construction: only the caller's original roots
+            # expand — a grandchild repo stays disclosed via ITS parent's
+            # banner rather than recursing unbounded.
+            original_keys = {str(root) for root in handle.roots}
+            seen = set(original_keys)
+            queue = list(handle.roots)
+            while queue:
+                root = queue.pop(0)
                 key = str(root)
                 try:
                     # TASK-1975: budget gate BEFORE any snapshot work. Over
@@ -182,7 +197,29 @@ class ChangeTurnTracker:
                             "tracking disabled for this turn"
                         )
                         continue
-                    handle.baseline_nested[key] = scan.nested_repos
+                    registered: tuple[str, ...] = ()
+                    if key in original_keys:
+                        max_subs = change_review_setting(
+                            "max_sub_roots", DEFAULT_MAX_SUB_ROOTS
+                        )
+                        candidates = scan.nested_repos[: max(0, max_subs)]
+                        kept: list[str] = []
+                        for rel in candidates:
+                            child = (root / rel).resolve()
+                            ckey = str(child)
+                            if ckey in seen or not child.is_dir():
+                                continue
+                            seen.add(ckey)
+                            kept.append(rel)
+                            handle.roots.append(child)
+                            queue.append(child)
+                        registered = tuple(kept)
+                    handle.auto_registered[key] = registered
+                    handle.baseline_nested[key] = tuple(
+                        rel
+                        for rel in scan.nested_repos
+                        if rel not in registered
+                    )
                     repo = self.service.repo_for_root(root)
                     handle.baselines[key] = repo.snapshot("turn baseline")
                     handle.baseline_oversize[key] = repo.last_oversize_excluded
@@ -254,7 +291,14 @@ class ChangeTurnTracker:
                     repo.force_add(in_root)
                 end = repo.snapshot("turn end")
                 oversize = repo.last_oversize_excluded
-                nested = repo.last_nested_repos
+                # TASK-1977: a TRACKED sub-root is not an untracked hole —
+                # disclosure covers exactly what is not tracked.
+                registered = handle.auto_registered.get(key, ())
+                nested = tuple(
+                    rel
+                    for rel in repo.last_nested_repos
+                    if rel not in registered
+                )
                 if end == baseline:
                     # TASK-1975 (AC#6): an oversized file CREATED during
                     # the turn is the turn's only event -- disclose it with

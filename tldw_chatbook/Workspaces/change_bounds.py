@@ -29,6 +29,7 @@ DEFAULT_MAX_FILES = 20_000
 DEFAULT_MAX_TOTAL_BYTES = 2 * 1024**3
 DEFAULT_MAX_FILE_BYTES = 10 * 1024**2
 DEFAULT_RETENTION_DAYS = 30
+DEFAULT_MAX_SUB_ROOTS = 20
 
 #: Directory names the scan prunes — mirrors the shadow repo's
 #: ``FORCED_EXCLUDES`` (change_tracking.py): untracked trees must not count.
