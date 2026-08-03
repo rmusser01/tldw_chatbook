@@ -58,6 +58,14 @@ LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
 # burying later results (RAG-30/31). `snippet` itself is never clamped.
 LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS = 320
 LIBRARY_RAG_TOP_K_MAX = 50
+# Match-band thresholds (RAG-34): honest bands instead of a raw
+# three-decimal cosine score. Both boundaries are inclusive on their upper
+# band -- a score of exactly LIBRARY_RAG_MATCH_STRONG_THRESHOLD lands in
+# "strong", and exactly LIBRARY_RAG_MATCH_MODERATE_THRESHOLD lands in
+# "moderate" -- so `library_rag_score_suffix`/`library_rag_all_matches_weak`
+# below are the single seam a future refactor must touch to shift them.
+LIBRARY_RAG_MATCH_STRONG_THRESHOLD = 0.5
+LIBRARY_RAG_MATCH_MODERATE_THRESHOLD = 0.2
 LIBRARY_RAG_PROVENANCE_KEYS = frozenset(
     {
         "active_context_eligible",
@@ -315,6 +323,38 @@ def _coerce_score(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def library_rag_score_suffix(score: float | None) -> str:
+    """Return an evidence row's title-line score suffix as an honest band.
+
+    Raw three-decimal cosine scores (e.g. "| score 0.091") are meaningless
+    to users -- this renders a match band instead (RAG-34). `None` (the
+    service hard-sets `score=None` for keyword-mode rows because FTS
+    relevance was judged misleading; see
+    `library_local_rag_search_service.py`) renders as an empty string, not
+    "unknown". The weak band keeps the raw two-decimal number for
+    transparency, so a user can tell "this is the best of a bad lot" from
+    "this barely matched at all".
+
+    Band boundaries are inclusive on their upper band: a score exactly at
+    `LIBRARY_RAG_MATCH_STRONG_THRESHOLD` is "strong", and a score exactly at
+    `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD` is "moderate".
+
+    Args:
+        score: Retrieval score, or `None` for keyword-mode rows.
+
+    Returns:
+        `""` for `None`; otherwise `" | match: strong"`,
+        `" | match: moderate"`, or `" | match: weak (0.xx)"`.
+    """
+    if score is None:
+        return ""
+    if score >= LIBRARY_RAG_MATCH_STRONG_THRESHOLD:
+        return " | match: strong"
+    if score >= LIBRARY_RAG_MATCH_MODERATE_THRESHOLD:
+        return " | match: moderate"
+    return f" | match: weak ({score:.2f})"
 
 
 def _normalize_mode(value: Any) -> str:
@@ -881,6 +921,29 @@ class LibraryRagResultRow:
     def can_open(self) -> bool:
         """True when the row carries a resolvable parent id and known type."""
         return bool(self.open_source_type and self.source_id)
+
+
+def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
+    """True when every scored row among `rows` bands weak (RAG-34/Task 8).
+
+    Feeds Task 8's evidence-list coverage note. Unscored rows (keyword-mode,
+    `score is None`) are ignored entirely -- neither counted toward "all"
+    nor treated as weak. True only when there is at least one scored row and
+    all of them fall below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result
+    set with no scored rows at all (e.g. pure keyword mode) returns `False`,
+    not `True` -- "everything is weak" is a claim about actual scores, not
+    about their absence.
+
+    Args:
+        rows: Evidence rows to inspect.
+
+    Returns:
+        Whether every scored row among `rows` bands weak.
+    """
+    scored = [row.score for row in rows if row.score is not None]
+    if not scored:
+        return False
+    return all(score < LIBRARY_RAG_MATCH_MODERATE_THRESHOLD for score in scored)
 
 
 @dataclass(frozen=True)

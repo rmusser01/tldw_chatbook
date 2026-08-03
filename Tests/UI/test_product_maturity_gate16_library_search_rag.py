@@ -450,7 +450,9 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
             }
         ]
         visible_text = _visible_text(screen)
-        assert "Incident Review | score 0.930" in visible_text
+        # (RAG-34) Evidence rows render an honest match band, not the raw
+        # cosine score -- 0.93 lands in the "strong" band.
+        assert "Incident Review | match: strong" in visible_text
         assert "Expired credential caused the incident." in visible_text
         assert "Incident Review p.2" in visible_text
         assert len(screen.query("#library-rag-service-error")) == 0

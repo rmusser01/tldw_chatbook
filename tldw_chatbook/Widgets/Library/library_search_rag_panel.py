@@ -17,6 +17,7 @@ from ...Library.library_rag_state import (
     LibraryRagResultRow,
     LibraryRagScopeState,
     LibraryRagSourceOption,
+    library_rag_score_suffix,
     searching_status_line,
 )
 
@@ -300,7 +301,7 @@ def library_rag_result_row_children(
         then Select evidence.
     """
     selected = row.result_id == selected_result_id
-    score = "" if row.score is None else f" | score {row.score:.3f}"
+    score = library_rag_score_suffix(row.score)
     children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",

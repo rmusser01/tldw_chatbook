@@ -13,6 +13,8 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagQueryState,
     LibraryRagResultRow,
     LibraryRagScopeState,
+    library_rag_all_matches_weak,
+    library_rag_score_suffix,
     searching_status_line,
     update_search_history,
 )
@@ -726,3 +728,97 @@ class TestPanelStateHistory:
             LibraryRagPanelState.from_values(history_collapsed=True).history_collapsed
             is True
         )
+
+
+class TestLibraryRagScoreSuffix:
+    """(RAG-34) Evidence rows render an honest match band instead of a raw
+    three-decimal cosine score -- keyword-mode rows carry score=None by
+    deliberate service design (FTS relevance was dropped as misleading) and
+    must render as an empty string, not "unknown"."""
+
+    def test_none_renders_empty_string(self):
+        assert library_rag_score_suffix(None) == ""
+
+    def test_strong_band_above_threshold(self):
+        assert library_rag_score_suffix(0.93) == " | match: strong"
+
+    def test_strong_band_inclusive_at_exact_boundary(self):
+        """0.5 lands in "strong", not "moderate" -- the strong band is
+        `>= 0.5`, so the boundary value itself must not silently drift into
+        the band below it under a future refactor."""
+        assert library_rag_score_suffix(0.5) == " | match: strong"
+
+    def test_moderate_band_between_thresholds(self):
+        assert library_rag_score_suffix(0.35) == " | match: moderate"
+
+    def test_moderate_band_inclusive_at_exact_boundary(self):
+        """0.2 lands in "moderate", not "weak" -- the moderate band is
+        `>= 0.2`, pinned from the low side the same way strong is pinned
+        from its own boundary above."""
+        assert library_rag_score_suffix(0.2) == " | match: moderate"
+
+    def test_moderate_band_just_below_strong_boundary(self):
+        assert library_rag_score_suffix(0.499) == " | match: moderate"
+
+    def test_weak_band_keeps_raw_two_decimal_number_for_transparency(self):
+        """Weak is "the best of a bad lot" -- unlike strong/moderate, the
+        raw number stays visible so a user can tell how weak."""
+        assert library_rag_score_suffix(0.091) == " | match: weak (0.09)"
+
+    def test_weak_band_just_below_moderate_boundary(self):
+        assert library_rag_score_suffix(0.199) == " | match: weak (0.20)"
+
+    def test_weak_band_at_zero(self):
+        assert library_rag_score_suffix(0.0) == " | match: weak (0.00)"
+
+
+class TestLibraryRagAllMatchesWeak:
+    """(RAG-34/Task 8) `library_rag_all_matches_weak` feeds Task 8's
+    coverage note -- it must be True only when there is at least one scored
+    row and every scored row bands weak; unscored (keyword) rows are
+    ignored entirely, and a result set with no scored rows at all is False,
+    not True."""
+
+    def test_no_rows_is_false(self):
+        assert library_rag_all_matches_weak(()) is False
+
+    def test_all_scored_rows_weak_is_true(self):
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B", "score": 0.15}),
+        )
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_one_strong_or_moderate_row_makes_it_false(self):
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B", "score": 0.35}),
+        )
+        assert library_rag_all_matches_weak(rows) is False
+
+    def test_unscored_rows_are_ignored_not_counted_toward_all(self):
+        """A keyword-mode row (score=None) sitting alongside a weak scored
+        row does not flip the verdict either way -- it is simply excluded
+        from the "every scored row" check."""
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B"}),
+        )
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_only_unscored_rows_is_false(self):
+        """No scored rows at all (pure keyword mode) is False -- "everything
+        is weak" is a claim about actual scores, not about their absence."""
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A"}),
+            LibraryRagResultRow.from_result({"title": "B"}),
+        )
+        assert library_rag_all_matches_weak(rows) is False
+
+    def test_weak_boundary_row_counts_as_weak(self):
+        rows = (LibraryRagResultRow.from_result({"title": "A", "score": 0.2 - 1e-9}),)
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_moderate_boundary_row_is_not_weak(self):
+        rows = (LibraryRagResultRow.from_result({"title": "A", "score": 0.2}),)
+        assert library_rag_all_matches_weak(rows) is False
