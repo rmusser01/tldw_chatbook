@@ -5787,7 +5787,13 @@ LibraryIngestCanvas CollapsibleTitle:focus {
 }
 
 /* task-2015: at narrow widths the options-panel summary title clipped
-   mid-word with no ellipsis, hiding the chunking config entirely. */
+   mid-word with no ellipsis, hiding the chunking config entirely. The
+   stock CollapsibleTitle is width:auto, so the PARENT clips it before its
+   own text-overflow can engage -- constrain the width and pin one line so
+   the ellipsis actually renders. */
 LibraryIngestCanvas CollapsibleTitle {
+    width: 1fr;
+    height: 1;
+    text-wrap: nowrap;
     text-overflow: ellipsis;
 }
