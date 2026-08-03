@@ -43,6 +43,37 @@ def _change_item(**overrides):
     return item
 
 
+def test_appeared_scope_ignores_the_synthetic_change_title_and_metadata(service):
+    """task-1363 review: "appeared" matches ONLY the added page text, never the
+    change item's own metadata. A site change's title is the synthetic
+    "Change detected: <source name>", present on every check, so a pattern that
+    sits in the source name (here "Test source") must NOT fire under "appeared"
+    -- otherwise the scope that exists to cut page-wide noise would itself fire
+    on every change. Reds if "appeared" folds title/summary/author back into
+    the haystack.
+    """
+    item = _change_item()  # title = "Change detected: Test source"
+
+    source_name_rule = [{
+        "id": 9,
+        "name": "Matches the source name in the synthetic title",
+        "conditions": {"type": "keyword", "pattern": "Test source", "scope": "appeared"},
+    }]
+    assert service.evaluate(item, source_name_rule) == [], (
+        "the synthetic change title is not text that appeared on the page; an "
+        "'appeared' rule must not match it"
+    )
+    # Sanity: the same pattern DOES match under "anywhere" (it is in the title),
+    # proving the item genuinely carries it and the appeared-scope miss is the
+    # scoping, not a missing field.
+    source_name_anywhere = [{
+        "id": 10,
+        "name": "Same pattern, anywhere scope",
+        "conditions": {"type": "keyword", "pattern": "Test source", "scope": "anywhere"},
+    }]
+    assert [m["rule_id"] for m in service.evaluate(item, source_name_anywhere)] == [10]
+
+
 def test_appeared_scope_matches_added_text_but_not_an_unchanged_old_phrase(service):
     """AC#1/#3: "appeared" matches text a change introduced, not text that was
     already on the page before the change -- even though the old phrase is

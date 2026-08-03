@@ -93,3 +93,15 @@ Followed the plan exactly; no UI (none exists for these rules today — see plan
 - Left status `In Progress` per dispatch instructions (no UI exists to close AC#1 end-to-end for a
   human user — the capability is proven at the rule-data/service layer the tests exercise directly, as
   the plan's preamble anticipated).
+
+## Review refinement (2026-08-03)
+
+Whole-branch review (CLEAN — "anywhere" default proven byte-identical by md5, both mutations
+reproduced, non-persistence confirmed) flagged one non-blocking note: under "appeared" on a SITE
+change, the haystack originally included the synthetic change title ("Change detected: <source
+name>") + summary + author alongside the added text, so an "appeared" pattern that sat in the source
+name would fire on EVERY change — page-wide noise, the opposite of what "appeared" is for. Refined so
+"appeared" matches ONLY the added text when the delta key is present (symmetric with "disappeared");
+the feed/API whole-item fallback (delta key absent) is unchanged. Pinned by
+`test_appeared_scope_ignores_the_synthetic_change_title_and_metadata` (a "Test source" pattern misses
+under "appeared" but hits under "anywhere"), mutation-verified.

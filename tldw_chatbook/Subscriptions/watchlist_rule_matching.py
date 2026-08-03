@@ -82,12 +82,15 @@ def build_rule_haystack(item: Mapping[str, Any], scope: str = "anywhere") -> str
       filter could admit an item the user told the app to drop), keep matching
       the whole page exactly as before.
     * ``"appeared"``: only the text a site change newly introduced --
-      :data:`RULE_MATCH_ADDED_TEXT_KEY` in place of the body, alongside
-      ``title``/``summary``/``author`` (a rule can still match a phrase in the
-      title of the item that reported the change). When that key is absent --
-      a feed or API item, which has no "previous version" to diff against --
-      the *entire* new item just appeared, so this falls back to the page-wide
-      haystack rather than matching nothing.
+      :data:`RULE_MATCH_ADDED_TEXT_KEY` and nothing else, symmetric with
+      ``"disappeared"`` below. NOT ``title``/``summary``/``author``: a change
+      item's title is the synthetic ``"Change detected: <source name>"``,
+      present on every change, so a pattern that happened to sit in the source
+      name would match every check and defeat the point of scoping to what is
+      new. When that key is absent -- a feed or API item, which has no
+      "previous version" to diff against -- the *entire* new item just
+      appeared, so this falls back to the page-wide haystack rather than
+      matching nothing.
     * ``"disappeared"``: only :data:`RULE_MATCH_REMOVED_TEXT_KEY`, and nothing
       else -- not ``title``/``summary``/``author``, because those describe the
       item as it now stands, not text that disappeared. When the key is
@@ -114,13 +117,15 @@ def build_rule_haystack(item: Mapping[str, Any], scope: str = "anywhere") -> str
     if normalized_scope == "appeared":
         if RULE_MATCH_ADDED_TEXT_KEY not in item:
             return _page_wide_haystack(item)
-        parts = [
-            str(item.get("title") or ""),
-            str(item.get("summary") or ""),
-            str(item.get(RULE_MATCH_ADDED_TEXT_KEY) or ""),
-            str(item.get("author") or ""),
-        ]
-        return " ".join(parts).lower()
+        # Only the newly-added text -- symmetric with "disappeared", and NOT
+        # title/summary/author. A site change's title is the synthetic
+        # "Change detected: <source name>", which is present on every change,
+        # so including it would fire an "appeared" rule whose pattern happened
+        # to sit in the source name on EVERY check -- exactly the page-wide
+        # noise "appeared" exists to escape (task-1363 review). The item's own
+        # metadata is not "text that just appeared on the page"; the added
+        # segments are.
+        return str(item.get(RULE_MATCH_ADDED_TEXT_KEY) or "").lower()
 
     # "anywhere" and any unrecognized scope value (safe default).
     return _page_wide_haystack(item)
