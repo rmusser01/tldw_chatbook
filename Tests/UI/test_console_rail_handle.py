@@ -93,7 +93,7 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
     """Bundled TCSS makes both vertical rail sides narrow, tall, and contained."""
     app = _VerticalRailHandleHarness()
 
-    async with app.run_test(size=(32, 24)) as pilot:
+    async with app.run_test(size=(32, 20)) as pilot:
         await pilot.pause()
         host = app.query_one("#vertical-rail-handle-harness", Horizontal)
         left = app.query_one("#vertical-context-handle", ConsoleRailHandle)
@@ -113,10 +113,12 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
         _assert_content_column_contained(left, left_button)
         _assert_content_column_contained(right, right_button)
         _assert_content_column_contained(right, right_badge)
-        assert right_button.region.height >= 7
-        assert right_button.region.y + right_button.region.height <= right_badge.region.y
+        assert left_button.region.height >= len(left._display_label().splitlines())
+        assert right_button.region.height >= len(right._display_label().splitlines())
+        assert right_badge.region.height >= len(right._display_badge().splitlines())
+        assert right_button.region.y + right_button.region.height == right_badge.region.y
         assert right_badge.region.y >= right.content_region.y
-        assert right_badge.region.y + right_badge.region.height <= (
+        assert right_badge.region.y + right_badge.region.height == (
             right.content_region.y + right.content_region.height
         )
         assert left_button.tooltip == "Open Context rail"
