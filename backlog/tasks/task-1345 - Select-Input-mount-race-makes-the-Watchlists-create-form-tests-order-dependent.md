@@ -1,7 +1,7 @@
 ---
 id: TASK-1345
 title: Select/Input mount race makes the Watchlists create-form tests order-dependent
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
