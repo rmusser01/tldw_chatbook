@@ -20,6 +20,8 @@ No test here can reach a network: every call injects a recording fake.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -87,16 +89,20 @@ class _FakeChat:
 
     Records every call's kwargs so a test can assert what reached the
     provider boundary -- and, crucially, that nothing did on the paths that
-    must never call a provider.
+    must never call a provider. Also records the thread it ran on: the real
+    `chat_api_call` blocks on network I/O, so running it on the caller's
+    event loop would freeze the UI.
     """
 
     def __init__(self, *, reply: object = GROUNDED_ANSWER, error: Exception | None = None):
         self.reply = reply
         self.error = error
         self.calls: list[dict] = []
+        self.threads: list[int] = []
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
+        self.threads.append(threading.get_ident())
         if self.error is not None:
             raise self.error
         return self.reply
@@ -180,6 +186,28 @@ async def test_the_provider_call_is_one_shot_non_streaming_and_low_temperature()
     assert [message["role"] for message in kwargs["messages_payload"]] == ["user"]
 
 
+async def test_a_blocking_chat_seam_runs_off_the_event_loop():
+    """The real `chat_api_call` blocks on the network; the loop must not.
+
+    Deleting the `asyncio.to_thread` hop leaves every other test here green
+    while freezing the whole TUI for the length of a provider call.
+    """
+    chat = _FakeChat()
+    loop_thread = threading.get_ident()
+
+    await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=chat,
+    )
+
+    assert chat.threads, "the seam must have been called"
+    assert all(ident != loop_thread for ident in chat.threads)
+
+
 async def test_an_async_chat_seam_is_awaited():
     calls: list[dict] = []
 
@@ -226,9 +254,12 @@ async def test_the_user_message_carries_evidence_question_and_coverage_note():
     # Retrieval honesty reaches the model, not just the screen.
     assert "Retrieval coverage" in user
     assert coverage_note in user
-    # The evidence is fenced as untrusted data.
+    # Evidence and question are both fenced as untrusted data -- library
+    # content and a user string, neither of them instructions.
     assert "UNTRUSTED EVIDENCE BEGIN" in user
     assert "UNTRUSTED EVIDENCE END" in user
+    assert "UNTRUSTED QUESTION BEGIN" in user
+    assert "UNTRUSTED QUESTION END" in user
 
 
 async def test_an_empty_coverage_note_adds_no_coverage_claim():
@@ -403,6 +434,35 @@ async def test_a_model_that_declines_is_recorded_as_abstained():
     assert answer.text == LIBRARY_RAG_NO_EVIDENCE_TEXT
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        f'"{LIBRARY_RAG_NO_EVIDENCE_TEXT}"',
+        f"**{LIBRARY_RAG_NO_EVIDENCE_TEXT}**",
+        f"“{LIBRARY_RAG_NO_EVIDENCE_TEXT}”",
+        LIBRARY_RAG_NO_EVIDENCE_TEXT.rstrip("."),
+    ],
+    ids=["straight_quotes", "bolded", "curly_quotes", "no_full_stop"],
+)
+async def test_an_echoed_abstention_is_still_an_abstention(reply):
+    """Models echo the framing they were shown.
+
+    A compliant abstention that comes back quoted or bolded must not be
+    reported as a grounded answer -- that would be the feature's own defect
+    arriving through the back door.
+    """
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(reply=reply),
+    )
+
+    assert answer.status == ANSWER_STATUS_ABSTAINED
+
+
 def test_insufficient_evidence_validation_counts_as_an_abstention():
     """The mapping contract, tested at its own seam.
 
@@ -432,11 +492,22 @@ def test_the_system_prompt_pins_the_honesty_contract():
 
     # (a) answer only from the staged evidence
     assert "using only the evidence staged" in prompt
-    # (b) cite with the given bracketed labels, never invent one
+    # (b) cite with the given bracketed labels, never invent one, and cite
+    #     the snippet the claim actually came from
     assert "[S1]" in prompt
     assert "never invent" in prompt
+    assert "cite the specific snippet that contains it" in prompt
     # (c) plain abstention, in the exact words the no-evidence path uses
     assert LIBRARY_RAG_NO_EVIDENCE_TEXT in prompt
+    assert "Reply with exactly this sentence and nothing else:" in prompt
+    # ...and NOT wrapped in quotes: a quoted sentence comes back quoted.
+    assert f'"{LIBRARY_RAG_NO_EVIDENCE_TEXT}"' not in prompt
     # (d) the evidence is untrusted data, not instructions
     assert "untrusted" in prompt
     assert "ignore" in prompt
+    # (e) retrieved is not the same as relevant -- the defect this whole
+    #     feature exists to prevent. The evidence block carries no score, so
+    #     a 6%-relevance row looks exactly like a perfect match.
+    assert "retrieved by similarity, not by judgement" in prompt
+    assert "still have nothing to do with the question" in prompt
+    assert "abstain" in prompt
