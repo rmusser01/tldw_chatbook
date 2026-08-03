@@ -2186,7 +2186,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 and self._library_prompts_view == "editor"
-            ):
+            ) or self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 # A source refresh may update the Prompts count while a newly
                 # created Prompt remains open. Recompose only the rail so the
                 # shared block editor keeps its TextAreas, cursor, selection,
@@ -2196,6 +2196,12 @@ class LibraryScreen(BaseAppScreen):
                 # recompose here remounted the form mid-click (the queue
                 # renders from the job registry, not this snapshot -- only
                 # the rail needs the fresh counts).
+                # (RAG-27) Same protection for the Search/RAG canvas: a
+                # background ingest completing while the user is mid-search
+                # must not eject them from the panel either -- the rail sync
+                # below covers the rail, and the extra call further down
+                # refreshes the panel's own scope-toggle/run-gate widgets in
+                # place with the fresh source counts.
                 try:
                     rail = self.query_one("#library-rail", LibraryRail)
                 except (NoMatches, QueryError):
@@ -2208,6 +2214,14 @@ class LibraryScreen(BaseAppScreen):
                     self._library_rail_preferences(),
                     query=self._library_rag_query,
                 )
+                if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                    self.run_worker(
+                        self._refresh_search_rag_panel_state_widgets(
+                            include_results_and_history=False
+                        ),
+                        exclusive=True,
+                        group="library_rag_panel_snapshot_sync",
+                    )
                 return
             self.refresh(recompose=True)
 

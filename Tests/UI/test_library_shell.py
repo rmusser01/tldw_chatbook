@@ -12171,6 +12171,147 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_path):
+    """(RAG-27) A background ingest done-count growth while the user is on
+    the Search/RAG canvas -- mid-search, with results already on screen --
+    must sync the rail and the panel's scope-toggle/run-gate widgets IN
+    PLACE, mirroring the Ingest canvas and Prompts-editor guards
+    (``_apply_local_source_snapshot``'s narrow-path branch, PR #1261). The
+    fall-through whole-screen ``refresh(recompose=True)`` this guard
+    otherwise takes would remount ``LibrarySearchRagPanel`` (and the rail)
+    from scratch -- destroying the just-landed Evidence results and any
+    unsubmitted state -- exactly the ejection UAT (critique RAG-27)
+    observed live.
+
+    Mirrors ``test_library_search_typed_text_survives_registry_recompose``
+    above: a real ``LibraryIngestQueueMixin``-backed harness, with the
+    registry-changed event simulated directly via
+    ``_handle_library_ingest_registry_changed`` rather than running a full
+    ingest job (a scripted registry double supplies the done-count growth,
+    matching ``test_completion_toast_survives_mid_batch_clear``'s
+    technique below).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="rag27-search")
+    db.add_media_with_keywords(
+        title="Tides",
+        content="Tide charts for the coastal survey.",
+        media_type="article",
+    )
+    harness = _LibraryIngestCanvasHarness(db)
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Tides",
+                    "snippet": "Tide charts for the coastal survey.",
+                    "source_id": "media-1",
+                    "chunk_id": "chunk-1",
+                    "provenance": {"source_type": "media"},
+                }
+            ]
+        }
+    )
+    harness.library_rag_search_service = service
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "tides"
+        await _wait_for_library_rag_query_ready(screen, pilot, "tides")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        panel = screen.query_one("#library-search-rag-panel")
+        rail = screen.query_one("#library-rail")
+        results_container = screen.query_one("#library-rag-results")
+        results_before = list(results_container.children)
+        assert results_before, "the static service result never mounted"
+
+        # Spy (not replace) so the real in-place sync still runs -- this
+        # both proves the call happened AND, via the identity checks below,
+        # that its effects (or lack thereof, for results/history) match
+        # what the guard's comment promises.
+        rail.sync_state = Mock(wraps=rail.sync_state)
+        screen._refresh_search_rag_panel_state_widgets = Mock(
+            wraps=screen._refresh_search_rag_panel_state_widgets
+        )
+
+        class _DoneGrowthRegistry:
+            """Minimal registry double reporting one completed job.
+
+            Mirrors ``_ScriptedRegistry`` in
+            ``test_completion_toast_survives_mid_batch_clear`` below --
+            only ``counts()``/``jobs()``/``add_listener``/
+            ``remove_listener`` are exercised by
+            ``_handle_library_ingest_registry_changed``.
+            """
+
+            def counts(self):
+                return {
+                    "queued": 0,
+                    "parsing": 0,
+                    "writing": 0,
+                    "done": 1,
+                    "failed": 0,
+                }
+
+            def jobs(self):
+                return ()
+
+            def add_listener(self, _listener):
+                pass
+
+            def remove_listener(self, _listener):
+                pass
+
+        harness.library_ingest_jobs = _DoneGrowthRegistry()
+        screen._handle_library_ingest_registry_changed()
+
+        # The done-count growth chains two async workers
+        # (`_refresh_local_source_snapshot` -> `_apply_local_source_snapshot`
+        # -> the new `_refresh_search_rag_panel_state_widgets` worker) --
+        # poll rather than assume a single `pilot.pause()` drains both.
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if screen._refresh_search_rag_panel_state_widgets.called:
+                break
+
+        # The canvas (and the rail) must be the SAME mounted widget
+        # instances -- not merely present-and-equal, which a whole-screen
+        # recompose would also satisfy.
+        assert screen.query_one("#library-search-rag-panel") is panel, (
+            "the Search/RAG canvas was recomposed (widget identity lost) on "
+            "an ingest done-count growth"
+        )
+        assert screen.query_one("#library-rail") is rail, (
+            "the rail was recomposed (widget identity lost) on an ingest "
+            "done-count growth"
+        )
+
+        # Evidence rows must be the SAME Static instances -- proving
+        # `include_results_and_history=False` was actually honored, not
+        # just that no recompose happened.
+        results_after = list(screen.query_one("#library-rag-results").children)
+        assert len(results_after) == len(results_before) and all(
+            before is after
+            for before, after in zip(results_before, results_after)
+        ), (
+            "Evidence result widgets were rebuilt -- "
+            "include_results_and_history must be False for an "
+            "ingest-driven panel refresh"
+        )
+
+        assert rail.sync_state.called, "the rail was not synced in place"
+        screen._refresh_search_rag_panel_state_widgets.assert_called_with(
+            include_results_and_history=False
+        )
+
+
+@pytest.mark.asyncio
 async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path):
     """(task-2015 review) During the 0.8s debounce window an in-flight
     worker for the PREVIOUS path could still apply -- generation equality
