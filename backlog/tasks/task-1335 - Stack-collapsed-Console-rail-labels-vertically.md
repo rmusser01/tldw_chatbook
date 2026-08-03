@@ -1,10 +1,10 @@
 ---
 id: TASK-1335
 title: Stack collapsed Console rail labels vertically
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-03 03:05'
-updated_date: '2026-08-03 04:03'
+updated_date: '2026-08-03 04:13'
 labels: []
 dependencies: []
 ---
@@ -48,7 +48,6 @@ widget boundary, Console behavior, and persisted rail state.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-
 Implemented an opt-in vertical presentation for only the collapsed Console
 Context and Inspector handles. The shared handle keeps its horizontal default,
 while the Console call sites use stable three-cell outer rails, stacked visible
@@ -62,12 +61,16 @@ persistence, responsive state, and expanded headers remain unchanged.
 
 TDD/review evidence: dedicated contract tests cover vertical labels, geometry,
 badge visibility/tooltips, and the unchanged horizontal default; Tasks 1-3
-passed per-task spec and quality review. Final focused verification passed 46
-tests: 41 Console rail/handle/state and Personas-selection tests, plus 5 CSS
-build-integrity tests. The four changed Python modules/tests compiled with
-`py_compile`, and `git diff --check 659186711..HEAD` passed. Final diff review
-found only the intended Console widget/call-site/test/TCSS scope; the generated
-TCSS change is mechanical and no secrets were introduced.
+passed per-task spec and quality review. Targeted verification is green: 41
+tests from `Tests/UI/test_console_rail_handle.py`,
+`Tests/UI/test_console_persistent_rails.py::test_generated_console_stylesheet_includes_rail_rules`,
+the two specified `Tests/UI/test_personas_workbench.py::TestWorkbenchShell`
+selections, and `Tests/Chat/test_console_rail_state.py`; plus 5 CSS
+build-integrity tests from `Tests/UI/test_css_build_integrity.py`. The four
+changed Python modules/tests compiled with `py_compile`, and
+`git diff --check 659186711..HEAD` passed. Final diff review found only the
+intended Console widget/call-site/test/TCSS scope; the generated TCSS change is
+mechanical and no secrets were introduced.
 
 The two existing full-app mounted Console selections remain blocked before
 screen mount during `TldwCli()` construction by `sqlite3.OperationalError:
@@ -75,6 +78,13 @@ attempt to write a readonly database` against user-data SQLite paths under
 `~/.local/share/tldw_cli` (scheduled-tasks and library-collections wiring).
 This is the documented pre-existing harness condition; it does not exercise or
 demonstrate a regression in the rail implementation.
+
+Implementation is complete and targeted verification is green, but this task
+remains In Progress. The repository's strict Definition of Done also requires
+the full suite, linter/formatter, and performance/security/licence gates to be
+run green; those repository-wide gates have not all been run. The two selected
+full-app integrations also remain baseline-blocked as described above, so task
+closure is withheld without exception.
 
 ADR required: no
 
