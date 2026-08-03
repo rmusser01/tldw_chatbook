@@ -5644,15 +5644,24 @@ class LibraryScreen(BaseAppScreen):
         )
         previous_active = self._library_ingest_last_active_count
         self._library_ingest_last_active_count = active_count
-        if previous_active == 0 and active_count > 0:
+        done_now = counts.get("done", 0)
+        failed_now = counts.get("failed", 0)
+        baseline_done, baseline_failed = self._library_ingest_batch_baseline
+        if done_now < baseline_done or failed_now < baseline_failed:
+            # (task-2015 review) Clear/dismiss mid-batch shrinks DONE/FAILED
+            # below the baseline; without re-anchoring, the settle deltas go
+            # negative and completions after the clear vanish from the
+            # toast.
             self._library_ingest_batch_baseline = (
-                counts.get("done", 0),
-                counts.get("failed", 0),
+                min(baseline_done, done_now),
+                min(baseline_failed, failed_now),
             )
+        if previous_active == 0 and active_count > 0:
+            self._library_ingest_batch_baseline = (done_now, failed_now)
         elif previous_active > 0 and active_count == 0:
             baseline_done, baseline_failed = self._library_ingest_batch_baseline
-            imported = counts.get("done", 0) - baseline_done
-            failed = counts.get("failed", 0) - baseline_failed
+            imported = done_now - baseline_done
+            failed = failed_now - baseline_failed
             if imported > 0 or failed > 0:
                 parts = []
                 if imported > 0:
@@ -12116,7 +12125,21 @@ class LibraryScreen(BaseAppScreen):
             event: Input change event emitted by the path field.
         """
         event.stop()
+        if event.value == self._library_ingest_form.path:
+            # Textual re-announces an Input's ``value=`` when a recompose
+            # remounts it. Treating that echo as a user edit re-armed the
+            # debounce on every recompose (a perpetual pre-flight loop
+            # while any path sat in the field) and would fence off a
+            # just-started worker for no reason (task-2015 review; same
+            # family as the canvas's ``_reported_option_values`` guard).
+            return
         self._library_ingest_form.path = event.value
+        # (task-2015 review) Fence off any in-flight pre-flight the moment
+        # the text genuinely changes: its result describes a path this
+        # field no longer shows, and generation equality alone would
+        # accept it during the debounce window.
+        self._cancel_library_ingest_preflight()
+        self._library_ingest_preflight_generation += 1
         # (task-2015) Feedback must not wait for blur: restart the debounce
         # timer on every edit; its fire runs the pre-flight for the text the
         # user has settled on. The blur/submit triggers still run
@@ -12129,8 +12152,21 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_path_debounce_timer = self.set_timer(
                 0.8, self._run_debounced_library_ingest_preflight
             )
+        else:
+            # A cleared field must not keep old errors or a summary parked
+            # on screen with nothing staged (task-2015 review). Recompose
+            # only when there IS pre-flight state to drop -- the plain
+            # typed-then-deleted case keeps this handler's no-recompose
+            # contract (cursor/widget identity preserved).
+            had_preflight = (
+                self._library_ingest_form.preflight is not None
+                or self._library_ingest_form.preflight_checking
+            )
+            self._invalidate_library_ingest_preflight()
+            if had_preflight:
+                self._refresh_library_ingest_canvas_preserving_context()
         # (task-2016) The state model drops intro lines once a path exists,
-        # but this handler deliberately never recomposes -- hide/show them
+        # but this handler avoids recomposing while typing -- hide/show them
         # in place so they track the field's content live.
         show_intros = (
             not event.value.strip()

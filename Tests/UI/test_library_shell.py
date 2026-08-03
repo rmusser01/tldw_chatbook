@@ -12165,3 +12165,167 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
         assert (
             screen.query_one("#library-search-input", Input).value == ""
         ), "deleted search text resurrected on recompose"
+
+
+@pytest.mark.asyncio
+async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path):
+    """(task-2015 review) During the 0.8s debounce window an in-flight
+    worker for the PREVIOUS path could still apply -- generation equality
+    alone accepted it. Every genuine edit must fence the old generation."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2r-fence")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/tmp/a.txt"
+        await pilot.pause()
+        stale_generation = screen._library_ingest_preflight_generation
+
+        path_input.value = "/tmp/b.txt"
+        await pilot.pause()
+
+        late_result_for_a = PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        )
+        screen._apply_library_ingest_preflight_result(
+            late_result_for_a, stale_generation
+        )
+        assert screen._library_ingest_form.preflight is None, (
+            "a worker for the previous path applied during the debounce window"
+        )
+
+
+@pytest.mark.asyncio
+async def test_clearing_path_clears_lingering_preflight_state(tmp_path):
+    """(task-2015 review) Emptying the field must not leave old errors or a
+    summary parked on screen with nothing staged."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2r-clear")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/nope/missing.txt"
+        await pilot.pause()
+        screen._library_ingest_form.preflight = PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /nope/missing.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        )
+
+        screen.query_one("#library-ingest-path", Input).value = ""
+        await pilot.pause()
+        assert screen._library_ingest_form.preflight is None, (
+            "stale pre-flight errors lingered after the field was cleared"
+        )
+
+
+@pytest.mark.asyncio
+async def test_recompose_mount_echo_does_not_rearm_debounce(tmp_path):
+    """(task-2015 review) Textual re-announces an Input's ``value=`` on
+    remount; treating that echo as a user edit re-armed the debounce on
+    every recompose -- a perpetual ~1s pre-flight loop while any path sat
+    in the field."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2r-echo")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        screen.query_one("#library-ingest-path", Input).value = "/tmp/a.txt"
+        await pilot.pause()
+        timer = screen._library_ingest_path_debounce_timer
+        if timer is not None:
+            timer.stop()
+        screen._library_ingest_path_debounce_timer = None
+
+        # A registry tick recomposes the canvas; the remounted Input echoes
+        # its value= back as Input.Changed.
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        await pilot.pause()
+
+        assert screen._library_ingest_path_debounce_timer is None, (
+            "the mount echo re-armed the debounce -- perpetual pre-flight loop"
+        )
+
+
+@pytest.mark.asyncio
+async def test_completion_toast_survives_mid_batch_clear(tmp_path):
+    """(task-2015 review) Clearing finished rows while other jobs are still
+    active shrinks DONE/FAILED below the batch baseline; without
+    re-anchoring, the settle deltas go negative and the completion toast
+    vanishes or misreports."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="p2r-toast")
+    harness = _LibraryIngestCanvasHarness(db)
+    harness.notify = Mock()
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        class _ScriptedRegistry:
+            def __init__(self):
+                self.script = [
+                    # Batch goes active with one prior DONE row on the board.
+                    {"queued": 1, "parsing": 0, "writing": 0, "done": 1, "failed": 0},
+                    # User clears the finished row mid-batch.
+                    {"queued": 1, "parsing": 0, "writing": 0, "done": 0, "failed": 0},
+                    # The active job completes; batch settles.
+                    {"queued": 0, "parsing": 0, "writing": 0, "done": 1, "failed": 0},
+                ]
+                self.index = 0
+
+            def counts(self):
+                return dict(self.script[min(self.index, len(self.script) - 1)])
+
+            def jobs(self):
+                return ()
+
+            def add_listener(self, _listener):
+                pass
+
+            def remove_listener(self, _listener):
+                pass
+
+        registry = _ScriptedRegistry()
+        harness.library_ingest_jobs = registry
+        for step in range(len(registry.script)):
+            registry.index = step
+            screen._handle_library_ingest_registry_changed()
+            await pilot.pause()
+
+        summaries = [
+            call.args[0]
+            for call in harness.notify.call_args_list
+            if call.args and str(call.args[0]).startswith("Ingest finished")
+        ]
+        assert summaries == ["Ingest finished — 1 imported"], (
+            f"mid-batch clear broke the settle toast: {summaries}"
+        )
