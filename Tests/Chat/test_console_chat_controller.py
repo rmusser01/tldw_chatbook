@@ -4427,7 +4427,21 @@ async def test_dispatch_records_fingerprint_baseline_and_cache_snapshot():
                 )
 
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=CacheUsageGateway())
+    # Fix round 1, Finding 1: the baseline now comes from the DISPATCHED
+    # resolution ("anthropic"/"test-model"), not from `self.provider`/
+    # `self.model` -- so those must be pre-set to match here (mirroring
+    # ordinary, non-racing usage, where the selection handed to
+    # `resolve_for_send` is built from these same fields and so already
+    # agrees with what comes back). `compute_current_fingerprint` reads
+    # `self.provider`/`self.model` directly; the dedicated race test below
+    # (`test_baseline_uses_dispatched_resolution_not_racing_controller_
+    # fields`) covers the case where they deliberately diverge.
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=CacheUsageGateway(),
+        provider="anthropic",
+        model="test-model",
+    )
     session = store.ensure_session(title="Chat 1")
     assert controller.payload_fingerprint_baseline(session.id) is None
 
@@ -4442,4 +4456,109 @@ async def test_dispatch_records_fingerprint_baseline_and_cache_snapshot():
 
     current = controller.compute_current_fingerprint(session.id)
     from tldw_chatbook.Chat.console_cost_tracker import fingerprint_break_reason
+    assert fingerprint_break_reason(baseline, current) is None
+
+
+@pytest.mark.asyncio
+async def test_baseline_uses_dispatched_resolution_not_racing_controller_fields():
+    """Fix round 1, Finding 1 (Critical): the baseline's provider/model must
+    come from the RESOLUTION actually being dispatched, not
+    `self.provider`/`self.model` -- those are controller-wide mutable
+    fields shared across every fleet session, so a provider/model switch
+    racing the awaits between `resolve_for_send` and the dispatch choke
+    point (e.g. a DIFFERENT session's send flipping them in between) must
+    not leak into THIS call's recorded baseline.
+    """
+    from tldw_chatbook.Chat.console_cost_tracker import fingerprint_payload
+
+    class RacingProviderGateway(StreamingGateway):
+        async def resolve_for_send(self, selection):
+            resolution = await super().resolve_for_send(selection)
+            # The pair this call is ACTUALLY dispatching.
+            resolution.provider = "anthropic"
+            resolution.model = "claude-real-dispatched-model"
+            return resolution
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=RacingProviderGateway()
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    original_resolve = controller.provider_gateway.resolve_for_send
+
+    async def _racing_resolve(selection):
+        resolution = await original_resolve(selection)
+        # Simulate the race: something (another fleet session's own send)
+        # flips the controller-wide mutable fields between resolve_for_send
+        # returning and the dispatch choke point recording the baseline.
+        controller.provider = "llama_cpp"
+        controller.model = "wrong-racing-model"
+        return resolution
+
+    controller.provider_gateway.resolve_for_send = _racing_resolve
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+
+    baseline = controller.payload_fingerprint_baseline(session.id)
+    assert baseline is not None
+
+    dispatched_provider_model = fingerprint_payload(
+        "anthropic", "claude-real-dispatched-model", []
+    ).provider_model
+    racing_provider_model = fingerprint_payload(
+        "llama_cpp", "wrong-racing-model", []
+    ).provider_model
+    assert baseline.provider_model == dispatched_provider_model
+    assert baseline.provider_model != racing_provider_model
+
+
+@pytest.mark.asyncio
+async def test_baseline_ignores_dispatch_time_substitution_and_stays_comparable():
+    """Fix round 1, Finding 2 (Important, corrected design): the record site
+    must fingerprint the SAME raw store view `compute_current_fingerprint`
+    reads (a fresh `_provider_messages_for_session` call), not the
+    `provider_messages` parameter in scope at the dispatch choke point.
+    Every caller has already run its own per-send transforms (skill
+    substitution here; chat-dictionary/world-info/RAG folding are the same
+    shape) on that parameter before passing it in, so fingerprinting the
+    parameter directly would compare a transformed payload against
+    `compute_current_fingerprint`'s untransformed one and falsely report
+    "earlier history changed" immediately after a completely ordinary send.
+    """
+    from tldw_chatbook.Chat.console_cost_tracker import fingerprint_break_reason
+
+    store = ConsoleChatStore()
+    # provider="llama_cpp" matches StreamingGateway's default resolution
+    # already; model must be pre-set to match its "test-model" too (Finding
+    # 1: the baseline reads the resolution's model, `compute_current_
+    # fingerprint` reads `self.model` -- see the sibling test above for the
+    # dedicated race case).
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="test-model"
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    async def _substitute_final_turn(provider_messages):
+        # Stand-in for skill/chat-dictionary/world-info substitution: the
+        # ephemeral payload for this turn differs from what the store
+        # actually holds (the raw text the user typed is what's persisted).
+        transformed = [dict(row) for row in provider_messages]
+        for row in reversed(transformed):
+            if row.get("role") == "user":
+                row["content"] = "SUBSTITUTED CONTENT -- not what the user typed"
+                break
+        return transformed, None, (), (), ""
+
+    controller._apply_skill_substitution = _substitute_final_turn
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+
+    baseline = controller.payload_fingerprint_baseline(session.id)
+    assert baseline is not None
+    current = controller.compute_current_fingerprint(session.id)
+    # No break immediately after an ordinary send -- the substitution never
+    # touched the store, so both sides read the same raw view.
     assert fingerprint_break_reason(baseline, current) is None

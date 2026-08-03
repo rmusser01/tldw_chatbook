@@ -5979,22 +5979,58 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.assistant_kind == "character"
-        # Cost-ticker PR3: record this send's payload-fingerprint baseline
-        # from `provider_messages` BEFORE any of the transforms below run --
-        # the same pre-compaction, pre-window stage `_provider_messages_for_
-        # session` produces and `compute_current_fingerprint` recomputes
-        # from, so a baseline and a later "current" fingerprint are always
-        # comparable. This is the single dispatch choke point covering BOTH
-        # the direct-provider and agent paths (they branch further down).
-        # Deliberately conservative: a compaction fold or a token-window
-        # trim can each shrink what actually gets sent relative to this
-        # snapshot, but neither is a payload EDIT -- the chip's alert is
-        # about the shared prefix Anthropic's cache keyed off changing
-        # underneath it, not about a routine, expected drop, so compaction/
-        # window drops never trigger a spurious cache-break alert.
+        # Cost-ticker PR3: record this send's payload-fingerprint baseline at
+        # the single dispatch choke point covering BOTH the direct-provider
+        # and agent paths (they branch further down). Two boundaries are
+        # deliberate here, not oversights:
+        #
+        # (a) Fingerprint from a FRESH `_provider_messages_for_session(
+        #     owner_id)` call -- the same raw, pre-compaction, pre-window
+        #     stage `compute_current_fingerprint` recomputes from -- rather
+        #     than the `provider_messages` parameter in scope here. Every
+        #     caller of `_stream_assistant_response` has already run its own
+        #     per-send transforms (skill substitution, chat-dictionary/
+        #     world-info folding, RAG injection, ...) on `provider_messages`
+        #     before passing it in, so fingerprinting the parameter directly
+        #     would compare a TRANSFORMED payload against
+        #     `compute_current_fingerprint`'s untransformed one and falsely
+        #     report "earlier history changed" for any session using those
+        #     features. Re-deriving from the store keeps both sides on the
+        #     same raw view. A compaction fold or a token-window trim
+        #     (below) can still shrink what actually gets sent relative to
+        #     this snapshot -- neither is a payload EDIT, so neither counts
+        #     as a cache break either.
+        # (b) Per-send final-turn substitutions themselves (dictionaries/
+        #     world-info/skills) are ephemeral and stay invisible to the
+        #     fingerprint even though they can cause real provider-side
+        #     prefix instability for the sessions that use them. The chip's
+        #     GROUND-TRUTH cache fields (`cache_ttl_snapshot`, sourced from
+        #     actual usage) still report honestly regardless; only the
+        #     break-alert's named REASON won't attribute to this cause. V1
+        #     boundary -- a named "content substitution changed" reason is a
+        #     reasonable follow-up, not required here.
+        #
+        # Provider/model come from the RESOLUTION actually being dispatched,
+        # not `self.provider`/`self.model` -- those are controller-wide
+        # mutable fields shared across every fleet session, and a
+        # provider/model switch racing the awaits between `resolve_for_send`
+        # and here (or a background session's send racing a foreground
+        # switch) can leave them holding a DIFFERENT pair than what this
+        # call actually sends (see `bound_messages_to_window`'s own comment
+        # a few lines down, which avoids the same hazard for the same
+        # reason). Falling back to `self.provider`/`self.model` only covers
+        # narrow stand-in resolutions that don't carry the attributes at
+        # all (e.g. some test doubles).
         try:
+            baseline_messages = self._provider_messages_for_session(owner_id)
+            baseline_provider = getattr(resolution, "provider", None) or self.provider
+            baseline_model = (
+                getattr(resolution, "model", None)
+                or self.model
+                or self.configured_model
+            )
             self._payload_fingerprint_baselines[owner_id] = fingerprint_payload(
-                self.provider, self.model or self.configured_model, provider_messages
+                baseline_provider, baseline_model, baseline_messages
             )
         except Exception as exc:
             logger.bind(session_id=owner_id, error=repr(exc)).warning(
@@ -6189,7 +6225,7 @@ class ConsoleChatController:
         except Exception as exc:
             logger.bind(
                 message_id=assistant_message_id, error=repr(exc)
-            ).warning("cost_fingerprint_record_failed")
+            ).warning("cost_cache_ttl_record_failed")
 
     async def _run_direct_provider_reply(
         self,
