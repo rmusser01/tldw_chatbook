@@ -1,4 +1,5 @@
 import inspect
+from dataclasses import FrozenInstanceError
 from unittest.mock import Mock
 
 import pytest
@@ -11,6 +12,12 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     PromptScopeService,
     ServerPromptService,
     build_prompt_scope_service,
+)
+from tldw_chatbook.Prompt_Management.prompt_normalizers import normalize_prompt_record
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    CANONICAL_JSON_UTF8_V1,
+    PromptCapabilityError,
+    canonical_json_utf8_size,
 )
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PaginatedPromptsResponse,
@@ -57,6 +64,70 @@ class ExplodingClientProvider:
         raise AssertionError("provider should not build a client")
 
 
+def modern_prompt_health(
+    *,
+    structured_kinds=None,
+    search=True,
+    conditional_update=False,
+    measurement=None,
+    compiled_lane_limit=12_000,
+    definition_limit=200_000,
+    request_limit=400_000,
+):
+    return {
+        "status": "healthy",
+        "capabilities": {
+            "structured_kinds": structured_kinds
+            if structured_kinds is not None
+            else [
+                {"schema_version": 1, "kind": "multi_message"},
+                {"schema_version": 2, "kind": "block_prompt"},
+                {"schema_version": 2, "kind": "block_recipe"},
+            ],
+            "artifact_types": ["prompt", "recipe"],
+            "search": search,
+            "conditional_update": conditional_update,
+            "size_limits": {
+                "compiled_lane_characters": compiled_lane_limit,
+                "definition_utf8_bytes": definition_limit,
+                "request_utf8_bytes": request_limit,
+                "json_byte_measurement": (
+                    measurement
+                    if measurement is not None
+                    else {
+                        "name": "canonical_json_utf8_v1",
+                        "encoding": "utf-8",
+                        "ensure_ascii": False,
+                        "sort_keys": True,
+                        "separators": [",", ":"],
+                    }
+                ),
+            },
+        },
+    }
+
+
+def block_definition(*, kind="block_prompt", content="hello"):
+    return {
+        "schema_version": 2,
+        "kind": kind,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "user-1",
+                        "title": "User",
+                        "syntax": "freeform",
+                        "content": content,
+                    }
+                ],
+            },
+        ],
+    }
+
+
 def test_prompt_scope_service_module_does_not_reference_legacy_config_client_builders():
     source = inspect.getsource(prompt_scope_module)
 
@@ -78,6 +149,7 @@ class FakeLocalPromptService:
             "user_prompt": "Local user",
             "keywords": ["draft"],
             "prompt_format": "legacy",
+            "artifact_type": "prompt",
             "version": 3,
             "deleted": False,
         }
@@ -147,8 +219,10 @@ class FakeLocalPromptService:
 
 
 class FakeServerPromptService:
-    def __init__(self):
+    def __init__(self, *, health=None, search_items=None):
         self.calls = []
+        self.health = health if health is not None else modern_prompt_health()
+        self.search_items = list(search_items or [])
         self.prompt = PromptResponse(
             id=9,
             uuid="server-uuid-9",
@@ -192,6 +266,19 @@ class FakeServerPromptService:
             current_page=page,
             total_items=12,
         )
+
+    async def get_prompts_health(self):
+        self.calls.append(("get_prompts_health",))
+        return self.health
+
+    async def search_prompts(self, **kwargs):
+        self.calls.append(("search_prompts", kwargs))
+        return {
+            "items": self.search_items,
+            "total_matches": len(self.search_items),
+            "page": kwargs.get("page", 1),
+            "per_page": kwargs.get("results_per_page", 20),
+        }
 
     async def get_prompt(self, prompt_identifier, *, include_deleted=False):
         self.calls.append(("get_prompt", prompt_identifier, include_deleted))
@@ -287,10 +374,99 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
 
     assert local_result["items"][0]["id"] == "local:prompt:local-uuid-7"
     assert local_result["items"][0]["backend"] == "local"
+    assert local_result["items"][0]["artifact_type"] == "prompt"
     assert server_result["items"][0]["id"] == "server:prompt:server-uuid-9"
     assert server_result["items"][0]["backend"] == "server"
     assert server_result["current_page"] == 2
     assert policy.actions == ["prompts.list.local", "prompts.list.server"]
+
+
+@pytest.mark.parametrize(
+    (
+        "system_flag",
+        "user_flag",
+        "system_prompt",
+        "user_prompt",
+        "expected",
+    ),
+    [
+        (1, 0, None, None, (True, False)),
+        (2, -1, None, None, (False, False)),
+        ("1", "0", None, None, (False, False)),
+        (None, None, "System text", "User text", (True, True)),
+    ],
+)
+def test_prompt_scope_lane_flags_accept_only_boolean_or_sqlite_boolean_values(
+    system_flag,
+    user_flag,
+    system_prompt,
+    user_prompt,
+    expected,
+):
+    normalized = PromptScopeService._normalize_prompt_record(
+        {
+            "id": 7,
+            "uuid": "local-uuid-7",
+            "name": "Lane flags",
+            "has_system_prompt": system_flag,
+            "has_user_prompt": user_flag,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+        },
+        backend="local",
+    )
+
+    assert (
+        normalized["has_system_prompt"],
+        normalized["has_user_prompt"],
+    ) == expected
+
+
+def test_prompt_scope_unknown_remote_artifact_remains_browsable_but_unsupported():
+    normalized = PromptScopeService._normalize_prompt_list(
+        {
+            "items": [
+                {
+                    "id": 9,
+                    "uuid": "known-prompt",
+                    "name": "Known Prompt",
+                    "artifact_type": "prompt",
+                },
+                {
+                    "id": 10,
+                    "uuid": "future-artifact",
+                    "name": "Future Artifact",
+                    "artifact_type": "workflow",
+                    "system_prompt": "Compatibility system",
+                    "user_prompt": "Compatibility user",
+                },
+                {
+                    "id": 11,
+                    "uuid": "known-recipe",
+                    "name": "Known Recipe",
+                    "artifact_type": "recipe",
+                },
+            ],
+            "total_pages": 1,
+            "current_page": 1,
+            "total_items": 3,
+        },
+        backend="server",
+        page=1,
+        per_page=10,
+    )
+
+    assert [item["name"] for item in normalized["items"]] == [
+        "Known Prompt",
+        "Future Artifact",
+        "Known Recipe",
+    ]
+    future = normalized["items"][1]
+    assert future["artifact_type"] == "unsupported"
+    assert future["artifact_type_raw"] == "workflow"
+    assert future["definition_state"] == "unsupported"
+    assert future["system_prompt"] == "Compatibility system"
+    assert future["user_prompt"] == "Compatibility user"
 
 
 @pytest.mark.asyncio
@@ -310,6 +486,14 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         system_prompt="System",
         user_prompt="User",
         keywords=["local"],
+        artifact_type="recipe",
+    )
+    local_updated = await service.save_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        details="Locally updated",
+        artifact_type="prompt",
+        expected_version=3,
     )
     updated = await service.save_prompt(
         mode="server",
@@ -318,19 +502,36 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         prompt_format="structured",
         prompt_schema_version=1,
         prompt_definition={"schema_version": 1, "messages": []},
+        artifact_type="recipe",
+        expected_version=5,
     )
     deleted = await service.delete_prompt(
         mode="server", prompt_identifier="server-uuid-9"
     )
 
     assert created["id"] == "local:prompt:local-uuid-8"
+    assert created["artifact_type"] == "recipe"
     assert local.calls[0][0] == "create_prompt"
+    assert local.calls[0][1]["artifact_type"] == "recipe"
+    assert local_updated["details"] == "Locally updated"
+    assert local.calls[1] == (
+        "update_prompt",
+        "local-uuid-7",
+        {
+            "details": "Locally updated",
+            "artifact_type": "prompt",
+            "expected_version": 3,
+        },
+    )
     assert updated["id"] == "server:prompt:server-uuid-9"
     assert updated["name"] == "Updated Server"
     assert server.calls[-2][0] == "update_prompt"
+    assert server.calls[-2][2]["artifact_type"] == "recipe"
+    assert "expected_version" not in server.calls[-2][2]
     assert deleted is True
     assert policy.actions == [
         "prompts.create.local",
+        "prompts.update.local",
         "prompts.update.server",
         "prompts.delete.server",
     ]
@@ -495,6 +696,9 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
             "prompt_format": "legacy",
             "prompt_schema_version": None,
             "prompt_definition": None,
+            "artifact_type": "prompt",
+            "has_system_prompt": False,
+            "has_user_prompt": False,
         }
     ]
     assert restored["version"] == 3
@@ -508,6 +712,45 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
         "prompts.versions.server",
         "prompts.restore_version.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_refuses_to_record_recipe_usage_after_authoritative_read():
+    server = FakeServerPromptService()
+    server.prompt = server.prompt.model_copy(update={"artifact_type": "recipe"})
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Recipes cannot be used directly"):
+        await service.record_prompt_usage(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == [("get_prompt", "server-uuid-9", False)]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_refuses_to_record_unknown_artifact_usage():
+    server = FakeServerPromptService()
+    server.prompt = {
+        **server.prompt.model_dump(mode="json"),
+        "artifact_type": "workflow",
+    }
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Only Prompt artifacts can be used directly"):
+        await service.record_prompt_usage(
+            mode="server", prompt_identifier="server-uuid-9"
+        )
+
+    assert server.calls == [("get_prompt", "server-uuid-9", False)]
 
 
 @pytest.mark.asyncio
@@ -698,3 +941,502 @@ def test_local_prompt_service_persists_prompt_collections(tmp_path):
     assert updated["prompt_ids"] == [prompt_id]
     assert membership_updated["name"] == "Renamed"
     assert membership_updated["prompt_ids"] == [second_prompt_id]
+
+
+@pytest.mark.asyncio
+async def test_local_capabilities_are_frozen_known_in_process_and_use_canonical_limits():
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(), server_service=FakeServerPromptService()
+    )
+
+    capabilities = await service.get_capabilities(mode="local")
+
+    assert capabilities.backend == "local"
+    assert capabilities.structured_kinds == frozenset(
+        {(2, "block_prompt"), (2, "block_recipe")}
+    )
+    assert capabilities.artifact_types == frozenset({"prompt", "recipe"})
+    assert capabilities.search is True
+    assert capabilities.conditional_update is True
+    assert capabilities.compiled_lane_limit == 20_000
+    assert capabilities.definition_limit == 256_000
+    assert capabilities.request_limit == 512_000
+    assert capabilities.json_byte_measurement == CANONICAL_JSON_UTF8_V1
+    with pytest.raises(FrozenInstanceError):
+        capabilities.search = False
+
+
+@pytest.mark.asyncio
+async def test_modern_server_capabilities_preserve_exact_kinds_and_smaller_limits():
+    server = FakeServerPromptService(
+        health=modern_prompt_health(conditional_update=True)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+    cached = await service.get_capabilities(mode="server")
+
+    assert capabilities.structured_kinds == frozenset(
+        {
+            (1, "multi_message"),
+            (2, "block_prompt"),
+            (2, "block_recipe"),
+        }
+    )
+    assert capabilities.artifact_types == frozenset({"prompt", "recipe"})
+    assert capabilities.search is True
+    assert capabilities.conditional_update is False
+    assert capabilities.compiled_lane_limit == 12_000
+    assert capabilities.definition_limit == 200_000
+    assert capabilities.request_limit == 400_000
+    assert capabilities.json_byte_measurement == CANONICAL_JSON_UTF8_V1
+    assert cached is capabilities
+    assert server.calls == [("get_prompts_health",)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "health",
+    [
+        {"status": "healthy"},
+        {"status": "healthy", "capabilities": "not-an-object"},
+        {"status": "healthy", "capabilities": {"structured_kinds": [2]}},
+        {
+            "status": "healthy",
+            "capabilities": {
+                "structured_kinds": [{"schema_version": 2, "kind": "block_prompt"}],
+                "artifact_types": [{}],
+            },
+        },
+    ],
+)
+async def test_legacy_or_malformed_server_health_fails_closed_but_remains_browsable(
+    health,
+):
+    server = FakeServerPromptService(health=health)
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+    listed = await service.list_prompts(mode="server", page=1, per_page=5)
+
+    assert capabilities.structured_kinds == frozenset()
+    assert capabilities.artifact_types == frozenset({"prompt"})
+    assert capabilities.search is False
+    assert capabilities.conditional_update is False
+    assert capabilities.compiled_lane_limit == 20_000
+    assert capabilities.definition_limit == 256_000
+    assert capabilities.request_limit == 512_000
+    assert capabilities.json_byte_measurement is None
+    assert listed["items"][0]["artifact_type"] == "prompt"
+
+
+@pytest.mark.asyncio
+async def test_single_text_only_server_is_not_inferred_to_support_console_block_v2():
+    server = FakeServerPromptService(
+        health=modern_prompt_health(
+            structured_kinds=[{"schema_version": 2, "kind": "single_text_recipe"}]
+        )
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+
+    assert capabilities.structured_kinds == frozenset({(2, "single_text_recipe")})
+    with pytest.raises(PromptCapabilityError) as exc:
+        await service.save_prompt(
+            mode="server",
+            name="Console Prompt",
+            artifact_type="prompt",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=block_definition(),
+            user_prompt="hello",
+        )
+    assert (exc.value.backend, exc.value.capability) == (
+        "server",
+        "structured kind (2, 'block_prompt')",
+    )
+    assert not any(call[0] == "create_prompt" for call in server.calls)
+
+
+@pytest.mark.asyncio
+async def test_block_save_does_not_accept_boolean_schema_version_as_an_integer():
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService())
+
+    with pytest.raises(PromptCapabilityError):
+        await service.save_prompt(
+            mode="local",
+            name="Boolean Version",
+            artifact_type="prompt",
+            prompt_format="structured",
+            prompt_schema_version=True,
+            prompt_definition=block_definition(),
+            user_prompt="hello",
+        )
+
+    assert not any(call[0] == "create_prompt" for call in local.calls)
+
+
+@pytest.mark.asyncio
+async def test_server_search_routes_non_empty_query_without_hidden_detail_fetches():
+    definition = block_definition(content="résumé")
+    server = FakeServerPromptService(
+        search_items=[
+            {
+                "id": 41,
+                "uuid": "server-search-41",
+                "name": "Alpha",
+                "artifact_type": "prompt",
+                "has_system_prompt": False,
+                "has_user_prompt": True,
+                "version": 7,
+                "prompt_format": "structured",
+                "prompt_schema_version": 2,
+                "prompt_definition": definition,
+                "system_prompt": "",
+                "user_prompt": "résumé",
+            }
+        ]
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    items = await service.search_prompts(mode="server", query="alpha", limit=25)
+
+    assert server.calls == [
+        ("get_prompts_health",),
+        (
+            "search_prompts",
+            {
+                "search_query": "alpha",
+                "page": 1,
+                "results_per_page": 25,
+                "include_deleted": False,
+            },
+        ),
+    ]
+    assert items[0]["backend"] == "server"
+    assert items[0]["source_id"] == "server-search-41"
+    assert items[0]["server_id"] == 41
+    assert items[0]["version"] == 7
+    assert items[0]["artifact_type"] == "prompt"
+    assert items[0]["has_system_prompt"] is False
+    assert items[0]["has_user_prompt"] is True
+    assert items[0]["definition_state"] == "supported_v2"
+    assert items[0]["prompt_definition"] == definition
+
+
+@pytest.mark.asyncio
+async def test_empty_server_query_uses_paginated_list_not_search():
+    server = FakeServerPromptService()
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    items = await service.search_prompts(
+        mode="server", query="", limit=25, include_deleted=True
+    )
+
+    assert items[0]["name"] == "Server Prompt"
+    assert server.calls == [("list_prompts", 1, 25, True, "last_modified", "desc")]
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_server_query_lists_but_nonempty_bytes_are_unchanged():
+    server = FakeServerPromptService()
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    listed = await service.search_prompts(mode="server", query=" \t\n", limit=7)
+    await service.search_prompts(mode="server", query="  alpha  ", limit=9)
+
+    assert listed[0]["name"] == "Server Prompt"
+    assert server.calls == [
+        ("list_prompts", 1, 7, False, "last_modified", "desc"),
+        ("get_prompts_health",),
+        (
+            "search_prompts",
+            {
+                "search_query": "  alpha  ",
+                "page": 1,
+                "results_per_page": 9,
+                "include_deleted": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_or_policy_denied_server_search_is_typed_unavailable():
+    unsupported = PromptScopeService(
+        FakeLocalPromptService(),
+        FakeServerPromptService(health={"status": "healthy"}),
+    )
+    with pytest.raises(PromptCapabilityError) as unsupported_exc:
+        await unsupported.search_prompts(mode="server", query="alpha")
+    assert (unsupported_exc.value.backend, unsupported_exc.value.capability) == (
+        "server",
+        "search",
+    )
+
+    denied_server = FakeServerPromptService()
+    denied = PromptScopeService(
+        FakeLocalPromptService(),
+        denied_server,
+        policy_enforcer=FakePolicyEnforcer.deny("server policy"),
+    )
+    with pytest.raises(PromptCapabilityError) as denied_exc:
+        await denied.search_prompts(mode="server", query="alpha")
+    assert (denied_exc.value.backend, denied_exc.value.capability) == (
+        "server",
+        "search",
+    )
+    assert denied_server.calls == []
+
+
+def test_canonical_json_utf8_size_measures_decoded_unicode_mapping():
+    value = {"z": "é", "a": [True, None]}
+
+    assert canonical_json_utf8_size(value) == len(
+        '{"a":[true,null],"z":"é"}'.encode("utf-8")
+    )
+
+
+def test_full_malformed_definition_is_classified_without_losing_source_bytes():
+    record = {
+        "id": 4,
+        "name": "Malformed",
+        "artifact_type": "prompt",
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": "{not-json",
+        "system_prompt": "compiled system",
+        "user_prompt": "compiled user",
+    }
+
+    normalized = normalize_prompt_record(record, backend="server")
+
+    assert normalized["definition_state"] == "malformed"
+    assert normalized["prompt_definition"] == "{not-json"
+
+
+@pytest.mark.asyncio
+async def test_malformed_measurement_and_limits_fail_before_structured_persistence():
+    malformed_measurement = modern_prompt_health(
+        measurement={
+            "name": "wire_bytes",
+            "encoding": "utf-8",
+            "ensure_ascii": False,
+            "sort_keys": True,
+            "separators": [",", ":"],
+        }
+    )
+    server = FakeServerPromptService(health=malformed_measurement)
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+    assert capabilities.json_byte_measurement is None
+    with pytest.raises(PromptCapabilityError, match="canonical JSON byte measurement"):
+        await service.save_prompt(
+            mode="server",
+            name="Console Prompt",
+            artifact_type="prompt",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=block_definition(),
+            user_prompt="hello",
+        )
+
+    local = FakeLocalPromptService()
+    local_service = PromptScopeService(local, server)
+    with pytest.raises(ValueError, match="user_prompt.*20000 characters"):
+        await local_service.save_prompt(
+            mode="local",
+            name="Oversized",
+            artifact_type="prompt",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=block_definition(content="x" * 20_001),
+            user_prompt="x" * 20_001,
+        )
+    assert not any(call[0] == "create_prompt" for call in local.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("health", "message"),
+    [
+        (
+            modern_prompt_health(definition_limit=100),
+            "prompt_definition exceeds 100 UTF-8 bytes",
+        ),
+        (
+            modern_prompt_health(request_limit=250),
+            "request exceeds 250 UTF-8 bytes",
+        ),
+    ],
+)
+async def test_server_canonical_byte_limits_reject_without_truncation_or_mutation(
+    health, message
+):
+    server = FakeServerPromptService(health=health)
+    service = PromptScopeService(FakeLocalPromptService(), server)
+    definition = block_definition(content="é" * 40)
+
+    with pytest.raises(ValueError, match=message):
+        await service.save_prompt(
+            mode="server",
+            name="Unicode",
+            artifact_type="prompt",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+            user_prompt="é" * 40,
+        )
+
+    assert definition["lanes"][1]["blocks"][0]["content"] == "é" * 40
+    assert not any(call[0] == "create_prompt" for call in server.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_format", [None, "legacy"])
+async def test_block_v2_evidence_rejects_missing_or_legacy_format_before_mutation(
+    prompt_format,
+):
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService())
+
+    with pytest.raises(PromptCapabilityError, match="valid Console block artifact"):
+        await service.save_prompt(
+            mode="local",
+            name="Inconsistent block",
+            artifact_type="prompt",
+            prompt_format=prompt_format,
+            prompt_schema_version=2,
+            prompt_definition=block_definition(),
+            user_prompt="caller text",
+        )
+
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller_user", ["stale caller lane", "x" * 20_001])
+async def test_block_save_persists_compiler_lanes_not_caller_compatibility_fields(
+    caller_user,
+):
+    local = FakeLocalPromptService()
+    service = PromptScopeService(local, FakeServerPromptService())
+
+    await service.save_prompt(
+        mode="local",
+        name="Canonical lanes",
+        artifact_type="prompt",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=block_definition(content="tiny compiled lane"),
+        system_prompt="stale system lane",
+        user_prompt=caller_user,
+    )
+
+    persisted = local.calls[0][1]
+    assert persisted["system_prompt"] == ""
+    assert persisted["user_prompt"] == "tiny compiled lane"
+
+
+@pytest.mark.asyncio
+async def test_definition_limit_measures_and_persists_final_normalized_model():
+    definition = block_definition(content="tiny")
+    block = definition["lanes"][1]["blocks"][0]
+    block["xml_tag"] = None
+    block["mapping_hint"] = None
+    expected_definition = block_definition(content="tiny")
+    normalized_size = canonical_json_utf8_size(expected_definition)
+    assert canonical_json_utf8_size(definition) > normalized_size
+
+    server = FakeServerPromptService(
+        health=modern_prompt_health(definition_limit=normalized_size)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    await service.save_prompt(
+        mode="server",
+        name="Normalized definition",
+        artifact_type="prompt",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        user_prompt="caller value",
+    )
+
+    sent = next(call[1] for call in server.calls if call[0] == "create_prompt")
+    assert sent["prompt_definition"] == expected_definition
+    assert sent["user_prompt"] == "tiny"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt_identifier", [None, "server-uuid-9"])
+async def test_request_limit_measures_exact_create_or_update_mapping_after_defaults(
+    prompt_identifier,
+):
+    definition = block_definition(content="tiny")
+    pre_default_mapping = {
+        "name": "Default boundary",
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": definition,
+    }
+    pre_default_size = canonical_json_utf8_size(pre_default_mapping)
+    server = FakeServerPromptService(
+        health=modern_prompt_health(request_limit=pre_default_size)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    with pytest.raises(ValueError, match=f"request exceeds {pre_default_size}"):
+        await service.save_prompt(
+            mode="server",
+            prompt_identifier=prompt_identifier,
+            name="Default boundary",
+            prompt_format="structured",
+            prompt_schema_version=2,
+            prompt_definition=definition,
+        )
+
+    assert not any(
+        call[0] in {"create_prompt", "update_prompt"} for call in server.calls
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": 0,
+            "sort_keys": True,
+            "separators": [",", ":"],
+        },
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": False,
+            "sort_keys": 1,
+            "separators": [",", ":"],
+        },
+        {
+            "name": "canonical_json_utf8_v1",
+            "encoding": "utf-8",
+            "ensure_ascii": False,
+            "sort_keys": True,
+            "separators": (",", ":"),
+        },
+    ],
+)
+async def test_measurement_descriptor_requires_exact_json_types(measurement):
+    server = FakeServerPromptService(
+        health=modern_prompt_health(measurement=measurement)
+    )
+    service = PromptScopeService(FakeLocalPromptService(), server)
+
+    capabilities = await service.get_capabilities(mode="server")
+
+    assert capabilities.json_byte_measurement is None

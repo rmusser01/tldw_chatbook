@@ -532,6 +532,22 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "reusable Higgs voice profile artifact root",
     ),
     ExceptionRule(
+        "tldw_chatbook/UI/Screens/settings_speech_tts.py",
+        "module:_PROVIDER_NON_SECRET_DEFAULTS",
+        "literal:~/.config/tldw_cli/chatterbox_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "global Settings default for the reusable Chatterbox voice artifact directory",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/UI/Screens/settings_speech_tts.py",
+        "module:_PROVIDER_NON_SECRET_DEFAULTS",
+        "literal:~/.config/tldw_cli/higgs_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "global Settings default for the reusable Higgs voice artifact directory",
+    ),
+    ExceptionRule(
         "tldw_chatbook/UI/Screens/settings_storage_defaults.py",
         "module:DEFAULT_CHACHANOTES_DB_PATH",
         "literal:~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",

@@ -74,6 +74,11 @@ class ConsoleMessageActionService:
     _TOOL_OUTPUT_ACTIONS: tuple[tuple[str, str], ...] = (
         ("tool-output", "Full output"),
     )
+    #: TASK-1972: offered only on a change-summary row (one carrying the
+    #: run id it reviews). Opens the Change Review screen for THAT turn.
+    _REVIEW_CHANGES_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("review-changes", "Review"),
+    )
     _VARIANT_NAV_ACTIONS: tuple[tuple[str, str], ...] = (
         ("variant-previous", "<"),
         ("variant-next", ">"),
@@ -191,6 +196,10 @@ class ConsoleMessageActionService:
             completed_actions = self._base_actions_with(tuple(extra_actions))
         if self._has_tool_output(message):
             completed_actions = completed_actions + list(self._TOOL_OUTPUT_ACTIONS)
+        if getattr(message, "change_review_run_id", None):
+            completed_actions = completed_actions + list(
+                self._REVIEW_CHANGES_ACTIONS
+            )
         if self._has_image(message):
             completed_actions = (
                 completed_actions

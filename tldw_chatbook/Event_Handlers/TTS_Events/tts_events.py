@@ -45,6 +45,10 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
+from tldw_chatbook.TTS.effective_settings import (
+    TTSCharacterProfileSelection,
+    TTSSelectionOverrides,
+)
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
 
 _T = TypeVar("_T")
@@ -326,8 +330,7 @@ class TTSEventHandler:
 
     def __init__(
         self,
-        profile_service_loader: Callable[[], Awaitable[object | None]]
-        | None = None,
+        profile_service_loader: Callable[[], Awaitable[object | None]] | None = None,
     ):
         self._tts_service = None
         self._profile_service_loader = profile_service_loader
@@ -462,8 +465,7 @@ class TTSEventHandler:
                         event.validator,
                     )
                 logger.warning(
-                    "Console character speech resolution failed "
-                    "(outcome_code={})",
+                    "Console character speech resolution failed (outcome_code={})",
                     error.code,
                 )
                 await self._post_tts_message(
@@ -540,8 +542,7 @@ class TTSEventHandler:
             return None
         except Exception:
             logger.warning(
-                "Console speech snapshot rejected "
-                "(outcome_code=validator_failure)"
+                "Console speech snapshot rejected (outcome_code=validator_failure)"
             )
             await self._post_tts_message(
                 TTSCompleteEvent(
@@ -629,8 +630,7 @@ class TTSEventHandler:
                     raise
                 except Exception as error:
                     logger.warning(
-                        "TTS profile service load failed "
-                        "(exception_category={})",
+                        "TTS profile service load failed (exception_category={})",
                         type(error).__name__,
                     )
         resolver = CharacterTTSRequestResolver(profile_service)
@@ -709,8 +709,7 @@ class TTSEventHandler:
             if time_since_last < self.COOLDOWN_SECONDS:
                 wait_seconds = self.COOLDOWN_SECONDS - time_since_last
                 logger.warning(
-                    "TTS request rejected by message cooldown "
-                    "(wait_seconds={:.1f})",
+                    "TTS request rejected by message cooldown (wait_seconds={:.1f})",
                     wait_seconds,
                 )
                 await self._post_tts_message(
@@ -793,10 +792,7 @@ class TTSEventHandler:
                         "provider_id",
                         None,
                     )
-                    if (
-                        isinstance(candidate_provider_id, str)
-                        and candidate_provider_id
-                    ):
+                    if isinstance(candidate_provider_id, str) and candidate_provider_id:
                         provider_id = candidate_provider_id
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")
@@ -833,9 +829,42 @@ class TTSEventHandler:
             primary_error: BaseException | None = None
             try:
                 if exact_request is not None:
-                    response, requested_selection = await service.synthesize_exact(
-                        exact_request,
+                    assert resolution is not None
+                    assert resolution.repository_generation is not None
+                    assert resolution.profile_revision is not None
+                    character_profile = TTSCharacterProfileSelection(
+                        selection=TTSSelectionOverrides(
+                            provider_id=exact_request.provider_id,
+                            model_mode="exact",
+                            model_id=exact_request.model_id,
+                            voice_mode=(
+                                "server_default"
+                                if exact_request.voice is None
+                                else "exact"
+                            ),
+                            voice_id=exact_request.voice,
+                            response_format=exact_request.response_format,
+                            speed=exact_request.speed,
+                            provider_options=exact_request.options,
+                        ),
+                        repository_generation=resolution.repository_generation,
+                        profile_revision=resolution.profile_revision,
+                    )
+                    response, effective_selection = await service.synthesize_effective(
+                        text=text,
+                        character_profile=character_profile,
                         progress_sink=progress_sink,
+                    )
+                    requested_selection = TTSRequestedSelectionSnapshot(
+                        provider_id=effective_selection.provider_id,
+                        model_id=effective_selection.model_id,
+                        voice_id=effective_selection.voice_id,
+                        response_format=effective_selection.response_format,
+                        speed=effective_selection.speed,
+                        options=effective_selection.provider_options,
+                        configuration_revision=(
+                            effective_selection.revisions.provider_configuration
+                        ),
                     )
                     self._validate_exact_selection(
                         exact_request,

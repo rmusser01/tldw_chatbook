@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -11,16 +12,28 @@ from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
 )
+from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
     from ..tldw_api import PromptCreateRequest, TLDWAPIClient
+from .prompt_artifact_codec import deserialize_definition
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
     normalize_prompt_list,
     normalize_prompt_record,
+    normalize_prompt_search,
     normalize_prompt_version_list,
 )
+from .prompt_source_capabilities import (
+    PromptCapabilityError,
+    PromptSourceCapabilities,
+    local_prompt_capabilities,
+    normalize_server_prompt_capabilities,
+    validate_console_artifact_payload,
+    validate_prompt_request_size,
+)
+from .server_prompt_adapter import normalize_artifact_type
 
 
 class PromptBackend(str, Enum):
@@ -39,6 +52,7 @@ def _payload_from_fields(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[dict[str, Any]] = None,
+    artifact_type: Optional[str] = None,
 ) -> dict[str, Any]:
     payload = {
         "name": name,
@@ -50,6 +64,11 @@ def _payload_from_fields(
         "prompt_format": prompt_format,
         "prompt_schema_version": prompt_schema_version,
         "prompt_definition": prompt_definition,
+        "artifact_type": (
+            normalize_artifact_type(artifact_type)
+            if artifact_type is not None
+            else None
+        ),
     }
     return {key: value for key, value in payload.items() if value is not None}
 
@@ -61,6 +80,17 @@ def _prompt_create_request_from_payload(payload: dict[str, Any]) -> PromptCreate
     if not payload.get("name"):
         raise ValueError("Prompt name is required for server prompt saves.")
     return PromptCreateRequest(**payload)
+
+
+def _serialize_server_prompt_request(
+    payload: dict[str, Any], *, for_update: bool
+) -> dict[str, Any]:
+    # Deferred import: keep the runtime API schema boundary out of module import.
+    from ..tldw_api.prompt_chatbook_schemas import serialize_prompt_request
+
+    return serialize_prompt_request(
+        _prompt_create_request_from_payload(payload), for_update=for_update
+    )
 
 
 class ServerPromptService:
@@ -152,6 +182,12 @@ class ServerPromptService:
         return await self._require_client().restore_prompt_version(
             prompt_identifier, version
         )
+
+    async def get_prompts_health(self) -> dict[str, Any]:
+        return await self._require_client().get_prompts_health()
+
+    async def search_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._require_client().search_prompts(**kwargs)
 
     async def create_prompt_collection(self, payload: dict[str, Any]) -> Any:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -405,6 +441,7 @@ class LocalPromptService:
             prompt_format=payload.get("prompt_format"),
             prompt_schema_version=payload.get("prompt_schema_version"),
             prompt_definition=payload.get("prompt_definition"),
+            artifact_type=payload.get("artifact_type"),
         )
         identifier = prompt_uuid or prompt_id
         return self.get_prompt(identifier, include_deleted=True)
@@ -417,8 +454,14 @@ class LocalPromptService:
             raise ValueError(f"Prompt '{prompt_identifier}' not found.")
 
         if hasattr(self.prompt_db, "update_prompt_by_id"):
+            expected_version = payload.get("expected_version")
+            update_payload = {
+                key: value
+                for key, value in payload.items()
+                if key != "expected_version"
+            }
             prompt_uuid, _message = self.prompt_db.update_prompt_by_id(
-                existing["id"], payload
+                existing["id"], update_payload, expected_version=expected_version
             )
             return self.get_prompt(prompt_uuid or existing["id"], include_deleted=True)
 
@@ -437,6 +480,7 @@ class LocalPromptService:
             prompt_definition=payload.get(
                 "prompt_definition", existing.get("prompt_definition")
             ),
+            artifact_type=payload.get("artifact_type", existing.get("artifact_type")),
         )
         return self.get_prompt(prompt_uuid or prompt_id, include_deleted=True)
 
@@ -573,6 +617,7 @@ class PromptScopeService:
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self._server_capabilities_cache: PromptSourceCapabilities | None = None
 
     def _normalize_mode(self, mode: PromptBackend | str | None) -> PromptBackend:
         if mode is None:
@@ -602,6 +647,67 @@ class PromptScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    async def get_capabilities(
+        self, *, mode: PromptBackend | str
+    ) -> PromptSourceCapabilities:
+        """Return truthful, immutable capabilities for the selected source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.LOCAL:
+            return local_prompt_capabilities()
+        if self._server_capabilities_cache is not None:
+            return self._server_capabilities_cache
+
+        try:
+            health = await self._maybe_await(self.server_service.get_prompts_health())
+        except Exception:
+            # A transient health failure must not invent capabilities or poison retries.
+            return normalize_server_prompt_capabilities(None)
+        capabilities = normalize_server_prompt_capabilities(health)
+        self._server_capabilities_cache = capabilities
+        return capabilities
+
+    @staticmethod
+    def _source_record(record: Any) -> Mapping[str, Any]:
+        if hasattr(record, "model_dump"):
+            return record.model_dump(mode="json")
+        return record if isinstance(record, Mapping) else {}
+
+    @classmethod
+    def _normalize_prompt_record(cls, record: Any, *, backend: str) -> dict[str, Any]:
+        """Keep new artifact fields while retaining the established normalizer shape."""
+        normalized = normalize_prompt_record(record, backend=backend)
+        source = cls._source_record(record)
+        system_flag = source.get("has_system_prompt")
+        user_flag = source.get("has_user_prompt")
+        normalized["has_system_prompt"] = (
+            bool(system_flag)
+            if isinstance(system_flag, (bool, int)) and system_flag in (0, 1)
+            else bool(str(source.get("system_prompt") or "").strip())
+        )
+        normalized["has_user_prompt"] = (
+            bool(user_flag)
+            if isinstance(user_flag, (bool, int)) and user_flag in (0, 1)
+            else bool(str(source.get("user_prompt") or "").strip())
+        )
+        return normalized
+
+    @classmethod
+    def _normalize_prompt_list(
+        cls, response: Any, *, backend: str, page: int, per_page: int
+    ) -> dict[str, Any]:
+        normalized = normalize_prompt_list(
+            response, backend=backend, page=page, per_page=per_page
+        )
+        if isinstance(response, tuple) and len(response) == 4:
+            source_items = response[0]
+        else:
+            source_items = cls._source_record(response).get("items", [])
+        normalized["items"] = [
+            cls._normalize_prompt_record(item, backend=backend) for item in source_items
+        ]
+        return normalized
 
     @staticmethod
     def _action_id(mode: PromptBackend, action: str) -> str:
@@ -633,7 +739,7 @@ class PromptScopeService:
                 sort_order=sort_order,
             )
         )
-        return normalize_prompt_list(
+        return self._normalize_prompt_list(
             response, backend=normalized_mode.value, page=page, per_page=per_page
         )
 
@@ -676,43 +782,39 @@ class PromptScopeService:
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Search prompts in the given backend, normalized like ``list_prompts``.
-
-        Mirrors ``NotesScopeService.search_notes``'s ``fts_match_query``
-        pass-through: forwarded to the local backend only when provided, so
-        existing local backends/test fakes without the parameter keep
-        working unchanged. Like ``count_prompts``, only the local backend is
-        supported today -- there is no server-side prompt search endpoint.
-
-        Args:
-            mode: Backend to search in; only the local backend is supported
-                today (see Raises). Defaults to ``"local"``.
-            query: Plain user query text.
-            limit: Maximum number of prompts to return.
-            include_deleted: Whether to include soft-deleted prompts.
-            fts_match_query: Optional pre-built FTS5 MATCH string (e.g.
-                Library keyword search's plural/singular-widened query)
-                overriding the MATCH clause built from ``query`` in the
-                local backend.
-
-        Returns:
-            Normalized prompt records (see ``normalize_prompt_record``);
-            each carries the local integer id under ``local_id`` (its
-            ``id`` is the composite ``"local:prompt:<id>"`` string -- use
-            ``local_id`` for any caller that needs the raw prompt id, e.g.
-            to open the prompt editor).
-
-        Raises:
-            ValueError: For the server backend, or when the resolved
-                backend is unavailable.
-        """
+        """Search one source, using paginated server listing for an empty query."""
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id(normalized_mode, "list"))
-        if normalized_mode != PromptBackend.LOCAL:
-            raise ValueError(
-                "Server prompt search is not supported; use list_prompts for a scoped page."
+        if normalized_mode == PromptBackend.SERVER and not query.strip():
+            page = await self.list_prompts(
+                mode=normalized_mode,
+                page=1,
+                per_page=limit,
+                include_deleted=include_deleted,
             )
+            return page["items"]
+
+        try:
+            self._enforce_policy(self._action_id(normalized_mode, "list"))
+        except (PermissionError, PolicyDeniedError) as exc:
+            raise PromptCapabilityError(normalized_mode.value, "search") from exc
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == PromptBackend.SERVER:
+            capabilities = await self.get_capabilities(mode=normalized_mode)
+            if not capabilities.search:
+                raise PromptCapabilityError(normalized_mode.value, "search")
+            try:
+                response = await self._maybe_await(
+                    service.search_prompts(
+                        search_query=query,
+                        page=1,
+                        results_per_page=limit,
+                        include_deleted=include_deleted,
+                    )
+                )
+            except (PermissionError, PolicyDeniedError) as exc:
+                raise PromptCapabilityError(normalized_mode.value, "search") from exc
+            return normalize_prompt_search(response, backend=normalized_mode.value)
+
         local_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
         )
@@ -725,7 +827,7 @@ class PromptScopeService:
             )
         )
         return [
-            normalize_prompt_record(item, backend=normalized_mode.value)
+            self._normalize_prompt_record(item, backend=normalized_mode.value)
             for item in response or ()
         ]
 
@@ -742,7 +844,7 @@ class PromptScopeService:
         response = await self._maybe_await(
             service.get_prompt(prompt_identifier, include_deleted=include_deleted)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def save_prompt(
         self,
@@ -758,6 +860,8 @@ class PromptScopeService:
         prompt_format: Optional[str] = None,
         prompt_schema_version: Optional[int] = None,
         prompt_definition: Optional[dict[str, Any]] = None,
+        artifact_type: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         action = "update" if prompt_identifier not in (None, "") else "create"
@@ -773,14 +877,51 @@ class PromptScopeService:
             prompt_format=prompt_format,
             prompt_schema_version=prompt_schema_version,
             prompt_definition=prompt_definition,
+            artifact_type=artifact_type,
         )
+        raw_definition = deserialize_definition(payload.get("prompt_definition"))
+        definition_kind = (
+            raw_definition.get("kind") if raw_definition is not None else None
+        )
+        definition_version = (
+            raw_definition.get("schema_version") if raw_definition is not None else None
+        )
+        is_console_v2_candidate = (
+            (
+                type(payload.get("prompt_schema_version")) is int
+                and payload.get("prompt_schema_version") == 2
+            )
+            or (type(definition_version) is int and definition_version == 2)
+            or definition_kind
+            in {
+                "block_prompt",
+                "block_recipe",
+                "single_text_recipe",
+            }
+        )
+        capabilities = None
+        if is_console_v2_candidate:
+            capabilities = await self.get_capabilities(mode=normalized_mode)
+            payload = validate_console_artifact_payload(payload, capabilities)
+        if (
+            action == "update"
+            and normalized_mode == PromptBackend.LOCAL
+            and expected_version is not None
+        ):
+            payload["expected_version"] = expected_version
+        if capabilities is not None:
+            if normalized_mode == PromptBackend.SERVER:
+                payload = _serialize_server_prompt_request(
+                    payload, for_update=action == "update"
+                )
+            validate_prompt_request_size(payload, capabilities)
         if action == "create":
             response = await self._maybe_await(service.create_prompt(payload))
         else:
             response = await self._maybe_await(
                 service.update_prompt(prompt_identifier, payload)
             )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def delete_prompt(
         self,
@@ -805,10 +946,25 @@ class PromptScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id(normalized_mode, "use"))
         service = self._service_for_mode(normalized_mode)
+        current = await self._maybe_await(
+            service.get_prompt(prompt_identifier, include_deleted=False)
+        )
+        normalized_current = self._normalize_prompt_record(
+            current, backend=normalized_mode.value
+        )
+        if normalized_current.get("artifact_type") == "recipe":
+            raise ValueError(
+                "Recipes cannot be used directly. Save a Prompt copy before use."
+            )
+        if normalized_current.get("artifact_type") != "prompt":
+            raise ValueError(
+                "Only Prompt artifacts can be used directly. Save a supported "
+                "Prompt copy before use."
+            )
         response = await self._maybe_await(
             service.record_prompt_usage(prompt_identifier)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def list_prompt_versions(
         self,
@@ -841,7 +997,7 @@ class PromptScopeService:
         response = await self._maybe_await(
             service.restore_prompt_version(prompt_identifier, version)
         )
-        return normalize_prompt_record(response, backend=normalized_mode.value)
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def create_prompt_collection(
         self,

@@ -17,8 +17,8 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
-from loguru import logger
 from rich.text import Text
+from textual.message import Message
 from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.TTS import (
@@ -30,8 +30,6 @@ from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
-    SERVER_DEFAULT_VOICE_ID,
-    SelectSentinel,
     controls_from_profile_preset,
 )
 from tldw_chatbook.UI.stts_profile_library import (
@@ -49,6 +47,16 @@ _PROFILE_RESULT_STALE_COPY = (
     "TTS settings changed after this audio was generated. Generate a new "
     "result before saving it as a profile."
 )
+
+
+class AdoptStudioPreferencesRequested(Message):
+    """Hand an explicitly adopted preview to the Studio preference editor."""
+
+    def __init__(self, preset: TTSPlaygroundSelectionPreset) -> None:
+        super().__init__()
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            raise TypeError("Studio adoption requires an exact profile preset")
+        self.preset = preset
 
 
 class SpeechProfileMixin:
@@ -299,11 +307,14 @@ class SpeechProfileMixin:
 
     def _sync_profile_preview_status(self) -> None:
         banner = self.query_one("#tts-profile-preview-status", Static)
+        adopt = self.query_one("#tts-adopt-studio-preferences-btn", Button)
         preset = self._profile_preset
         availability = self._profile_effective_availability
         if preset is None or availability is None:
             banner.add_class("hidden")
             banner.update("")
+            adopt.add_class("hidden")
+            adopt.disabled = True
             return
         style_state = availability
         if availability == "unavailable":
@@ -335,6 +346,9 @@ class SpeechProfileMixin:
             )
         banner.update(Text(copy))
         banner.remove_class("hidden")
+        can_adopt = availability != "unavailable"
+        adopt.set_class(not can_adopt, "hidden")
+        adopt.disabled = not can_adopt
 
     def _sync_save_profile_action(self) -> None:
         """Expose save only for an idle artifact with native provenance."""

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Awaitable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 import pytest
@@ -21,6 +21,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSConfigurationRevisionError,
     TTSModelInfo,
+    TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
@@ -28,14 +29,23 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderUnavailableError,
     TTSRegistryClosedError,
     TTSRequest,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.effective_settings import (
+    TTSCharacterProfileSelection,
+    TTSEffectiveResolutionError,
+    TTSSelectionOverrides,
+    TTSSelectionSource,
+    TTSStudioDraftSelection,
+)
 from tldw_chatbook.TTS.legacy_bridge import (
     LegacyBackendHost,
     LegacyTTSAdapter,
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
@@ -409,9 +419,63 @@ def _snapshot(
     )
 
 
+def _accepted_native_capability_reader(
+    registry: TTSAdapterRegistry,
+) -> Callable[[str, str, str | None], Awaitable[TTSNativeCapabilitySnapshot]]:
+    """Provide explicit authoritative evidence for admission unit tests."""
+
+    async def read(
+        provider_id: str,
+        model_id: str,
+        voice_id: str | None,
+    ) -> TTSNativeCapabilitySnapshot:
+        catalog_revision = 19
+        catalog = TTSProviderCatalog(
+            provider_id=provider_id,
+            revision=catalog_revision,
+            health=ProviderHealth(state="available", fresh=True),
+            models=(_model(model_id),),
+        )
+        voice_results = (
+            {}
+            if voice_id is None
+            else {
+                model_id: TTSVoiceDiscoveryResult(
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    catalog_revision=catalog_revision,
+                    voices=(voice_id,),
+                    state="complete",
+                )
+            }
+        )
+        return TTSNativeCapabilitySnapshot(
+            provider_id=provider_id,
+            configuration_revision=registry.configuration_revision(provider_id),
+            state="complete",
+            catalog=catalog,
+            voice_results=voice_results,
+        )
+
+    return read
+
+
+def _test_service(
+    registry: TTSAdapterRegistry,
+    **kwargs: Any,
+) -> TTSService:
+    """Construct a service with explicit native evidence for unit tests."""
+    kwargs.setdefault(
+        "native_capability_reader",
+        _accepted_native_capability_reader(registry),
+    )
+    return TTSService(registry, **kwargs)
+
+
 def _native_service(
     adapter: _CapturingAdapter,
     snapshot: TTSPreferencesSnapshot,
+    studio_preferences_loader: Callable[[], StudioTTSPreferencesSnapshot] | None = None,
 ) -> tuple[TTSService, _RecordingRegistry]:
     registry = _RecordingRegistry(
         specs=(
@@ -428,7 +492,15 @@ def _native_service(
         ),
         aliases={},
     )
-    return TTSService(registry, preferences_snapshot=snapshot), registry
+    return (
+        TTSService(
+            registry,
+            preferences_snapshot=snapshot,
+            studio_preferences_loader=studio_preferences_loader,
+            native_capability_reader=_accepted_native_capability_reader(registry),
+        ),
+        registry,
+    )
 
 
 @pytest.mark.asyncio
@@ -475,6 +547,74 @@ async def test_invalid_initial_provider_is_unconfigured_and_publication_recovers
         response = await service.synthesize_default(text="Recovered request")
         assert [request.provider_id for request in adapter.requests] == ["audio_cpp"]
         assert [request.model_id for request in adapter.requests] == ["Model/Recovered"]
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_invalid_global_provider_cannot_be_hidden_by_sparse_override() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    service, registry = _native_service(
+        adapter,
+        _snapshot(provider_id="PRIVATE_INITIAL_PROVIDER"),
+    )
+
+    try:
+        with pytest.raises(TTSProviderUnavailableError) as caught:
+            await service.synthesize_default(
+                text="Do not select another provider.",
+                voice_override="voice-only",
+            )
+
+        assert str(caught.value) == "TTS default provider is not configured"
+        assert adapter.requests == []
+        assert registry._total_leases() == 0
+        assert service._operation_limit._value == 4
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_explicit_provider_without_global_uses_provider_fallback_axes() -> None:
+    adapter = _CapturingAdapter("openai")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="openai",
+                    display_name="OpenAI",
+                    native=False,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(provider_id="PRIVATE_INITIAL_PROVIDER"),
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response, effective = await service.synthesize_effective(
+            text="Use declared fallbacks only.",
+            explicit=TTSSelectionOverrides(provider_id="openai"),
+        )
+
+        assert effective.model_id == "tts-1"
+        assert effective.voice_id == "alloy"
+        assert effective.sources["provider_id"] is TTSSelectionSource.EXPLICIT
+        assert effective.sources["model_id"] is TTSSelectionSource.PROVIDER_FALLBACK
+        assert effective.sources["voice_id"] is TTSSelectionSource.PROVIDER_FALLBACK
+        assert TTSSelectionSource.GLOBAL not in effective.sources.values()
+        assert adapter.requests[0].model_id == "tts-1"
+        assert adapter.requests[0].voice == "alloy"
     finally:
         if response is not None:
             await response.aclose()
@@ -566,6 +706,179 @@ async def test_audio_cpp_server_default_omits_voice_and_uses_locked_options() ->
         await service.wait_closed()
 
 
+@pytest.mark.asyncio
+async def test_empty_explicit_voice_blocks_instead_of_falling_through() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    service, registry = _native_service(
+        adapter,
+        _snapshot(voice_mode="exact", voice_id="saved-voice"),
+    )
+
+    try:
+        with pytest.raises(TTSEffectiveResolutionError) as caught:
+            await service.synthesize_default(
+                text="Do not use the saved voice.",
+                voice_override="",
+            )
+
+        assert caught.value.code == "invalid_selection"
+        assert caught.value.axis == "voice_id"
+        assert adapter.requests == []
+        assert registry._total_leases() == 0
+        assert service._operation_limit._value == 4
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_effective_admission_retains_character_profile_sources_and_revisions() -> (
+    None
+):
+    adapter = _CapturingAdapter("audio_cpp")
+    service, registry = _native_service(adapter, _snapshot())
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="Character/Model",
+            voice_mode="exact",
+            voice_id="Character/Voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=13,
+        profile_revision=8,
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response, effective = await service.synthesize_effective(
+            text="Character-authored response.",
+            character_profile=character,
+        )
+
+        assert effective.sources["provider_id"] is TTSSelectionSource.CHARACTER_PROFILE
+        assert effective.sources["model_id"] is TTSSelectionSource.CHARACTER_PROFILE
+        assert effective.sources["voice_id"] is TTSSelectionSource.CHARACTER_PROFILE
+        assert effective.revisions.character_repository == 13
+        assert effective.revisions.character_profile == 8
+        assert not hasattr(effective, "text")
+        assert adapter.requests == [
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id="Character/Model",
+                text="Character-authored response.",
+                voice="Character/Voice",
+                response_format="wav",
+                speed=1.0,
+                options={},
+            )
+        ]
+        assert registry.expected_revisions == [("audio_cpp", 1)]
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_effective_admission_marks_unsaved_studio_preview() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    saved = StudioTTSPreferencesSnapshot()
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(),
+        studio_preferences_loader=lambda: saved,
+    )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="Preview/Model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=0,
+        preview=True,
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response, effective = await service.synthesize_effective(
+            text="Preview only.",
+            studio_draft=draft,
+            studio_preferences=saved,
+        )
+
+        assert effective.studio_preview is True
+        assert effective.sources["provider_id"] is TTSSelectionSource.STUDIO_DRAFT
+        assert effective.sources["model_id"] is TTSSelectionSource.STUDIO_DRAFT
+        assert effective.revisions.studio_preferences == 0
+        assert saved == StudioTTSPreferencesSnapshot()
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_studio_admission_rejects_snapshot_behind_current_store_revision() -> (
+    None
+):
+    adapter = _CapturingAdapter("openai")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="openai",
+                    display_name="OpenAI",
+                    native=False,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    current = StudioTTSPreferencesSnapshot(revision=6)
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(
+            provider_id="openai",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+        ),
+        studio_preferences_loader=lambda: current,
+    )
+
+    try:
+        with pytest.raises(TTSEffectiveResolutionError) as caught:
+            await service.synthesize_effective(
+                text="Do not synthesize stale Studio state.",
+                studio_draft=TTSStudioDraftSelection(
+                    selection=TTSSelectionOverrides(voice_id="echo"),
+                    base_revision=5,
+                ),
+                studio_preferences=StudioTTSPreferencesSnapshot(revision=5),
+            )
+
+        assert caught.value.code == "revision_incoherent"
+        assert caught.value.axis == "studio_preferences"
+        assert adapter.synthesize_calls == 0
+        assert registry._total_leases() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
 class _PauseOnceService(TTSService):
     def __init__(
         self,
@@ -576,7 +889,11 @@ class _PauseOnceService(TTSService):
         self.allow_admission = asyncio.Event()
         self.frozen_requests: list[TTSRequest] = []
         self._pause_next_admission = True
-        super().__init__(registry, preferences_snapshot=snapshot)
+        super().__init__(
+            registry,
+            preferences_snapshot=snapshot,
+            native_capability_reader=_accepted_native_capability_reader(registry),
+        )
 
     async def _pause_admission(self, request: TTSRequest) -> None:
         if self._pause_next_admission:
@@ -678,7 +995,7 @@ async def test_exact_native_admission_freezes_text_free_selection_and_releases_g
 ):
     adapter = _BlockingExactAdapter()
     registry = _counting_native_registry(adapter)
-    service = TTSService(registry)
+    service = _test_service(registry)
     mutable_options: dict[str, Any] = {}
     request = TTSRequest(
         provider_id="audio_cpp",
@@ -753,7 +1070,7 @@ async def test_exact_audio_cpp_admission_rejects_unreviewed_contract_values(
     )
     adapter = _CapturingAdapter("audio_cpp")
     registry = _counting_native_registry(adapter)
-    service = TTSService(registry)
+    service = _test_service(registry)
     values: dict[str, object] = {
         "provider_id": "audio_cpp",
         "model_id": "Model/Exact",
@@ -811,7 +1128,7 @@ async def test_exact_admission_rejects_unreviewed_native_provider() -> None:
         ),
         aliases={},
     )
-    service = TTSService(registry)
+    service = _test_service(registry)
     response: TTSAudioResponse | None = None
     try:
         with pytest.raises(ValueError, match="exact audio_cpp"):
@@ -837,6 +1154,49 @@ async def test_exact_admission_rejects_unreviewed_native_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exact_native_entrypoint_rejects_legacy_provider_before_synthesis() -> (
+    None
+):
+    adapter = _CapturingAdapter("openai")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="openai",
+                    display_name="OpenAI",
+                    native=False,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = _test_service(registry)
+
+    try:
+        with pytest.raises(ValueError, match="exact audio_cpp"):
+            await service.synthesize_exact(
+                TTSRequest(
+                    provider_id="openai",
+                    model_id="tts-1",
+                    text="private text",
+                    voice="alloy",
+                    response_format="mp3",
+                    speed=1.0,
+                    options={},
+                )
+            )
+
+        assert adapter.synthesize_calls == 0
+        assert registry._total_leases() == 0
+        assert service._operation_limit._value == 4
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_revision_decision_waits_for_queued_writer_and_reads_once() -> None:
     adapter = _CapturingAdapter("audio_cpp")
     registry = _RevisionCountingRegistry(
@@ -854,7 +1214,7 @@ async def test_revision_decision_waits_for_queued_writer_and_reads_once() -> Non
         ),
         aliases={},
     )
-    service = TTSService(registry)
+    service = _test_service(registry)
     first_reader_entered = asyncio.Event()
     release_first_reader = asyncio.Event()
     first_reader = asyncio.create_task(
@@ -930,6 +1290,7 @@ class _GateExitPauseService(TTSService):
             registry,
             max_concurrent_operations=1,
             preferences_snapshot=snapshot,
+            native_capability_reader=_accepted_native_capability_reader(registry),
         )
 
     async def _pause_admit_return(self, operation: Any) -> Any:
@@ -1060,6 +1421,7 @@ class _CapacityObservedService(TTSService):
             registry,
             max_concurrent_operations=1,
             preferences_snapshot=snapshot,
+            native_capability_reader=_accepted_native_capability_reader(registry),
         )
 
     async def _acquire_operation_slot(self) -> None:
@@ -1248,7 +1610,7 @@ async def test_settings_publication_times_out_without_cancelling_old_speech() ->
     )
     old_snapshot = _snapshot(model_id="Old/Model")
     new_snapshot = _snapshot(model_id="New/Model")
-    service = TTSService(registry, preferences_snapshot=old_snapshot)
+    service = _test_service(registry, preferences_snapshot=old_snapshot)
     response = await service.synthesize_default(text="Generation one")
 
     outcome_type = getattr(
@@ -1357,7 +1719,7 @@ async def test_first_publication_cannot_collide_with_compatibility_reconfigure()
     )
     old_snapshot = _snapshot(model_id="Model/Initial")
     saved_snapshot = _snapshot(model_id="Model/Saved")
-    service = TTSService(registry, preferences_snapshot=old_snapshot)
+    service = _test_service(registry, preferences_snapshot=old_snapshot)
 
     try:
         assert (
@@ -1426,7 +1788,7 @@ async def test_compatibility_reconfigure_cannot_supersede_pending_publication() 
         aliases={},
     )
     saved_snapshot = _snapshot(model_id="Model/Saved")
-    service = TTSService(
+    service = _test_service(
         registry,
         preferences_snapshot=_snapshot(model_id="Model/Initial"),
     )
@@ -1504,7 +1866,7 @@ async def test_publication_rejects_noncanonical_preference_provider_synchronousl
         ),
         aliases={"audio.cpp": "audio_cpp"},
     )
-    service = TTSService(registry, preferences_snapshot=initial_snapshot)
+    service = _test_service(registry, preferences_snapshot=initial_snapshot)
     persistence_calls = 0
 
     def persistence() -> Any:
@@ -1565,7 +1927,7 @@ async def test_newer_settings_publication_supersedes_pending_handoff() -> None:
         ),
         aliases={},
     )
-    service = TTSService(
+    service = _test_service(
         registry,
         preferences_snapshot=_snapshot(model_id="Model/One"),
     )
@@ -1625,7 +1987,11 @@ class _OlderPublicationObserverFirstService(TTSService):
         self.older_generation: int | None = None
         self.newer_generation: int | None = None
         self.older_status_classified = asyncio.Event()
-        super().__init__(registry, preferences_snapshot=snapshot)
+        super().__init__(
+            registry,
+            preferences_snapshot=snapshot,
+            native_capability_reader=_accepted_native_capability_reader(registry),
+        )
 
     async def _reconfiguration_status(
         self,
@@ -1984,7 +2350,7 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
         ),
         aliases={},
     )
-    service = TTSService(
+    service = _test_service(
         registry,
         preferences_snapshot=_snapshot(
             provider_id="alpha",
@@ -2066,16 +2432,16 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             "elevenlabs",
             "eleven_multilingual_v2",
             "wav",
-            "elevenlabs",
-            "mp3",
-            "elevenlabs_elevenlabs",
+            "eleven_multilingual_v2",
+            "wav",
+            "elevenlabs_eleven_multilingual_v2",
         ),
         (
             "kokoro",
             "kokoro",
             "mp3",
             "kokoro",
-            "wav",
+            "mp3",
             "local_kokoro_default_onnx",
         ),
         (
@@ -2083,7 +2449,7 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             "chatterbox",
             "mp3",
             "chatterbox",
-            "wav",
+            "mp3",
             "local_chatterbox_default",
         ),
         (
@@ -2099,7 +2465,7 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             "alltalk",
             "mp3",
             "alltalk",
-            "wav",
+            "mp3",
             "alltalk_default",
         ),
     ),
@@ -2137,7 +2503,7 @@ async def test_retained_provider_defaults_admit_the_legacy_bridge(
         ),
         aliases={},
     )
-    service = TTSService(
+    service = _test_service(
         registry,
         preferences_snapshot=_snapshot(
             provider_id=provider_id,
@@ -2159,7 +2525,7 @@ async def test_retained_provider_defaults_admit_the_legacy_bridge(
                 OpenAISpeechRequest(
                     model=expected_model,
                     input="Character response",
-                    voice="voice/case",
+                    voice="Voice/Case",
                     response_format=expected_format,
                     speed=1.0,
                 ),
@@ -2172,5 +2538,164 @@ async def test_retained_provider_defaults_admit_the_legacy_bridge(
         )
     finally:
         await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_effective_legacy_snapshot_matches_the_admitted_exact_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[OpenAISpeechRequest] = []
+
+    async def audio() -> AsyncIterator[bytes]:
+        yield b"audio"
+
+    def capture_generate(
+        _host: LegacyBackendHost,
+        _internal_model_id: str,
+        request: OpenAISpeechRequest,
+        _progress_sink: ProgressSink | None,
+    ) -> AsyncIterator[bytes]:
+        captured.append(request)
+        return audio()
+
+    monkeypatch.setattr(LegacyBackendHost, "generate", capture_generate)
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            {},
+            manager_factory=lambda _provider, _config: pytest.fail(
+                "request admission must stop at the legacy adapter boundary"
+            ),
+        ),
+        aliases={},
+    )
+    model_id = "eleven_multilingual_v2"
+    voice_id = "AZnzlk1XvdvUeBnXmlld"
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(
+            provider_id="elevenlabs",
+            model_id=model_id,
+            voice_mode="exact",
+            voice_id=voice_id,
+            response_format="wav",
+        ),
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response, selection = await service.synthesize_effective(
+            text="Preserve exact values."
+        )
+
+        assert selection.model_id == model_id
+        assert selection.voice_id == voice_id
+        assert selection.response_format == "wav"
+        assert captured == [
+            OpenAISpeechRequest(
+                model=model_id,
+                input="Preserve exact values.",
+                voice=voice_id,
+                response_format="wav",
+                speed=1.0,
+            )
+        ]
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_supported_studio_options_reach_the_legacy_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[OpenAISpeechRequest] = []
+
+    async def audio() -> AsyncIterator[bytes]:
+        yield b"audio"
+
+    def capture_generate(
+        _host: LegacyBackendHost,
+        _internal_model_id: str,
+        request: OpenAISpeechRequest,
+        _progress_sink: ProgressSink | None,
+    ) -> AsyncIterator[bytes]:
+        captured.append(request)
+        return audio()
+
+    monkeypatch.setattr(LegacyBackendHost, "generate", capture_generate)
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            {},
+            manager_factory=lambda _provider, _config: pytest.fail(
+                "request admission must stop at the legacy adapter boundary"
+            ),
+        ),
+        aliases={},
+    )
+    saved = StudioTTSPreferencesSnapshot(
+        revision=2,
+        auto_play=True,
+        provider_options={"chatterbox": {"exaggeration": 0.8, "cfg_weight": 0.3}},
+    )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_options={
+                "temperature": 1.2,
+                "num_candidates": 3,
+                "validate_with_whisper": True,
+            }
+        ),
+        base_revision=2,
+    )
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(
+            provider_id="chatterbox",
+            model_id="chatterbox",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="wav",
+        ),
+        studio_preferences_loader=lambda: saved,
+    )
+    response: TTSAudioResponse | None = None
+
+    try:
+        response, selection = await service.synthesize_effective(
+            text="Studio response",
+            studio_draft=draft,
+            studio_preferences=saved,
+        )
+
+        assert dict(selection.provider_options) == {
+            "exaggeration": 0.8,
+            "cfg_weight": 0.3,
+            "temperature": 1.2,
+            "num_candidates": 3,
+            "validate_with_whisper": True,
+        }
+        assert captured == [
+            OpenAISpeechRequest(
+                model="chatterbox",
+                input="Studio response",
+                voice="default",
+                response_format="wav",
+                speed=1.0,
+                extra_params={
+                    "temperature": 1.2,
+                    "num_candidates": 3,
+                    "validate_with_whisper": True,
+                    "exaggeration": 0.8,
+                    "cfg_weight": 0.3,
+                },
+            )
+        ]
+    finally:
+        if response is not None:
+            await response.aclose()
         await service.close()
         await service.wait_closed()

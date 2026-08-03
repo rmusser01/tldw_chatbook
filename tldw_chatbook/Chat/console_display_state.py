@@ -13,6 +13,16 @@ from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
+#: TASK-1972: the inspector's route to the Change Review screen -- the
+#: honest replacement for the dead "Review tool call" action TASK-1843
+#: removed. Enabled whenever change tracking is ON (git present, tracker
+#: built): the SCREEN owns the empty state ("No file changes recorded"),
+#: so enablement never needs a per-tick DB query.
+CONSOLE_INSPECTOR_REVIEW_CHANGES_ID = "console-inspector-review-changes"
+CONSOLE_INSPECTOR_REVIEW_CHANGES_LABEL = "Review changes"
+CONSOLE_INSPECTOR_NO_CHANGE_TRACKING_REASON = (
+    "Change tracking is off (git unavailable)."
+)
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID = "console-inspector-review-tool-call"
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_LABEL = "Review tool call"
 CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID = "console-inspector-save-chatbook"
@@ -645,6 +655,7 @@ class ConsoleInspectorState:
         scope_item_count: int | None = None,
         run_active: bool = False,
         ephemeral: bool = False,
+        change_review_available: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
@@ -732,6 +743,12 @@ class ConsoleInspectorState:
                 label=CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL,
                 enabled=normalized_approval_count > 0,
                 disabled_reason=CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+            ),
+            ConsoleInspectorAction(
+                widget_id=CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,
+                label=CONSOLE_INSPECTOR_REVIEW_CHANGES_LABEL,
+                enabled=change_review_available,
+                disabled_reason=CONSOLE_INSPECTOR_NO_CHANGE_TRACKING_REASON,
             ),
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,

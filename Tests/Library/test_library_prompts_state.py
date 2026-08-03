@@ -1,16 +1,30 @@
 """Pure display-state contracts for the Library prompts canvas."""
 
+from dataclasses import replace
 import sqlite3
 from datetime import datetime, timezone
 
+import pytest
+
 from tldw_chatbook.DB.Prompts_DB import ConflictError
 from tldw_chatbook.Library.library_prompts_state import (
-    PromptEditorState,
+    PromptArtifactDraft,
     PromptListRow,
+    prepare_prompt_artifact_save,
     build_prompt_editor_state,
     build_prompts_list_state,
     classify_prompt_save_error,
     prompt_editor_meta_line,
+    require_artifact_save_supported,
+)
+from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
+    blank_recipe,
+    outcome_first_recipe,
+)
+from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+    PromptCapabilityError,
+    PromptSourceCapabilities,
+    local_prompt_capabilities,
 )
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
@@ -102,8 +116,41 @@ def test_list_state_secondary_omits_empty_details():
 def test_list_state_secondary_shows_details_and_age():
     state = build_prompts_list_state([PROMPT_A], query="", sort="newest", now=NOW)
     assert state.rows[0] == PromptListRow(
-        prompt_id=1, name="Summarize", secondary="Summarizes text · 3m"
+        prompt_id=1,
+        name="Summarize",
+        secondary="Summarizes text · 3m",
+        lane_summary="System + User",
     )
+
+
+def test_list_rows_label_prompt_recipe_source_and_normalized_lane_summary():
+    recipe = {
+        **PROMPT_A,
+        "id": 9,
+        "name": "Outcome first",
+        "artifact_type": "recipe",
+        "backend": "server",
+        "has_system_prompt": True,
+        "has_user_prompt": False,
+    }
+    empty_prompt = {
+        **PROMPT_B,
+        "id": 10,
+        "has_system_prompt": False,
+        "has_user_prompt": False,
+    }
+
+    state = build_prompts_list_state(
+        [recipe, empty_prompt], query="", sort="name", now=NOW
+    )
+
+    rows = {row.prompt_id: row for row in state.rows}
+    assert rows[9].artifact_type == "recipe"
+    assert rows[9].type_label == "Recipe"
+    assert rows[9].source_label == "Server"
+    assert rows[9].lane_summary == "System only"
+    assert rows[10].type_label == "Prompt"
+    assert rows[10].lane_summary == "Empty"
 
 
 def test_list_state_secondary_ignores_author_and_keywords_even_when_present():
@@ -119,18 +166,310 @@ def test_list_state_secondary_ignores_author_and_keywords_even_when_present():
 
 def test_editor_state_maps_fetch_prompt_details_fields():
     state = build_prompt_editor_state(PROMPT_A)
-    assert state == PromptEditorState(
-        prompt_id=1,
-        name="Summarize",
-        author="Alice",
-        details="Summarizes text",
-        system_prompt="You are helpful.",
-        user_prompt="Summarize: {text}",
-        keywords_csv="writing, summary",
-        version=2,
-        created="",
-        modified="2026-07-07T11:57:00+00:00",
+    assert (
+        state.prompt_id,
+        state.name,
+        state.author,
+        state.details,
+        state.system_prompt,
+        state.user_prompt,
+        state.keywords_csv,
+        state.version,
+        state.created,
+        state.modified,
+    ) == (
+        1,
+        "Summarize",
+        "Alice",
+        "Summarizes text",
+        "You are helpful.",
+        "Summarize: {text}",
+        "writing, summary",
+        2,
+        "",
+        "2026-07-07T11:57:00+00:00",
     )
+    assert state.block_editor_state is not None
+
+
+def _v2_detail(*, artifact_type: str = "prompt") -> dict[str, object]:
+    kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
+    return {
+        "id": 17,
+        "name": "Structured",
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": {
+            "schema_version": 2,
+            "kind": kind,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be precise.",
+                            "mapping_hint": "Define the model's role.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "xml",
+                            "xml_tag": "goal",
+                            "content": "Ship the release.",
+                        }
+                    ],
+                },
+            ],
+        },
+        "system_prompt": "stale compatibility text",
+        "user_prompt": "stale compatibility text",
+        "version": 4,
+        "backend": "local",
+    }
+
+
+def test_editor_state_decodes_supported_v2_into_shared_immutable_block_state():
+    state = build_prompt_editor_state(_v2_detail())
+
+    assert state.artifact_type == "prompt"
+    assert state.definition_state == "supported_v2"
+    assert state.block_editor_state is not None
+    assert state.block_editor_state.definition.kind == "block_prompt"
+    assert state.compiled_system_preview == "# Role\n\nBe precise."
+    assert state.compiled_user_preview == "<goal>Ship the release.</goal>"
+    assert state.compatibility_stale is True
+
+
+def test_editor_state_decomposes_legacy_prompt_without_changing_lane_origins():
+    detail = {
+        **PROMPT_A,
+        "system_prompt": "  exact system\n",
+        "user_prompt": "exact user\n\n",
+    }
+
+    state = build_prompt_editor_state(detail)
+
+    assert state.definition_state == "legacy"
+    assert state.block_editor_state is not None
+    assert state.block_editor_state.compiled_system == "  exact system\n"
+    assert state.block_editor_state.compiled_user == "exact user\n\n"
+    assert state.block_editor_state.system_origin is not None
+    assert state.block_editor_state.user_origin is not None
+
+
+def test_editor_state_keeps_foreign_or_malformed_artifacts_read_only_and_visible():
+    detail = _v2_detail(artifact_type="recipe")
+    detail["prompt_schema_version"] = 1
+
+    state = build_prompt_editor_state(detail)
+
+    assert state.artifact_type == "recipe"
+    assert state.definition_state == "foreign_v1"
+    assert state.block_editor_state is None
+    assert state.compiled_system_preview == "stale compatibility text"
+    assert state.can_convert_as_new is True
+    assert "read-only" in state.compatibility_reason.lower()
+
+
+def test_outcome_first_recipe_has_stable_blank_markdown_blocks_in_both_lanes():
+    first = outcome_first_recipe()
+    second = outcome_first_recipe()
+
+    assert first == second
+    assert first is not second
+    assert first.kind == "block_recipe"
+    assert tuple(block.id for block in first.lanes[0].blocks) == (
+        "role",
+        "personality",
+        "collaboration-style",
+    )
+    assert tuple(block.id for block in first.lanes[1].blocks) == (
+        "goal",
+        "success-criteria",
+        "context-evidence",
+        "constraints",
+        "output",
+        "stop-rules",
+    )
+    assert all(
+        block.syntax == "markdown"
+        and block.content == ""
+        and block.mapping_hint
+        and block.xml_tag is None
+        for lane in first.lanes
+        for block in lane.blocks
+    )
+
+
+def test_blank_recipe_is_a_fresh_immutable_two_lane_recipe():
+    first = blank_recipe()
+    second = blank_recipe()
+
+    assert first == second
+    assert first is not second
+    assert first.kind == "block_recipe"
+    assert tuple(lane.id for lane in first.lanes) == ("system", "user")
+    assert all(lane.blocks == () for lane in first.lanes)
+
+
+def _draft(*, artifact_type: str = "recipe") -> PromptArtifactDraft:
+    definition = outcome_first_recipe()
+    if artifact_type == "prompt":
+        definition = replace(definition, kind="block_prompt")
+    return PromptArtifactDraft(
+        artifact_type=artifact_type,  # type: ignore[arg-type]
+        definition=definition,
+        system_prompt="",
+        user_prompt="",
+        definition_bytes=b"{}",
+        request_bytes=b"{}",
+    )
+
+
+def test_require_artifact_save_supported_accepts_exact_local_recipe_contract():
+    require_artifact_save_supported(_draft(), local_prompt_capabilities())
+
+
+def test_require_artifact_save_supported_rejects_type_kind_mismatch():
+    draft = replace(_draft(), artifact_type="prompt")
+
+    with pytest.raises(ValueError, match="artifact_type.*kind.*agree"):
+        require_artifact_save_supported(draft, local_prompt_capabilities())
+
+
+def test_require_artifact_save_supported_names_source_limit_and_recovery():
+    capabilities = replace(local_prompt_capabilities(), compiled_lane_limit=3)
+    draft = replace(_draft(), user_prompt="four")
+
+    with pytest.raises(ValueError, match="user_prompt.*3 characters.*shorten"):
+        require_artifact_save_supported(draft, capabilities)
+
+
+def test_require_artifact_save_supported_names_definition_and_request_byte_limits():
+    definition_limited = replace(local_prompt_capabilities(), definition_limit=1)
+    request_limited = replace(local_prompt_capabilities(), request_limit=1)
+
+    with pytest.raises(ValueError, match="prompt_definition.*1 UTF-8 bytes"):
+        require_artifact_save_supported(_draft(), definition_limited)
+    with pytest.raises(ValueError, match="request.*1 UTF-8 bytes"):
+        require_artifact_save_supported(_draft(), request_limited)
+
+
+def test_require_artifact_save_supported_rejects_missing_kind_capability():
+    capabilities = replace(local_prompt_capabilities(), structured_kinds=frozenset())
+
+    with pytest.raises(PromptCapabilityError, match="structured kind"):
+        require_artifact_save_supported(_draft(), capabilities)
+
+
+def test_require_artifact_save_supported_guards_update_version_and_capability():
+    capabilities: PromptSourceCapabilities = replace(
+        local_prompt_capabilities(), conditional_update=False
+    )
+
+    with pytest.raises(ValueError, match="conditional update.*save as new"):
+        require_artifact_save_supported(
+            _draft(), capabilities, update_original=True, expected_version=3
+        )
+    with pytest.raises(ValueError, match="current version.*Reload"):
+        require_artifact_save_supported(
+            _draft(), local_prompt_capabilities(), update_original=True
+        )
+
+
+def test_prepare_recipe_save_defaults_to_empty_content_and_preserves_structure():
+    definition = outcome_first_recipe()
+    populated = replace(
+        definition,
+        lanes=(
+            replace(
+                definition.lanes[0],
+                blocks=(replace(definition.lanes[0].blocks[0], content="Architect"),),
+            ),
+            definition.lanes[1],
+        ),
+    )
+    state = build_prompt_editor_state(
+        {
+            "artifact_type": "recipe",
+            "prompt_format": "structured",
+            "prompt_schema_version": 2,
+            "prompt_definition": {
+                "kind": populated.kind,
+                "schema_version": populated.schema_version,
+                "lanes": [
+                    {
+                        "id": lane.id,
+                        "blocks": [
+                            {
+                                "id": block.id,
+                                "title": block.title,
+                                "syntax": block.syntax,
+                                "content": block.content,
+                                "mapping_hint": block.mapping_hint,
+                            }
+                            for block in lane.blocks
+                        ],
+                    }
+                    for lane in populated.lanes
+                ],
+            },
+        }
+    ).block_editor_state
+    assert state is not None
+
+    draft, payload, saved_state = prepare_prompt_artifact_save(
+        state,
+        artifact_type="recipe",
+        include_recipe_starter_content=False,
+        request_fields={"name": "Outcome first", "keywords": None},
+    )
+
+    assert draft.artifact_type == "recipe"
+    assert draft.system_prompt == ""
+    assert all(
+        block.content == ""
+        for lane in saved_state.definition.lanes
+        for block in lane.blocks
+    )
+    assert saved_state.definition.lanes[0].blocks[0].title == "Role"
+    assert (
+        saved_state.definition.lanes[0].blocks[0].mapping_hint
+        == "Define the model's function and job."
+    )
+    assert payload["artifact_type"] == "recipe"
+    assert "keywords" not in payload
+    assert payload["prompt_definition"]["kind"] == "block_recipe"
+    assert draft.definition_bytes
+    assert draft.request_bytes
+
+
+def test_prepare_recipe_save_preserves_content_only_when_explicitly_selected():
+    state = build_prompt_editor_state(
+        {"system_prompt": "Stay direct.", "user_prompt": "Draft the plan."}
+    ).block_editor_state
+    assert state is not None
+
+    draft, payload, saved_state = prepare_prompt_artifact_save(
+        state,
+        artifact_type="recipe",
+        include_recipe_starter_content=True,
+        request_fields={"name": "Planning recipe"},
+    )
+
+    assert draft.system_prompt == "Stay direct."
+    assert draft.user_prompt == "Draft the plan."
+    assert saved_state.artifact_type == "recipe"
+    assert payload["prompt_definition"]["kind"] == "block_recipe"
 
 
 def test_editor_state_resolves_prompt_id_from_local_id_when_id_is_composite_string():
@@ -203,18 +542,19 @@ def test_editor_state_prompt_id_none_for_blank_create_flow_detail():
 
 def test_editor_state_tolerates_empty_mapping():
     state = build_prompt_editor_state({})
-    assert state == PromptEditorState(
-        prompt_id=None,
-        name="",
-        author="",
-        details="",
-        system_prompt="",
-        user_prompt="",
-        keywords_csv="",
-        version=None,
-        created="",
-        modified="",
-    )
+    assert (
+        state.prompt_id,
+        state.name,
+        state.author,
+        state.details,
+        state.system_prompt,
+        state.user_prompt,
+        state.keywords_csv,
+        state.version,
+        state.created,
+        state.modified,
+    ) == (None, "", "", "", "", "", "", None, "", "")
+    assert state.block_editor_state is not None
 
 
 def test_classify_soft_deleted_name():

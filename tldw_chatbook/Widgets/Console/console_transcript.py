@@ -75,6 +75,7 @@ _ACTION_TOOLTIPS = {
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
     "save-image": "Save image to disk.",
     "tool-output": "Show or hide this tool call's full result (o).",
+    "review-changes": "Open the Change Review screen for this turn (v).",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -584,6 +585,7 @@ class ConsoleTranscript(VerticalScroll):
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
+        ("v", "invoke_selected_action('review-changes')", "Review changes"),
     ]
 
     PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset(
@@ -952,6 +954,22 @@ class ConsoleTranscript(VerticalScroll):
             Tuple of cached message ids, for delete-pruning tests.
         """
         return tuple(self._message_signature_cache)
+
+    def display_message(self, message_id: str) -> "ConsoleChatMessage | None":
+        """Return the RENDERED row for ``message_id`` — tree node or not.
+
+        TASK-2030: display-only TOOL markers (the ✎/⚙ rows) are never tree
+        nodes, so the STORE cannot resolve them by id; the transcript's own
+        display model is the authority for what the user actually selected.
+
+        Args:
+            message_id: Identifier of a rendered transcript row.
+
+        Returns:
+            The display-model message, or ``None`` when nothing rendered
+            carries that id.
+        """
+        return self._message_by_id(message_id)
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""

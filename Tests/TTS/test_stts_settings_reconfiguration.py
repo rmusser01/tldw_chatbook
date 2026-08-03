@@ -18,6 +18,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSProviderConfigurationChanged,
     STTSEventHandler,
     STTSSettingsSaveEvent,
+    STTSSettingsSaveResult,
 )
 from tldw_chatbook.TTS.adapter_registry import ReconfigureResult, TTSAdapterRegistry
 from tldw_chatbook.TTS.audio_cpp_config import (
@@ -184,6 +185,24 @@ PROVIDER_SETTING_KEYS = {
 }
 
 
+class SettingsResultRecorder:
+    def __init__(self) -> None:
+        self.results: list[STTSSettingsSaveResult] = []
+        self.runtime_results: list[STTSSettingsSaveResult] = []
+
+    def receive_stts_settings_save_result(
+        self,
+        result: STTSSettingsSaveResult,
+    ) -> None:
+        self.results.append(result)
+
+    def receive_stts_settings_runtime_result(
+        self,
+        result: STTSSettingsSaveResult,
+    ) -> None:
+        self.runtime_results.append(result)
+
+
 def test_settings_save_event_copies_mapping_and_carries_preferences() -> None:
     preferences = TTSPreferencesSnapshot(
         provider_id="audio_cpp",
@@ -215,6 +234,188 @@ def test_settings_save_event_defaults_to_provider_settings_only() -> None:
     event = STTSSettingsSaveEvent({"audio_cpp": AudioCppConfig().to_mapping()})
 
     assert event.preferences is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_credential_clear_is_atomic_targeted_and_reports_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    current_settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "api_settings": {
+                "openai": {"api_key": "synthetic-canonical-secret"},
+            },
+            "openai_api": {"api_key": "synthetic-raw-legacy-secret"},
+            "API": {"openai_api_key": "synthetic-old-secret"},
+            "app_tts": {
+                "default_provider": "openai",
+                "default_model": "tts-1-hd",
+                "default_voice": "alloy",
+                "default_format": "mp3",
+                "default_speed": 1.0,
+            },
+        },
+        "openai_api": {"api_key": "synthetic-stale-normalized-secret"},
+    }
+    service = ImmediatePublicationService()
+    handler = STTSEventHandler(RecordingApp())
+    handler._stts_service = service
+    saved_batches: list[
+        tuple[dict[str, dict[str, object]], dict[str, tuple[str, ...]]]
+    ] = []
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> TTSSettingsPersistenceOutcome:
+        saved_batches.append(
+            (
+                deepcopy({key: dict(value) for key, value in section_values.items()}),
+                deepcopy(dict(delete_keys)),
+            )
+        )
+        return _mutation_outcome()
+
+    monkeypatch.setattr("tldw_chatbook.config.settings", current_settings)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.apply_settings_mutation_to_cli_config",
+        save_batch,
+    )
+    recorder = SettingsResultRecorder()
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent(
+            {},
+            delete_setting_keys=("openai_api_key",),
+            request_id=9,
+            reply_to=recorder,
+        )
+    )
+
+    sections, deletes = saved_batches[0]
+    assert "openai_api_key" not in sections.get("API", {})
+    assert deletes["API"] == ("openai_api_key",)
+    assert deletes["api_settings.openai"] == ("api_key",)
+    assert deletes["openai_api"] == ("api_key",)
+    service.reconfigure_provider.assert_awaited_once()
+    assert service.reconfigure_provider.await_args.args[0] == "openai"
+    projected = service.reconfigure_provider.await_args.args[1]["app_config"]
+    assert "api_key" not in projected.get("openai_api", {})
+    assert recorder.results == [
+        STTSSettingsSaveResult(
+            request_id=9,
+            persisted=True,
+            provider_statuses={"openai": "applied"},
+            provider_configuration_revisions={"openai": 1},
+            provider_runtime_revisions={"openai": 2},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "logical_key", "canonical_section", "environment_variable"),
+    (
+        ("openai", "openai_api_key", "api_settings.openai", "OPENAI_API_KEY"),
+        (
+            "elevenlabs",
+            "elevenlabs_api_key",
+            "api_settings.elevenlabs",
+            "ELEVENLABS_API_KEY",
+        ),
+    ),
+)
+async def test_explicit_credential_set_persists_to_authoritative_provider_section(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_id: str,
+    logical_key: str,
+    canonical_section: str,
+    environment_variable: str,
+) -> None:
+    monkeypatch.delenv(environment_variable, raising=False)
+    handler = STTSEventHandler(RecordingApp())
+    service = ImmediatePublicationService()
+    handler._stts_service = service
+    saved_batches: list[dict[str, dict[str, object]]] = []
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> TTSSettingsPersistenceOutcome:
+        assert delete_keys == {}
+        saved_batches.append(deepcopy(dict(section_values)))
+        return _mutation_outcome()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {}},
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.apply_settings_mutation_to_cli_config",
+        save_batch,
+    )
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent({logical_key: "synthetic-new-secret"})
+    )
+
+    assert saved_batches[0][canonical_section] == {"api_key": "synthetic-new-secret"}
+    assert logical_key not in saved_batches[0].get("API", {})
+    projected = service.reconfigure_provider.await_args.args[1]["app_config"]
+    assert projected[f"{provider_id}_api"]["api_key"] == "synthetic-new-secret"
+
+
+@pytest.mark.asyncio
+async def test_successful_cache_reload_refreshes_the_application_config_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    current_settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "api_settings": {"openai": {"api_key": "synthetic-old-secret"}},
+        },
+        "api_settings": {"openai": {"api_key": "synthetic-old-secret"}},
+    }
+    refreshed_settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "api_settings": {"openai": {"api_key": "synthetic-new-secret"}},
+        },
+        "api_settings": {"openai": {"api_key": "synthetic-new-secret"}},
+    }
+    app = RecordingApp()
+    app.app_config = deepcopy(current_settings)
+    handler = STTSEventHandler(app)
+    handler._stts_service = ImmediatePublicationService()
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> TTSSettingsPersistenceOutcome:
+        assert section_values["api_settings.openai"] == {
+            "api_key": "synthetic-new-secret"
+        }
+        assert delete_keys == {}
+        config_module.settings = refreshed_settings
+        return _mutation_outcome()
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        save_batch,
+    )
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent({"openai_api_key": "synthetic-new-secret"})
+    )
+
+    assert app.app_config == refreshed_settings
+    assert app.app_config is not refreshed_settings
 
 
 @pytest.mark.asyncio
@@ -280,7 +481,7 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
 
     await handler.handle_settings_save(STTSSettingsSaveEvent({"openai_api_key": "new"}))
 
-    assert saved_batches[0]["API"] == {"openai_api_key": "new"}
+    assert saved_batches[0]["api_settings.openai"] == {"api_key": "new"}
     assert openai_factory.instances[0].close_calls == 1
     assert kokoro_factory.instances[0].close_calls == 0
     assert registry.configuration_revision("openai") == 2
@@ -291,7 +492,8 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
         "openai",
         {
             "COMPREHENSIVE_CONFIG_RAW": {
-                "API": {"openai_api_key": "new"},
+                "api_settings": {"openai": {"api_key": "new"}},
+                "API": {"openai_api_key": "old"},
                 "app_tts": {
                     "default_provider": "openai",
                     "default_model_mode": "exact",
@@ -438,10 +640,8 @@ async def test_recognized_keys_reconfigure_each_candidate_once_in_provider_order
 
     await handler.handle_settings_save(STTSSettingsSaveEvent(event_settings))
 
-    assert saved_batches[0]["API"] == {
-        "elevenlabs_api_key": "value",
-        "openai_api_key": "value",
-    }
+    assert saved_batches[0]["api_settings.openai"] == {"api_key": "value"}
+    assert saved_batches[0]["api_settings.elevenlabs"] == {"api_key": "value"}
     assert saved_batches[0]["app_tts"]["default_provider"] == "openai"
     assert saved_batches[0]["app_tts"]["default_model_mode"] == "exact"
     assert saved_batches[0]["tts_settings"]["default_tts_provider"] == "openai"
@@ -572,7 +772,7 @@ async def test_failed_atomic_batch_stops_before_reload_and_reconfiguration(
         )
     )
 
-    assert saved_batches[0]["API"] == {"openai_api_key": "secret"}
+    assert saved_batches[0]["api_settings.openai"] == {"api_key": "secret"}
     assert saved_batches[0]["app_tts"]["default_provider"] == "kokoro"
     assert saved_batches[0]["app_tts"]["KOKORO_DEVICE_DEFAULT"] == "cpu"
     reconfigure_provider.assert_not_awaited()
@@ -739,7 +939,7 @@ async def test_concurrent_settings_saves_are_serialized(
         delete_keys: Mapping[str, tuple[str, ...]],
     ) -> TTSSettingsPersistenceOutcome:
         assert delete_keys == {}
-        saved_values.append(str(section_values["API"]["openai_api_key"]))
+        saved_values.append(str(section_values["api_settings.openai"]["api_key"]))
         return _mutation_outcome()
 
     monkeypatch.setattr(
@@ -891,6 +1091,8 @@ async def test_changed_audio_cpp_config_retires_only_audio_cpp(
     for provider_id in ("audio_cpp", "openai"):
         lease = await registry.acquire(provider_id)
         await lease.release()
+    assert service.saved_configuration_revision("audio_cpp") == 0
+    assert service.applied_configuration_revision("audio_cpp") == 0
 
     app = RecordingApp()
     handler = STTSEventHandler(app)
@@ -916,6 +1118,8 @@ async def test_changed_audio_cpp_config_retires_only_audio_cpp(
     assert legacy_factory.instances[0].close_calls == 0
     assert registry.configuration_revision("audio_cpp") == 2
     assert registry.configuration_revision("openai") == 1
+    assert service.saved_configuration_revision("audio_cpp") == 1
+    assert service.applied_configuration_revision("audio_cpp") == 1
     assert len(app.messages) == 1
     assert isinstance(app.messages[0], STTSProviderConfigurationChanged)
 
@@ -1087,6 +1291,7 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
     app = RecordingApp()
     handler = STTSEventHandler(app)
     handler._stts_service = service
+    recorder = SettingsResultRecorder()
     captured_ticket: TTSSettingsPublicationTicket | None = None
     original_begin = service.begin_preferences_publication
 
@@ -1112,6 +1317,8 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
         STTSSettingsSaveEvent(
             {"audio_cpp": replacement},
             preferences=preferences,
+            request_id=17,
+            reply_to=recorder,
         )
     )
 
@@ -1119,6 +1326,8 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
         ("Saved — applying after current speech", "information")
     ]
     assert app.messages == []
+    assert recorder.results[0].provider_statuses == {"audio_cpp": "pending"}
+    assert recorder.runtime_results == []
     assert factory.instances[0].close_calls == 0
     assert [chunk async for chunk in response.byte_stream] == [b"audio"]
     await response.aclose()
@@ -1130,6 +1339,12 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
     assert factory.instances[0].close_calls == 1
     assert len(app.messages) == 1
     assert isinstance(app.messages[0], STTSProviderConfigurationChanged)
+    assert recorder.runtime_results[0].request_id == 17
+    assert recorder.runtime_results[0].provider_statuses == {"audio_cpp": "applied"}
+    assert recorder.runtime_results[0].provider_configuration_revisions == {
+        "audio_cpp": 1
+    }
+    assert recorder.runtime_results[0].provider_runtime_revisions == {"audio_cpp": 2}
     await service.close()
     await service.wait_closed()
 

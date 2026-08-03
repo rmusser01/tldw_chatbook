@@ -3,6 +3,7 @@
 #
 # Imports
 import copy
+from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import sys
@@ -16,6 +17,7 @@ else:
 import os
 from pathlib import Path
 import toml
+import portalocker
 from typing import (
     Any,
     Collection,
@@ -25,6 +27,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    Iterator,
 )
 
 #
@@ -48,6 +51,7 @@ from tldw_chatbook.Utils.private_paths import (
     create_private_text,
     lexical_path,
     open_private_binary,
+    open_private_text_append_stream,
     secure_private_directory,
     verify_trusted_directory,
 )
@@ -118,11 +122,7 @@ def application_owned_config_directory(config_path: Path) -> Path | None:
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
     default_path = lexical_path(DEFAULT_CONFIG_PATH)
-    return (
-        default_path.parent
-        if lexical_path(config_path) == default_path
-        else None
-    )
+    return default_path.parent if lexical_path(config_path) == default_path else None
 
 
 def _report_config_path_posture(
@@ -850,21 +850,23 @@ def load_settings(force_reload: bool = False) -> Dict:
     # If [API] exists in the user's CLI config, it would have merged with/overridden the CLI defaults' [API]
     # Same applies to all other sections retrieved below.
 
-    paths_section = get_toml_section('Paths')
-    logging_section_server = get_toml_section('Logging')
-    processing_section = get_toml_section('Processing')
-    chunking_section = get_toml_section('Chunking')
-    embeddings_section = get_toml_section('Embeddings')
-    embedding_config_section = get_toml_section('embedding_config')  # Get the [embedding_config] table
-    chat_dicts_section = get_toml_section('ChatDictionaries')
-    auto_save_section = get_toml_section('AutoSave')
-    stt_settings_section = get_toml_section('STTSettings')
-    tts_settings_section = get_toml_section('TTSSettings')
-    search_engines_section = get_toml_section('SearchEngines')
-    search_settings_section = get_toml_section('SearchSettings')
-    web_scraper_section = get_toml_section('WebScraper')
-    confluence_section = get_toml_section('Confluence')
-    library_section = get_toml_section('library')
+    paths_section = get_toml_section("Paths")
+    logging_section_server = get_toml_section("Logging")
+    processing_section = get_toml_section("Processing")
+    chunking_section = get_toml_section("Chunking")
+    embeddings_section = get_toml_section("Embeddings")
+    embedding_config_section = get_toml_section(
+        "embedding_config"
+    )  # Get the [embedding_config] table
+    chat_dicts_section = get_toml_section("ChatDictionaries")
+    auto_save_section = get_toml_section("AutoSave")
+    stt_settings_section = get_toml_section("STTSettings")
+    tts_settings_section = get_toml_section("TTSSettings")
+    search_engines_section = get_toml_section("SearchEngines")
+    search_settings_section = get_toml_section("SearchSettings")
+    web_scraper_section = get_toml_section("WebScraper")
+    confluence_section = get_toml_section("Confluence")
+    library_section = get_toml_section("library")
 
     final_api_settings = get_toml_section("api_settings")
     final_logging_settings = get_toml_section("logging")
@@ -1031,9 +1033,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         # --- Configurations migrated from load_and_log_configs ---
         "anthropic_api": {
             "api_key": anthropic_api_key,
-            "model": api_section_legacy.get(
-                "anthropic_model", "claude-sonnet-5"
-            ),
+            "model": api_section_legacy.get("anthropic_model", "claude-sonnet-5"),
             "streaming": api_section_legacy.get("anthropic_streaming", False),
             "temperature": api_section_legacy.get("anthropic_temperature", 0.7),
             "top_p": api_section_legacy.get("anthropic_top_p", 0.95),
@@ -1945,7 +1945,6 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
-
         "library": {
             "ingest_directory_scan_limit": coerce_int_setting(
                 library_section.get("ingest_directory_scan_limit", 1000),
@@ -1956,9 +1955,8 @@ def load_settings(force_reload: bool = False) -> Dict:
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
         },
-
-        "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
-        "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
+        "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
+        "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
     }
 
     # Bridge TTSSettings defaults into APP_TTS_CONFIG for runtime use
@@ -3800,10 +3798,7 @@ def _load_cli_config_bootstrap_unlocked(
         loaded_config["_first_run"] = True
         bootstrap_succeeded = True
     except PrivatePathError as exc:
-        if (
-            application_directory is not None
-            and exc.result.reason == "missing_parent"
-        ):
+        if application_directory is not None and exc.result.reason == "missing_parent":
             logger.info(
                 f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
             )
@@ -3918,6 +3913,55 @@ def _config_file_lock():
         Textual thread workers so concurrent cycles cannot drop updates.
     """
     return _CONFIG_FILE_LOCK
+
+
+@contextmanager
+def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
+    """Hold one OS-backed lock across a whole-file config transaction."""
+
+    lock_path = config_path.with_name(f"{config_path.name}.lock")
+    application_directory = application_owned_config_directory(config_path)
+    try:
+        create_private_text(
+            lock_path,
+            "",
+            application_owned_directory=application_directory,
+        )
+    except FileExistsError:
+        pass
+    stream = open_private_text_append_stream(
+        lock_path,
+        application_owned_directory=application_directory,
+    )
+    locked = False
+    try:
+        portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+        locked = True
+        yield
+    finally:
+        if locked:
+            try:
+                portalocker.unlock(stream)
+            except Exception as error:
+                logger.error(
+                    "Configuration write lock release failed (error_type={}).",
+                    type(error).__name__,
+                )
+        try:
+            stream.close()
+        except Exception as error:
+            logger.error(
+                "Configuration write lock close failed (error_type={}).",
+                type(error).__name__,
+            )
+
+
+@contextmanager
+def _config_write_lock(config_path: Path) -> Iterator[None]:
+    """Serialize one config write transaction within and across processes."""
+
+    with _config_file_lock(), _config_interprocess_lock(config_path):
+        yield
 
 
 def _load_cli_config_bootstrap(
@@ -4038,6 +4082,24 @@ def _enforce_existing_encryption(
         )
 
 
+_REVISION_OWNED_CONFIG_SECTIONS = frozenset({"speech_studio"})
+
+
+def _preserve_revision_owned_sections(
+    current: Mapping[str, Any],
+    replacement: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Keep dedicated revision-owned sections out of whole-config writers."""
+
+    selected = copy.deepcopy(dict(replacement))
+    for section in _REVISION_OWNED_CONFIG_SECTIONS:
+        if section in current:
+            selected[section] = copy.deepcopy(current[section])
+        else:
+            selected.pop(section, None)
+    return selected
+
+
 def _try_read_cli_config_serialized_unlocked(config_path: Path) -> str | None:
     try:
         with open_private_binary(config_path) as opened:
@@ -4107,12 +4169,16 @@ def replace_cli_config_serialized(
         raise TypeError("The CLI config must contain a top-level table")
 
     config_path = get_cli_config_path()
-    with _config_file_lock():
+    with _config_write_lock(config_path):
         current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if current_serialized is None:
             current_config: Dict[str, Any] = {}
         else:
             current_config = tomllib.loads(current_serialized)
+        replacement = _preserve_revision_owned_sections(
+            current_config,
+            replacement,
+        )
         _enforce_existing_encryption(current_config, replacement)
         persisted = _config_data_for_persistence(replacement)
         backup_path: Path | None = None
@@ -4131,8 +4197,15 @@ def persist_cli_config_for_shutdown() -> bool:
 
     try:
         config_path = get_cli_config_path()
-        with _config_file_lock():
-            current = _load_cli_config_bootstrap_unlocked().config
+        with _config_write_lock(config_path):
+            bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
+            if not bootstrap.succeeded:
+                logger.warning(
+                    "Shutdown config persistence skipped because the current "
+                    "file could not be loaded safely."
+                )
+                return False
+            current = bootstrap.config
             persisted = _config_data_for_persistence(current)
             _write_raw_cli_config_unlocked(config_path, persisted)
             _publish_runtime_config_unlocked()
@@ -4157,9 +4230,7 @@ def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> boo
                 return True
             continue
         if not (
-            is_sensitive_config_key(key)
-            and isinstance(value, str)
-            and value.strip()
+            is_sensitive_config_key(key) and isinstance(value, str) and value.strip()
         ):
             continue
         if value.startswith("<") and value.endswith(">"):
@@ -4176,10 +4247,7 @@ def _config_data_for_persistence(
 
     selected = copy.deepcopy(dict(config_data))
     encryption = selected.get("encryption", {})
-    if not (
-        isinstance(encryption, Mapping)
-        and encryption.get("enabled", False)
-    ):
+    if not (isinstance(encryption, Mapping) and encryption.get("enabled", False)):
         return selected
 
     password = get_encryption_password()
@@ -4196,10 +4264,11 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
     """Atomically replace the effective config and refresh all config caches."""
 
     config_path = get_cli_config_path()
-    with _config_file_lock():
+    with _config_write_lock(config_path):
         current = _read_raw_cli_config_unlocked(config_path)
-        _enforce_existing_encryption(current, config_data)
-        persisted = _config_data_for_persistence(config_data)
+        replacement = _preserve_revision_owned_sections(current, config_data)
+        _enforce_existing_encryption(current, replacement)
+        persisted = _config_data_for_persistence(replacement)
         _write_raw_cli_config_unlocked(config_path, persisted)
         return _publish_runtime_config_unlocked()
 
@@ -4213,9 +4282,7 @@ def export_cli_config_snapshot(
 
     config_path = get_cli_config_path()
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    snapshot_path = (
-        config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
-    )
+    snapshot_path = config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
     with _config_file_lock():
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
@@ -4237,11 +4304,161 @@ class ConfigMutationResult:
     file_replaced: bool
     caches_reloaded: bool
     failure_phase: Literal["before_replace", "cache_reload"] | None
+    conflict: bool = False
 
     @property
     def fully_applied(self) -> bool:
         """Return whether both persistence phases completed."""
         return self.file_replaced and self.caches_reloaded
+
+
+def _valid_nonnegative_revision(value: object) -> int | None:
+    """Return an exact nonnegative revision or ``None`` when malformed."""
+
+    if type(value) is not int or value < 0:
+        return None
+    return value
+
+
+def _without_revision(
+    values: Mapping[str, Any],
+    revision_key: str,
+) -> Dict[str, Any]:
+    """Return a defensive section copy without its concurrency revision."""
+
+    comparable = copy.deepcopy(dict(values))
+    comparable.pop(revision_key, None)
+    return comparable
+
+
+def replace_revisioned_settings_section_to_cli_config(
+    section: str,
+    values: Mapping[str, Any],
+    *,
+    expected_revision: int,
+    revision_key: str = "revision",
+) -> ConfigMutationResult:
+    """Atomically replace one top-level revisioned configuration section.
+
+    A missing or structurally malformed section has revision zero, allowing an
+    explicit owner to recover only its own section. The comparison, whole
+    section replacement, atomic file write, and cache publication all occur
+    while the existing process lock and a stable private interprocess lock are
+    held.
+
+    Args:
+        section: Exact top-level section owned by the caller.
+        values: Complete replacement section, including its next revision.
+        expected_revision: Revision observed by the caller.
+        revision_key: Key carrying the persisted section revision.
+
+    Returns:
+        A mutation result with ``conflict=True`` when the observed revision is
+        stale. Invalid transitions fail before replacement.
+    """
+
+    try:
+        if type(section) is not str or not section or "." in section:
+            raise ValueError("Revisioned section must be a top-level name")
+        if not isinstance(values, Mapping):
+            raise TypeError("Revisioned section values must be a mapping")
+        if type(revision_key) is not str or not revision_key:
+            raise ValueError("Revision key must be a non-empty string")
+        validated_expected = _valid_nonnegative_revision(expected_revision)
+        if validated_expected is None:
+            raise ValueError("Expected revision must be a nonnegative integer")
+        replacement = copy.deepcopy(dict(values))
+        replacement_revision = _valid_nonnegative_revision(
+            replacement.get(revision_key)
+        )
+        if replacement_revision != validated_expected + 1:
+            raise ValueError("Replacement revision must advance by exactly one")
+        config_path = _get_effective_config_path()
+    except Exception as error:
+        logger.error(
+            "Revisioned configuration replacement failed "
+            "(phase=validation, section={}, error_type={}).",
+            section if isinstance(section, str) else "invalid",
+            type(error).__name__,
+        )
+        return ConfigMutationResult(False, False, "before_replace")
+
+    with ExitStack() as locks:
+        try:
+            locks.enter_context(_config_write_lock(config_path))
+        except Exception as error:
+            logger.error(
+                "Revisioned configuration replacement failed "
+                "(phase=lock, section={}, error_type={}).",
+                section,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
+        try:
+            config_data = _read_raw_cli_config_unlocked(config_path)
+        except Exception as error:
+            logger.error(
+                "Revisioned configuration replacement failed "
+                "(phase=read, section={}, error_type={}).",
+                section,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
+
+        current = config_data.get(section)
+        current_revision = 0
+        current_revision_is_valid = False
+        if isinstance(current, Mapping):
+            parsed_revision = _valid_nonnegative_revision(current.get(revision_key))
+            if parsed_revision is not None:
+                current_revision = parsed_revision
+                current_revision_is_valid = True
+        if current_revision != validated_expected:
+            logger.info(
+                "Revisioned configuration replacement rejected stale writer: "
+                "section={}, expected_revision={}, current_revision={}",
+                section,
+                validated_expected,
+                current_revision,
+            )
+            return ConfigMutationResult(False, False, None, conflict=True)
+
+        if (
+            current_revision_is_valid
+            and isinstance(current, Mapping)
+            and _without_revision(
+                current,
+                revision_key,
+            )
+            == _without_revision(replacement, revision_key)
+        ):
+            return ConfigMutationResult(False, False, None)
+
+        config_data[section] = replacement
+        try:
+            persisted = _config_data_for_persistence(config_data)
+            _write_raw_cli_config_unlocked(config_path, persisted)
+        except Exception as error:
+            logger.error(
+                "Revisioned configuration replacement failed "
+                "(phase=before_replace, section={}, error_type={}).",
+                section,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
+
+        try:
+            _publish_runtime_config_unlocked()
+        except Exception as error:
+            logger.error(
+                "Revisioned configuration replacement failed "
+                "(phase=cache_reload, section={}, error_type={}).",
+                section,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(True, False, "cache_reload")
+
+        return ConfigMutationResult(True, True, None)
 
 
 def _delete_config_keys(
@@ -4270,6 +4487,7 @@ def _delete_config_keys(
                 changed = True
     return changed
 
+
 def _validate_config_mutation_targets(
     section_values: Mapping[str, Mapping[Any, Any]],
     delete_keys: Mapping[str, Collection[str]],
@@ -4285,6 +4503,10 @@ def _validate_config_mutation_targets(
     for section, values in section_values.items():
         if not isinstance(section, str) or not section:
             raise TypeError("Configuration sections must be non-empty strings")
+        if section.partition(".")[0] in _REVISION_OWNED_CONFIG_SECTIONS:
+            raise ValueError(
+                "Revision-owned configuration requires its dedicated writer"
+            )
         if not isinstance(values, Mapping):
             raise TypeError("Configuration section values must be mappings")
         for key in values:
@@ -4294,6 +4516,10 @@ def _validate_config_mutation_targets(
     for section, keys in delete_keys.items():
         if not isinstance(section, str) or not section:
             raise TypeError("Configuration sections must be non-empty strings")
+        if section.partition(".")[0] in _REVISION_OWNED_CONFIG_SECTIONS:
+            raise ValueError(
+                "Revision-owned configuration requires its dedicated writer"
+            )
         if isinstance(keys, (str, bytes)) or not isinstance(keys, Collection):
             raise TypeError("Configuration delete keys must be collections")
         for key in keys:
@@ -4323,7 +4549,17 @@ def apply_settings_mutation_to_cli_config(
         )
         return ConfigMutationResult(False, False, "before_replace")
 
-    with _config_file_lock():
+    with ExitStack() as locks:
+        try:
+            locks.enter_context(_config_write_lock(config_path))
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=lock, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
         try:
             _validate_config_mutation_targets(section_values, requested_deletes)
             logged_keys = {
@@ -4806,7 +5042,7 @@ def enable_config_encryption(password: str) -> bool:
     """
     try:
         config_path = get_cli_config_path()
-        with _config_file_lock():
+        with _config_write_lock(config_path):
             config_data = _read_raw_cli_config_unlocked(config_path)
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
             _write_raw_cli_config_unlocked(config_path, encrypted_config)
@@ -4833,7 +5069,7 @@ def disable_config_encryption(password: str) -> bool:
     """
     try:
         config_path = get_cli_config_path()
-        with _config_file_lock():
+        with _config_write_lock(config_path):
             config_data = _read_raw_cli_config_unlocked(config_path)
             encryption_config = config_data.get("encryption", {})
             if encryption_config.get("enabled", False):
@@ -4874,7 +5110,7 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     try:
         config_path = get_cli_config_path()
-        with _config_file_lock():
+        with _config_write_lock(config_path):
             config_data = _read_raw_cli_config_unlocked(config_path)
             encryption_config = config_data.get("encryption", {})
             if not encryption_config.get("enabled", False):
@@ -5076,9 +5312,10 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
-    return _get_custom_database_path(
-        "chachanotes_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+    return (
+        _get_custom_database_path("chachanotes_db_path")
+        or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+    )
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -5112,9 +5349,10 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_prompts.db"
-    return _get_custom_database_path(
-        "prompts_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_prompts.db"
+    return (
+        _get_custom_database_path("prompts_db_path")
+        or get_user_data_dir() / "tldw_chatbook_prompts.db"
+    )
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -5133,72 +5371,84 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / "tldw_chatbook_media_v2.db"
-    return _get_custom_database_path(
-        "media_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_media_v2.db"
+    return (
+        _get_custom_database_path("media_db_path")
+        or get_user_data_dir() / "tldw_chatbook_media_v2.db"
+    )
 
 
 def get_library_collections_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_collections_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_library_collections.db"
+    return (
+        _get_custom_database_path("library_collections_db_path")
+        or get_user_data_dir() / "tldw_chatbook_library_collections.db"
+    )
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_ingest_jobs_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+    return (
+        _get_custom_database_path("library_ingest_jobs_db_path")
+        or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+    )
 
 
 def get_workspaces_db_path() -> Path:
-    return _get_custom_database_path(
-        "workspaces_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_workspaces.db"
+    return (
+        _get_custom_database_path("workspaces_db_path")
+        or get_user_data_dir() / "tldw_chatbook_workspaces.db"
+    )
 
 
 def get_subscriptions_db_path() -> Path:
-    return _get_custom_database_path(
-        "subscriptions_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+    return (
+        _get_custom_database_path("subscriptions_db_path")
+        or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+    )
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return _get_custom_database_path(
-        "evals_db_path"
-    ) or get_user_data_dir() / "evals.db"
+    return (
+        _get_custom_database_path("evals_db_path") or get_user_data_dir() / "evals.db"
+    )
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return _get_custom_database_path(
-        "rag_indexing_db_path"
-    ) or get_user_data_dir() / "rag_indexing.db"
+    return (
+        _get_custom_database_path("rag_indexing_db_path")
+        or get_user_data_dir() / "rag_indexing.db"
+    )
 
 
 def get_notifications_db_path() -> Path:
-    return _get_custom_database_path(
-        "notifications_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_notifications.db"
+    return (
+        _get_custom_database_path("notifications_db_path")
+        or get_user_data_dir() / "tldw_chatbook_notifications.db"
+    )
 
 
 def get_research_db_path() -> Path:
-    return _get_custom_database_path(
-        "research_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_research.db"
+    return (
+        _get_custom_database_path("research_db_path")
+        or get_user_data_dir() / "tldw_chatbook_research.db"
+    )
 
 
 def get_writing_db_path() -> Path:
-    return _get_custom_database_path(
-        "writing_db_path"
-    ) or get_user_data_dir() / "tldw_chatbook_writing.db"
+    return (
+        _get_custom_database_path("writing_db_path")
+        or get_user_data_dir() / "tldw_chatbook_writing.db"
+    )
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return _get_custom_database_path(
-        "scheduled_tasks_db_path",
-        expand_before_validation=False,
-    ) or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    return (
+        _get_custom_database_path(
+            "scheduled_tasks_db_path",
+            expand_before_validation=False,
+        )
+        or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    )
 
 
 def get_cli_log_file_path() -> Path:

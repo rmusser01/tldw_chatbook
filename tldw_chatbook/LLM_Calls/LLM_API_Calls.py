@@ -24,6 +24,7 @@
 # Import necessary libraries
 import json
 import time
+from collections.abc import Mapping
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -44,9 +45,22 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot, load_settings
+from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.config import (
+    get_cli_setting,
+    get_runtime_config_snapshot,
+    load_settings,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    llm_content_byte_count,
+    llm_retry_count,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+    safe_llm_url_host,
+)
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -509,6 +523,7 @@ def chat_with_openai(
     reasoning_summary: Optional[str] = None,
     verbosity: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the OpenAI API.
@@ -542,7 +557,27 @@ def chat_with_openai(
         custom_prompt_arg: Legacy, largely ignored.
     """
     loaded_config_data = load_settings()
-    openai_config = loaded_config_data.get("openai_api", {})
+    legacy_openai_config = loaded_config_data.get("openai_api", {})
+    api_settings = loaded_config_data.get("api_settings", {})
+    canonical_openai_config = (
+        api_settings.get("openai", {}) if isinstance(api_settings, Mapping) else {}
+    )
+    openai_config = (
+        dict(legacy_openai_config) if isinstance(legacy_openai_config, Mapping) else {}
+    )
+    if isinstance(canonical_openai_config, Mapping):
+        # Speech Settings owns the canonical credential, while the canonical
+        # provider table may also contain defaults for unrelated chat axes.
+        # Overlay only connection-owned values so moving the credential does
+        # not silently change established model or sampling behavior.
+        for key in ("api_key", "api_base_url"):
+            if key in canonical_openai_config:
+                openai_config[key] = canonical_openai_config[key]
+    if not openai_config.get("api_key") and isinstance(legacy_openai_config, Mapping):
+        # The legacy projection resolves environment-backed credentials.
+        # Keep that resolved value when the canonical table intentionally
+        # stores only api_key_env_var or an empty local fallback.
+        openai_config["api_key"] = legacy_openai_config.get("api_key")
 
     final_api_key = api_key or openai_config.get("api_key")
     if not final_api_key:
@@ -693,9 +728,10 @@ def chat_with_openai(
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = (
-        openai_config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
-        + api_path
-    )
+        api_base_url
+        or openai_config.get("api_base_url")
+        or builtin_provider_endpoint("openai", openai_config)
+    ).rstrip("/") + api_path
 
     start_time = time.time()
     log_counter(
@@ -789,7 +825,7 @@ def chat_with_openai(
             )  # Ensure float
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],  # Changed from method_whitelist
@@ -877,11 +913,16 @@ def chat_with_openai(
         )
 
         if e.response is not None:
+            error_detail = str(safe_llm_error_detail(e.response.text))
             logger.error(
-                f"OpenAI Full Error Response (status {e.response.status_code}): {e.response.text}"
+                "OpenAI request failed; "
+                f"status={e.response.status_code}; detail={error_detail}"
             )
         else:
-            logger.error(f"OpenAI HTTPError with no response object: {e}")
+            logger.error(
+                "OpenAI HTTPError with no response object; "
+                f"error_type={safe_llm_exception_message(e)}"
+            )
         raise
         # if e.response is not None:
         #     error_content_text = e.response.text
@@ -905,7 +946,11 @@ def chat_with_openai(
             duration,
             labels={"model": final_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"OpenAI RequestException: {e}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"OpenAI RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(f"OpenAI RequestException: {error_detail}")
         raise
     except Exception as e:  # Catch any other unexpected error
         # Log unexpected error metrics
@@ -914,10 +959,15 @@ def chat_with_openai(
             "openai_api_error",
             labels={"model": final_model, "error_type": "unexpected"},
         )
-        logger.opt(exception=True).error(
-            f"OpenAI: Unexpected error in chat_with_openai: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"OpenAI: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="openai", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
 def _anthropic_block_index(event: dict) -> int | None:
@@ -1090,6 +1140,7 @@ def chat_with_anthropic(
     # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """Call the Anthropic Messages API (streaming or non-streaming).
 
@@ -1413,9 +1464,10 @@ def chat_with_anthropic(
         }
 
     api_url = (
-        anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
-        + "/messages"
-    )
+        api_base_url
+        or anthropic_config.get("api_base_url")
+        or builtin_provider_endpoint("anthropic", anthropic_config)
+    ).rstrip("/") + "/messages"
     logger.debug(
         "Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -1430,7 +1482,7 @@ def chat_with_anthropic(
         retry_count = int(anthropic_config.get("api_retries", 3))
         retry_delay = float(anthropic_config.get("api_retry_delay", 1))
         retry_strategy = Retry(
-            total=retry_count,
+            total=llm_retry_count(retry_count),
             backoff_factor=retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
@@ -1502,7 +1554,9 @@ def chat_with_anthropic(
                         "created": created_ts,
                         "model": current_model,
                         "choices": [],
-                        "usage": dict(usage if usage is not None else usage_accumulator),
+                        "usage": dict(
+                            usage if usage is not None else usage_accumulator
+                        ),
                     }
                     return f"data: {json.dumps(sse_chunk)}\n\n"
 
@@ -1779,9 +1833,11 @@ def chat_with_anthropic(
             return normalized_response
 
     except requests.exceptions.HTTPError as e:
-        # ... (error handling from your file, ensure provider is "anthropic") ...
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else "No response text"
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
 
         # Log error metrics
         duration = time.time() - start_time
@@ -1830,8 +1886,11 @@ def chat_with_anthropic(
             duration,
             labels={"model": current_model, "error_type": "network_error"},
         )
+        error_text = safe_llm_exception_message(e)
         raise ChatProviderError(
-            provider="anthropic", message=f"Network error: {str(e)}", status_code=504
+            provider="anthropic",
+            message=f"Network error: {error_text}",
+            status_code=504,
         ) from e
     except Exception as e:
         # Log unexpected error metrics
@@ -1845,8 +1904,16 @@ def chat_with_anthropic(
             duration,
             labels={"model": current_model, "error_type": "unexpected_error"},
         )
-        logger.opt(exception=True).error(f"Anthropic: Unexpected error: {e}")
-        raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
+        error_text = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Anthropic: Unexpected error: {error_text}")
+        else:
+            logger.opt(exception=True).error(
+                f"Anthropic: Unexpected error: {error_text}"
+            )
+        raise ChatProviderError(
+            provider="anthropic", message=f"Unexpected error: {error_text}"
+        ) from e
 
 
 def _cohere_tools_payload(tools: list) -> list:
@@ -2020,6 +2087,7 @@ def chat_with_cohere(
     custom_prompt_arg: Optional[
         str
     ] = None,  # Kept for legacy, but focus on structured input
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
@@ -2047,9 +2115,11 @@ def chat_with_cohere(
     log_counter(
         "cohere_api_request", labels={"model": final_model, "streaming": str(streaming)}
     )
-    api_base_url = cohere_config.get("api_base_url", "https://api.cohere.com").rstrip(
-        "/"
-    )
+    api_base_url = (
+        api_base_url
+        or cohere_config.get("api_base_url")
+        or builtin_provider_endpoint("cohere", cohere_config)
+    ).rstrip("/")
     # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
     # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
     # lived outside the history model, and there were no call ids. v2 is
@@ -2086,7 +2156,8 @@ def chat_with_cohere(
         sys_content = sys_msg.get("content") or ""
         cohere_messages.append({"role": "system", "content": str(sys_content)})
         logger.debug(
-            f"Cohere: Using leading system message as v2 system entry: '{str(sys_content)[:100]}...'"
+            "Cohere: Using leading system message as v2 system entry; "
+            f"content_bytes={llm_content_byte_count(sys_content)}"
         )
 
     # task-267 Task 2: role="tool" history and assistant tool_calls echoes
@@ -2217,8 +2288,13 @@ def chat_with_cohere(
             f"Cohere: 'num_generations' ({num_generations}) is v1-only and has no v2 equivalent; dropping."
         )
 
-    logger.debug(f"Cohere Request Payload: {json.dumps(payload, indent=2)}")
-    logger.debug(f"Cohere Request URL: {COHERE_CHAT_URL}")
+    logger.debug(
+        "Cohere request metadata: "
+        f"model={final_model}; streaming={bool(streaming)}; "
+        f"message_count={len(cohere_messages)}; "
+        f"content_bytes={llm_content_byte_count(cohere_messages)}"
+    )
+    logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
     session = requests.Session()
@@ -2228,7 +2304,7 @@ def chat_with_cohere(
     )  # Ensure float for backoff_factor
 
     retry_strategy = Retry(
-        total=retry_count,
+        total=llm_retry_count(retry_count),
         backoff_factor=retry_delay,
         status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
         allowed_methods=["POST"],  # Retry only for POST requests
@@ -2474,7 +2550,9 @@ def chat_with_cohere(
             response.raise_for_status()  # Will raise HTTPError for bad responses (4xx or 5xx) after retries
             response_data = response.json()
             logger.debug(
-                f"Cohere non-streaming response data: {json.dumps(response_data, indent=2)}"
+                "Cohere non-streaming response metadata: "
+                f"status={response.status_code}; "
+                f"content_bytes={llm_content_byte_count(response_data)}"
             )
 
             # ---- v2 response shape ----
@@ -2494,7 +2572,9 @@ def chat_with_cohere(
             )
             if not message:
                 logger.warning(
-                    f"Cohere non-streaming response missing 'message': {response_data}"
+                    "Cohere non-streaming response missing 'message'; "
+                    f"response_type={type(response_data).__name__}; "
+                    f"content_bytes={llm_content_byte_count(response_data)}"
                 )
 
             raw_finish_reason = response_data.get("finish_reason")
@@ -2589,9 +2669,14 @@ def chat_with_cohere(
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
-        error_text = getattr(e.response, "text", str(e))
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logger.error(
-            f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}"
+            "Cohere API call failed; "
+            f"host={safe_llm_url_host(COHERE_CHAT_URL)}; "
+            f"status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -2633,9 +2718,16 @@ def chat_with_cohere(
     except (
         requests.exceptions.RequestException
     ) as e:  # Includes ReadTimeout, ConnectionError etc.
-        logger.opt(exception=True).error(
-            f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "Cohere API request failed; reason=network_error; "
+            f"host={safe_llm_url_host(COHERE_CHAT_URL)}; "
+            f"error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -2651,11 +2743,18 @@ def chat_with_cohere(
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(
             provider="cohere",
-            message=f"Network error after retries: {e}",
+            message=f"Network error after retries: {error_detail}",
             status_code=504,
         )  # 504 for gateway timeout like
     except Exception as e:
-        logger.opt(exception=True).error(f"Cohere API call: Unexpected error: {e}")
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            f"Cohere API call failed; reason=unexpected; error_type={error_detail}"
+        )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -2670,7 +2769,8 @@ def chat_with_cohere(
         )
         if not isinstance(e, ChatAPIError):
             raise ChatAPIError(
-                provider="cohere", message=f"Unexpected error in Cohere API call: {e}"
+                provider="cohere",
+                message=f"Unexpected error in Cohere API call: {error_detail}",
             )
         else:
             raise
@@ -2702,6 +2802,7 @@ def chat_with_deepseek(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,  # If supported
     logit_bias: Optional[Dict[str, float]] = None,  # If supported
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -2791,9 +2892,10 @@ def chat_with_deepseek(
         data["logit_bias"] = logit_bias
 
     api_url = (
-        deepseek_config.get("api_base_url", "https://api.deepseek.com").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url
+        or deepseek_config.get("api_base_url")
+        or builtin_provider_endpoint("deepseek", deepseek_config)
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -2845,7 +2947,7 @@ def chat_with_deepseek(
             # ... (non-streaming, retry) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(deepseek_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(deepseek_config.get("api_retries", 3))),
                     backoff_factor=float(deepseek_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -3014,6 +3116,7 @@ def chat_with_google(
     response_format: Optional[Dict[str, str]] = None,  # for response_mime_type
     tools: Optional[List[Dict[str, Any]]] = None,  # Gemini 'tools' config
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     loaded_config_data = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -3198,20 +3301,27 @@ def chat_with_google(
     stream_suffix = (
         ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     )
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
+    google_api_base = (
+        api_base_url
+        or google_config.get("api_base_url")
+        or builtin_provider_endpoint("google", google_config)
+    ).rstrip("/")
+    api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
     logger.debug(
         "Google Gemini Request Payload (excluding contents): {k: v for k,v in payload.items() if k != 'contents'}"
     )
     logger.debug(
-        f"Google Gemini Contents (first item parts): {payload.get('contents', [{}])[0].get('parts', [])[:2] if payload.get('contents') else 'No contents'}"
+        "Google Gemini request content metadata: "
+        f"message_count={len(gemini_contents)}; "
+        f"content_bytes={llm_content_byte_count(gemini_contents)}"
     )
 
     response = None  # Initialize response to None for the finally block
     try:
         adapter = HTTPAdapter(
             max_retries=Retry(
-                total=int(google_config.get("api_retries", 3)),
+                total=llm_retry_count(int(google_config.get("api_retries", 3))),
                 backoff_factor=float(google_config.get("api_retry_delay", 1)),
                 status_forcelist=[429, 500, 503],
                 allowed_methods=["POST"],
@@ -3539,9 +3649,13 @@ def chat_with_google(
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else "No response text"
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logger.error(
-            f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}"
+            "Google Gemini API call failed; "
+            f"status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -3560,6 +3674,11 @@ def chat_with_google(
             labels={"model": current_model, "status_code": str(status_code)},
         )
         if status_code == 400:
+            if is_sensitive_llm_request():
+                raise ChatBadRequestError(
+                    provider="google",
+                    message=f"Bad request ({status_code}). Detail: {error_text[:200]}",
+                ) from e
             try:
                 error_json = e.response.json()
                 detail = error_json.get("error", {}).get("message", error_text)
@@ -3609,11 +3728,17 @@ def chat_with_google(
             duration,
             labels={"model": current_model, "error_type": "network_error"},
         )
+        error_detail = safe_llm_exception_message(e)
         raise ChatProviderError(
-            provider="google", message=f"Network error: {str(e)}", status_code=504
+            provider="google", message=f"Network error: {error_detail}", status_code=504
         ) from e
     except Exception as e:
-        logger.opt(exception=True).error(f"Google Gemini: Unexpected error: {e}")
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Google Gemini: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -3631,7 +3756,7 @@ def chat_with_google(
             raise
         else:
             raise ChatProviderError(
-                provider="google", message=f"Unexpected error: {str(e)}"
+                provider="google", message=f"Unexpected error: {error_detail}"
             ) from e
     finally:
         # If streaming, the response object is closed inside stream_generator's finally.
@@ -3683,6 +3808,7 @@ def chat_with_groq(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -3769,9 +3895,10 @@ def chat_with_groq(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        groq_config.get("api_base_url", "https://api.groq.com/openai/v1").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url
+        or groq_config.get("api_base_url")
+        or builtin_provider_endpoint("groq", groq_config)
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -3830,7 +3957,7 @@ def chat_with_groq(
             retry_count = int(groq_config.get("api_retries", 3))  # ... retry setup ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=retry_count,
+                    total=llm_retry_count(retry_count),
                     backoff_factor=float(groq_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -3940,6 +4067,7 @@ def chat_with_huggingface(
     logprobs: Optional[bool] = None,  # OpenAI compatible name
     top_logprobs: Optional[int] = None,  # OpenAI compatible name
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
@@ -3987,11 +4115,11 @@ def chat_with_huggingface(
         # This format explicitly puts the model in the URL path.
         # User must ensure router_base_url and model_id result in a valid endpoint.
         router_base = _optional_config_string(
-            hf_config.get(
-                "router_base_url",
-                hf_config.get("huggingface_router_base_url"),
+            api_base_url
+            or hf_config.get(
+                "router_base_url", hf_config.get("huggingface_router_base_url")
             ),
-            default="https://router.huggingface.co/hf-inference",
+            default=builtin_provider_endpoint("huggingface", hf_config) or "",
         ).rstrip("/")
         chat_path = _optional_config_string(
             hf_config.get("api_chat_path"), "v1/chat/completions"
@@ -4005,10 +4133,13 @@ def chat_with_huggingface(
         else:
             api_url = f"{router_base}/models/{model_path_part}/{chat_path}"
         logger.info(
-            f"HuggingFace: Using explicit 'use_router_url_format=true'. Target URL: {api_url}"
+            "HuggingFace: Using explicit 'use_router_url_format=true'. "
+            f"Target host: {safe_llm_url_host(api_url)}"
         )
     else:  # use_router_url_format is false, standard URL construction
-        configured_api_base_url = _optional_config_string(hf_config.get("api_base_url"))
+        configured_api_base_url = _optional_config_string(
+            api_base_url or hf_config.get("api_base_url")
+        )
         # Default chat path can be just "chat/completions" if base_url includes /v1, or "v1/chat/completions" if not.
         # Let's make the default api_chat_path more flexible.
         # If using the public HF API, base is /v1 and path is chat/completions.
@@ -4036,20 +4167,21 @@ def chat_with_huggingface(
             else:
                 api_url = f"{configured_api_base}/{chat_completions_path}"
             logger.info(
-                f"HuggingFace: Using configured 'api_base_url' ('{configured_api_base_url}') and 'api_chat_path' ('{chat_completions_path}'). Target URL: {api_url}. Model is in payload."
+                "HuggingFace: Using configured endpoint; "
+                f"host={safe_llm_url_host(api_url)}; model_in_payload=true."
             )
         else:
             # Fallback if no api_base_url is configured.
             # Use the public Hugging Face Inference API endpoint for OpenAI-like chat completions.
-            default_hf_api_base = (
-                "https://api-inference.huggingface.co/v1"  # Base includes /v1
-            )
+            default_hf_api_base = builtin_provider_endpoint("huggingface", hf_config)
             default_chat_path_for_api_inference = (
                 "chat/completions"  # Path relative to /v1 base
             )
             api_url = f"{default_hf_api_base.rstrip('/')}/{default_chat_path_for_api_inference}"
             logger.warning(
-                f"HuggingFace: 'api_base_url' not configured. Defaulting to public Inference API endpoint: {api_url}. Model is in payload."
+                "HuggingFace: 'api_base_url' not configured. "
+                f"Defaulting to host={safe_llm_url_host(api_url)}; "
+                "model_in_payload=true."
             )
     # --- End URL Construction ---
 
@@ -4143,10 +4275,19 @@ def chat_with_huggingface(
     # Remove None values from payload before sending, common practice
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    logger.debug(
-        f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
-    )
-    if "tools" in payload:
+    if is_sensitive_llm_request():
+        logger.debug(
+            "HuggingFace request metadata: "
+            f"model={final_model_for_payload}; "
+            f"streaming={final_streaming_payload_val}; "
+            f"message_count={len(api_messages)}; "
+            f"content_bytes={llm_content_byte_count(api_messages)}"
+        )
+    else:
+        logger.debug(
+            f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
+        )
+    if "tools" in payload and not is_sensitive_llm_request():
         logger.debug(f"HuggingFace Tools: {payload['tools']}")
     redacted_headers = {
         key: "<redacted>" if key.lower() == "authorization" else value
@@ -4160,7 +4301,10 @@ def chat_with_huggingface(
 
     try:
         if final_streaming_payload_val:  # Check the boolean intended for payload
-            logger.debug(f"HuggingFace: Posting streaming request to {api_url}")
+            logger.debug(
+                "HuggingFace: Posting streaming request to "
+                f"host={safe_llm_url_host(api_url)}"
+            )
             # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
             response = requests.post(
                 api_url,
@@ -4233,10 +4377,13 @@ def chat_with_huggingface(
 
             return stream_generator_huggingface()
         else:  # Non-streaming
-            logger.debug(f"HuggingFace: Posting non-streaming request to {api_url}")
+            logger.debug(
+                "HuggingFace: Posting non-streaming request to "
+                f"host={safe_llm_url_host(api_url)}"
+            )
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(hf_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(hf_config.get("api_retries", 3))),
                     backoff_factor=float(hf_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=[
@@ -4296,9 +4443,14 @@ def chat_with_huggingface(
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
-        error_text = getattr(e.response, "text", str(e))
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
+        endpoint_copy = safe_llm_url_host(api_url)
         logger.error(
-            f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}"
+            "HuggingFace API call failed; "
+            f"host={endpoint_copy}; status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -4324,7 +4476,7 @@ def chat_with_huggingface(
         elif status_code == 404:  # Specifically handle 404 for URL/model issues
             raise ChatBadRequestError(
                 provider="huggingface",
-                message=f"Endpoint or Model not found (404) at {api_url}. Detail: {error_text[:200]}",
+                message=f"Endpoint or Model not found (404) at {endpoint_copy}. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
             raise ChatRateLimitError(
@@ -4334,20 +4486,27 @@ def chat_with_huggingface(
         elif 400 <= status_code < 500:  # Other 4xx
             raise ChatBadRequestError(
                 provider="huggingface",
-                message=f"Bad request (Status {status_code}) to {api_url}. Detail: {error_text[:200]}",
+                message=f"Bad request (Status {status_code}) to {endpoint_copy}. Detail: {error_text[:200]}",
             )
         else:  # 5xx
             raise ChatProviderError(
                 provider="huggingface",
-                message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}",
+                message=f"Server error (Status {status_code}) from {endpoint_copy}. Detail: {error_text[:200]}",
                 status_code=status_code,
             )
     except (
         requests.exceptions.RequestException
     ) as e:  # Covers DNS, Connection, Timeout errors
-        logger.opt(exception=True).error(
-            f"HuggingFace API request failed to {api_url} (network error): {e}"
+        endpoint_copy = safe_llm_url_host(api_url)
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "HuggingFace API request failed; reason=network_error; "
+            f"host={endpoint_copy}; error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -4362,13 +4521,20 @@ def chat_with_huggingface(
         )
         raise ChatProviderError(
             provider="huggingface",
-            message=f"Network error connecting to {api_url}: {e}",
+            message=f"Network error connecting to {endpoint_copy}: {error_detail}",
             status_code=504,
         )  # 504 for timeout/gateway like
     except Exception as e:
-        logger.opt(exception=True).error(
-            f"HuggingFace API call to {api_url}: Unexpected error: {e}"
+        endpoint_copy = safe_llm_url_host(api_url)
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "HuggingFace API call failed; reason=unexpected; "
+            f"host={endpoint_copy}; error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -4384,7 +4550,7 @@ def chat_with_huggingface(
         if not isinstance(e, ChatAPIError):  # Avoid re-wrapping known chat errors
             raise ChatAPIError(
                 provider="huggingface",
-                message=f"Unexpected error in HuggingFace API call: {e}",
+                message=f"Unexpected error in HuggingFace API call: {error_detail}",
             )
         else:
             raise  # Re-raise if it's already a ChatAPIError subtype
@@ -4406,6 +4572,7 @@ def chat_with_mistral(
     tool_choice: Optional[str] = None,
     response_format: Optional[Dict[str, str]] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -4493,9 +4660,10 @@ def chat_with_mistral(
         data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = (
-        mistral_config.get("api_base_url", "https://api.mistral.ai/v1").rstrip("/")
-        + "/chat/completions"
-    )
+        api_base_url
+        or mistral_config.get("api_base_url")
+        or builtin_provider_endpoint("mistralai", mistral_config)
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -4541,7 +4709,7 @@ def chat_with_mistral(
             # ... (non-streaming, retry) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(mistral_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(mistral_config.get("api_retries", 3))),
                     backoff_factor=float(mistral_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -4649,6 +4817,7 @@ def chat_with_openrouter(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
@@ -4739,11 +4908,10 @@ def chat_with_openrouter(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        openrouter_config.get("api_base_url", "https://openrouter.ai/api/v1").rstrip(
-            "/"
-        )
-        + "/chat/completions"
-    )
+        api_base_url
+        or openrouter_config.get("api_base_url")
+        or builtin_provider_endpoint("openrouter", openrouter_config)
+    ).rstrip("/") + "/chat/completions"
     logger.debug(
         "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
     )
@@ -4790,7 +4958,7 @@ def chat_with_openrouter(
             # ... (retry setup) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(openrouter_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(openrouter_config.get("api_retries", 3))),
                     backoff_factor=float(openrouter_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -4895,6 +5063,7 @@ def chat_with_moonshot(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     user: Optional[str] = None,  # User identifier
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Moonshot AI API.
@@ -5113,13 +5282,14 @@ def chat_with_moonshot(
     )
 
     # Determine API endpoint based on config (default to international)
-    api_region = moonshot_config.get("api_region", "international").lower()
-    if api_region == "china":
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.cn/v1")
+    if api_base_url:
+        effective_api_base_url = api_base_url
     else:
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.ai/v1")
+        effective_api_base_url = moonshot_config.get(
+            "api_base_url"
+        ) or builtin_provider_endpoint("moonshot", moonshot_config)
 
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
     start_time = time.time()
     log_counter(
@@ -5181,7 +5351,7 @@ def chat_with_moonshot(
             retry_delay = float(moonshot_config.get("api_retry_delay", 1.0))
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],
@@ -5259,11 +5429,16 @@ def chat_with_moonshot(
         )
 
         if e.response is not None:
+            error_detail = str(safe_llm_error_detail(e.response.text))
             logger.error(
-                f"Moonshot Full Error Response (status {e.response.status_code}): {e.response.text}"
+                "Moonshot request failed; "
+                f"status={e.response.status_code}; detail={error_detail}"
             )
         else:
-            logger.error(f"Moonshot HTTPError with no response object: {e}")
+            logger.error(
+                "Moonshot HTTPError with no response object; "
+                f"error_type={safe_llm_exception_message(e)}"
+            )
         raise
     except requests.exceptions.RequestException as e:
         # Log network error metrics
@@ -5277,7 +5452,13 @@ def chat_with_moonshot(
             duration,
             labels={"model": final_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"Moonshot RequestException: {e}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Moonshot RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(
+                f"Moonshot RequestException: {error_detail}"
+            )
         raise
     except Exception as e:
         # Log unexpected error metrics
@@ -5286,10 +5467,15 @@ def chat_with_moonshot(
             "moonshot_api_error",
             labels={"model": final_model, "error_type": "unexpected"},
         )
-        logger.opt(exception=True).error(
-            f"Moonshot: Unexpected error in chat_with_moonshot: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Moonshot: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="moonshot", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
 
 
 def chat_with_zai(
@@ -5306,6 +5492,7 @@ def chat_with_zai(
     do_sample: Optional[bool] = None,
     request_id: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Z.AI API.
@@ -5404,8 +5591,12 @@ def chat_with_zai(
         "Content-Type": "application/json",
     }
 
-    api_base_url = zai_config.get("api_base_url", "https://api.z.ai/api/paas/v4")
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
+    effective_api_base_url = (
+        api_base_url
+        or zai_config.get("api_base_url")
+        or builtin_provider_endpoint("zai", zai_config)
+    )
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
     logger.debug(
         "Z.AI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
@@ -5467,7 +5658,7 @@ def chat_with_zai(
             retry_delay = float(zai_config.get("api_retry_delay", 1.0))
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],
@@ -5524,7 +5715,10 @@ def chat_with_zai(
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else str(e)
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
 
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -5543,7 +5737,7 @@ def chat_with_zai(
         )
 
         logger.error(
-            f"Z.AI Full Error Response (status {status_code}): {error_text[:500]}"
+            f"Z.AI request failed; status={status_code}; detail={error_text[:500]}"
         )
 
         if status_code == 401:
@@ -5578,8 +5772,14 @@ def chat_with_zai(
             duration,
             labels={"model": current_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"Z.AI RequestException: {e}")
-        raise ChatProviderError(provider="zai", message=f"Network error: {str(e)}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Z.AI RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(f"Z.AI RequestException: {error_detail}")
+        raise ChatProviderError(
+            provider="zai", message=f"Network error: {error_detail}"
+        )
 
     except Exception as e:
         # Log unexpected error metrics
@@ -5587,10 +5787,15 @@ def chat_with_zai(
         log_counter(
             "zai_api_error", labels={"model": current_model, "error_type": "unexpected"}
         )
-        logger.opt(exception=True).error(
-            f"Z.AI: Unexpected error in chat_with_zai: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Z.AI: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="zai", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="zai", message=f"Unexpected error: {e}")
 
 
 #

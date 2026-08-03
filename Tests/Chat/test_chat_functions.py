@@ -614,6 +614,77 @@ class TestProviderRequestPayloads:
         assert "max_output_tokens" not in captured["json"]
         assert captured["json"]["tools"] == [tool]
 
+    def test_openai_canonical_endpoint_wins_over_legacy_alias(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "api_settings": {
+                    "openai": {"api_base_url": "https://canonical.test/v1"}
+                },
+                "openai_api": {"api_base_url": "https://legacy.test/v1"},
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-4.1",
+            streaming=False,
+        )
+
+        assert captured["url"] == "https://canonical.test/v1/chat/completions"
+
+    def test_openai_empty_canonical_local_key_keeps_resolved_environment_key(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "api_settings": {
+                    "openai": {
+                        "api_key": "",
+                        "api_key_env_var": "OPENAI_API_KEY",
+                    }
+                },
+                "openai_api": {
+                    "api_key": DUMMY_OPENAI_API_KEY,
+                    "api_base_url": "https://api.openai.test/v1",
+                },
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            model="gpt-4.1",
+            streaming=False,
+        )
+
+        assert captured["headers"]["Authorization"] == (
+            f"Bearer {DUMMY_OPENAI_API_KEY}"
+        )
+
     def test_gpt_5_6_none_reasoning_effort_uses_chat_completions(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 

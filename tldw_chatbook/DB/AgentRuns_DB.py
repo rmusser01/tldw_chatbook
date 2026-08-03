@@ -213,6 +213,29 @@ class AgentRunsDB(BaseDB):
                 ),
             )
 
+    def update_change_snapshot_reverted(
+        self, row_id: int, reverted_paths: list[str]
+    ) -> None:
+        """Record which of a snapshot row's paths were reverted (TASK-1974).
+
+        Args:
+            row_id: The ``change_snapshots`` row id.
+            reverted_paths: Paths restored to baseline; appended to any
+                previously recorded set (a second partial revert must not
+                erase the first's record).
+        """
+        with self.transaction() as conn:
+            current = conn.execute(
+                "SELECT reverted FROM change_snapshots WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            existing = json.loads(current["reverted"]) if current and current["reverted"] else []
+            merged = list(dict.fromkeys([*existing, *reverted_paths]))
+            conn.execute(
+                "UPDATE change_snapshots SET reverted = ? WHERE id = ?",
+                (json.dumps(merged), row_id),
+            )
+
     def change_snapshots_for_run(self, run_id: str) -> list[dict]:
         """Return a run's change-snapshot rows, oldest first.
 

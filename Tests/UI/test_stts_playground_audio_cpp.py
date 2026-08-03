@@ -94,6 +94,7 @@ class FakeTTSService:
         self.descriptor_calls = 0
         self.catalog_calls: list[tuple[str, bool]] = []
         self.voice_calls: list[tuple[str, str, bool]] = []
+        self.voice_observation_calls: list[tuple[str, str, bool]] = []
         self.synthesize_calls = 0
         self.revisions = {provider_id: 1 for provider_id in PROVIDER_IDS}
         self.catalogs = {
@@ -204,6 +205,7 @@ class FakeTTSService:
         model_id: str,
         refresh: bool = False,
     ) -> TTSVoiceDiscoveryResult:
+        self.voice_observation_calls.append((provider_id, model_id, refresh))
         voices = await self.get_voices(provider_id, model_id, refresh=refresh)
         catalog = self.catalogs[provider_id]
         model_ids = {model.model_id for model in catalog.models}
@@ -437,6 +439,9 @@ async def test_mount_uses_descriptors_and_resolves_only_selected_provider(
     assert service.voice_calls == [
         ("audio_cpp", "<opaque:model>", False),
     ]
+    assert service.voice_observation_calls == [
+        ("audio_cpp", "<opaque:model>", False),
+    ]
     assert service.synthesize_calls == 0
 
 
@@ -654,6 +659,7 @@ async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
                     await release_first.wait()
                 raise RuntimeError("obsolete refresh failed")
             assert provider_id == "audio_cpp"
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)
@@ -715,6 +721,7 @@ async def test_superseded_catalog_success_cannot_invalidate_newer_success(
                 except asyncio.CancelledError:
                     await release_first.wait()
                 return older_catalog
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)
@@ -860,6 +867,7 @@ async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellati
                     return obsolete_catalog
             second_started.set()
             await release_second.wait()
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)
@@ -1011,8 +1019,11 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         await service.voice_started.wait()
         await pilot.pause()
 
-        assert _option_values(voice_select) == (SERVER_DEFAULT_VOICE_ID,)
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
+        assert _option_values(voice_select) == (
+            SERVER_DEFAULT_VOICE_ID,
+            "[voice]",
+        )
+        assert voice_select.value == "[voice]"
         assert app.notices == notices_before
         assert app.query_one("#tts-generate-btn", Button).disabled is True
 
@@ -1035,7 +1046,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
 
 
 @pytest.mark.asyncio
-async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed(
+async def test_catalog_revision_preserves_exact_voice_removed_by_refresh(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
     service = audio_cpp_playground
@@ -1062,18 +1073,14 @@ async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed
         service.allow_voices.set()
         await app.workers.wait_for_complete()
 
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
-        assert app.notices == [
-            *notices_before,
-            (
-                "Available models or voices changed; a valid selection was chosen",
-                "warning",
-            ),
-        ]
+        assert voice_select.value == "[voice]"
+        assert "[voice]" in _option_values(voice_select)
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert app.notices == notices_before
 
 
 @pytest.mark.asyncio
-async def test_voice_discovery_failure_releases_pending_explicit_voice(
+async def test_voice_discovery_failure_preserves_pending_explicit_voice(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
     service = audio_cpp_playground
@@ -1094,23 +1101,22 @@ async def test_voice_discovery_failure_releases_pending_explicit_voice(
         )
         await app.workers.wait_for_complete()
 
-        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
-        assert app.query_one("#tts-generate-btn", Button).disabled is False
+        assert voice_select.value == "[voice]"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
         assert (
             str(app.query_one("#tts-provider-status", Static).render())
-            == "Voices are unavailable; the provider default remains available"
+            == "Voices are unavailable; the exact selection remains unverified"
         )
 
         app.query_one(TTSPlaygroundWidget).action_generate_tts()
         await pilot.pause()
 
-        assert len(app.generation_events) == 1
-        assert app.generation_events[0].request.voice_id is None
+        assert app.generation_events == []
         assert "untrusted upstream detail" not in str(app.notices)
 
 
 @pytest.mark.asyncio
-async def test_voice_discovery_failure_overrides_configured_explicit_default(
+async def test_voice_discovery_failure_preserves_configured_explicit_default(
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1133,17 +1139,17 @@ async def test_voice_discovery_failure_overrides_configured_explicit_default(
         await pilot.pause()
 
         widget = app.query_one(TTSPlaygroundWidget)
-        assert app.query_one("#tts-voice-select", Select).value == (
-            SERVER_DEFAULT_VOICE_ID
+        assert app.query_one("#tts-voice-select", Select).value == "[voice]"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert (
+            str(app.query_one("#tts-provider-status", Static).render())
+            == "Voices are unavailable; the exact selection remains unverified"
         )
-        assert widget._pending_voice_selections == {}
-        assert app.query_one("#tts-generate-btn", Button).disabled is False
 
         widget.action_generate_tts()
         await pilot.pause()
 
-        assert len(app.generation_events) == 1
-        assert app.generation_events[0].request.voice_id is None
+        assert app.generation_events == []
         assert "untrusted upstream detail" not in str(app.notices)
 
 
@@ -2951,10 +2957,11 @@ async def test_cancelled_profile_name_modal_is_dismissed_without_saving(
         widget = app.query_one(TTSPlaygroundWidget)
         widget._store_delivered_artifact(artifact, announce=False)
         save_button = app.query_one("#audio-save-profile-btn", Button)
-        save_button.scroll_visible(animate=False)
+        save_button.focus()
         await pilot.pause()
 
-        await pilot.click("#audio-save-profile-btn")
+        assert save_button.has_focus
+        await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: isinstance(
