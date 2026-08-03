@@ -9,6 +9,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
@@ -87,6 +88,16 @@ _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 # drift out of sync with that error string's exact punctuation.
 _SUPPORTED_TYPES_ERROR_MARKER = " Supported types:"
 
+# (task-2015) The pipeline historically wrapped stage errors in
+# ``Failed to <verb> <type> file:`` at each layer, producing chains like
+# ``Failed to ingest pdf file: Failed to process pdf file: PDF Extraction
+# Error.``. Only an outer prefix immediately followed by another
+# ``Failed to`` is dropped -- a single prefix carries real information and
+# passes through untouched.
+_NESTED_FAILURE_PREFIX_RE = re.compile(
+    r"^Failed to \w+(?: [\w.+-]+)? file: (?=Failed to )"
+)
+
 
 def short_ingest_error(error: str) -> str:
     """Return the short (queue-row) form of an ingest job's error message.
@@ -109,6 +120,11 @@ def short_ingest_error(error: str) -> str:
         The error up to (excluding) the supported-types marker, right-
         stripped; the whole error when the marker is absent.
     """
+    while True:
+        unwrapped = _NESTED_FAILURE_PREFIX_RE.sub("", error, count=1)
+        if unwrapped == error:
+            break
+        error = unwrapped
     return error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
 
 
@@ -456,6 +472,9 @@ class LibraryIngestCanvasState:
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
     queue_show_clear_finished: bool
+    #: (task-2015) Two-press confirm: the armed label names what a second
+    #: press will destroy; the resting label is plain "Clear finished".
+    queue_clear_finished_label: str
     errors: list[str]
     #: ``True`` when the errors are about the path itself, so the canvas
     #: offers a way to pick a different one instead of a Retry that would
@@ -504,14 +523,21 @@ def _format_elapsed(
             the ``finished_at`` fallback described above.
 
     Returns:
-        ``"0s"`` when ``started_at`` is unknown; otherwise the elapsed
-        duration rendered as ``"Ns"`` under a minute, or ``"Nm Ss"`` at or
-        above a minute.
+        ``""`` when ``started_at`` is unknown (``None`` or the ``0.0``
+        default a restored job carries) -- the caller omits the segment;
+        ``"<1s"`` under one second; otherwise ``"Ns"`` under a minute, or
+        ``"Nm Ss"`` at or above a minute.
     """
-    if started_at is None:
-        return "0s"
+    if not started_at:
+        # No usable base (None, or the 0.0 default a restored job carries):
+        # claiming "0s" would be a lie -- the caller drops the segment.
+        return ""
     end = finished_at if finished_at is not None else now
-    total_seconds = max(0, int(round(end - started_at)))
+    raw = max(0.0, end - started_at)
+    if raw < 1:
+        # (task-2015) A watched sub-second job saying "0s" reads as broken.
+        return "<1s"
+    total_seconds = int(round(raw))
     if total_seconds < 60:
         return f"{total_seconds}s"
     minutes, seconds = divmod(total_seconds, 60)
@@ -531,7 +557,9 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
       ``PARSING`` -> ``WRITING`` transition -- see
       ``LibraryIngestJobRegistry.mark_writing``).
     - queued: ``"● queued · {basename}"``.
-    - done: ``"✓ done · {basename} · {elapsed}"``.
+    - done: ``"✓ done · {basename} · {elapsed}"`` -- elapsed measured from
+      ``submitted_at`` (what the user actually waited, task-2015), the
+      `` · {elapsed}`` segment dropped when no usable timestamp exists.
     - failed: ``"✗ failed · {basename} · {short_error}"``, where
       ``short_error`` (L4, fix batch F1b) drops a trailing
       ``" Supported types: ..."`` tail from ``job.error`` so it is not
@@ -586,11 +614,19 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             error_detail=job.error_detail,
         )
     if job.state == IngestJobState.DONE:
-        elapsed = _format_elapsed(job.started_at, job.finished_at, now=now)
+        # (task-2015) Elapsed is what the user actually waited: submission to
+        # finish. ``started_at`` (parse start) excluded the queue wait, so a
+        # watched multi-second job could claim "0s".
+        elapsed = _format_elapsed(
+            job.submitted_at or job.started_at, job.finished_at, now=now
+        )
+        line = f"{_GLYPH_DONE} done · {basename}"
+        if elapsed:
+            line += f" · {elapsed}"
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_DONE,
-            line=f"{_GLYPH_DONE} done · {basename} · {elapsed}",
+            line=line,
             can_open=job.media_id is not None,
             can_retry=False,
             # A server ingest wrote to the server's library, so there is no
@@ -743,6 +779,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    clear_finished_armed: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -811,18 +848,19 @@ def build_library_ingest_state(
         unavailable_line = MEDIA_DB_UNAVAILABLE_COPY
     else:
         unavailable_line = ""
-    start_enabled = (
-        registry_available and media_db_available and bool(form.path.strip())
-    )
-    # (L3b AB wave, A4) Only render the blank-path nudge when neither
-    # blocking gate line is already showing -- at most one gate line ever
-    # renders at once.
-    start_quiet_line = (
-        START_QUIET_LINE_COPY if not unavailable_line and not form.path.strip() else ""
-    )
     queue_rows = tuple(_build_queue_row(job, now=resolved_now) for job in jobs)
     queue_show_clear_finished = any(
         job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+    )
+    finished_count = sum(
+        1
+        for job in jobs
+        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+    )
+    queue_clear_finished_label = (
+        f"Press again to clear {finished_count} finished"
+        if clear_finished_armed
+        else "Clear finished"
     )
 
     # Pre-flight summary fields. Copy ``type_groups`` so the frozen
@@ -832,12 +870,19 @@ def build_library_ingest_state(
         type_groups = dict(active_preflight.type_groups)
         unsupported_files = list(type_groups.pop("unsupported", []))
         errors = list(active_preflight.errors)
-        type_breakdown_line = build_type_breakdown_line(type_groups)
-        estimate_line = build_estimate_line(
-            active_preflight.total_files,
-            active_preflight.total_size,
-            active_preflight.truncated,
-        )
+        if errors:
+            # (task-2015) A "0 files" estimate or a type breakdown parked
+            # under a path error is noise: error states render the error and
+            # its recovery affordance only.
+            type_breakdown_line = ""
+            estimate_line = ""
+        else:
+            type_breakdown_line = build_type_breakdown_line(type_groups)
+            estimate_line = build_estimate_line(
+                active_preflight.total_files,
+                active_preflight.total_size,
+                active_preflight.truncated,
+            )
         warning_lines = build_warning_lines(active_preflight.warnings)
         errors_are_path_problem = bool(
             errors and getattr(active_preflight, "path_invalid", False)
@@ -857,6 +902,39 @@ def build_library_ingest_state(
     # reachable even when no plain-text files are in the selection.
     if "generic" not in type_groups_list:
         type_groups_list.append("generic")
+
+    # (task-2015) Pre-flight just promised every discovered file will be
+    # recorded as a failure -- letting Start stay enabled invites a
+    # guaranteed-failure submit. ``type_groups`` here is the post-pop dict of
+    # SUPPORTED groups only.
+    nothing_importable = (
+        active_preflight is not None
+        and not errors
+        and active_preflight.total_files > 0
+        and not type_groups
+    )
+    start_enabled = (
+        registry_available
+        and media_db_available
+        and bool(form.path.strip())
+        and not nothing_importable
+    )
+    # (L3b AB wave, A4) At most one gate line ever renders at once: the
+    # unavailable line wins, then the guaranteed-failure explanation, then
+    # the blank-path nudge.
+    if unavailable_line:
+        start_quiet_line = ""
+    elif nothing_importable:
+        count = len(unsupported_files) or active_preflight.total_files
+        noun = "file" if count == 1 else "files"
+        start_quiet_line = (
+            f"Nothing in this selection can be imported — "
+            f"{count} unsupported {noun}."
+        )
+    elif not form.path.strip():
+        start_quiet_line = START_QUIET_LINE_COPY
+    else:
+        start_quiet_line = ""
 
     # Orientation is for an untouched form only: once there is a path or a
     # summary to read, it would just be noise above the real content.
@@ -883,6 +961,7 @@ def build_library_ingest_state(
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,
         queue_show_clear_finished=queue_show_clear_finished,
+        queue_clear_finished_label=queue_clear_finished_label,
         errors=errors,
         errors_are_path_problem=errors_are_path_problem,
         intro_lines=intro_lines,

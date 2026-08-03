@@ -17,6 +17,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_warning_lines,
     clamp_chunk_size,
     parse_keywords,
+    short_ingest_error,
 )
 
 
@@ -235,12 +236,15 @@ def test_done_row_line_format_seconds_only():
 
 
 def test_done_row_line_format_minutes_and_seconds():
+    # (task-2015) Elapsed measures from submission; the fixture's timeline is
+    # submitted -> started -> finished, 125s of user-perceived wait.
     jobs = (
         _job(
             state=IngestJobState.DONE,
             source_path="/tmp/report.txt",
-            started_at=0.0,
-            finished_at=125.0,
+            submitted_at=100.0,
+            started_at=110.0,
+            finished_at=225.0,
             media_id=7,
         ),
     )
@@ -766,8 +770,10 @@ def test_canvas_state_preflight_fields_populated_from_parameter():
         total_files=2,
     )
     state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
-    assert state.type_breakdown_line == "2 PDF documents"
-    assert state.estimate_line == "2 files · 2.0 KB"
+    # (task-2015) With errors present, the breakdown/estimate are suppressed
+    # -- an estimate parked under an error is noise. Warnings still render.
+    assert state.type_breakdown_line == ""
+    assert state.estimate_line == ""
     assert state.warning_lines == ["PDF isn't installed — needed for missing."]
     assert state.errors == ["Path not found"]
     assert state.type_groups == ["pdf", "generic"]
@@ -1338,3 +1344,130 @@ def test_the_view_on_server_action_cannot_be_caught_by_the_local_open_handler():
     server_button = server_button[: server_button.index("compact=True")]
     assert "library-ingest-view-server" in server_button
     assert "library-ingest-open " not in server_button
+
+
+# --- task-2015: P2 batch ----------------------------------------------------
+
+
+def test_short_ingest_error_collapses_nested_failed_to_prefixes():
+    """(task-2015) Wrapper-on-wrapper copy like the PDF failure chain must
+    collapse to a single 'Failed to …' prefix on the queue-row surface."""
+    nested = (
+        "Failed to ingest pdf file: Failed to process pdf file: "
+        "PDF Extraction Error."
+    )
+    assert (
+        short_ingest_error(nested)
+        == "Failed to process pdf file: PDF Extraction Error."
+    )
+
+
+def test_short_ingest_error_leaves_single_prefix_alone():
+    single = "Failed to process pdf file: PDF Extraction Error."
+    assert short_ingest_error(single) == single
+
+
+def test_estimate_and_breakdown_suppressed_when_preflight_has_errors():
+    """(task-2015) A '0 files' estimate parked under a path error is noise;
+    error states render the error + recovery only."""
+    preflight = PreflightResult(
+        type_groups={},
+        warnings=[],
+        errors=["Path not found: /nope/missing.txt"],
+        total_size=0,
+        truncated=False,
+        total_files=0,
+        path_invalid=True,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/nope/missing.txt"), preflight=preflight
+    )
+    assert state.errors == ["Path not found: /nope/missing.txt"]
+    assert state.estimate_line == ""
+    assert state.type_breakdown_line == ""
+
+
+def test_start_disabled_when_every_staged_file_is_unsupported():
+    """(task-2015) Pre-flight just promised every file will fail; Start must
+    be disabled with the gate line explaining why."""
+    preflight = PreflightResult(
+        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+        warnings=[],
+        errors=[],
+        total_size=51,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/folder"), preflight=preflight
+    )
+    assert state.start_enabled is False
+    assert "unsupported" in state.start_quiet_line
+    assert "2" in state.start_quiet_line
+
+
+def test_start_stays_enabled_for_mixed_selection():
+    preflight = PreflightResult(
+        type_groups={
+            "generic": ["/tmp/a.txt"],
+            "unsupported": ["/tmp/x.json"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=300,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/folder"), preflight=preflight
+    )
+    assert state.start_enabled is True
+
+
+def test_done_row_elapsed_measures_from_submission():
+    """(task-2015) Elapsed reflects what the user actually waited: submission
+    to finish, not parse-start to finish."""
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=100.0,
+            started_at=104.0,
+            finished_at=105.0,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt · 5s"
+
+
+def test_done_row_subsecond_elapsed_renders_lt_one_second():
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=100.0,
+            started_at=100.1,
+            finished_at=100.4,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt · <1s"
+
+
+def test_done_row_without_timestamps_omits_elapsed_segment():
+    """A restored/malformed job with no usable timestamps must not claim
+    '0s'; the elapsed segment is dropped entirely."""
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=0.0,
+            started_at=None,
+            finished_at=None,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt"

@@ -2728,3 +2728,54 @@ async def test_duplicate_hash_lookup_db_error_keeps_job_done_without_media_id(
         assert second_done.progress["message"].startswith("Already in Library")
 
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_empty_file_failure_is_permanent_and_refuses_retry(
+    tmp_path: Path,
+) -> None:
+    """(task-2015) A truly empty file fails identically on every attempt --
+    offering Retry for it is dead bait (the UAT pressed it and got the same
+    failure with '· retry 1'). Same permanence family as missing-file and
+    unsupported-type."""
+    db = _make_db(tmp_path)
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        failing_job = app.submit_library_ingest_job(source_path=str(empty))
+        failed = await _wait_for_job_state(
+            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        )
+        await _wait_for_runner_idle(app, pilot)
+
+        assert "empty" in (failed.error or "")
+        assert failed.permanent is True
+        assert app.retry_library_ingest_job(failed.job_id) is None
+
+
+@pytest.mark.asyncio
+async def test_directory_done_rows_all_carry_media_ids(tmp_path: Path) -> None:
+    """(task-2015) Every done job from a folder submission resolves a real
+    media id -- the UAT's 'folder rows lack Open in Library' observation was
+    the duplicate-swallow case (task-2013); this pins the fresh-folder path.
+    """
+    db = _make_db(tmp_path)
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    (folder / "one.txt").write_text("first document body " * 10)
+    (folder / "two.txt").write_text("second, different body " * 10)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        jobs = app.submit_library_ingest_job(source_path=str(folder))
+        submitted = jobs if isinstance(jobs, list) else [jobs]
+        for job in submitted:
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            assert done.media_id is not None, (
+                f"folder done row without media id: {done.source_path}"
+            )
+        await _wait_for_runner_idle(app, pilot)

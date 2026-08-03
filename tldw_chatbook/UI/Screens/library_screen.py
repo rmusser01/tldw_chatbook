@@ -1318,6 +1318,19 @@ class LibraryScreen(BaseAppScreen):
         # `_apply_library_ingest_preflight_result` drops any result whose
         # generation is no longer current (task-2011).
         self._library_ingest_preflight_generation: int = 0
+        # (task-2015) While-typing validation: each path edit restarts this
+        # timer; its fire runs the pre-flight so feedback no longer waits
+        # for blur.
+        self._library_ingest_path_debounce_timer: Timer | None = None
+        # (task-2015) Batch-settle toast bookkeeping: active-job count at the
+        # last registry tick, and the (done, failed) counts captured when the
+        # queue went from idle to active -- the settle toast reports deltas
+        # against that baseline.
+        self._library_ingest_last_active_count: int = 0
+        self._library_ingest_batch_baseline: tuple[int, int] = (0, 0)
+        # (task-2015) Two-press "Clear finished": first press arms, second
+        # clears; any registry mutation disarms.
+        self._library_ingest_clear_finished_armed: bool = False
         # Explicit user-started curated model install. It is separate from
         # inference: providers never acquire models on first use. The same
         # worker slot tracks BOTH the preflight step (plan computation) and
@@ -4759,6 +4772,11 @@ class LibraryScreen(BaseAppScreen):
         fresh form -- task-2011).
         """
         self._invalidate_library_ingest_preflight()
+        timer = self._library_ingest_path_debounce_timer
+        if timer is not None:
+            timer.stop()
+            self._library_ingest_path_debounce_timer = None
+        self._library_ingest_clear_finished_armed = False
         self._library_ingest_form = LibraryIngestFormState()
 
     # ----- Export canvas -------------------------------------------------
@@ -5697,7 +5715,52 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_ingest_canvas_preserving_context()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
-        done_count = counts_fn().get("done", 0) if callable(counts_fn) else 0
+        counts = counts_fn() if callable(counts_fn) else {}
+        # (task-2015) Any registry mutation disarms a pending two-press
+        # "Clear finished": the queue the user armed against just changed.
+        self._library_ingest_clear_finished_armed = False
+        # (task-2015) Batch-settle toast: when the active-job count crosses
+        # 0 -> N a baseline of (done, failed) is captured; on N -> 0 one
+        # summary toast reports the deltas -- the only above-the-fold
+        # completion signal on a queue that renders below it.
+        active_count = (
+            counts.get("queued", 0)
+            + counts.get("parsing", 0)
+            + counts.get("writing", 0)
+        )
+        previous_active = self._library_ingest_last_active_count
+        self._library_ingest_last_active_count = active_count
+        done_now = counts.get("done", 0)
+        failed_now = counts.get("failed", 0)
+        baseline_done, baseline_failed = self._library_ingest_batch_baseline
+        if done_now < baseline_done or failed_now < baseline_failed:
+            # (task-2015 review) Clear/dismiss mid-batch shrinks DONE/FAILED
+            # below the baseline; without re-anchoring, the settle deltas go
+            # negative and completions after the clear vanish from the
+            # toast.
+            self._library_ingest_batch_baseline = (
+                min(baseline_done, done_now),
+                min(baseline_failed, failed_now),
+            )
+        if previous_active == 0 and active_count > 0:
+            self._library_ingest_batch_baseline = (done_now, failed_now)
+        elif previous_active > 0 and active_count == 0:
+            baseline_done, baseline_failed = self._library_ingest_batch_baseline
+            imported = done_now - baseline_done
+            failed = failed_now - baseline_failed
+            if imported > 0 or failed > 0:
+                parts = []
+                if imported > 0:
+                    parts.append(f"{imported} imported")
+                if failed > 0:
+                    parts.append(f"{failed} failed")
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Ingest finished — " + " · ".join(parts),
+                        severity="warning" if not imported else "information",
+                    )
+        done_count = counts.get("done", 0)
         if done_count != self._library_ingest_last_done_count:
             grew = done_count > self._library_ingest_last_done_count
             self._library_ingest_last_done_count = done_count
@@ -5815,6 +5878,7 @@ class LibraryScreen(BaseAppScreen):
             ingest_backend=ingest_backend,
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
+            clear_finished_armed=self._library_ingest_clear_finished_armed,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -12592,7 +12656,46 @@ class LibraryScreen(BaseAppScreen):
             event: Input change event emitted by the path field.
         """
         event.stop()
+        if event.value == self._library_ingest_form.path:
+            # Textual re-announces an Input's ``value=`` when a recompose
+            # remounts it. Treating that echo as a user edit re-armed the
+            # debounce on every recompose (a perpetual pre-flight loop
+            # while any path sat in the field) and would fence off a
+            # just-started worker for no reason (task-2015 review; same
+            # family as the canvas's ``_reported_option_values`` guard).
+            return
         self._library_ingest_form.path = event.value
+        # (task-2015 review) Fence off any in-flight pre-flight the moment
+        # the text genuinely changes: its result describes a path this
+        # field no longer shows, and generation equality alone would
+        # accept it during the debounce window.
+        self._cancel_library_ingest_preflight()
+        self._library_ingest_preflight_generation += 1
+        # (task-2015) Feedback must not wait for blur: restart the debounce
+        # timer on every edit; its fire runs the pre-flight for the text the
+        # user has settled on. The blur/submit triggers still run
+        # immediately -- this only ADDS the while-typing path.
+        timer = self._library_ingest_path_debounce_timer
+        if timer is not None:
+            timer.stop()
+            self._library_ingest_path_debounce_timer = None
+        if event.value.strip():
+            self._library_ingest_path_debounce_timer = self.set_timer(
+                0.8, self._run_debounced_library_ingest_preflight
+            )
+        else:
+            # A cleared field must not keep old errors or a summary parked
+            # on screen with nothing staged (task-2015 review). Recompose
+            # only when there IS pre-flight state to drop -- the plain
+            # typed-then-deleted case keeps this handler's no-recompose
+            # contract (cursor/widget identity preserved).
+            had_preflight = (
+                self._library_ingest_form.preflight is not None
+                or self._library_ingest_form.preflight_checking
+            )
+            self._invalidate_library_ingest_preflight()
+            if had_preflight:
+                self._refresh_library_ingest_canvas_preserving_context()
         try:
             start_button = self.query_one("#library-ingest-start", Button)
         except (NoMatches, QueryError):
@@ -13025,6 +13128,19 @@ class LibraryScreen(BaseAppScreen):
             pass
         self._library_ingest_preflight_worker = None
 
+    def _run_debounced_library_ingest_preflight(self) -> None:
+        """Timer fire for the while-typing pre-flight (task-2015).
+
+        Skips quietly when the user has already left the ingest canvas or
+        emptied the path -- a late fire must never resurrect feedback for a
+        path the form is no longer showing (the generation stamp guards the
+        worker result itself).
+        """
+        self._library_ingest_path_debounce_timer = None
+        path = self._library_ingest_form.path.strip()
+        if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            self._trigger_library_ingest_preflight(path)
+
     def _invalidate_library_ingest_preflight(self) -> None:
         """Drop the current pre-flight echo AND fence off in-flight workers.
 
@@ -13054,7 +13170,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_preflight_generation += 1
         generation = self._library_ingest_preflight_generation
         self._library_ingest_form.preflight_checking = True
-        self.refresh(recompose=True)
+        # (task-2015) Context-preserving: the while-typing debounce means
+        # this can now run while the user is mid-word in the path field --
+        # a plain recompose would steal their focus (the task-2010 class).
+        self._refresh_library_ingest_canvas_preserving_context()
         self._library_ingest_preflight_worker = self._run_library_ingest_preflight(
             path, generation
         )
@@ -13100,7 +13219,9 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
-        self.refresh(recompose=True)
+        # Context-preserving for the same reason as the trigger (task-2015):
+        # the result can land while the user is still typing.
+        self._refresh_library_ingest_canvas_preserving_context()
 
     def _trigger_preflight(self, path: str) -> None:
         """Alias for ``_trigger_library_ingest_preflight``.
@@ -13611,6 +13732,16 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Clear finished" action.
         """
         event.stop()
+        # (task-2015) One unconfirmed press used to destroy every finished
+        # row -- the only receipts an ingest leaves. First press arms (the
+        # button label names what a second press removes); second press
+        # clears. A registry mutation between the presses disarms (see
+        # ``_handle_library_ingest_registry_changed``).
+        if not self._library_ingest_clear_finished_armed:
+            self._library_ingest_clear_finished_armed = True
+            self._refresh_library_ingest_canvas_preserving_context()
+            return
+        self._library_ingest_clear_finished_armed = False
         registry = self._library_ingest_registry()
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
