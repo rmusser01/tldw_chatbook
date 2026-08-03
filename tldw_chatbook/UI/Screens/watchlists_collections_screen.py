@@ -1992,8 +1992,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return
             save_region_layout(layout)
 
-    def _content_toggle_is_blocked(self, region: Region) -> bool:
-        """Whether a CONTENT layout change must be refused right now.
+    def _refuse_content_toggle_off_read_tab(self, region: Region) -> bool:
+        """Refuse a CONTENT layout change off the Read tab, telling the user why.
+
+        Named as an ACTION, not a predicate (it was `_content_toggle_is_blocked`
+        before TASK-1349), because it is NOT pure: when it refuses it calls
+        `self.notify(...)`. A side-effecting predicate is safe only until
+        someone wires it into a render path -- this codebase already shipped
+        `provider_is_configured()` writing an `eval_models` row from
+        `compose()`, so opening the Evals screen mutated the DB on every fresh
+        install. The verb in the name is the warning that innocent name never
+        gave; keep it a verb if the notify stays here.
 
         Whole-branch review (Important): off the Read (Items) tab,
         `_visible_region_layout` force-collapses CONTENT, which renders a
@@ -2035,7 +2044,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_toggle_region(self) -> None:
         """Collapse or expand whichever region currently has focus."""
         region = self.focused_region
-        if self._content_toggle_is_blocked(region):
+        if self._refuse_content_toggle_off_read_tab(region):
             return
         self._apply_layout(self.region_layout.toggle(region))
 
@@ -2043,12 +2052,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Isolate the focused centre pane; press again to restore.
 
         Refused for CONTENT off the Read tab, exactly as the chevron and `z`
-        already are -- see `_content_toggle_is_blocked`.
+        already are -- see `_refuse_content_toggle_off_read_tab`.
         """
         if self.focused_region not in CENTRE_REGIONS:
             self.notify("Solo applies to the Feeds, Items, or Content panes.")
             return
-        if self._content_toggle_is_blocked(self.focused_region):
+        if self._refuse_content_toggle_off_read_tab(self.focused_region):
             return
         self._apply_layout(self.region_layout.solo(self.focused_region))
 
@@ -2061,7 +2070,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RegionToggled)
     def _on_region_toggled(self, event: RegionToggled) -> None:
         event.stop()
-        if self._content_toggle_is_blocked(event.region):
+        if self._refuse_content_toggle_off_read_tab(event.region):
             return
         self._apply_layout(self.region_layout.toggle(event.region))
 
