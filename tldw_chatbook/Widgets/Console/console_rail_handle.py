@@ -7,6 +7,7 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_CONTEXT_LABEL,
     CONSOLE_RAIL_INSPECTOR_LABEL,
@@ -108,9 +109,9 @@ class ConsoleRailHandle(DestinationRailHandle):
         """Normalize known rail labels before rendering them one cell per row."""
         normalized_label = " ".join(label.split())
         if normalized_label == " ".join(CONSOLE_RAIL_CONTEXT_LABEL.split()):
-            normalized_label = "Context"
+            normalized_label = normalized_label.removesuffix(GLYPH_COLLAPSED).rstrip()
         elif normalized_label == " ".join(CONSOLE_RAIL_INSPECTOR_LABEL.split()):
-            normalized_label = "Inspector"
+            normalized_label = normalized_label.removeprefix(GLYPH_COLLAPSE_LEFT).lstrip()
         return ConsoleRailHandle._stack_vertical_text(normalized_label)
 
     @staticmethod

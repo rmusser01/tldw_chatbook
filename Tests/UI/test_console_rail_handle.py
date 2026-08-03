@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from textual.widgets import Button, Static
 
+import tldw_chatbook.Widgets.Console.console_rail_handle as console_rail_handle
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSED
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_CONTEXT_LABEL,
     CONSOLE_RAIL_INSPECTOR_LABEL,
@@ -71,6 +73,16 @@ def test_vertical_known_label_normalizes_before_glyph_removal() -> None:
     handle = _handle(label=f"  \n{CONSOLE_RAIL_CONTEXT_LABEL}\n  ", vertical=True)
 
     assert handle._display_label() == "C\no\nn\nt\ne\nx\nt"
+
+
+def test_vertical_canonical_context_label_derives_visible_text_from_constant(
+    monkeypatch,
+) -> None:
+    canonical_label = f"Orbit {GLYPH_COLLAPSED}"
+    monkeypatch.setattr(console_rail_handle, "CONSOLE_RAIL_CONTEXT_LABEL", canonical_label)
+    handle = _handle(label=canonical_label, vertical=True)
+
+    assert handle._display_label() == "O\nr\nb\ni\nt"
 
 
 def test_vertical_compose_marks_handle_and_children_and_uses_content_width() -> None:
