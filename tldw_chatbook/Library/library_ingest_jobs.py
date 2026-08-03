@@ -67,7 +67,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 from loguru import logger
 
@@ -281,6 +281,32 @@ class IngestJobStore(Protocol):
         retry: "LibraryIngestJob",
     ) -> None: ...
     def delete_job(self, job_id: str) -> None: ...
+
+
+#: (task-2041) The writer marks a dedup outcome by starting the done-job's
+#: progress message with this prefix; the batch-settle toast counts matches
+#: through the same constant so the two can never drift.
+INGEST_DUPLICATE_PROGRESS_PREFIX = "Already in Library"
+
+
+def count_duplicate_done_jobs(jobs: "Sequence[LibraryIngestJob]") -> int:
+    """Count DONE jobs whose outcome was a dedup match, not a fresh import.
+
+    Args:
+        jobs: A registry ``jobs()`` snapshot (any iterable of jobs).
+
+    Returns:
+        The number of DONE jobs whose progress message carries
+        ``INGEST_DUPLICATE_PROGRESS_PREFIX`` (the writer's dedup marker).
+    """
+    return sum(
+        1
+        for job in jobs
+        if job.state == IngestJobState.DONE
+        and str((job.progress or {}).get("message", "")).startswith(
+            INGEST_DUPLICATE_PROGRESS_PREFIX
+        )
+    )
 
 
 class LibraryIngestJobRegistry:

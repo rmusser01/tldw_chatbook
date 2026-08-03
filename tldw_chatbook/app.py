@@ -33,9 +33,16 @@ if (
     __name__ == "__mp_main__"
     or _early_multiprocessing.parent_process() is not None
 ):
+    import logging as _early_logging
     import warnings as _early_warnings
 
     _early_warnings.simplefilter("ignore")
+    # (task-2041) A bare ``logging.warning()`` on a handler-less root
+    # logger auto-basicConfigs a stderr StreamHandler
+    # ("WARNING:root:OpenTelemetry not installed…" painted over the TUI).
+    # A NullHandler makes root non-empty, so neither auto-basicConfig nor
+    # lastResort fires.
+    _early_logging.getLogger().addHandler(_early_logging.NullHandler())
     try:
         from loguru import logger as _early_worker_logger
 
@@ -197,6 +204,7 @@ from tldw_chatbook.Library.web_clip_request import (
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
+    INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
@@ -3397,8 +3405,9 @@ class LibraryIngestQueueMixin:
                     if was_duplicate:
                         progress = {
                             "message": (
-                                "Already in Library — matched an existing item; "
-                                "nothing new was imported."
+                                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
+                                "matched an existing item; nothing new was "
+                                "imported."
                             )
                         }
                     else:

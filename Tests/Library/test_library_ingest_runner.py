@@ -2810,11 +2810,13 @@ def test_worker_initializer_silences_import_noise(tmp_path: Path) -> None:
 
         silence_ingest_worker_import_noise()
 
+        import logging
         import warnings
         from loguru import logger
 
         logger.warning("should not reach stderr")
         warnings.warn("should not reach stderr either", UserWarning)
+        logging.warning("should not reach stderr three")
         print("MARKER-OK")
         """,
     )

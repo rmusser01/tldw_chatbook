@@ -68,7 +68,10 @@ from ...Library.library_export_state import (
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
-from ...Library.library_ingest_jobs import LibraryIngestJob
+from ...Library.library_ingest_jobs import (
+    LibraryIngestJob,
+    count_duplicate_done_jobs,
+)
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
@@ -1327,7 +1330,7 @@ class LibraryScreen(BaseAppScreen):
         # queue went from idle to active -- the settle toast reports deltas
         # against that baseline.
         self._library_ingest_last_active_count: int = 0
-        self._library_ingest_batch_baseline: tuple[int, int] = (0, 0)
+        self._library_ingest_batch_baseline: tuple[int, int, int] = (0, 0, 0)
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
@@ -5732,33 +5735,63 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_last_active_count = active_count
         done_now = counts.get("done", 0)
         failed_now = counts.get("failed", 0)
-        baseline_done, baseline_failed = self._library_ingest_batch_baseline
-        if done_now < baseline_done or failed_now < baseline_failed:
+        # (task-2041) A dedup match reaches DONE without importing anything;
+        # counting it as "imported" made the toast contradict the row copy.
+        # Matches are recognised by the writer's progress-message prefix
+        # (shared constant, so the two can never drift).
+        jobs_fn = getattr(registry, "jobs", None)
+        registry_jobs = jobs_fn() if callable(jobs_fn) else ()
+        matched_now = count_duplicate_done_jobs(registry_jobs)
+        baseline_done, baseline_failed, baseline_matched = (
+            self._library_ingest_batch_baseline
+        )
+        if (
+            done_now < baseline_done
+            or failed_now < baseline_failed
+            or matched_now < baseline_matched
+        ):
             # (task-2015 review) Clear/dismiss mid-batch shrinks DONE/FAILED
             # below the baseline; without re-anchoring, the settle deltas go
             # negative and completions after the clear vanish from the
             # toast.
+            baseline_done = min(baseline_done, done_now)
+            baseline_failed = min(baseline_failed, failed_now)
+            baseline_matched = min(baseline_matched, matched_now)
             self._library_ingest_batch_baseline = (
-                min(baseline_done, done_now),
-                min(baseline_failed, failed_now),
+                baseline_done,
+                baseline_failed,
+                baseline_matched,
             )
         if previous_active == 0 and active_count > 0:
-            self._library_ingest_batch_baseline = (done_now, failed_now)
+            self._library_ingest_batch_baseline = (
+                done_now,
+                failed_now,
+                matched_now,
+            )
         elif previous_active > 0 and active_count == 0:
-            baseline_done, baseline_failed = self._library_ingest_batch_baseline
-            imported = done_now - baseline_done
+            baseline_done, baseline_failed, baseline_matched = (
+                self._library_ingest_batch_baseline
+            )
+            matched = max(0, matched_now - baseline_matched)
+            imported = (done_now - baseline_done) - matched
             failed = failed_now - baseline_failed
-            if imported > 0 or failed > 0:
+            if imported > 0 or matched > 0 or failed > 0:
                 parts = []
                 if imported > 0:
                     parts.append(f"{imported} imported")
+                if matched > 0:
+                    parts.append(f"{matched} already in Library")
                 if failed > 0:
                     parts.append(f"{failed} failed")
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
                     notify(
                         "Ingest finished — " + " · ".join(parts),
-                        severity="warning" if not imported else "information",
+                        severity=(
+                            "information"
+                            if imported > 0 or matched > 0
+                            else "warning"
+                        ),
                     )
         done_count = counts.get("done", 0)
         if done_count != self._library_ingest_last_done_count:

@@ -12329,3 +12329,92 @@ async def test_completion_toast_survives_mid_batch_clear(tmp_path):
         assert summaries == ["Ingest finished — 1 imported"], (
             f"mid-batch clear broke the settle toast: {summaries}"
         )
+
+
+@pytest.mark.asyncio
+async def test_clear_path_button_empties_the_widget_for_real(tmp_path):
+    """(task-2041) Live round-2 evidence: after pressing Clear, a focus
+    click into the 'empty' field re-materialized the previous text. The
+    widget's own value must be empty after Clear, and stay empty through
+    a recompose and a refocus."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="r2-clear")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/nope/missing.txt"
+        await pilot.pause()
+
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-path")
+        screen.query_one("#library-ingest-clear-path", Button).press()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        widget = screen.query_one("#library-ingest-path", Input)
+        assert widget.value == "", (
+            f"Clear left the widget holding {widget.value!r}"
+        )
+        assert screen._library_ingest_form.path == ""
+
+        # Refocus + one more recompose: the emptiness must survive both.
+        widget.focus()
+        await pilot.pause()
+        screen._handle_library_ingest_registry_changed()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        assert screen.query_one("#library-ingest-path", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
+    """(task-2041) A dedup-only batch must never claim "imported" -- the
+    round-2 critique caught the toast contradicting its own row copy."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="r2-dedup-toast")
+    body = "identical body " * 20
+    first = tmp_path / "report.txt"
+    second = tmp_path / "copy_of_report.txt"
+    first.write_text(body, encoding="utf-8")
+    second.write_text(body, encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+    harness.notify = Mock()
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        first_job = harness.submit_library_ingest_job(source_path=str(first))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(first_job.job_id) == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("first job never reached DONE")
+        await pilot.pause()
+
+        second_job = harness.submit_library_ingest_job(source_path=str(second))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(second_job.job_id) == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("second job never reached DONE")
+        await pilot.pause()
+
+        summaries = [
+            call.args[0]
+            for call in harness.notify.call_args_list
+            if call.args and str(call.args[0]).startswith("Ingest finished")
+        ]
+        assert summaries and summaries[-1] == (
+            "Ingest finished — 1 already in Library"
+        ), f"dedup batch misreported: {summaries}"
+        assert summaries[0] == "Ingest finished — 1 imported"

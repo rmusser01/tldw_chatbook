@@ -6120,9 +6120,13 @@ LibraryIngestCanvas .type-group-field-label {
 LibraryIngestCanvas Input:focus {
     outline: heavy $accent;
 }
+/* (task-2041) NOT an outline: `outline: heavy` on a 1-row compact button
+   draws over the label row, so every focused action button rendered as a
+   label-less box -- and the armed "Press again to clear N finished"
+   confirm was invisible exactly when it must be read. Reverse video is
+   monochrome-visible AND keeps the label. */
 LibraryIngestCanvas Button:focus {
-    outline: heavy $accent;
-    text-style: bold;
+    text-style: bold reverse;
 }
 LibraryIngestCanvas Checkbox:focus {
     outline: heavy $accent;
