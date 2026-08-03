@@ -1,7 +1,7 @@
 ---
 id: TASK-1394
 title: One failing URL fails a whole url_list run and discards collected items
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 05:20'
 labels:
@@ -34,3 +34,17 @@ pane rather than reporting clean counts.
 - [ ] #2 The failure is visible per run (an error count or disposition in the Runs detail), not silently absorbed
 - [ ] #3 A test with one poisoned URL among several fails under the old all-or-nothing behaviour
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. `_default_run_executor` (`local_watchlists_service.py`): wrap each `monitor.check_url(...)` in the
+   `url_list` AND `sitemap` loops in try/except. On exception, append a NEW `error` disposition
+   (type-only, no URL/content in the recorded value) and continue — never add to `items`, never
+   raise out of the loop. Items/dispositions from the URLs that succeeded persist (AC#1).
+2. Add a 6th `error` counter to `_ALL_DISPOSITION_COUNTERS` (:68) + `_disposition_counts` mapping so
+   a partially/fully-failed run reports its error count in `run_stats["dispositions"]` (AC#2).
+3. Render the error count in `runs_pane.py`'s Checks line (~:162) alongside changed/unchanged/etc.
+4. Tests: one poisoned URL among several → succeeded items persist + error counter = 1 (AC#1/#2);
+   the same test REDs without the try/except (poisoned URL raises, whole run fails — AC#3).
+<!-- SECTION:PLAN:END -->
