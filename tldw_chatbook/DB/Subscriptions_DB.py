@@ -1527,11 +1527,12 @@ class SubscriptionsDB(BaseDB):
                 # task-1410 AC#2: shared with `record_check_error` so the
                 # two failure-recording paths cannot diverge on the
                 # threshold check -- see `_advance_failure_and_maybe_pause`.
-                self._advance_failure_and_maybe_pause(
+                just_paused = self._advance_failure_and_maybe_pause(
                     cursor, subscription_id, error, now
                 )
 
             else:
+                just_paused = False
                 # Successful check
                 cursor.execute(
                     """
@@ -1540,7 +1541,8 @@ class SubscriptionsDB(BaseDB):
                         last_successful_check = ?,
                         last_error = NULL,
                         error_count = 0,
-                        consecutive_failures = 0
+                        consecutive_failures = 0,
+                        is_paused = 0
                     WHERE id = ?
                 """,
                     (now, now, subscription_id),
@@ -1574,9 +1576,14 @@ class SubscriptionsDB(BaseDB):
                     "operation": "record_check_result",
                     "status": "error" if error else "success",
                     "item_count": str(len(items)) if items else "0",
-                    "auto_paused": "true"
-                    if error and "Auto-paused" in str(error)
-                    else "false",
+                    # Fix wave for the task-1410 review (Finding #4): this used
+                    # to inspect `error` for the substring "Auto-paused",
+                    # which `_advance_failure_and_maybe_pause` never writes
+                    # there (it goes to `logger.warning`, not `last_error`),
+                    # so the label was always "false" even when this very
+                    # call paused the subscription. Wired to the helper's own
+                    # return value instead of a text-sniffing guess.
+                    "auto_paused": "true" if just_paused else "false",
                 },
             )
 
@@ -1588,7 +1595,7 @@ class SubscriptionsDB(BaseDB):
         now: str,
         *,
         force_pause: bool = False,
-    ) -> None:
+    ) -> bool:
         """Record one failed check and auto-pause once the streak meets threshold.
 
         task-1410 AC#2. The single write path both `record_check_result`'s
@@ -1608,9 +1615,15 @@ class SubscriptionsDB(BaseDB):
         through this one method is what keeps them from diverging again.
 
         AC#1: this never clears `is_paused` -- the only `UPDATE ... SET
-        is_paused = ...` below can set it to `1`, never `0`. Un-pausing
-        remains exclusively `reset_subscription_errors`' and the success
-        branch's job.
+        is_paused = ...` below can set it to `1`, never `0`. A FAILURE never
+        un-pauses a source; only a SUCCESS does. That un-pausing happens in
+        `record_check_result`'s success branch (fix wave for the task-1410
+        review: an auto-paused source had no writer that ever cleared
+        `is_paused`, since this helper only runs on failures and
+        `reset_subscription_errors` has no callers). This gives a paused
+        source its only recourse: nothing re-checks a paused source on a
+        schedule, but a manual re-check still runs (`launch_run`/
+        `execute_run` have no paused guard), and a successful one resumes it.
 
         Args:
             cursor: An open cursor inside the caller's transaction.
@@ -1623,6 +1636,11 @@ class SubscriptionsDB(BaseDB):
                 instead of a second, independent write path -- the one
                 that used to write `is_paused = 0` on every ordinary
                 failure and clear an existing pause (AC#1).
+
+        Returns:
+            True if this call paused the subscription, False otherwise --
+            used by `record_check_result`'s metric logging (Finding #4 of
+            the task-1410 review) instead of text-sniffing `error`.
         """
         cursor.execute(
             """
@@ -1645,8 +1663,19 @@ class SubscriptionsDB(BaseDB):
         )
         row = cursor.fetchone()
         if row is None:
-            return
-        if force_pause or row["consecutive_failures"] >= row["auto_pause_threshold"]:
+            return False
+        threshold = row["auto_pause_threshold"]
+        # A NULL/non-positive threshold means "auto-pause disabled for this
+        # source", not "pause on the very first failure" (0/negative) or a
+        # crash (`int >= None` raises TypeError). Production never seeds a
+        # value like this (the config default is 10 and the service strips
+        # `None`), but `update_subscription(auto_pause_threshold=...)`
+        # accepts one directly, so the helper itself must not trust it.
+        threshold_active = isinstance(threshold, (int, float)) and threshold > 0
+        should_pause = force_pause or (
+            threshold_active and row["consecutive_failures"] >= threshold
+        )
+        if should_pause:
             cursor.execute(
                 "UPDATE subscriptions SET is_paused = 1 WHERE id = ?",
                 (subscription_id,),
@@ -1655,6 +1684,7 @@ class SubscriptionsDB(BaseDB):
                 f"Auto-paused subscription {subscription_id} after "
                 f"{row['consecutive_failures']} failures"
             )
+        return should_pause
 
     def record_check_error(
         self, subscription_id: int, error: str, should_pause: bool = False

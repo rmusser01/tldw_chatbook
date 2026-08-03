@@ -176,6 +176,82 @@ def test_record_check_error_never_unpauses_an_already_paused_subscription(db):
     assert row["last_error"] == "connection refused"
 
 
+def test_record_check_result_success_resumes_an_auto_paused_subscription(db):
+    """Fix wave for the task-1410 review, Finding #1 (the important one).
+
+    task-1410 made auto-pause live across both failure paths, but the only
+    ``is_paused = 0`` writer (``reset_subscription_errors``) has zero
+    callers, the scheduler skips paused sources
+    (``get_pending_checks``/``WatchlistCheckHandler``), and
+    ``record_check_result``'s success branch did not touch ``is_paused`` --
+    so an auto-paused source could never be un-paused by ANY path. A
+    successful check is the natural recourse: a failure never un-pauses
+    (AC#1, pinned above), but a success now does.
+
+    Reds if the success branch's new ``is_paused = 0`` write is reverted:
+    ``is_paused`` stays 1 even though the check just succeeded.
+    """
+    source_id = db.add_subscription(
+        name="Docs",
+        type="rss",
+        source="https://a.example/feed",
+        auto_pause_threshold=3,
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscriptions
+            SET is_paused = 1, error_count = 3, consecutive_failures = 3,
+                last_error = 'connection refused'
+            WHERE id = ?
+            """,
+            (source_id,),
+        )
+
+    db.record_check_result(subscription_id=source_id, items=None, error=None)
+
+    row = db.get_subscription(source_id)
+    assert row["is_paused"] == 0, "a successful check must resume an auto-paused subscription"
+    assert row["consecutive_failures"] == 0
+    assert row["error_count"] == 0
+    assert row["last_error"] is None
+
+
+@pytest.mark.parametrize("bad_threshold", [None, 0, -1])
+def test_advance_failure_and_maybe_pause_never_pauses_on_a_bad_threshold(db, bad_threshold):
+    """Fix wave for the task-1410 review, Finding #3.
+
+    ``_advance_failure_and_maybe_pause``'s threshold comparison
+    (``consecutive_failures >= auto_pause_threshold``) TypeErrors the
+    instant ``auto_pause_threshold`` is NULL (``int >= None``), and pauses
+    on the very first failure if it is 0 or negative. The config seed (``<=
+    0`` falls back to 10) and the service layer (which strips ``None``)
+    keep production from reaching either case today, but a direct
+    ``update_subscription(auto_pause_threshold=...)`` reaches the
+    comparison unguarded. A NULL/non-positive threshold must mean
+    "auto-pause disabled for this source" -- never a crash, never an
+    instant pause.
+
+    Reds if the guard is dropped: the ``None`` case raises ``TypeError`` on
+    the first failure; the ``0``/``-1`` cases pause after exactly one
+    failure instead of never.
+    """
+    source_id = db.add_subscription(
+        name="Docs",
+        type="rss",
+        source="https://a.example/feed",
+        auto_pause_threshold=5,
+    )
+    db.update_subscription(source_id, auto_pause_threshold=bad_threshold)
+
+    for _ in range(10):
+        db.record_check_error(source_id, "connection refused")
+
+    row = db.get_subscription(source_id)
+    assert row["consecutive_failures"] == 10, "failures must keep accumulating"
+    assert row["is_paused"] == 0, f"threshold={bad_threshold!r} must never auto-pause"
+
+
 def test_add_subscription_seeds_auto_pause_threshold_from_config_default(db, monkeypatch):
     """task-1410 AC#3. ``[subscriptions].auto_pause_after_failures`` (config,
     previously read by nothing) now seeds the ``auto_pause_threshold`` column

@@ -942,6 +942,68 @@ async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_thr
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paused_source(
+    tmp_path,
+):
+    """Fix wave for the task-1410 review, Finding #1 (the important one).
+
+    Once a source auto-pauses, the scheduler never re-checks it:
+    `get_pending_checks` excludes `is_paused = 1` rows and
+    `WatchlistCheckHandler` skips them too. But `launch_run`/`execute_run`
+    have no paused guard at all -- a MANUAL re-check of a paused source
+    still runs. That is meant to be the source's only recourse, but until
+    this fix wave nothing on the success side ever cleared `is_paused`
+    (the auto-pause helper only ever writes `is_paused = 1`;
+    `reset_subscription_errors` has zero callers app-wide) -- so even a
+    manual re-check that fully succeeded left the source stranded, paused
+    forever.
+
+    Drives the real path end to end: an already-paused source, a manual
+    `launch_run` + `execute_run` whose executor succeeds, and confirms
+    `is_paused` clears with the failure counters reset -- exactly as an
+    ordinary successful check resets them.
+
+    Reds if `record_check_result`'s success branch drops its new
+    `is_paused = 0` write.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def always_succeeds(subscription):
+        return []
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_succeeds)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": 3,
+        }
+    )
+    source_id = source["source_id"]
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscriptions
+            SET is_paused = 1, error_count = 3, consecutive_failures = 3,
+                last_error = 'connection refused'
+            WHERE id = ?
+            """,
+            (source_id,),
+        )
+
+    launched = await service.launch_run(source_id=source_id)
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed"
+    row = db.get_subscription(source_id)
+    assert row["is_paused"] == 0, "a successful manual re-check must resume a paused source"
+    assert row["consecutive_failures"] == 0
+    assert row["error_count"] == 0
+    assert row["last_error"] is None
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_executes_api_sources_with_json_field_mapping(
     tmp_path, monkeypatch
 ):

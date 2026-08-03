@@ -163,4 +163,35 @@ in the task description as documenting `auto_pause_after_failures`) was not re-c
 new seeding behavior — out of scope for the stated ACs, called out here rather than silently
 skipped. Status intentionally left **In Progress** per dispatch instructions rather than moved to
 Done.
+
+**Fix wave (whole-branch review follow-up).** The review found the branch clean against the three
+ACs but flagged that auto-pause, as landed, was a permanent trap: `reset_subscription_errors` (the
+only `is_paused = 0` writer) has zero callers, the scheduler skips paused sources, and
+`record_check_result`'s success branch did not clear `is_paused` — so nothing could ever un-pause an
+auto-paused source. Fixed by giving a **successful check** the natural recourse: the success branch
+in `record_check_result` now also sets `is_paused = 0` alongside its existing counter reset. AC#1 is
+unchanged (a failure never un-pauses); a success now does. This is coherent with the fact that
+`launch_run`/`execute_run` have no paused guard — a manual re-check of a paused source still runs,
+and a successful one now resumes it. No paused guard was added to `launch_run`/`execute_run`; doing
+so would have removed this recourse entirely. Also guarded
+`_advance_failure_and_maybe_pause`'s threshold comparison (`consecutive_failures >=
+auto_pause_threshold`) against a NULL or non-positive `auto_pause_threshold` — previously a `TypeError`
+on NULL (`int >= None`) or an instant pause-on-first-failure on 0/negative; no production path seeds
+either today (the config seed falls back to 10, the service strips `None`), but a direct
+`update_subscription(auto_pause_threshold=...)` reached the unguarded comparison. Both are now
+treated as "auto-pause disabled for this source." Also corrected the helper's docstring, which
+claimed the success branch already un-paused before this fix wave made that true, and rewired the
+`record_check_result` metric's `"auto_paused"` label — previously always `"false"` because it
+text-sniffed `error` for a substring the helper never wrote there — to the helper's own return value
+instead. New tests: `Tests/DB/test_subscriptions_db.py` gained
+`test_record_check_result_success_resumes_an_auto_paused_subscription` and a
+`bad_threshold`-parametrized (`None`/`0`/`-1`) guard test;
+`Tests/Subscriptions/test_local_watchlists_service.py` gained
+`test_local_watchlists_service_successful_manual_recheck_resumes_a_paused_source`, driving the resume
+through the real `launch_run`/`execute_run` path. All mutation-tested (Edit → run → revert, `git
+status --short` clean between): dropping the new `is_paused = 0` write reds both resume tests;
+dropping the threshold guard reds all three parametrized cases (`None` raises `TypeError`; `0`/`-1`
+pause on the first failure). Filed TASK-2050 (low priority) for the still-missing UI resume
+affordance and paused indicator — this fix wave closes the data-layer trap, not the UX gap the
+review's Finding #1 also named.
 <!-- SECTION:NOTES:END -->
