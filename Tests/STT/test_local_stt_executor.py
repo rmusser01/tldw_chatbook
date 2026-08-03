@@ -10,7 +10,9 @@ import pytest
 
 from Tests.Model_Artifacts.test_service import installed_root_and_dependency
 from Tests.STT.executor_test_support import (
+    device_retry_executor_worker,
     fake_executor_worker,
+    private_log_executor_worker,
     resident_executor_worker,
 )
 from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
@@ -34,6 +36,10 @@ from tldw_chatbook.STT.executor import (
     _AttemptTerminalGuard,
     snapshot_local_source,
     validate_local_source_snapshot,
+)
+from tldw_chatbook.STT.executor_worker import (
+    _ProviderLoadFailure,
+    _failure_from_exception,
 )
 
 
@@ -183,6 +189,46 @@ def test_failure_requires_stable_typed_code_and_bounded_actions() -> None:
             "attempt-1",
             "engine_crashed",
         )
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "error", "expected_actions"),
+    [
+        (
+            "parakeet-onnx",
+            LocalSourceChangedError("private path"),
+            ("retry_faster_whisper",),
+        ),
+        (
+            "transcribe-cpp",
+            LocalSourceChangedError("private path"),
+            ("choose_another_gguf", "retry_faster_whisper"),
+        ),
+        (
+            "parakeet-onnx",
+            _ProviderLoadFailure(TranscriptionFailureCode.PROVIDER_UNAVAILABLE),
+            ("retry_faster_whisper",),
+        ),
+    ],
+)
+def test_worker_generated_failures_always_offer_provider_recovery(
+    provider_id: str,
+    error: BaseException,
+    expected_actions: tuple[str, ...],
+) -> None:
+    request = _request()
+    request = ExecutorRequest(
+        generation=request.generation,
+        attempt_id=request.attempt_id,
+        job_id=request.job_id,
+        source_path=request.source_path,
+        identity=_identity(provider_id=provider_id, local_snapshot_token=None),
+        options={},
+    )
+
+    failure = _failure_from_exception(request, error)
+
+    assert failure.recovery_actions == expected_actions
     with pytest.raises(ValueError):
         ExecutorFailure(
             3,
@@ -398,7 +444,8 @@ def test_force_stop_detaches_before_kill_and_cleans_generation_scratch() -> None
         assert executor.force_stop("held") is True
         _wait_for_terminal(callbacks)
         assert callbacks.failures[0].code is TranscriptionFailureCode.CANCELLED
-        _wait_until(lambda: executor.retiring is False)
+        assert executor.wait_for_retirement(10.0) is True
+        assert executor.retiring is False
         assert scratch.exists() is False
         assert executor.busy is False
     finally:
@@ -449,6 +496,7 @@ def test_loading_crash_marks_only_active_identity_unhealthy() -> None:
         _wait_for_terminal(callbacks)
 
         assert callbacks.failures[0].code is TranscriptionFailureCode.ENGINE_CRASHED
+        assert callbacks.failures[0].recovery_actions == ("retry_faster_whisper",)
         assert executor.unhealthy_identity == identity
         with pytest.raises(ExecutorUnavailableError):
             _submit(executor, _Callbacks(), attempt_id="blocked", identity=identity)
@@ -480,6 +528,113 @@ def test_typed_device_failure_retries_once_on_cpu_in_fresh_generation() -> None:
         assert callbacks.results[0].attempt_id == "retry"
         assert callbacks.results[0].payload["device"] == "cpu"
     finally:
+        executor.close()
+
+
+def test_real_worker_typed_provider_failure_reloads_on_effective_cpu() -> None:
+    executor = LocalSTTExecutor(
+        worker_target=device_retry_executor_worker,
+        startup_timeout=5.0,
+        graceful_shutdown_timeout=0.2,
+        force_stop_timeout=2.0,
+    )
+    callbacks = _Callbacks()
+    accelerated = _identity(
+        root_revision=None,
+        closure_fingerprint=None,
+        device=ExecutionDevice.METAL,
+    )
+    try:
+        first_generation = _submit(
+            executor,
+            callbacks,
+            attempt_id="real-worker-retry",
+            identity=accelerated,
+        )
+        _wait_for_terminal(callbacks)
+
+        assert callbacks.failures == []
+        assert callbacks.results[0].generation > first_generation
+        assert executor.resident_identity == _identity(
+            root_revision=None,
+            closure_fingerprint=None,
+            device=ExecutionDevice.CPU,
+        )
+    finally:
+        executor.close()
+
+
+def test_real_worker_suppresses_path_bearing_legacy_logs(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    executor = LocalSTTExecutor(
+        worker_target=private_log_executor_worker,
+        startup_timeout=5.0,
+        graceful_shutdown_timeout=0.2,
+        force_stop_timeout=2.0,
+    )
+    callbacks = _Callbacks()
+    try:
+        _submit(executor, callbacks, attempt_id="private-log")
+        _wait_for_terminal(callbacks)
+        assert callbacks.failures[0].code is TranscriptionFailureCode.INFERENCE_FAILED
+    finally:
+        executor.close()
+
+    captured = capfd.readouterr()
+    assert "/private/models/secret.onnx" not in captured.out
+    assert "/private/models/secret.onnx" not in captured.err
+
+
+def test_cpu_retry_start_failure_delivers_one_terminal_instead_of_stranding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor()
+    callbacks = _Callbacks()
+    accelerated = _identity(
+        root_revision=None,
+        closure_fingerprint=None,
+        device=ExecutionDevice.METAL,
+    )
+    retry_gate = threading.Event()
+    retry_reached = threading.Event()
+    original_on_event = callbacks.on_event
+
+    def hold_retry(event: ExecutorEvent) -> None:
+        original_on_event(event)
+        if event.phase is WorkerPhase.TRANSCRIBING:
+            retry_reached.set()
+            assert retry_gate.wait(10.0)
+
+    try:
+        executor.submit(
+            attempt_id="retry-start-fails",
+            job_id="job-retry-start-fails",
+            source_path=Path("fixture.wav"),
+            identity=accelerated,
+            options={"test_mode": "device_failure"},
+            on_event=hold_retry,
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        assert retry_reached.wait(10.0)
+        monkeypatch.setattr(
+            executor,
+            "_start_worker_locked",
+            lambda: (_ for _ in ()).throw(
+                ExecutorUnavailableError("replacement unavailable")
+            ),
+        )
+        retry_gate.set()
+        _wait_for_terminal(callbacks)
+
+        assert callbacks.results == []
+        assert len(callbacks.failures) == 1
+        assert callbacks.failures[0].code is TranscriptionFailureCode.ENGINE_CRASHED
+        assert callbacks.failures[0].recovery_actions == ("retry_faster_whisper",)
+        assert executor.busy is False
+    finally:
+        retry_gate.set()
         executor.close()
 
 
@@ -600,6 +755,58 @@ def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
     assert service.artifact_path(dependency.reference).exists() is False
 
 
+def test_loaded_residency_is_reported_before_first_parse_failure(
+    tmp_path: Path,
+) -> None:
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    original = _identity(
+        root_revision=None,
+        closure_fingerprint=None,
+        local_snapshot_token=None,
+    )
+    changed = _identity(
+        model_id="replacement-model",
+        root_revision=None,
+        closure_fingerprint=None,
+        local_snapshot_token=None,
+    )
+    try:
+        first_generation = executor.submit(
+            attempt_id="first-fails",
+            job_id="job-first-fails",
+            source_path=tmp_path / "fixture.wav",
+            identity=original,
+            options={
+                "transcription_provider": "parakeet-onnx",
+                "test_worker_fail_parse": True,
+            },
+            on_result=first.on_result,
+            on_failure=first.on_failure,
+        )
+        _wait_for_terminal(first)
+        assert first.failures[0].code is TranscriptionFailureCode.INFERENCE_FAILED
+        assert executor.resident_identity == original
+
+        second_generation = executor.submit(
+            attempt_id="second-succeeds",
+            job_id="job-second-succeeds",
+            source_path=tmp_path / "fixture.wav",
+            identity=changed,
+            options={"transcription_provider": "parakeet-onnx"},
+            on_result=second.on_result,
+            on_failure=second.on_failure,
+        )
+        _wait_for_terminal(second)
+
+        assert second_generation > first_generation
+        assert second.results
+        assert second.failures == []
+    finally:
+        executor.close()
+
+
 def test_worker_crash_releases_managed_closure_lease(tmp_path: Path) -> None:
     service, root, dependency, identity = _managed_request_values(tmp_path)
     executor = _resident_executor()
@@ -712,5 +919,6 @@ def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
 
         assert second.results == []
         assert second.failures[0].code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        assert second.failures[0].recovery_actions == ("retry_faster_whisper",)
     finally:
         executor.close()

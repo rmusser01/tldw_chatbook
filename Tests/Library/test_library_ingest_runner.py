@@ -164,6 +164,11 @@ class _FakeLocalSTTExecutor:
         self.generation = 1
         self.submit_thread_ident: int | None = None
         self.close_thread_ident: int | None = None
+        self.cancel_calls: list[str] = []
+        self.force_stop_calls: list[str] = []
+        self.retiring = False
+        self._retirement_complete = threading.Event()
+        self._retirement_complete.set()
 
     def submit(self, **kwargs: Any) -> int:
         self.submit_thread_ident = threading.get_ident()
@@ -180,6 +185,23 @@ class _FakeLocalSTTExecutor:
 
     def trigger_failure(self, index: int, failure: ExecutorFailure) -> None:
         self._spawn(self.calls[index]["on_failure"], failure)
+
+    def cancel(self, attempt_id: str) -> bool:
+        self.cancel_calls.append(attempt_id)
+        return True
+
+    def force_stop(self, attempt_id: str) -> bool:
+        self.force_stop_calls.append(attempt_id)
+        self.retiring = True
+        self._retirement_complete.clear()
+        return True
+
+    def wait_for_retirement(self, timeout: float | None = None) -> bool:
+        return self._retirement_complete.wait(timeout)
+
+    def complete_retirement(self) -> None:
+        self.retiring = False
+        self._retirement_complete.set()
 
     @staticmethod
     def _spawn(callback: Callable[[Any], None], value: Any) -> None:
@@ -1071,6 +1093,136 @@ async def test_eligible_local_stt_uses_executor_not_general_pool(
         assert executor.calls[0]["job_id"] == job.job_id
         assert executor.calls[0]["options"]["transcription_provider"] == provider
         assert pool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_retry_clears_executor_unhealthy_gate_explicitly(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        assert executor.calls[0]["explicit_retry"] is False
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["explicit_retry"] is True
+
+
+@pytest.mark.asyncio
+async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    app._ingest_parse_pool = pool
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.TRANSCRIBING),
+        )
+        await pilot.pause()
+
+        assert app.cancel_local_ingest_job(job.job_id) is True
+        assert executor.cancel_calls == [attempt_id]
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "transcribing",
+            "cancel_requested": True,
+        }
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "post-processing",
+            "cancel_requested": True,
+        }
+
+        topups: list[str] = []
+        app._top_up_ingest_parse_pool = lambda: topups.append("top-up")
+        assert app.force_stop_local_ingest_job(job.job_id) is True
+        for _ in range(_POLL_ATTEMPTS):
+            if executor.force_stop_calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert executor.force_stop_calls == [attempt_id]
+        assert topups == []
+        assert app._ingest_parse_pool is pool
+
+        executor.complete_retirement()
+        for _ in range(_POLL_ATTEMPTS):
+            if topups:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert topups == ["top-up"]
+
+
+@pytest.mark.asyncio
+async def test_local_stt_cancel_rejects_stale_or_unbound_job(tmp_path: Path) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+
+    async with app.run_test():
+        assert app.cancel_local_ingest_job("missing-job") is False
+        assert app.force_stop_local_ingest_job("missing-job") is False
+        assert executor.cancel_calls == []
+        assert executor.force_stop_calls == []
 
 
 @pytest.mark.asyncio

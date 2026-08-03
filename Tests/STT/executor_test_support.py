@@ -46,6 +46,8 @@ def _fake_parse_job(
     *,
     transcription_runner: Any,
 ) -> dict[str, Any]:
+    if options.get("test_worker_fail_parse"):
+        raise RuntimeError("synthetic parse failure")
     if options.get("test_worker_crash"):
         os._exit(71)
     if options.get("test_worker_hold"):
@@ -79,6 +81,75 @@ def resident_executor_worker(
         generation,
         scratch_path,
         provider_builder=_fake_provider_builder,
+        parse_job=_fake_parse_job,
+    )
+
+
+def _device_retry_provider_builder(request: Any, _model_root: Path | None) -> Any:
+    from tldw_chatbook.STT.contracts import (
+        DeviceFailureOrigin,
+        ExecutionDevice,
+    )
+    from tldw_chatbook.STT.executor_worker import ProviderRuntime
+
+    if request.identity.device is not ExecutionDevice.CPU:
+        error = RuntimeError("typed execution provider initialization failure")
+        error.device_failure_origin = (  # type: ignore[attr-defined]
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION
+        )
+        error.failed_device = request.identity.device  # type: ignore[attr-defined]
+        raise error
+    runtime = _FakeResidentRuntime(1)
+    return ProviderRuntime(runner=runtime.transcribe, close=runtime.close)
+
+
+def device_retry_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Exercise CPU retry through the production resident worker loop."""
+
+    from tldw_chatbook.STT.executor_worker import _run_executor_worker
+
+    _run_executor_worker(
+        connection,
+        admission_event,
+        cancellation_event,
+        generation,
+        scratch_path,
+        provider_builder=_device_retry_provider_builder,
+        parse_job=_fake_parse_job,
+    )
+
+
+def _private_log_provider_builder(_request: Any, _model_root: Path | None) -> Any:
+    from loguru import logger
+
+    logger.error("private worker path: /private/models/secret.onnx")
+    raise RuntimeError("private worker path: /private/models/secret.onnx")
+
+
+def private_log_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Attempt a path-bearing legacy log inside the production worker loop."""
+
+    from tldw_chatbook.STT.executor_worker import _run_executor_worker
+
+    _run_executor_worker(
+        connection,
+        admission_event,
+        cancellation_event,
+        generation,
+        scratch_path,
+        provider_builder=_private_log_provider_builder,
         parse_job=_fake_parse_job,
     )
 
@@ -118,6 +189,43 @@ def containment_descendant(
     connection.send(("child", child.pid))
     while True:
         time.sleep(1.0)
+
+
+def containment_crashed_leader_with_term_ignoring_descendant(
+    connection: Connection,
+    admission_event: Any,
+    scratch_path: str,
+) -> None:
+    """Crash after starting a descendant that ignores graceful termination."""
+
+    from tldw_chatbook.STT.executor_process_tree import enter_worker_containment
+
+    identity = enter_worker_containment()
+    connection.send(("identity", identity))
+    if not admission_event.wait(10.0):
+        return
+    ready = Path(scratch_path) / "descendant-ready"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,signal,time;"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                f"pathlib.Path({str(ready)!r}).write_text('ready');"
+                "time.sleep(120)"
+            ),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 10.0
+    while not ready.is_file() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    connection.send(("child", child.pid))
+    connection.close()
+    os._exit(73)
 
 
 def fake_executor_worker(

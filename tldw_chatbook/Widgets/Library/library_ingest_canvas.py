@@ -194,6 +194,7 @@ class LibraryIngestQueuePanel(Vertical):
                 or row.can_retry
                 or row.can_dismiss
                 or row.can_cancel
+                or row.can_force_stop
                 or bool(row.error_detail)
                 or bool(stt_actions)
             )
@@ -328,6 +329,17 @@ class LibraryIngestQueuePanel(Vertical):
                             id=f"library-ingest-cancel-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-cancel "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_force_stop:
+                        yield Button(
+                            "Force stop",
+                            id=f"library-ingest-force-stop-{row.job_id}",
+                            classes=(
+                                "library-canvas-action "
+                                "library-ingest-force-stop "
                                 "library-ingest-row-action"
                             ),
                             compact=True,

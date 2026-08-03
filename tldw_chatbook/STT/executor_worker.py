@@ -9,7 +9,11 @@ from multiprocessing.connection import Connection
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .contracts import TranscriptionFailureCode
+from .contracts import (
+    DeviceFailureOrigin,
+    ExecutionDevice,
+    TranscriptionFailureCode,
+)
 from .executor import (
     ExecutorEvent,
     ExecutorFailure,
@@ -75,32 +79,77 @@ def _cancelled_failure(request: ExecutorRequest) -> ExecutorFailure:
     )
 
 
+def _default_recovery_actions(
+    request: ExecutorRequest,
+    code: TranscriptionFailureCode,
+) -> tuple[str, ...]:
+    if code is TranscriptionFailureCode.CANCELLED:
+        return ()
+    if request.identity.provider_id == "transcribe-cpp" and code in {
+        TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+        TranscriptionFailureCode.ARTIFACT_CORRUPT,
+        TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+    }:
+        return ("choose_another_gguf", "retry_faster_whisper")
+    return ("retry_faster_whisper",)
+
+
+def _typed_device_failure(
+    error: BaseException,
+) -> tuple[DeviceFailureOrigin | None, ExecutionDevice | None]:
+    origin = getattr(error, "device_failure_origin", None)
+    failed_device = getattr(error, "failed_device", None)
+    if type(origin) is DeviceFailureOrigin and type(failed_device) is ExecutionDevice:
+        return origin, failed_device
+    return None, None
+
+
+def _executor_failure(
+    request: ExecutorRequest,
+    error: BaseException,
+    code: TranscriptionFailureCode,
+    *,
+    actions: tuple[str, ...] = (),
+    failed_attempt: dict[str, Any] | None = None,
+) -> ExecutorFailure:
+    origin, failed_device = _typed_device_failure(error)
+    return ExecutorFailure(
+        request.generation,
+        request.attempt_id,
+        code,
+        recovery_actions=actions or _default_recovery_actions(request, code),
+        failed_attempt=failed_attempt,
+        device_failure_origin=origin,
+        failed_device=failed_device,
+    )
+
+
 def _failure_from_exception(
     request: ExecutorRequest,
     error: BaseException,
 ) -> ExecutorFailure:
     if isinstance(error, LocalSourceChangedError):
-        return ExecutorFailure(
-            request.generation,
-            request.attempt_id,
+        return _executor_failure(
+            request,
+            error,
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
         )
     if isinstance(error, _ProviderLoadFailure):
-        return ExecutorFailure(
-            request.generation,
-            request.attempt_id,
+        return _executor_failure(
+            request,
+            error,
             error.code,
-            recovery_actions=error.actions,
+            actions=error.actions,
         )
 
     from .transcribe_cpp import TranscribeCppFailure
 
     if isinstance(error, TranscribeCppFailure):
-        return ExecutorFailure(
-            request.generation,
-            request.attempt_id,
+        return _executor_failure(
+            request,
+            error,
             error.code,
-            recovery_actions=tuple(error.actions),
+            actions=tuple(error.actions),
             failed_attempt=error.stt_failure_provenance,
         )
 
@@ -121,18 +170,17 @@ def _failure_from_exception(
         failed_attempt = getattr(error, "stt_failure_provenance", None)
         if not isinstance(failed_attempt, dict):
             failed_attempt = None
-        return ExecutorFailure(
-            request.generation,
-            request.attempt_id,
+        return _executor_failure(
+            request,
+            error,
             code,
-            recovery_actions=safe_actions,
+            actions=safe_actions,
             failed_attempt=failed_attempt,
         )
-    return ExecutorFailure(
-        request.generation,
-        request.attempt_id,
+    return _executor_failure(
+        request,
+        error,
         TranscriptionFailureCode.INFERENCE_FAILED,
-        recovery_actions=("retry_faster_whisper",),
     )
 
 
@@ -261,6 +309,7 @@ def _transcribe_cpp_provider(
         job_id=request.job_id,
         language=request.options.get("language") or "en",
         ffmpeg_path=request.options.get("ffmpeg_path"),
+        device=request.identity.device,
     )
 
     def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
@@ -366,6 +415,11 @@ def _run_executor_worker(
     connection.send(("bootstrap", identity))
     if not admission_event.wait(30.0):
         return
+    from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+        silence_ingest_worker_import_noise,
+    )
+
+    silence_ingest_worker_import_noise()
     scratch = Path(scratch_path)
     if not scratch.is_dir():
         return
@@ -398,6 +452,15 @@ def _run_executor_worker(
                     resident = _load_resident(request, provider_builder)
                 else:
                     _validate_reuse(request, resident)
+                if not resident.reported:
+                    connection.send(
+                        ExecutorResident(
+                            generation,
+                            request.attempt_id,
+                            request.identity,
+                        )
+                    )
+                    resident.reported = True
                 if cancellation_event.is_set():
                     connection.send(_cancelled_failure(request))
                     continue
@@ -416,15 +479,6 @@ def _run_executor_worker(
                 if cancellation_event.is_set():
                     connection.send(_cancelled_failure(request))
                     continue
-                if not resident.reported:
-                    connection.send(
-                        ExecutorResident(
-                            generation,
-                            request.attempt_id,
-                            request.identity,
-                        )
-                    )
-                    resident.reported = True
                 connection.send(
                     ExecutorEvent(
                         generation,

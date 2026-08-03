@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,6 +49,8 @@ class _WindowsJobApi:
     _PROCESS_TERMINATE = 0x0001
     _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _WAIT_OBJECT_0 = 0
+    _WAIT_TIMEOUT = 258
 
     def __init__(self) -> None:
         if os.name != "nt":
@@ -114,6 +117,8 @@ class _WindowsJobApi:
         kernel32.TerminateJobObject.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
 
     def _last_error(self, operation: str) -> OSError:
         error = self._ctypes.get_last_error()
@@ -165,6 +170,17 @@ class _WindowsJobApi:
 
         if not self._kernel32.TerminateJobObject(job_handle, 1):
             raise self._last_error("TerminateJobObject")
+
+    def wait_for_job_empty(self, job_handle: int, timeout: float) -> bool:
+        """Wait until every process assigned to one job has exited."""
+
+        milliseconds = min(max(int(max(0.0, timeout) * 1000), 0), 0xFFFFFFFE)
+        result = int(self._kernel32.WaitForSingleObject(job_handle, milliseconds))
+        if result == self._WAIT_OBJECT_0:
+            return True
+        if result == self._WAIT_TIMEOUT:
+            return False
+        raise self._last_error("WaitForSingleObject")
 
     def close_handle(self, job_handle: int) -> None:
         """Close a Job Object handle if present."""
@@ -254,45 +270,98 @@ class ExecutorProcessTree:
         """Terminate the contained tree and return only after proven death."""
 
         self._admitted = False
-        if not self._process.is_alive():
-            self._close_job_handle()
-            self._closed = True
-            return True
+        if self._platform_name == "posix":
+            return self._terminate_posix_group(
+                term_timeout=term_timeout,
+                kill_timeout=kill_timeout,
+            )
 
-        if self._platform_name == "nt" and self._job_handle:
+        job_proven_dead = not self._job_handle
+        if self._job_handle:
             try:
                 self._windows_api.terminate_job(self._job_handle)
+                job_proven_dead = self._windows_api.wait_for_job_empty(
+                    self._job_handle,
+                    max(0.0, term_timeout),
+                )
             except OSError:
-                self._process.terminate()
-        else:
-            try:
-                os.killpg(self._identity.process_group_id, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+                job_proven_dead = False
+        if self._process.is_alive() and not self._job_handle:
+            self._process.terminate()
         self._process.join(max(0.0, term_timeout))
 
-        if self._process.is_alive():
-            if self._platform_name == "nt":
+        if self._process.is_alive() or not job_proven_dead:
+            if self._job_handle:
                 try:
-                    if self._job_handle:
-                        self._windows_api.terminate_job(self._job_handle)
-                    else:
-                        self._process.kill()
+                    self._windows_api.terminate_job(self._job_handle)
+                    job_proven_dead = self._windows_api.wait_for_job_empty(
+                        self._job_handle,
+                        max(0.0, kill_timeout),
+                    )
                 except OSError:
-                    self._process.kill()
-            else:
+                    job_proven_dead = False
+            elif self._process.is_alive():
                 try:
-                    os.killpg(self._identity.process_group_id, signal.SIGKILL)
-                except ProcessLookupError:
+                    self._process.kill()
+                except OSError:
                     pass
             self._process.join(max(0.0, kill_timeout))
 
-        if self._process.is_alive():
+        if self._process.is_alive() or not job_proven_dead:
             self._quarantined = True
             return False
         self._close_job_handle()
         self._closed = True
         return True
+
+    def _terminate_posix_group(
+        self,
+        *,
+        term_timeout: float,
+        kill_timeout: float,
+    ) -> bool:
+        """Signal and prove death of the group independently of its leader."""
+
+        group_id = self._identity.process_group_id
+        if group_id is None:
+            self._quarantined = True
+            return False
+        if self._posix_group_exists(group_id):
+            try:
+                os.killpg(group_id, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        self._process.join(max(0.0, term_timeout))
+        group_dead = self._wait_for_posix_group_exit(group_id, term_timeout)
+        if self._process.is_alive() or not group_dead:
+            try:
+                os.killpg(group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self._process.join(max(0.0, kill_timeout))
+            group_dead = self._wait_for_posix_group_exit(group_id, kill_timeout)
+        if self._process.is_alive() or not group_dead:
+            self._quarantined = True
+            return False
+        self._closed = True
+        return True
+
+    @staticmethod
+    def _posix_group_exists(group_id: int) -> bool:
+        try:
+            os.killpg(group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def _wait_for_posix_group_exit(cls, group_id: int, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while cls._posix_group_exists(group_id) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return not cls._posix_group_exists(group_id)
 
     def close(self) -> bool:
         """Idempotently close containment, terminating a live worker if needed."""

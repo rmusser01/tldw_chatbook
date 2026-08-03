@@ -1109,6 +1109,32 @@ def test_a_running_local_job_offers_no_cancel():
     assert _row_for(job).can_cancel is False
 
 
+def test_a_running_local_stt_attempt_can_be_cancelled():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.wav",
+        state=IngestJobState.PARSING,
+        progress={"phase": "transcribing"},
+    )
+
+    row = _row_for(job)
+    assert row.can_cancel is True
+    assert row.can_force_stop is False
+
+
+def test_a_cancel_requested_local_stt_attempt_offers_force_stop_only():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.wav",
+        state=IngestJobState.PARSING,
+        progress={"phase": "transcribing", "cancel_requested": True},
+    )
+
+    row = _row_for(job)
+    assert row.can_cancel is False
+    assert row.can_force_stop is True
+
+
 def test_a_settled_server_job_offers_no_cancel():
     """There is nothing left to stop once the server has finished."""
     for state in (

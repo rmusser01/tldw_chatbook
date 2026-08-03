@@ -2609,6 +2609,7 @@ class LibraryIngestQueueMixin:
                 on_failure=functools.partial(
                     self._ingest_local_stt_failure, job.job_id
                 ),
+                explicit_retry=job.retry_count > 0,
             )
         except Exception as exc:
             provider = str(options.get("transcription_provider") or "")
@@ -2673,6 +2674,64 @@ class LibraryIngestQueueMixin:
         ):
             return
         self._ingest_local_stt_jobs[job_id] = (generation, attempt_id)
+
+    def cancel_local_ingest_job(self, job_id: str) -> bool:
+        """Request cooperative cancellation for one bound local STT attempt."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+        ):
+            return False
+        if not executor.cancel(binding[1]):
+            return False
+        progress = dict(job.progress or {})
+        progress["cancel_requested"] = True
+        self.library_ingest_jobs.update_progress(job_id, progress=progress)
+        return True
+
+    def force_stop_local_ingest_job(self, job_id: str) -> bool:
+        """Force-stop one cancel-requested local STT attempt off the UI thread."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+            or not bool((job.progress or {}).get("cancel_requested"))
+        ):
+            return False
+        thread = threading.Thread(
+            target=self._force_stop_local_stt_attempt,
+            args=(executor, binding[1]),
+            name=f"library-local-stt-force-stop-{job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            return False
+        return True
+
+    def _force_stop_local_stt_attempt(
+        self,
+        executor: LocalSTTExecutor,
+        attempt_id: str,
+    ) -> None:
+        if not executor.force_stop(attempt_id):
+            return
+        if executor.wait_for_retirement(10.0):
+            self._marshal_local_stt_call(self._top_up_ingest_parse_pool)
 
     def _on_ingest_local_stt_dispatch_failure(
         self,
@@ -2761,10 +2820,10 @@ class LibraryIngestQueueMixin:
                 event.generation,
                 event.attempt_id,
             )
-        self.library_ingest_jobs.update_progress(
-            job_id,
-            progress={"phase": event.phase.value},
-        )
+        existing = self.library_ingest_jobs.get_job(job_id)
+        progress = dict(existing.progress or {}) if existing is not None else {}
+        progress["phase"] = event.phase.value
+        self.library_ingest_jobs.update_progress(job_id, progress=progress)
 
     def _on_ingest_local_stt_result(
         self,
@@ -2806,7 +2865,9 @@ class LibraryIngestQueueMixin:
                 },
                 stt_failure_provenance=failure.failed_attempt,
             )
-        self._top_up_ingest_parse_pool()
+        executor = getattr(self, "_local_stt_executor", None)
+        if executor is None or not executor.retiring:
+            self._top_up_ingest_parse_pool()
 
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.

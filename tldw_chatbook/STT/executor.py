@@ -393,6 +393,8 @@ class LocalSTTExecutor:
         self._scratch_path: Path | None = None
         self._reader_thread: threading.Thread | None = None
         self._retirement_thread: threading.Thread | None = None
+        self._retirement_complete = threading.Event()
+        self._retirement_complete.set()
         self._active_request: ExecutorRequest | None = None
         self._active_callbacks: _ActiveCallbacks | None = None
         self._terminal_guard: _AttemptTerminalGuard | None = None
@@ -554,6 +556,7 @@ class LocalSTTExecutor:
             if detached is None:
                 return False
             self._retiring = True
+            self._retirement_complete.clear()
             thread = threading.Thread(
                 target=self._terminate_detached,
                 args=(detached,),
@@ -565,6 +568,11 @@ class LocalSTTExecutor:
         assert callback is not None and failure is not None
         self._deliver(callback, failure)
         return True
+
+    def wait_for_retirement(self, timeout: float | None = None) -> bool:
+        """Wait for a force-stopped generation to be proven dead and cleaned."""
+
+        return self._retirement_complete.wait(timeout)
 
     def clear_unhealthy_identity(self, identity: ModelIdentity) -> bool:
         """Clear the one session-local unhealthy identity for explicit retry."""
@@ -765,31 +773,50 @@ class LocalSTTExecutor:
                     request.generation,
                     request.attempt_id,
                     TranscriptionFailureCode.ENGINE_CRASHED,
+                    recovery_actions=("retry_faster_whisper",),
                 )
                 deliver = callbacks.on_failure
             else:
                 retry_identity = replace(request.identity, device=ExecutionDevice.CPU)
-                self._start_worker_locked()
-                assert self._worker_generation is not None
-                assert self._connection is not None
-                assert self._cancellation_event is not None
-                self._cancellation_event.clear()
-                retry_request = replace(
-                    request,
-                    generation=self._worker_generation,
-                    identity=retry_identity,
-                )
-                self._active_request = retry_request
-                self._active_callbacks = callbacks
-                self._terminal_guard = _AttemptTerminalGuard(
-                    generation=retry_request.generation,
-                    attempt_id=retry_request.attempt_id,
-                )
-                self._latest_phase = None
-                self._cpu_retry_used = True
-                self._busy = True
-                self._connection.send(retry_request)
-                return
+                try:
+                    self._start_worker_locked()
+                    assert self._worker_generation is not None
+                    assert self._connection is not None
+                    assert self._cancellation_event is not None
+                    self._cancellation_event.clear()
+                    retry_request = replace(
+                        request,
+                        generation=self._worker_generation,
+                        identity=retry_identity,
+                    )
+                    self._active_request = retry_request
+                    self._active_callbacks = callbacks
+                    self._terminal_guard = _AttemptTerminalGuard(
+                        generation=retry_request.generation,
+                        attempt_id=retry_request.attempt_id,
+                    )
+                    self._latest_phase = None
+                    self._cpu_retry_used = True
+                    self._busy = True
+                    self._connection.send(retry_request)
+                except (
+                    BrokenPipeError,
+                    EOFError,
+                    ExecutorUnavailableError,
+                    OSError,
+                ):
+                    self._clear_active_locked()
+                    if self._process is not None:
+                        self._retire_idle_worker_locked()
+                    failure = ExecutorFailure(
+                        request.generation,
+                        request.attempt_id,
+                        TranscriptionFailureCode.ENGINE_CRASHED,
+                        recovery_actions=("retry_faster_whisper",),
+                    )
+                    deliver = callbacks.on_failure
+                else:
+                    return
         if deliver is not None and failure is not None:
             self._deliver(deliver, failure)
 
@@ -839,6 +866,7 @@ class LocalSTTExecutor:
                     generation,
                     request.attempt_id,
                     TranscriptionFailureCode.ENGINE_CRASHED,
+                    recovery_actions=("retry_faster_whisper",),
                 )
                 if guard.accept(failure):
                     callback = callbacks.on_failure
@@ -914,18 +942,24 @@ class LocalSTTExecutor:
     def _terminate_detached(
         self, detached: _DetachedWorker, *, update_state: bool = True
     ) -> None:
-        proven = detached.tree.terminate_tree(
-            term_timeout=self._force_stop_timeout,
-            kill_timeout=self._force_stop_timeout,
-        )
-        detached.connection.close()
-        if proven:
-            shutil.rmtree(detached.scratch_path, ignore_errors=True)
-        with self._lock:
-            if not proven:
-                self._unavailable = True
-            if update_state:
-                self._retiring = False
+        proven = False
+        try:
+            proven = detached.tree.terminate_tree(
+                term_timeout=self._force_stop_timeout,
+                kill_timeout=self._force_stop_timeout,
+            )
+            if proven:
+                shutil.rmtree(detached.scratch_path, ignore_errors=True)
+        except Exception:
+            proven = False
+        finally:
+            detached.connection.close()
+            with self._lock:
+                if not proven:
+                    self._unavailable = True
+                if update_state:
+                    self._retiring = False
+                    self._retirement_complete.set()
 
     def _clear_active_locked(self) -> None:
         self._active_request = None

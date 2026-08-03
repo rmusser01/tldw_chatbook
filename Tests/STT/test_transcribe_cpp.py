@@ -45,13 +45,19 @@ class _FakeSession:
 
 
 class _FakeModel:
-    def __init__(self, path: str, calls: list[tuple[str, object]]) -> None:
+    def __init__(
+        self,
+        path: str,
+        calls: list[tuple[str, object]],
+        *,
+        backend: str = "auto",
+    ) -> None:
         self._calls = calls
-        calls.append(("model", path))
+        calls.append(("model", (path, backend)))
         self.arch = "whisper"
         self.variant = "base"
-        self.backend = "cpu"
-        self.device = SimpleNamespace(kind="cpu")
+        self.backend = backend
+        self.device = SimpleNamespace(kind="cpu" if backend == "auto" else backend)
         self.capabilities = SimpleNamespace(
             native_sample_rate=16_000,
             languages=("en", "fr"),
@@ -74,8 +80,8 @@ class _FakeModel:
 
 def _fake_runtime(calls: list[tuple[str, object]]) -> object:
     class Model:
-        def __new__(cls, path: str) -> _FakeModel:
-            return _FakeModel(path, calls)
+        def __new__(cls, path: str, *, backend: str = "auto") -> _FakeModel:
+            return _FakeModel(path, calls, backend=backend)
 
     def set_log_callback(callback: object) -> None:
         calls.append(("set_log_callback", callback))
@@ -157,6 +163,34 @@ def test_transcribe_file_revalidates_then_loads_once_and_normalizes_result(
     assert result.timings.total_seconds == pytest.approx(
         result.timings.model_load_seconds + result.timings.inference_seconds
     )
+
+
+def test_reusable_runtime_passes_explicit_cpu_backend_to_native_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    model_path = tmp_path / "private-model.gguf"
+    model_path.write_bytes(b"fixture")
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setitem(sys.modules, "transcribe_cpp", _fake_runtime(calls))
+    monkeypatch.setattr(
+        module,
+        "validate_local_gguf",
+        lambda path: SimpleNamespace(
+            path=path,
+            metadata=SimpleNamespace(architecture="whisper"),
+        ),
+    )
+
+    runtime = module.TranscribeCppRuntime.load(
+        model_path=model_path,
+        attempt_id="attempt-cpu",
+        device=module.ExecutionDevice.CPU,
+    )
+    runtime.close()
+
+    assert ("model", (str(model_path), "cpu")) in calls
 
 
 def test_reusable_runtime_loads_once_transcribes_twice_and_closes_once(
@@ -384,7 +418,7 @@ def test_native_model_load_failure_closes_nothing_and_never_leaks_path(
     calls: list[tuple[str, object]] = []
 
     class FailingModel:
-        def __init__(self, path: str) -> None:
+        def __init__(self, path: str, *, backend: str = "auto") -> None:
             calls.append(("model", path))
             raise RuntimeError(f"native load failed for {path}")
 

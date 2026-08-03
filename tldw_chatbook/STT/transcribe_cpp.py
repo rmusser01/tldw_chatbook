@@ -393,6 +393,7 @@ def _failed_attempt_document(
     job_id: str | None,
     model_id: str,
     language: str,
+    requested_device: ExecutionDevice = ExecutionDevice.AUTO,
 ) -> dict[str, Any]:
     attempt = FailedTranscriptionAttempt(
         attempt_id=attempt_id,
@@ -403,7 +404,7 @@ def _failed_attempt_document(
         artifact_root=None,
         artifact_dependencies=(),
         precision=PRECISION,
-        requested_device=ExecutionDevice.AUTO,
+        requested_device=requested_device,
         effective_device=None,
         requested_language=language,
         effective_language=language,
@@ -423,6 +424,7 @@ def _runtime_failure(
     batch_id: str | None = None,
     job_id: str | None = None,
     actions: tuple[str, ...] | None = None,
+    requested_device: ExecutionDevice = ExecutionDevice.AUTO,
 ) -> TranscribeCppFailure:
     selected_actions = _failure_actions(code) if actions is None else actions
     normalized_language = (language or "en").strip().lower()
@@ -437,6 +439,7 @@ def _runtime_failure(
             job_id=job_id,
             model_id=model_id,
             language=normalized_language,
+            requested_device=requested_device,
         ),
     )
 
@@ -451,11 +454,13 @@ class TranscribeCppRuntime:
         coordinator: TranscriptionCoordinator,
         model_id: str,
         maximum_timestamps: frozenset[TimestampGranularity],
+        requested_device: ExecutionDevice,
     ) -> None:
         self._adapter = adapter
         self._coordinator = coordinator
         self._model_id = model_id
         self._maximum_timestamps = maximum_timestamps
+        self._requested_device = requested_device
         self._closed = False
 
     @classmethod
@@ -468,6 +473,7 @@ class TranscribeCppRuntime:
         job_id: str | None = None,
         language: str = "en",
         ffmpeg_path: str | None = None,
+        device: ExecutionDevice = ExecutionDevice.AUTO,
     ) -> TranscribeCppRuntime:
         """Admit and load one direct-local GGUF without leaking native detail."""
 
@@ -481,6 +487,7 @@ class TranscribeCppRuntime:
                 model_id=unavailable_model,
                 language=language,
                 actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+                requested_device=device,
             )
         try:
             admission = validate_local_gguf(model_path)
@@ -493,6 +500,7 @@ class TranscribeCppRuntime:
                 model_id=unavailable_model,
                 language=language,
                 actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+                requested_device=device,
             ) from None
         try:
             runtime = importlib.import_module("transcribe_cpp")
@@ -505,6 +513,7 @@ class TranscribeCppRuntime:
                 model_id=unavailable_model,
                 language=language,
                 actions=(_RETRY_FASTER_WHISPER,),
+                requested_device=device,
             ) from None
 
         model: object | None = None
@@ -515,7 +524,7 @@ class TranscribeCppRuntime:
             if callable(set_log_callback):
                 set_log_callback(lambda *_args: None)
             load_started = time.perf_counter()
-            model = runtime.Model(str(admission.path))
+            model = runtime.Model(str(admission.path), backend=device.value)
             load_seconds = time.perf_counter() - load_started
             if getattr(model, "arch", None) != admission.metadata.architecture:
                 raise ValueError("native model architecture mismatch")
@@ -546,6 +555,7 @@ class TranscribeCppRuntime:
                 coordinator=coordinator,
                 model_id=model_id,
                 maximum_timestamps=maximum_timestamps,
+                requested_device=device,
             )
         except Exception:
             if adapter is not None:
@@ -562,6 +572,7 @@ class TranscribeCppRuntime:
                 model_id=model_id,
                 language=language,
                 actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+                requested_device=device,
             ) from None
 
     def transcribe(
@@ -586,6 +597,7 @@ class TranscribeCppRuntime:
                 job_id=job_id,
                 model_id=self._model_id,
                 language=language,
+                requested_device=self._requested_device,
             )
         normalized_language = (language or "en").strip().lower()
         timestamp_request = (
@@ -605,7 +617,7 @@ class TranscribeCppRuntime:
             language=normalized_language,
             task=TranscriptionTask.TRANSCRIBE,
             precision=PRECISION,
-            device=ExecutionDevice.AUTO,
+            device=self._requested_device,
             timestamps=timestamp_request,
             privacy=PrivacyRequirements(allow_remote_processing=False),
         )
@@ -620,6 +632,7 @@ class TranscribeCppRuntime:
                 model_id=self._model_id,
                 language=normalized_language,
                 actions=_failure_actions(error.failure.code),
+                requested_device=self._requested_device,
             ) from None
         except TranscribeCppFailure:
             raise
@@ -632,6 +645,7 @@ class TranscribeCppRuntime:
                 model_id=self._model_id,
                 language=normalized_language,
                 actions=(_CHOOSE_ANOTHER_GGUF, _RETRY_FASTER_WHISPER),
+                requested_device=self._requested_device,
             ) from None
         finally:
             self._adapter.mark_model_reused()
@@ -657,6 +671,7 @@ def transcribe_file(
     language: str = "en",
     timestamps: bool = False,
     ffmpeg_path: str | None = None,
+    device: ExecutionDevice = ExecutionDevice.AUTO,
 ) -> Any:
     """Load, use, and close one direct-local model for legacy callers."""
 
@@ -667,6 +682,7 @@ def transcribe_file(
         job_id=job_id,
         language=language,
         ffmpeg_path=ffmpeg_path,
+        device=device,
     )
     try:
         return runtime.transcribe(

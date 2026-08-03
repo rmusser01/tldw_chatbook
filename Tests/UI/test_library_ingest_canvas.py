@@ -649,6 +649,37 @@ async def test_progress_line_absent_when_not_present():
 
 
 @pytest.mark.asyncio
+async def test_local_stt_cancel_then_force_stop_actions_render_exclusively():
+    running = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/speech.wav",
+        state=IngestJobState.PARSING,
+        progress={"phase": "transcribing"},
+    )
+    state = build_library_ingest_state((running,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-ingest-cancel-ingest-job-1", Button)
+        assert not list(pilot.app.query("#library-ingest-force-stop-ingest-job-1"))
+
+    cancelling = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/speech.wav",
+        state=IngestJobState.PARSING,
+        progress={"phase": "transcribing", "cancel_requested": True},
+    )
+    state = build_library_ingest_state((cancelling,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        force = pilot.app.query_one(
+            "#library-ingest-force-stop-ingest-job-1",
+            Button,
+        )
+        assert str(force.label) == "Force stop"
+        assert not list(pilot.app.query("#library-ingest-cancel-ingest-job-1"))
+
+
+@pytest.mark.asyncio
 async def test_show_details_button_renders_for_error_detail():
     """A failed job with structured error detail gets a Show details button."""
     job = LibraryIngestJob(

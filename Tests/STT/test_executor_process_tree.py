@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from Tests.STT.executor_test_support import (
+    containment_crashed_leader_with_term_ignoring_descendant,
     containment_descendant,
     containment_probe,
 )
@@ -57,9 +58,16 @@ class _FakeProcess:
 
 
 class _FakeWindowsApi:
-    def __init__(self, calls: list[object], *, assign_error: bool = False) -> None:
+    def __init__(
+        self,
+        calls: list[object],
+        *,
+        assign_error: bool = False,
+        job_exits: bool = True,
+    ) -> None:
         self.calls = calls
         self.assign_error = assign_error
+        self.job_exits = job_exits
 
     def create_kill_on_close_job(self) -> int:
         self.calls.append("create_job")
@@ -72,6 +80,10 @@ class _FakeWindowsApi:
 
     def terminate_job(self, job_handle: int) -> None:
         self.calls.append(("terminate_job", job_handle))
+
+    def wait_for_job_empty(self, job_handle: int, timeout: float) -> bool:
+        self.calls.append(("wait_job", job_handle, timeout))
+        return self.job_exits
 
     def close_handle(self, job_handle: int) -> None:
         self.calls.append(("close_job", job_handle))
@@ -167,6 +179,32 @@ def test_failed_windows_assignment_never_admits_and_reaps_worker() -> None:
     assert process.is_alive() is False
 
 
+def test_windows_dead_leader_still_terminates_and_proves_empty_job() -> None:
+    calls: list[object] = []
+    process = _FakeProcess(calls)
+    admission = _RecordingEvent(calls)
+    api = _FakeWindowsApi(calls)
+    identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=None)
+    tree = ExecutorProcessTree(
+        process,
+        admission,
+        identity,
+        platform_name="nt",
+        windows_api=api,
+    )
+    tree.admit()
+    process._alive = False
+    calls.clear()
+
+    assert tree.terminate_tree(term_timeout=0.2, kill_timeout=0.3) is True
+    assert calls == [
+        ("terminate_job", 99),
+        ("wait_job", 99, 0.2),
+        ("join", 0.2),
+        ("close_job", 99),
+    ]
+
+
 def test_unproven_tree_death_quarantines_containment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -232,6 +270,53 @@ def test_posix_force_stop_removes_worker_and_descendant_before_scratch_cleanup(
         elif process.is_alive():
             process.terminate()
             process.join(5.0)
+        if scratch.exists() and (child_pid is None or not _pid_exists(child_pid)):
+            shutil.rmtree(scratch)
+
+
+def test_posix_crashed_leader_still_reaps_term_ignoring_descendant(
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX containment evidence")
+    scratch = tmp_path / "crashed-generation-scratch"
+    scratch.mkdir(mode=0o700)
+    context = multiprocessing.get_context("spawn")
+    receive, send = context.Pipe(duplex=False)
+    admission = context.Event()
+    process = context.Process(
+        target=containment_crashed_leader_with_term_ignoring_descendant,
+        args=(send, admission, str(scratch)),
+    )
+    process.start()
+    tree: ExecutorProcessTree | None = None
+    identity: WorkerContainmentIdentity | None = None
+    child_pid: int | None = None
+    try:
+        kind, identity = _receive(receive)
+        assert kind == "identity"
+        assert type(identity) is WorkerContainmentIdentity
+        tree = ExecutorProcessTree(process, admission, identity)
+        tree.admit()
+        child_kind, raw_child_pid = _receive(receive)
+        assert child_kind == "child"
+        child_pid = int(raw_child_pid)
+        process.join(10.0)
+        assert process.is_alive() is False
+        assert _pid_exists(child_pid) is True
+
+        assert tree.terminate_tree(term_timeout=0.1, kill_timeout=2.0) is True
+        assert _pid_exists(child_pid) is False
+
+        shutil.rmtree(scratch)
+        assert scratch.exists() is False
+    finally:
+        if identity is not None and child_pid is not None and _pid_exists(child_pid):
+            try:
+                os.killpg(identity.process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.join(2.0)
         if scratch.exists() and (child_pid is None or not _pid_exists(child_pid)):
             shutil.rmtree(scratch)
 
