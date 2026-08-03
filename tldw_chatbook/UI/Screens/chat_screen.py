@@ -1824,7 +1824,11 @@ class ChatScreen(BaseAppScreen):
             hands_free.controller.on_exit_request()
 
     def action_expand_collapsed_console_composer(self) -> None:
-        """Expand the hidden Console composer and return keyboard focus to it."""
+        """Expand the hidden Console composer and return keyboard focus to it.
+
+        An open slash-command popup swallows Escape first and is dismissed
+        instead, leaving the collapsed composer untouched.
+        """
         if self._console_setup_modal_blocking():
             return
         if self._dismiss_console_command_popup():
@@ -1834,6 +1838,8 @@ class ChatScreen(BaseAppScreen):
     def action_focus_next(self) -> None:
         """Move focus to the next widget, trapping Tab inside a blocking modal.
 
+        An open slash-command popup claims Tab first: the highlighted
+        suggestion is accepted into the draft instead of moving focus.
         While the Console setup modal is blocking the workbench, this keeps
         focus cycling within the modal's own focusables instead of letting
         Tab tunnel into rail/transcript/composer controls hidden beneath it.
@@ -2351,7 +2357,9 @@ class ChatScreen(BaseAppScreen):
     def action_focus_console_composer_home(self) -> None:
         """Return keyboard focus to the Console composer (Escape, non-priority).
 
-        Deliberately not ``priority=True`` so widget-level escapes — transcript
+        An open slash-command popup claims Escape first and is dismissed
+        without moving focus. Deliberately not ``priority=True`` so
+        widget-level escapes — transcript
         selection-clear, and any pushed modal's own dismiss binding — are
         resolved first as the key event bubbles up; this screen-level action
         only fires once nothing closer to focus has claimed Escape.
@@ -20762,9 +20770,8 @@ class ChatScreen(BaseAppScreen):
         popup = self._console_command_popup_or_none()
         if popup is None:
             return
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-        except QueryError:
+        composer = self._console_composer_or_none()
+        if composer is None:
             return
         if composer.has_paste_segments():
             popup.hide()
@@ -20795,9 +20802,8 @@ class ChatScreen(BaseAppScreen):
         suggestion = popup.accept_selected()
         if suggestion is None:
             return False
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-        except QueryError:
+        composer = self._console_composer_or_none()
+        if composer is None:
             return False
         composer.load_draft(suggestion.insert_text)
         self._sync_console_workbench_actions_from_draft()
