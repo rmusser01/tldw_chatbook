@@ -3,15 +3,13 @@
 import asyncio
 import shutil
 import subprocess
-import tempfile
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import (
@@ -191,7 +189,6 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import (
     ActiveServerCapabilityService,
 )
