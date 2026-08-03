@@ -224,4 +224,15 @@ def _build_test_app(
             ),
         ):
             stack.enter_context(ctx)
-        return TldwCli()
+        app = TldwCli()
+        # PR-3 Task 4: the Library RAG answer worker runs a real provider
+        # call automatically once a rag-mode retrieval settles -- no button
+        # of its own. `LibraryScreen._library_rag_answer_chat_kwargs` treats
+        # a present-but-not-callable `library_rag_answer_chat` as "generation
+        # disabled", so setting it to None here keeps every pilot that never
+        # opted in off the network (the default, when the attribute is
+        # absent entirely, is the real `chat_api_call` -- which is what the
+        # shipping app must use). A test that wants generation assigns its
+        # own fake callable.
+        app.library_rag_answer_chat = None
+        return app

@@ -150,7 +150,12 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
-from ...Library.library_rag_answer_service import library_rag_answer_provider_ready
+from ...Library.library_rag_answer_service import (
+    LibraryRagAnswer,
+    generate_library_rag_answer,
+    library_rag_answer_provider_ready,
+    resolve_library_rag_answer_provider,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -235,6 +240,7 @@ from ...Widgets.Library import (
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
     library_dim_label_text,
+    library_rag_answer_children,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
@@ -408,6 +414,14 @@ LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 # every row-level id (old flat widgets or the new card) was already being
 # removed and remounted here -- only the always-kept heading is listed.
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
+
+# PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the
+# ordinary case; `empty` is answered too -- honestly, and without a provider
+# call (`generate_library_rag_answer` refuses to hand a model an evidence
+# block with nothing citable). `blocked`/`failed` are excluded on purpose:
+# retrieval did not run, so there is nothing to be grounded in and the
+# recovery copy those statuses already render is the honest answer.
+LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES = frozenset({"ready", "empty"})
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
@@ -1149,6 +1163,25 @@ class LibraryScreen(BaseAppScreen):
         # quote query text the "empty" outcome it explains wasn't actually
         # run against.
         self._library_rag_searched_query: str = ""
+        # PR-3 Task 4: the grounded answer generated for the CURRENT results
+        # (`generate_library_rag_answer`), plus the query/mode it was
+        # generated for. Those two are the answer worker's staleness guards,
+        # mirroring `_apply_library_rag_search_outcome`'s query/mode guards
+        # for retrieval: every transition that invalidates an answer (a new
+        # search, a mode toggle) clears them, so an answer that lands
+        # afterwards is discarded instead of overwriting a newer panel.
+        self._library_rag_answer: LibraryRagAnswer | None = None
+        self._library_rag_answer_query: str = ""
+        self._library_rag_answer_mode: str = ""
+        # Whether the single provider call is running right now. Kept
+        # SEPARATE from `_library_rag_retrieval_status` (rather than
+        # overwriting it with "answering") so the retrieval's own settled
+        # status is never destroyed and settling the answer is just clearing
+        # a flag -- there is no "restore the right previous value" step to
+        # get wrong. Deliberately NOT persisted by `save_state`: a restored
+        # screen is a new instance with no worker running, so a restored
+        # "answering" status could never be resolved by anything.
+        self._library_rag_answer_in_flight: bool = False
         # B2: source types the user has toggled OFF (deselected) in the
         # scope region. Empty = every available source is in scope (the
         # default). Persists across rail switches within the session, same
@@ -1167,6 +1200,18 @@ class LibraryScreen(BaseAppScreen):
         # scheduled) and that worker's own "outcome" refresh can otherwise
         # interleave mid-rebuild and mount duplicate row IDs.
         self._library_rag_history_refresh_lock = asyncio.Lock()
+        # Serializes whole-panel refreshes (PR-3 Task 4). Two-phase answering
+        # made an always-latent race reachable on ordinary input: the
+        # retrieval outcome's refresh and the answer's own refresh can now be
+        # in flight at once (the no-evidence path resolves generation almost
+        # immediately after retrieval), and both tear down and remount the
+        # same fixed-id widgets -- each captures its removal list, awaits,
+        # and then mounts, so interleaving raises `DuplicateIds`
+        # (`library-rag-query-quiet-line`, observed). One lock around the
+        # whole sequence means a refresh always finishes before the next
+        # starts, and the next then rebuilds from state that is by then
+        # settled.
+        self._library_rag_panel_refresh_lock = asyncio.Lock()
         self._library_collections_loaded = False
         self._library_collections_records = ()
         self._library_collections_selected_id = ""
@@ -1681,6 +1726,14 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
         state["library_rag_diagnostics"] = dict(self._library_rag_diagnostics)
         state["library_rag_searched_query"] = self._library_rag_searched_query
+        # PR-3 Task 4: the answer travels with the results it was generated
+        # from -- same lifecycle as the two fields above, and for the same
+        # reason (a `LibraryRagAnswer` is a frozen dataclass, so it is safe
+        # to carry verbatim). `_library_rag_answer_in_flight` is deliberately
+        # absent: see its `__init__` comment.
+        state["library_rag_answer"] = self._library_rag_answer
+        state["library_rag_answer_query"] = self._library_rag_answer_query
+        state["library_rag_answer_mode"] = self._library_rag_answer_mode
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
@@ -1781,6 +1834,21 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_searched_query = str(
             state.get("library_rag_searched_query") or ""
         )
+        rag_answer = state.get("library_rag_answer")
+        self._library_rag_answer = (
+            rag_answer if isinstance(rag_answer, LibraryRagAnswer) else None
+        )
+        self._library_rag_answer_query = str(
+            state.get("library_rag_answer_query") or ""
+        )
+        rag_answer_mode = state.get("library_rag_answer_mode")
+        self._library_rag_answer_mode = (
+            rag_answer_mode if rag_answer_mode in ("search", "rag") else ""
+        )
+        # `_library_rag_answer_in_flight` is intentionally left at its
+        # `__init__` default (False): this instance has no answer worker
+        # running, so restoring an in-flight "answering" status would be a
+        # dangling one nothing could ever resolve.
 
         media_type_filter = state.get("library_media_type_filter")
         self._library_media_type_filter = (
@@ -3616,7 +3684,16 @@ class LibraryScreen(BaseAppScreen):
             mode=self._library_rag_mode,
             results=self._library_rag_results,
             selected_result_id=self._library_rag_selected_result_id,
-            retrieval_status=self._library_rag_retrieval_status,
+            # PR-3 Task 4: the in-flight answer OVERLAYS the settled
+            # retrieval status for display only ("answering" is what Task 3's
+            # normalizer and run-gate override key off) -- the retrieval's
+            # own status stays intact underneath, so clearing the flag
+            # restores it exactly.
+            retrieval_status=(
+                "answering"
+                if self._library_rag_answer_in_flight
+                else self._library_rag_retrieval_status
+            ),
             recovery_copy=(
                 self._library_rag_recovery_state.visible_copy
                 if self._library_rag_recovery_state is not None
@@ -3655,6 +3732,7 @@ class LibraryScreen(BaseAppScreen):
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
             diagnostics=self._library_rag_diagnostics,
+            answer=self._library_rag_answer,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -16033,6 +16111,25 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_selected_result_id = ""
         self._library_rag_diagnostics = {}
         self._library_rag_searched_query = ""
+        self._reset_library_rag_answer_state()
+
+    def _reset_library_rag_answer_state(self) -> None:
+        """Drop the answer and its staleness guards (PR-3 Task 4).
+
+        Called wherever the results an answer was grounded in stop being the
+        results on screen -- the mode toggle (via
+        `_reset_library_rag_retrieval_state`) and the start of a new search.
+        Clearing the two guard fields is what makes an in-flight answer's
+        eventual arrival a no-op: `_apply_library_rag_answer` compares the
+        request it was generated for against them, so an answer for a query
+        (or mode) the panel has moved on from can never overwrite a newer
+        one. The in-flight flag goes with them, so no reset path can leave a
+        dangling "answering" status behind.
+        """
+        self._library_rag_answer = None
+        self._library_rag_answer_query = ""
+        self._library_rag_answer_mode = ""
+        self._library_rag_answer_in_flight = False
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -16045,9 +16142,20 @@ class LibraryScreen(BaseAppScreen):
         query-edit path, which deliberately never touches the results/
         history widgets -- resetting those fields there without also
         rebuilding the widget would desync the two.
+
+        The in-flight ANSWER flag (PR-3 Task 4) is cleared for the same
+        reason its retrieval counterpart is: it too disables the Run button
+        ("Answering…"), and a provider call has no bounded duration, so a
+        user who starts typing a new query must not be locked out of running
+        it until some model finishes. The landed `_library_rag_answer` itself
+        is deliberately left alone -- it belongs to the results still on
+        screen, exactly like them. The generation still running underneath
+        keeps its guard fields, so its answer still applies when it lands
+        (it answers the query those visible results were retrieved for).
         """
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
+        self._library_rag_answer_in_flight = False
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
@@ -16177,6 +16285,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = "searching"
         self._library_rag_diagnostics = {}
         self._library_rag_searched_query = ""
+        # PR-3 Task 4: a new search invalidates the previous answer AND any
+        # generation still running for it -- clearing the guard fields is
+        # what makes that older answer's arrival a discarded no-op rather
+        # than a stale overwrite (`_apply_library_rag_answer`).
+        self._reset_library_rag_answer_state()
         # The rail-top search box can invoke this mid-recompose -- it selects
         # the Search canvas via ``_select_library_rail_row`` and then runs the
         # query immediately after, before the scheduled recompose has mounted
@@ -16670,11 +16783,187 @@ class LibraryScreen(BaseAppScreen):
         # when a search settles with nothing to show. Every other refresh
         # path leaves the user's manual expand/collapse alone.
         self._library_rag_history_collapsed = bool(self._library_rag_results)
+        # Phase two. Deliberately before the mounted-panel check below: the
+        # answer must be generated whether or not the user is looking at the
+        # Search canvas right now (same reason the state fields above always
+        # apply), and setting the in-flight flag here means the single
+        # refresh below already paints "Answering…" instead of needing a
+        # second one.
+        self._start_library_rag_answer(request, outcome)
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
             "#library-search-rag-panel"
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
+
+    def _start_library_rag_answer(
+        self,
+        request: LibraryRagSearchRequest,
+        outcome: LibraryRagSearchOutcome,
+    ) -> None:
+        """Kick off phase two -- generate an answer from what retrieval found.
+
+        Only rag mode ever answers: keyword Search is a retrieval mode and
+        never reaches a provider. Only a settled `ready`/`empty` retrieval
+        does either -- a `blocked`/`failed` outcome already renders its own
+        recovery copy, and an answer built on a retrieval that did not run
+        would be a guess wearing an answer's clothes.
+
+        The zero-row (`empty`) case still generates: `generate_library_rag_
+        answer` answers it honestly ("Nothing in your library supports an
+        answer to that.") WITHOUT calling a provider, and keeping one path
+        here means that rule lives in exactly one place instead of being
+        re-derived by the screen. What it does NOT do is raise the
+        "answering" in-flight status: no provider call is made, so there is
+        no in-flight window worth showing -- and showing one would swap the
+        quiet no-match line for the idle "No evidence yet" line for a frame,
+        which is precisely the state that line exists to replace.
+
+        Args:
+            request: The retrieval request this outcome answers.
+            outcome: The settled retrieval outcome.
+        """
+        # A new retrieval invalidates whatever answer was on screen, whatever
+        # happens next in this method.
+        self._reset_library_rag_answer_state()
+        if request.mode != "rag":
+            return
+        if outcome.status not in LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES:
+            return
+        chat_kwargs = self._library_rag_answer_chat_kwargs()
+        if chat_kwargs is None:
+            return
+        # Resolved ONCE and reused: `library_rag_answer_provider_ready()`
+        # (the run gate) and this call are two facets of one resolution, so
+        # the tuple travels into generation rather than the boolean being
+        # re-derived into a second provider lookup that could disagree.
+        provider, model = resolve_library_rag_answer_provider()
+        if provider is None:
+            # The run gate blocks rag mode without a provider, so this is
+            # unreachable through the UI; if it ever is reached, saying
+            # nothing is honest -- that gate's copy already explains why.
+            logger.debug("Library RAG answer skipped: no provider configured.")
+            return
+        # Built from state that has just been applied, so the note describes
+        # THESE results (`library_rag_coverage_note` derives it from the
+        # outcome's diagnostics + rows). Read before the in-flight flag is
+        # raised so the status overlay can't affect it.
+        coverage_note = self._library_rag_panel_state().coverage_note
+        self._library_rag_answer_query = request.query
+        self._library_rag_answer_mode = request.mode
+        self._library_rag_answer_in_flight = bool(outcome.results)
+        self._execute_library_rag_answer(
+            request,
+            results=outcome.results,
+            coverage_note=coverage_note,
+            provider=provider,
+            model=model,
+            chat_kwargs=chat_kwargs,
+        )
+
+    def _library_rag_answer_chat_kwargs(self) -> dict[str, Any] | None:
+        """The `chat=` seam override for `generate_library_rag_answer`.
+
+        Three cases, and the distinction between the last two is the whole
+        point: an app with no `library_rag_answer_chat` attribute at all
+        (the shipping `TldwCli`) gets `{}` -- i.e. the service's own default,
+        `chat_api_call` -- so production needs no wiring to answer. An app
+        that DOES carry the attribute owns the decision: a callable is used
+        as the chat seam, and a non-callable (`None`) disables generation
+        entirely, which is how `Tests/UI/app_factory.py` keeps every pilot
+        that never opted into a fake off the network.
+
+        Returns:
+            Keyword arguments to forward to `generate_library_rag_answer`,
+            or `None` when generation is disabled for this app.
+        """
+        if not hasattr(self.app_instance, "library_rag_answer_chat"):
+            return {}
+        chat_seam = self.app_instance.library_rag_answer_chat
+        return {"chat": chat_seam} if callable(chat_seam) else None
+
+    @work(exclusive=True, group="library_rag_answer")
+    async def _execute_library_rag_answer(
+        self,
+        request: LibraryRagSearchRequest,
+        *,
+        results: Sequence[Any],
+        coverage_note: str,
+        provider: str,
+        model: str | None,
+        chat_kwargs: dict[str, Any],
+    ) -> None:
+        """Run the single grounded-answer call for `request`.
+
+        Its OWN exclusive group (`library_rag_answer`), never the retrieval
+        worker's (`library_rag_search`): sharing one would let a newly
+        started SEARCH cancel an in-flight answer mid-await, and a cancelled
+        worker never reaches `_apply_library_rag_answer` -- leaving the
+        "answering" status it raised with nothing left to resolve it.
+        Separate groups mean each phase only ever supersedes itself.
+
+        `thread=False` on purpose: the blocking provider call is already
+        offloaded inside the service (`_invoke_chat`'s `asyncio.to_thread`),
+        so this coroutine never blocks the event loop, and staying on it
+        keeps the state writes in `_apply_library_rag_answer` on the UI
+        thread where every other screen mutation happens.
+
+        `results`/`coverage_note` are passed in rather than read from `self`
+        inside the worker: they are the evidence THIS answer is grounded in,
+        and a concurrent reset must not be able to change what the prompt
+        was built from halfway through.
+        """
+        answer = await generate_library_rag_answer(
+            query=request.query,
+            results=results,
+            coverage_note=coverage_note,
+            provider=provider,
+            model=model,
+            **chat_kwargs,
+        )
+        await self._apply_library_rag_answer(request, answer)
+
+    async def _apply_library_rag_answer(
+        self,
+        request: LibraryRagSearchRequest,
+        answer: LibraryRagAnswer,
+    ) -> None:
+        """Resolve a completed answer worker's outcome into state.
+
+        The two guards mirror `_apply_library_rag_search_outcome`'s: an
+        answer generated for a query the panel has moved past, or for a mode
+        the user has since left, is discarded rather than applied. They
+        compare against `_library_rag_answer_query`/`_library_rag_answer_mode`
+        -- the fields recording what the CURRENT generation is for -- because
+        every invalidating transition clears them (`_reset_library_rag_
+        answer_state`), and unlike the live query box those fields do not
+        move when the user merely types (an answer belongs to the results
+        still on screen, and typing deliberately leaves those alone: B5).
+
+        Discarding never leaves a dangling "answering" status: the same
+        transitions that clear the guard fields clear the in-flight flag with
+        them, so whatever superseded this answer already settled the panel.
+        """
+        if not self.is_mounted:
+            return
+        if request.query != self._library_rag_answer_query:
+            # Stale: a newer search (or a reset) owns the panel now.
+            return
+        if request.mode != self._library_rag_answer_mode:
+            # Stale: the mode toggled mid-flight; this answer belongs to the
+            # mode the user has since left.
+            return
+        self._library_rag_answer = answer
+        self._library_rag_answer_in_flight = False
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
+        ):
+            return
+        # Results and history are untouched by an answer landing -- only the
+        # answer region, the run gate and the query status line change.
+        await self._refresh_search_rag_panel_state_widgets(
+            include_results_and_history=False
+        )
 
     def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
         """Refresh the scope-toggle counts and the Run gate in place, with
@@ -16763,56 +17052,75 @@ class LibraryScreen(BaseAppScreen):
                 widgets show (search runs on Submitted), so callers that
                 DO need them (Submit/Run, evidence selection, outcome
                 application, scope/mode toggles) all pass the default True.
+
+        Serialized by `_library_rag_panel_refresh_lock` (PR-3 Task 4): every
+        step below is a remove-then-mount of fixed-id widgets, so two
+        overlapping calls can each capture their removal list, await, and
+        then both mount -- `DuplicateIds`. Two-phase answering made that
+        latent race routine (a retrieval outcome's refresh and its answer's
+        refresh can now overlap), so the whole sequence takes the lock, and
+        the panel state is (re)built inside it so a queued refresh renders
+        the state as of when it actually runs, not when it was requested.
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
             "#library-search-rag-panel"
         ):
             return
 
-        panel_state = self._library_rag_panel_state()
+        async with self._library_rag_panel_refresh_lock:
+            panel_state = self._library_rag_panel_state()
 
-        await self._refresh_library_rag_query_status_widgets(panel_state)
+            await self._refresh_library_rag_query_status_widgets(panel_state)
 
-        scope_container = self.query_one("#library-rag-source-scope", Vertical)
-        scope_container.set_class(
-            library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
-        )
-        self.query_one("#library-rag-scope-summary", Static).update(
-            self._library_rag_scope_summary(panel_state)
-        )
-        scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
-        import_buttons = list(self.query("#library-rag-open-import-export"))
-        for widget in (*scope_recovery_widgets, *import_buttons):
-            await widget.remove()
-        for child in library_rag_scope_recovery_children(panel_state):
-            await scope_container.mount(child)
+            scope_container = self.query_one("#library-rag-source-scope", Vertical)
+            scope_container.set_class(
+                library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
+            )
+            self.query_one("#library-rag-scope-summary", Static).update(
+                self._library_rag_scope_summary(panel_state)
+            )
+            scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
+            import_buttons = list(self.query("#library-rag-open-import-export"))
+            for widget in (*scope_recovery_widgets, *import_buttons):
+                await widget.remove()
+            for child in library_rag_scope_recovery_children(panel_state):
+                await scope_container.mount(child)
 
-        if not include_results_and_history:
-            return
+            # Deliberately ABOVE the `include_results_and_history` gate: the
+            # answer region is at most a handful of `Static`s (the same cost
+            # class as the query-status block rebuilt just above, nothing
+            # like the ~100+ result/history rows that gate exists for), and
+            # keeping it on every refresh path means it can never drift out
+            # of lockstep with `_library_rag_answer`/the in-flight flag.
+            await self._refresh_library_rag_answer_widgets(panel_state)
 
-        await self._refresh_library_rag_results_widgets(panel_state)
-        await self._refresh_library_rag_history_widget(
-            panel_state,
-            force_collapsed=panel_state.history_collapsed
-            if force_history_collapse
-            else None,
-        )
-        # `force_history_collapse` is only set True from the results-arrival
-        # transition in `_apply_library_rag_search_outcome` -- every other
-        # refresh trigger (scope toggle, mode toggle, evidence selection)
-        # passes the default False. Reuse that same signal (C2) to scroll
-        # the Evidence heading back into view once results just landed.
-        # Deliberately done LAST, after every widget mutation above
-        # (results *and* history) has settled: mounting/removing the
-        # history rows also changes the panel's virtual size, and a scroll
-        # issued before that would just get overridden by it.
-        if force_history_collapse and panel_state.results:
-            try:
-                self.query_one("#library-rag-results-heading", Static).scroll_visible(
-                    animate=False
-                )
-            except NoMatches:
-                pass
+            if not include_results_and_history:
+                return
+
+            await self._refresh_library_rag_results_widgets(panel_state)
+            await self._refresh_library_rag_history_widget(
+                panel_state,
+                force_collapsed=panel_state.history_collapsed
+                if force_history_collapse
+                else None,
+            )
+            # `force_history_collapse` is only set True from the
+            # results-arrival transition in
+            # `_apply_library_rag_search_outcome` -- every other refresh
+            # trigger (scope toggle, mode toggle, evidence selection) passes
+            # the default False. Reuse that same signal (C2) to scroll the
+            # Evidence heading back into view once results just landed.
+            # Deliberately done LAST, after every widget mutation above
+            # (results *and* history) has settled: mounting/removing the
+            # history rows also changes the panel's virtual size, and a
+            # scroll issued before that would just get overridden by it.
+            if force_history_collapse and panel_state.results:
+                try:
+                    self.query_one(
+                        "#library-rag-results-heading", Static
+                    ).scroll_visible(animate=False)
+                except NoMatches:
+                    pass
 
     async def _refresh_library_rag_query_status_widgets(
         self,
@@ -16849,6 +17157,36 @@ class LibraryScreen(BaseAppScreen):
         for child in library_rag_query_status_children(panel_state):
             await query_controls.mount(child, after=anchor)
             anchor = f"#{child.id}"
+
+    async def _refresh_library_rag_answer_widgets(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        """Rebuild the Answer region from `library_rag_answer_children` (Task 4).
+
+        Torn down and rebuilt whole on every call, from the SAME builder
+        `LibrarySearchRagPanel.compose()` uses -- the idiom
+        `_refresh_library_rag_query_status_widgets` already follows for the
+        query status block, and for the same reason: the region is a handful
+        of `Static`s, so a full rebuild is cheap and (unlike hand-written
+        incremental update logic) cannot drift from what a fresh mount
+        renders.
+
+        Mounted as a SIBLING, `before="#library-rag-results"`, matching
+        `compose()`'s order exactly. It must never end up inside
+        `#library-rag-results`: that container's own teardown loop
+        (`_refresh_library_rag_results_widgets`) removes every child not in
+        `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, and would destroy the answer
+        on every results refresh.
+        """
+        panel_widgets = list(self.query("#library-search-rag-panel"))
+        if not panel_widgets:
+            return
+        panel = panel_widgets[0]
+        for widget in list(self.query("#library-rag-answer")):
+            await widget.remove()
+        for child in library_rag_answer_children(panel_state):
+            await panel.mount(child, before="#library-rag-results")
 
     async def _refresh_library_rag_history_widget(
         self,

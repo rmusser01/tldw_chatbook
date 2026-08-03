@@ -201,6 +201,18 @@ def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Wid
     ]
 
 
+#: Caution copy for a `ready` answer whose `citation_status` is not
+#: `validated` but which carries no recovery copy of its own -- a state the
+#: shipping validator never produces, kept because nothing enforces that
+#: cross-module invariant here. Says only what is actually known (the
+#: citations did not validate; check the evidence), never that they were
+#: "verified".
+LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION = (
+    "This answer's citations did not validate against the staged evidence. "
+    "Check the evidence rows below before relying on it."
+)
+
+
 def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     """Return the Answer region (`Vertical#library-rag-answer`), or none (PR-3 Task 3).
 
@@ -232,10 +244,12 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     Carried ruling (Task 1 review): `status == "ready"` never renders as a
     clean answer without branching on `citation_status` first.
     `uncited`/`unverified` (in fact, anything other than the literal
-    `"validated"`) shows `citation_recovery` in a bordered callout ABOVE
-    the answer text -- at least as prominent as the answer, not a footnote
-    below it, since a plausible-looking wrong answer is the single most
-    dangerous failure mode this feature exists to prevent. `validated` gets
+    `"validated"`) shows `citation_recovery` -- or
+    `LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION` when that copy is somehow
+    empty -- in a bordered callout ABOVE the answer text: at least as
+    prominent as the answer, not a footnote below it, since a
+    plausible-looking wrong answer is the single most dangerous failure
+    mode this feature exists to prevent. `validated` gets
     a neutral one-line note instead -- and that note, like every other
     string this module builds, never calls it "verified":
     `build_answer_citation_validation` only checks that a citation label
@@ -277,10 +291,19 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     body: list[Widget] = [heading]
     if answer.status == ANSWER_STATUS_READY:
         clean = answer.citation_status == "validated"
-        if not clean and answer.citation_recovery:
+        if not clean:
+            # `citation_status` and `citation_recovery` are set together by
+            # `build_answer_citation_validation` -- but that invariant lives
+            # in another module and nothing enforces it at the dataclass
+            # level (PR-3 Task 3 review finding). Falling back to generic
+            # caution copy, rather than skipping the callout when recovery
+            # copy happens to be empty, keeps the branch's whole point
+            # intact: an answer whose citations did not validate is NEVER
+            # rendered as if they had.
             body.append(
                 Static(
-                    library_rag_answer_display_text(answer.citation_recovery),
+                    library_rag_answer_display_text(answer.citation_recovery)
+                    or LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION,
                     id="library-rag-answer-caution",
                     classes="library-rag-callout is-caution",
                 )
