@@ -752,7 +752,7 @@ class TabNavigationProvider(Provider):
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
         TAB_CCP: "Switch to Roleplay & Chat Dictionaries for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
-        TAB_SEARCH: "Switch to search and RAG",
+        TAB_SEARCH: "Switch to Library search and RAG",
         TAB_INGEST: "Switch to content ingestion",
         TAB_EVALS: "Switch to evaluation tools",
         TAB_LLM: "Switch to model and provider management",
@@ -1138,7 +1138,9 @@ class QuickActionsProvider(Provider):
                     {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True},
                 )
             elif action_id == "search_all":
-                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
+                _navigate_via_screen(
+                    self.app, TAB_SEARCH, "Opened Library Search/RAG"
+                )
             elif action_id == "import_media":
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
@@ -1398,7 +1400,9 @@ class MediaProvider(Provider):
                 )
             elif action_id == "search_transcripts":
                 _navigate_via_screen(
-                    self.app, TAB_SEARCH, "Opened Search/RAG for transcript search"
+                    self.app,
+                    TAB_SEARCH,
+                    "Opened Library Search/RAG for transcript search",
                 )
         except Exception as e:
             self.app.notify(f"Failed to execute media action: {e}", severity="error")
@@ -6172,13 +6176,15 @@ class TldwCli(
     # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
     # Notes tab -- except "prompts" (the retired Personas "prompts" mode
-    # chip, Task 7) and "skills" (the retired standalone Skills tab, Skills
-    # sub-project Task 5) have no dedicated re-entry action to carry that
-    # context, so the bare alias route itself must supply it here.
+    # chip, Task 7), "skills" (the retired standalone Skills tab, Skills
+    # sub-project Task 5), and "search" (the retired standalone Search
+    # screen, RAG UX v2 PR-1 Task 1) have no dedicated re-entry action to
+    # carry that context, so the bare alias route itself must supply it here.
     # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+        "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
         "customize": {"category": "theme"},
     }
 

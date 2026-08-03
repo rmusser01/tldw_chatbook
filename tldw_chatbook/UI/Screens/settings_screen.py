@@ -9903,6 +9903,44 @@ class SettingsScreen(BaseAppScreen):
             return base
         return f"{base} · built with {model} / chunk {chunk_size}·{chunk_overlap}"
 
+    def _library_rag_backfill_progress_line(self, update: Mapping[str, object]) -> str:
+        """Render one ``progress_callback`` update from
+        ``backfill_semantic_index`` (``RAG_Search/ingestion_indexing.py``,
+        invoked after every processed batch with ``{"item_type", "indexed",
+        "skipped", "failed"}`` -- counts cumulative per item type) as the
+        status-row text during a live backfill.
+
+        Task 3 (RAG UX v2 PR1): the retired Search screen's Maintenance tab
+        was the only place this per-batch signal ever reached the UI
+        (``search_rag_window.py``'s ``_update_indexing_progress``) -- same
+        wording, re-homed here so Settings' Backfill button stops going
+        silent for minutes at a time. The single formatting seam for both
+        this live progress line and ``_apply_library_rag_backfill_progress``
+        below.
+        """
+        return (
+            f"Indexing {update.get('item_type', '?')}: "
+            f"{update.get('indexed', 0)} indexed, "
+            f"{update.get('skipped', 0)} up-to-date, "
+            f"{update.get('failed', 0)} failed"
+        )
+
+    def _apply_library_rag_backfill_progress(self, update: Mapping[str, object]) -> None:
+        """Imperatively update the index-status Static with a live per-batch
+        backfill progress line -- called off-thread (via ``call_from_thread``)
+        from ``_rag_backfill_worker``'s ``progress_callback``.
+
+        Same active-category guard as ``_apply_library_rag_index_status``: a
+        backfill started before the user navigated away must not write to a
+        Static that now belongs to a different category.
+        """
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._set_static_text(
+            "#settings-library-rag-index-status",
+            self._library_rag_backfill_progress_line(update),
+        )
+
     def _apply_library_rag_index_status(self, status: Mapping[str, object]) -> None:
         """Imperatively update the index-status Static from a freshly fetched
         status dict -- called from off-thread worker callbacks, never during
@@ -10159,11 +10197,26 @@ class SettingsScreen(BaseAppScreen):
                     severity="error",
                 )
                 return
+
+            def _progress(update: Mapping[str, object]) -> None:
+                # Task 3 (RAG UX v2 PR1): live per-batch counts into the
+                # index-status row, exactly like SearchRAGWindow's own
+                # _progress -> _update_indexing_progress did on the now-
+                # retired Search screen. Never let a UI-side failure here
+                # abort the backfill itself.
+                try:
+                    self.app.call_from_thread(
+                        self._apply_library_rag_backfill_progress, dict(update)
+                    )
+                except Exception as e:
+                    logger.debug(f"Backfill progress update failed: {e}")
+
             summary = asyncio.run(
                 backfill_semantic_index(
                     media_db=media_db,
                     chachanotes_db=chachanotes_db,
                     rag_service=rag_service,
+                    progress_callback=_progress,
                 )
             )
         except Exception as e:

@@ -3,15 +3,13 @@
 import asyncio
 import shutil
 import subprocess
-import tempfile
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import (
@@ -191,8 +189,6 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-from tldw_chatbook.UI.Screens.search_screen import SearchScreen
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import (
     ActiveServerCapabilityService,
 )
@@ -2158,6 +2154,79 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
 
 
 @pytest.mark.asyncio
+async def test_search_route_lands_on_library_rag_canvas():
+    """``NavigateToScreen("search")`` must land on Library with the
+    Search/RAG rail row selected. The standalone Search screen is retired
+    (RAG UX v2 PR-1, Task 1) and the legacy "search" route now re-points into
+    Library, mirroring ``test_prompts_route_lands_on_library_with_prompts_row_selected``
+    /``test_skills_route_lands_on_library_with_skills_row_selected`` exactly --
+    "search" has no dedicated re-entry action to carry a nav-context, so the
+    bare alias route itself must supply it via
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_search_all_palette_command_lands_on_library_with_honest_toast():
+    """RAG UX v2 PR-1, Task 2: the "Search All Content" quick-action palette
+    command dispatches through the "search" alias (Task 1), so it must
+    resolve to the same Library Search/RAG canvas as
+    ``test_search_route_lands_on_library_rag_canvas`` -- and its toast must
+    say so honestly instead of promising the retired standalone "Search/RAG"
+    screen.
+    """
+    from tldw_chatbook.app import QuickActionsProvider
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+    notices: list[tuple[str, str]] = []
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        provider = QuickActionsProvider(screen=app.screen)
+        provider.execute_quick_action("search_all")
+
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        assert ("Opened Library Search/RAG", "information") in notices
+
+
+@pytest.mark.asyncio
 async def test_media_screen_round_trip_restores_type_filter_and_search_term():
     """Regression lock for the bug this task fixes: nothing seeds
     ``MediaWindow.active_media_type`` on a screen-navigated visit except a
@@ -2240,12 +2309,19 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
 
 
 @pytest.mark.asyncio
-async def test_search_screen_round_trip_restores_query_input():
-    """SearchScreen wraps ``SearchRAGWindow`` directly with no app-owned
-    runtime-state seam of its own (unlike Media's shared
-    ``MediaRuntimeState``), so its query input is entirely at the mercy of
-    ``_screen_states``.
+async def test_search_route_round_trips_to_the_library_rag_row():
+    """The retired standalone Search screen is folded into Library (RAG UX
+    v2 PR-1, Task 1): the "search" route no longer has a runtime-state seam
+    of its own, so this locks that the alias's rail-row selection survives a
+    round trip through another screen and is not just a first-navigation
+    fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``. Unlike the "library" +
+    click entry point exercised by
+    ``test_library_screen_round_trip_restores_rag_query_and_rail_selection``,
+    entering via the bare "search" alias re-applies that legacy nav context
+    on every visit rather than relying solely on restored screen state.
     """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
@@ -2257,15 +2333,12 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
-        assert type(app.screen).__name__ == "SearchScreen"
-
-        query_input = app.screen.query_one("#search-query-input", Input)
-        query_input.value = "quantum encryption notes"
-        await pilot.pause()
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
         for _ in range(150):
@@ -2277,15 +2350,14 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
 
         restored_screen = app.screen
-        assert type(restored_screen).__name__ == "SearchScreen"
-        restored_input = restored_screen.query_one("#search-query-input", Input)
-        assert restored_input.value == "quantum encryption notes"
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
 
 # --- Media/Search unit-style save_state/restore_state contracts -----------
@@ -2340,34 +2412,6 @@ def test_media_screen_restore_state_stashes_pending_dict_for_on_mount():
         "selected_media_id": "media-9",
         "search_term": "q",
         "keyword_filter": "kw",
-    }
-
-
-def test_search_screen_save_state_never_raises_when_window_unset():
-    app = _build_test_app()
-    screen = SearchScreen(app)  # compose_content never ran -- search_window is None
-
-    state = screen.save_state()
-
-    assert "search_query" not in state
-
-
-def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
-    app = _build_test_app()
-    screen = SearchScreen(app)
-
-    screen.restore_state(
-        {
-            "search_query": "hello",
-            "search_mode": "hybrid",
-            "search_active_tab": "history-tab",
-        }
-    )
-
-    assert screen._pending_search_restore == {
-        "query": "hello",
-        "mode": "hybrid",
-        "active_tab": "history-tab",
     }
 
 

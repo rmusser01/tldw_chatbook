@@ -1,31 +1,14 @@
 from __future__ import annotations
 
 import inspect
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from tldw_chatbook.runtime_policy.engine import PolicyEngine
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
-from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
     build_library_rag_console_live_work_payload,
 )
 from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
-
-
-def _search_app(runtime_backend: str = "local") -> Mock:
-    app = Mock()
-    app.notify = Mock()
-    app.api_endpoint = "test-endpoint"
-    app.search_active_sub_tab = None
-    app.get_authoritative_runtime_source = Mock(return_value=runtime_backend)
-    app.open_chat_with_handoff = Mock()
-    return app
 
 
 def test_search_result_builds_use_in_chat_event_with_result_data():
@@ -36,75 +19,6 @@ def test_search_result_builds_use_in_chat_event_with_result_data():
 
     assert event.index == 0
     assert event.result["title"] == "Doc"
-
-
-def test_search_window_normalizes_rag_result_payload(tmp_path):
-    app = _search_app(runtime_backend="server")
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    result = {
-        "title": "Chunk",
-        "content": "Retrieved text",
-        "source": "notes",
-        "score": 0.91,
-        "metadata": {"document_id": "doc-1"},
-    }
-
-    payload = window._build_search_chat_handoff_payload(result)
-
-    assert payload.source == "search-rag"
-    assert payload.item_type == "rag-result"
-    assert payload.discovery_owner == "rag_search"
-    assert payload.runtime_backend == "server"
-    assert payload.source_selector_state == "server"
-    assert payload.body == "Retrieved text"
-    assert payload.metadata["score"] == 0.91
-
-
-def test_search_window_normalizes_web_result_payload(tmp_path):
-    app = _search_app(runtime_backend="local")
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    result = {
-        "title": "Article",
-        "content": "Snippet",
-        "source": "web",
-        "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-    }
-
-    payload = window._build_search_chat_handoff_payload(result)
-
-    assert payload.source == "search-web"
-    assert payload.item_type == "web-result"
-    assert payload.discovery_owner == "web_search"
-    assert payload.source_owner == "server"
-    assert payload.source_selector_state == "server"
-    assert payload.metadata["url"] == "https://example.com"
-
-
-def test_search_rag_window_use_in_chat_handler_routes_to_app(tmp_path):
-    app = _search_app(runtime_backend="local")
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {"title": "Chunk", "content": "Retrieved text", "source": "notes"},
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    payload = app.open_chat_with_handoff.call_args.args[0]
-    assert payload.source == "search-rag"
-    assert payload.body == "Retrieved text"
 
 
 def test_library_rag_console_payload_preserves_evidence_fields():
@@ -332,93 +246,3 @@ def test_library_rag_console_payload_helper_documents_contract():
     assert docstring is not None
     assert "Args:" in docstring
     assert "Returns:" in docstring
-
-
-def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):
-    app = _search_app(runtime_backend="local")
-    app.open_chat_with_handoff = None
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {"title": "Chunk", "content": "Retrieved text", "source": "notes"},
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    message = app.notify.call_args.args[0]
-    assert "Use in Chat is unavailable" in message
-    assert "Open Chat" in message
-    assert "try again" in message
-    assert app.notify.call_args.kwargs["severity"] == "warning"
-
-
-def test_search_rag_window_use_in_chat_policy_block_explains_recovery(tmp_path):
-    app = _search_app(runtime_backend="server")
-    app.runtime_policy = SimpleNamespace(
-        state=RuntimeSourceState(active_source="local")
-    )
-    app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {
-            "title": "Server Chunk",
-            "content": "Retrieved text",
-            "source": "notes",
-            "metadata": {"document_id": "doc-1"},
-        },
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    app.open_chat_with_handoff.assert_not_called()
-    message = app.notify.call_args.args[0]
-    assert "rag.media_embeddings.search.server requires server mode" in message
-    assert "switch source" in message.lower()
-    assert app.notify.call_args.kwargs["severity"] == "warning"
-
-
-@pytest.mark.asyncio
-async def test_search_rag_window_web_search_runs_bing_call_in_thread(tmp_path):
-    app = _search_app(runtime_backend="local")
-    with patch(
-        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-        return_value=tmp_path,
-    ):
-        window = SearchRAGWindow(app_instance=app)
-    search_bing = Mock(return_value={"raw": "bing"})
-
-    with (
-        patch.object(search_rag_window, "WEB_SEARCH_AVAILABLE", True),
-        patch.object(search_rag_window, "search_web_bing", search_bing),
-        patch.object(
-            search_rag_window,
-            "parse_bing_results",
-            return_value=[
-                {
-                    "name": "Article",
-                    "snippet": "Snippet",
-                    "url": "https://example.com",
-                    "displayUrl": "example.com",
-                }
-            ],
-        ),
-        patch.object(
-            search_rag_window.asyncio,
-            "to_thread",
-            AsyncMock(return_value={"raw": "bing"}),
-        ) as to_thread,
-    ):
-        results = await window._perform_web_search("agent handoff")
-
-    to_thread.assert_awaited_once_with(search_bing, "agent handoff")
-    assert results[0]["title"] == "Article"
-    assert results[0]["metadata"]["url"] == "https://example.com"

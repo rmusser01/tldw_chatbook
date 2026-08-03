@@ -146,6 +146,9 @@ def test_tab_navigation_provider_copy_uses_shell_vocabulary():
     assert "global preferences" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SETTINGS]
     assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
     assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
+    # RAG UX v2 PR-1, Task 2: the retired standalone Search screen means this
+    # copy must say where "search" actually lands now.
+    assert "Library" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SEARCH]
 
 
 def test_palette_offers_library_skills_deeplink_command():

@@ -600,6 +600,21 @@ class TestQuickActionsProvider:
         assert message.screen_context == {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
         quick_actions_provider.app.notify.assert_called_once()
 
+    def test_execute_search_all_action(self, quick_actions_provider):
+        """Search All Content dispatches through the "search" alias (RAG UX
+        v2 PR-1, Task 1) into Library's Search/RAG canvas, so the toast must
+        say so honestly instead of the retired "Opened Search/RAG" copy.
+        """
+        quick_actions_provider.execute_quick_action("search_all")
+
+        quick_actions_provider.app.post_message.assert_called_once()
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SEARCH
+        quick_actions_provider.app.notify.assert_called_once()
+        call_args = quick_actions_provider.app.notify.call_args[0]
+        assert call_args[0] == "Opened Library Search/RAG"
+
     def test_execute_action_failure(self, quick_actions_provider):
         """Test quick action execution with error handling."""
         quick_actions_provider.app.post_message.side_effect = Exception("Action error")
@@ -736,6 +751,20 @@ class TestMediaProvider:
         message = media_provider.app.post_message.call_args.args[0]
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == TAB_MEDIA
+
+    def test_search_transcripts_navigates(self, media_provider):
+        """Search Transcripts dispatches through the "search" alias (RAG UX
+        v2 PR-1, Task 1) into Library's Search/RAG canvas, matching Search
+        All Content's honest toast copy.
+        """
+        media_provider.handle_media_action("search_transcripts")
+
+        message = media_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SEARCH
+        media_provider.app.notify.assert_called_once()
+        call_args = media_provider.app.notify.call_args[0]
+        assert call_args[0] == "Opened Library Search/RAG for transcript search"
 
 
 @requires_imports

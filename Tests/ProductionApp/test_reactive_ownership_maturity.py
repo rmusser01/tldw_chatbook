@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 import pytest
-from textual.widgets import Input, TabbedContent
+from textual.widgets import Input
 
 import tldw_chatbook.app as app_module
 from Tests.reactive_ownership_contract import RETIRED_TLDW_REACTIVES
@@ -23,11 +23,11 @@ from tldw_chatbook.Constants import (
     TAB_MCP,
     TAB_MEDIA,
     TAB_PERSONAS,
-    TAB_SEARCH,
     TAB_SETTINGS,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -40,7 +40,6 @@ from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 
@@ -58,7 +57,7 @@ ROUTE_SPECS = (
     ("personas", TAB_PERSONAS, PersonasScreen),
     ("library", TAB_LIBRARY, LibraryScreen),
     ("media", TAB_MEDIA, MediaScreen),
-    ("search", TAB_SEARCH, SearchScreen),
+    ("search", TAB_LIBRARY, LibraryScreen),
     ("ingest", TAB_LIBRARY, LibraryScreen),
     ("mcp", TAB_MCP, MCPScreen),
     ("evals", TAB_EVALS, EvalsScreen),
@@ -68,7 +67,6 @@ CHAT_SESSION_TITLE = "TASK-906 Console owner"
 PERSONAS_QUERY = "TASK-906 personas owner"
 LIBRARY_QUERY = "TASK-906 library owner"
 MEDIA_QUERY = "TASK-906 media owner"
-SEARCH_QUERY = "TASK-906 search owner"
 SETTINGS_QUERY = "TASK-906 settings owner"
 SECRET_SNAPSHOT_KEYS = frozenset(
     {
@@ -143,13 +141,30 @@ async def _wait_for_screen(
     canonical_tab: str,
     *,
     previous_screen: object | None = None,
+    original_screen: object | None = None,
 ):
+    """Poll until ``app.screen`` is a freshly-switched-to instance of ``screen_type``.
+
+    Two independent exclusions, both by identity:
+
+    - ``previous_screen``: whatever was mounted immediately before this call
+      (any route). Guards the race where the predicate's first check -- run
+      before any ``pilot.pause`` -- could still see the still-mounted
+      outgoing screen and match it by (type, tab) alone.
+    - ``original_screen``: the SAME route's screen instance from an earlier
+      visit (e.g. loop 1's instance, when this call is loop 2's revisit).
+      This is the mechanism by which
+      ``test_registered_routes_use_fresh_production_owners_and_safe_snapshots``
+      proves a revisited route gets a genuinely new screen, not a cached/
+      reused one -- dropping it would make that assertion vacuous.
+    """
     await _wait_until(
         pilot,
         lambda: (
             type(app.screen) is screen_type
             and app.current_tab == canonical_tab
             and app.screen is not previous_screen
+            and app.screen is not original_screen
             and app.screen.is_mounted
         ),
         f"production TldwCli did not route to exact {screen_type.__name__}",
@@ -211,11 +226,13 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
         screen.media_window.search_panel.search_term = MEDIA_QUERY
         assert screen.media_window.search_panel.search_term == MEDIA_QUERY
     elif route == "search":
-        assert type(screen) is SearchScreen
-        screen.query_one("#search-query-input", Input).value = SEARCH_QUERY
-        screen.query_one("#search-tabs", TabbedContent).active = "history-tab"
-        await pilot.pause()
-        assert screen.query_one("#search-query-input", Input).value == SEARCH_QUERY
+        # The standalone Search screen is retired (RAG UX v2 PR-1, Task 1):
+        # "search" now aliases to Library's Search/RAG canvas, same as
+        # "ingest" below -- the legacy nav context is applied automatically
+        # on the bare route (``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``), unlike
+        # "ingest" which needs ``_navigation_message`` to inject it.
+        assert type(screen) is LibraryScreen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
     elif route == "ingest":
         assert type(screen) is LibraryScreen
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
@@ -275,9 +292,12 @@ async def _assert_restored_route(route: str, screen: object, pilot: Any) -> None
             "fresh Media owner did not restore its snapshot",
         )
     elif route == "search":
-        assert type(screen) is SearchScreen
-        assert screen.query_one("#search-query-input", Input).value == SEARCH_QUERY
-        assert screen.query_one("#search-tabs", TabbedContent).active == "history-tab"
+        # The legacy nav context re-applies on every bare "search" visit
+        # (see the matching branch in ``_exercise_route``), so the rail row
+        # is deterministic regardless of whatever canonical_tab="library"
+        # snapshot was restored first.
+        assert type(screen) is LibraryScreen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
     elif route == "ingest":
         assert type(screen) is LibraryScreen
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
@@ -440,13 +460,23 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
     """Exercise every changed route twice through the normal production app."""
     for route, canonical_tab, screen_type in ROUTE_SPECS:
         assert resolve_screen_target(route) == (
-            "library" if route == "ingest" else route,
+            "library" if route in {"ingest", "search"} else route,
             canonical_tab,
             screen_type,
         )
 
     app = _production_app(monkeypatch)
     original_screens: dict[str, object] = {}
+    # Threaded through every ``_wait_for_screen`` call across both loops
+    # below (never reset): "search" folding into Library (RAG UX v2 PR-1,
+    # Task 1) makes "search" and "ingest" adjacent ROUTE_SPECS entries that
+    # share the exact same (LibraryScreen, TAB_LIBRARY) target. Without
+    # excluding the immediately-preceding screen by identity, the first,
+    # pre-``pilot.pause`` predicate check could match the still-mounted
+    # outgoing screen before ``switch_screen`` has actually run. This is
+    # ADDITIONAL to, not a replacement for, the ``original_screen`` exclusion
+    # below -- see ``_wait_for_screen``'s docstring for why both are needed.
+    last_screen: object | None = None
 
     async with app.run_test(size=(180, 55)) as pilot:
         for route, canonical_tab, screen_type in ROUTE_SPECS:
@@ -456,13 +486,17 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
                 pilot,
                 screen_type,
                 canonical_tab,
+                previous_screen=last_screen,
             )
             original_screens[route] = screen
+            last_screen = screen
             await _exercise_route(route, screen, pilot)
             assert all(not hasattr(app, name) for name in RETIRED_TLDW_REACTIVES)
 
         app.post_message(NavigateToScreen("home"))
-        await _wait_for_screen(app, pilot, HomeScreen, "home")
+        last_screen = await _wait_for_screen(
+            app, pilot, HomeScreen, "home", previous_screen=last_screen
+        )
 
         for route, canonical_tab, screen_type in ROUTE_SPECS:
             app.post_message(_navigation_message(route))
@@ -471,8 +505,10 @@ async def test_registered_routes_use_fresh_production_owners_and_safe_snapshots(
                 pilot,
                 screen_type,
                 canonical_tab,
-                previous_screen=original_screens[route],
+                previous_screen=last_screen,
+                original_screen=original_screens[route],
             )
+            last_screen = screen
             await _assert_restored_route(route, screen, pilot)
             assert all(not hasattr(app, name) for name in RETIRED_TLDW_REACTIVES)
 
