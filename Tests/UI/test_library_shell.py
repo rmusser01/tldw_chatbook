@@ -8406,6 +8406,91 @@ class _DelayedSaveLibraryNotesScopeService(StaticLibraryNotesScopeService):
         return await super().save_note(**kwargs)
 
 
+class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
+    """Bound real service seams with per-call OS-thread release gates.
+
+    The screen offloads these async methods into executor threads.  Each gate
+    is therefore a ``threading.Event`` and every wait is bounded by the shared
+    shutdown-safe timeout.  ``None`` consumes one call without blocking, which
+    lets a test gate only a later conflict refresh or overwrite save.
+    """
+
+    def __init__(
+        self,
+        notes,
+        *,
+        detail_gates: tuple[threading.Event | None, ...] = (),
+        save_gates: tuple[threading.Event | None, ...] = (),
+        create_gates: tuple[threading.Event | None, ...] = (),
+        delete_gates: tuple[threading.Event | None, ...] = (),
+        force_delete_result: bool | None = None,
+    ) -> None:
+        super().__init__(notes)
+        self._detail_gates = list(detail_gates)
+        self._save_gates = list(save_gates)
+        self._create_gates = list(create_gates)
+        self._delete_gates = list(delete_gates)
+        self._gate_lock = threading.Lock()
+        self._active_save_calls = 0
+        self.max_concurrent_save_calls = 0
+        self.force_delete_result = force_delete_result
+        self.detail_attempts: list[dict] = []
+        self.save_attempts: list[dict] = []
+        self.create_attempts: list[dict] = []
+        self.delete_attempts: list[dict] = []
+
+    def _claim_gate(
+        self, gates: list[threading.Event | None]
+    ) -> threading.Event | None:
+        with self._gate_lock:
+            return gates.pop(0) if gates else None
+
+    @staticmethod
+    async def _wait_for_gate(gate: threading.Event | None, operation: str) -> None:
+        if gate is None:
+            return
+        released = await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        if not released:
+            raise TimeoutError(f"Timed out waiting to release {operation} gate.")
+
+    async def get_note_detail(self, **kwargs):
+        self.detail_attempts.append(dict(kwargs))
+        gate = self._claim_gate(self._detail_gates)
+        await self._wait_for_gate(gate, "detail")
+        return await super().get_note_detail(**kwargs)
+
+    async def save_note(self, **kwargs):
+        is_create = not kwargs.get("note_id")
+        attempts = self.create_attempts if is_create else self.save_attempts
+        gates = self._create_gates if is_create else self._save_gates
+        attempts.append(dict(kwargs))
+        gate = self._claim_gate(gates)
+        if is_create:
+            await self._wait_for_gate(gate, "create")
+            return await super().save_note(**kwargs)
+
+        with self._gate_lock:
+            self._active_save_calls += 1
+            self.max_concurrent_save_calls = max(
+                self.max_concurrent_save_calls, self._active_save_calls
+            )
+        try:
+            await self._wait_for_gate(gate, "save")
+            return await super().save_note(**kwargs)
+        finally:
+            with self._gate_lock:
+                self._active_save_calls -= 1
+
+    async def delete_note(self, **kwargs):
+        self.delete_attempts.append(dict(kwargs))
+        gate = self._claim_gate(self._delete_gates)
+        await self._wait_for_gate(gate, "delete")
+        if self.force_delete_result is False:
+            self.delete_calls.append(dict(kwargs))
+            return False
+        return await super().delete_note(**kwargs)
+
+
 async def _open_note_editor(screen, pilot, note_id_suffix: str = "n-1"):
     """Drive the shared path to the in-canvas note editor for ``_two_notes()``'s
     first row, then let the mount-time armed-flag callback settle.
@@ -20333,3 +20418,615 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
             message="Reload did not resolve the conflict after Escape refusal.",
         )
         assert screen._library_note_shortcut_status == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-1333 Task 9: destructive and concurrent interaction safety in Pilot.
+
+
+async def _scroll_task9_context_to_nonzero_offset(context, pilot):
+    """Add bounded synthetic overflow and return a real nonzero scroll offset."""
+    await context.mount(
+        Static(
+            "Additional context evidence\n" * 12,
+            markup=False,
+        )
+    )
+    await pilot.pause()
+    context.scroll_to(y=context.max_scroll_y, animate=False)
+    await pilot.pause()
+    assert context.max_scroll_y > 0
+    assert context.scroll_y > 0
+    return context.scroll_y
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain() -> (
+    None
+):
+    first_save_release = threading.Event()
+    latest_save_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(), save_gates=(first_save_release, latest_save_release)
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            body = screen.query_one("#library-note-body", TextArea)
+
+            body.text = "revision one"
+            await pilot.pause()
+            screen.query_one("#library-note-save").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(service.save_attempts) == 1,
+                message="The first save never reached its gate.",
+            )
+
+            body.text = "revision two"
+            await pilot.pause()
+            screen.query_one("#library-note-save").press()
+            body.text = "revision three"
+            await pilot.pause()
+            screen.query_one("#library-note-back").press()
+
+            await asyncio.sleep(0.05)
+            assert screen._library_notes_view == "editor"
+            assert len(service.save_attempts) == 1
+
+            first_save_release.set()
+            for _ in range(200):
+                if len(service.save_attempts) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("The coalesced latest save never started.")
+            assert screen._library_notes_view == "editor"
+
+            latest_save_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_notes_view == "list",
+                message="Back did not wait for the complete save chain.",
+            )
+
+            assert [call["content"] for call in service.save_attempts] == [
+                "revision one",
+                "revision three",
+            ]
+            assert service.max_concurrent_save_calls == 1
+            stored = next(note for note in service.notes if note["id"] == "n-1")
+            assert stored["content"] == "revision three"
+    finally:
+        first_save_release.set()
+        latest_save_release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ("editor", "preview", "context"))
+async def test_library_note_pilot_conflict_can_originate_from_every_region(
+    origin: str,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = f"{origin} conflict draft"
+        await pilot.pause()
+
+        if origin == "preview":
+            screen.query_one("#library-note-preview").press()
+            await _wait_for_display(screen, pilot, "#library-note-preview-region")
+        elif origin == "context":
+            screen.query_one("#library-note-context").press()
+            await _wait_for_display(screen, pilot, "#library-note-context-region")
+
+        _bump_note_version_externally(app.notes_scope_service, "n-1")
+        await pilot.press("ctrl+s")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_note_session.snapshot
+                and screen._library_note_session.snapshot.in_conflict
+            ),
+            message=f"{origin} did not surface its save conflict.",
+        )
+
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert snapshot.body == f"{origin} conflict draft"
+        assert screen.query_one("#library-note-conflict-region").display is True
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_overwrite_keeps_edits_from_fetch_and_save() -> None:
+    refresh_release = threading.Event()
+    overwrite_save_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(),
+        detail_gates=(None, refresh_release),
+        save_gates=(None, overwrite_save_release, None),
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            body = screen.query_one("#library-note-body", TextArea)
+            body.text = "conflicted local draft"
+            await pilot.pause()
+            _bump_note_version_externally(service, "n-1")
+            screen.query_one("#library-note-save").press()
+            await _wait_for_display(screen, pilot, "#library-note-conflict-overwrite")
+
+            overwrite = screen.query_one("#library-note-conflict-overwrite")
+            reload_button = screen.query_one("#library-note-conflict-reload")
+            overwrite.press()
+            overwrite.press()
+            reload_button.press()
+            for _ in range(200):
+                if len(service.detail_attempts) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("Overwrite refresh never reached its gate.")
+
+            body.text = "edit during overwrite fetch"
+            await pilot.pause()
+            refresh_release.set()
+            for _ in range(200):
+                if len(service.save_attempts) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("Overwrite save never reached its gate.")
+
+            body.text = "edit during overwrite save"
+            await pilot.pause()
+            overwrite_save_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_note_autosave_state == "saved",
+                message="Overwrite did not save the newest canonical draft.",
+            )
+
+            assert len(service.detail_attempts) == 2
+            assert [call["content"] for call in service.save_attempts] == [
+                "conflicted local draft",
+                "edit during overwrite fetch",
+                "edit during overwrite save",
+            ]
+            assert service.max_concurrent_save_calls == 1
+            snapshot = screen._library_note_session.snapshot
+            assert snapshot is not None
+            assert snapshot.body == "edit during overwrite save"
+            assert snapshot.dirty is False
+    finally:
+        refresh_release.set()
+        overwrite_save_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_reload_rejects_edit_during_fetch_and_duplicates() -> (
+    None
+):
+    refresh_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(), detail_gates=(None, refresh_release)
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            body = screen.query_one("#library-note-body", TextArea)
+            body.text = "conflicted local draft"
+            await pilot.pause()
+            _bump_note_version_externally(service, "n-1", content="server replacement")
+            screen.query_one("#library-note-save").press()
+            await _wait_for_display(screen, pilot, "#library-note-conflict-reload")
+
+            reload_button = screen.query_one("#library-note-conflict-reload")
+            overwrite = screen.query_one("#library-note-conflict-overwrite")
+            reload_button.press()
+            reload_button.press()
+            overwrite.press()
+            for _ in range(200):
+                if len(service.detail_attempts) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("Reload refresh never reached its gate.")
+
+            body.text = "newer edit during reload"
+            await pilot.pause()
+            refresh_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_note_session.conflict_resolution_running,
+                message="Reload conflict operation never completed.",
+            )
+
+            snapshot = screen._library_note_session.snapshot
+            assert snapshot is not None
+            assert snapshot.body == "newer edit during reload"
+            assert snapshot.in_conflict is True
+            assert "Reload not applied" in snapshot.status_message
+            assert len(service.detail_attempts) == 2
+            assert len(service.save_attempts) == 1
+    finally:
+        refresh_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_context() -> (
+    None
+):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-context").press()
+        context = await _wait_for_display(screen, pilot, "#library-note-context-region")
+        screen.query_one("#library-note-context-delete").focus()
+        origin_scroll = await _scroll_task9_context_to_nonzero_offset(context, pilot)
+        snapshot_before = screen._library_note_session.snapshot
+        assert snapshot_before is not None
+        save_calls_before = len(app.notes_scope_service.save_calls)
+
+        delete_action = screen.query_one("#library-note-context-delete")
+        delete_action.press()
+        delete_action.press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+
+        admission = screen._library_note_session.destructive_admission
+        assert admission is not None
+        assert screen._library_note_session.destructive_running is False
+        assert screen._library_note_context is False
+        assert screen.query_one("#library-note-editor-region").display is True
+        delete_action.press()
+        await pilot.pause()
+        assert screen._library_note_session.destructive_admission == admission
+        title = screen.query_one("#library-note-title", Input)
+        body = screen.query_one("#library-note-body", TextArea)
+        keywords = screen.query_one("#library-note-context-keywords", Input)
+        assert title.disabled is True
+        assert body.disabled is True
+        assert keywords.disabled is True
+        for widget, key in ((title, "x"), (body, "y"), (keywords, "z")):
+            widget.focus()
+            await pilot.press(key)
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert len(app.notes_scope_service.save_calls) == save_calls_before
+        assert "Save locked" in screen._library_note_shortcut_status
+        assert screen._library_note_session.snapshot == snapshot_before
+
+        await pilot.press("escape")
+        await _wait_for_display(screen, pilot, "#library-note-context-region")
+        assert screen._library_note_session.destructive_admission is None
+        assert screen._library_note_confirming_delete is False
+        assert screen._library_note_context is True
+        assert getattr(screen.focused, "id", None) == "library-note-context-delete"
+        assert context.scroll_y == origin_scroll
+
+
+@pytest.mark.asyncio
+async def test_library_note_delete_captures_context_origin_before_gated_flush() -> None:
+    save_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(), save_gates=(save_release,)
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(60, 20)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            screen.query_one("#library-note-context").press()
+            context = await _wait_for_display(
+                screen, pilot, "#library-note-context-region"
+            )
+            origin_scroll = await _scroll_task9_context_to_nonzero_offset(
+                context, pilot
+            )
+            screen.query_one(
+                "#library-note-context-keywords", Input
+            ).value = "alpha, gated-delete"
+            await pilot.pause()
+
+            screen.query_one("#library-note-context-delete").press()
+            for _ in range(200):
+                if len(service.save_attempts) == 1:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("Delete's pre-admission flush never started.")
+
+            # Invoke the same bound Escape action while the Textual handler is
+            # suspended at the real threaded save seam. The initiating origin
+            # must remain Context even though current presentation changes.
+            await screen.action_library_notes_escape()
+            assert screen._library_note_context is False
+            save_release.set()
+            await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+
+            await pilot.press("escape")
+            await _wait_for_display(screen, pilot, "#library-note-context-region")
+            assert screen._library_note_context is True
+            assert getattr(screen.focused, "id", None) == (
+                "library-note-context-delete"
+            )
+            assert context.scroll_y == origin_scroll
+    finally:
+        save_release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_succeeds", (False, True))
+async def test_library_note_pilot_delete_running_blocks_duplicate_escape_and_save(
+    delete_succeeds: bool,
+) -> None:
+    delete_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(),
+        delete_gates=(delete_release,),
+        force_delete_result=None if delete_succeeds else False,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(60, 20)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            screen.query_one("#library-note-context").press()
+            context = await _wait_for_display(
+                screen, pilot, "#library-note-context-region"
+            )
+            origin_scroll = await _scroll_task9_context_to_nonzero_offset(
+                context, pilot
+            )
+            screen.query_one("#library-note-context-delete").press()
+            await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+            snapshot_before = screen._library_note_session.snapshot
+            assert snapshot_before is not None
+
+            confirm = screen.query_one("#library-note-delete-confirm", Button)
+            confirm.press()
+            confirm.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(service.delete_attempts) == 1,
+                message="Delete never reached its service gate.",
+            )
+            assert screen._library_note_session.destructive_running is True
+
+            confirm.press()
+            for selector, widget_type, key in (
+                ("#library-note-title", Input, "x"),
+                ("#library-note-body", TextArea, "y"),
+                ("#library-note-context-keywords", Input, "z"),
+            ):
+                widget = screen.query_one(selector, widget_type)
+                assert widget.disabled is True
+                widget.focus()
+                await pilot.press(key)
+            await pilot.press("ctrl+s")
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(service.delete_attempts) == 1
+            assert screen._library_note_confirming_delete is True
+            assert screen._library_note_session.snapshot == snapshot_before
+            assert "running" in screen._library_note_shortcut_status.lower()
+
+            delete_release.set()
+            if delete_succeeds:
+                await _wait_for_selector(screen, pilot, "#library-notes-list")
+                assert screen._library_notes_view == "list"
+                assert screen._library_note_session.snapshot is None
+            else:
+                await _wait_for_display(screen, pilot, "#library-note-context-region")
+                assert screen._library_note_session.destructive_admission is None
+                snapshot_after = screen._library_note_session.snapshot
+                assert snapshot_after is not None
+                assert snapshot_after.draft == snapshot_before.draft
+                assert snapshot_after.baseline == snapshot_before.baseline
+                assert snapshot_after.dirty == snapshot_before.dirty
+                assert "Delete failed" in snapshot_after.status_message
+                assert getattr(screen.focused, "id", None) == (
+                    "library-note-context-delete"
+                )
+                assert context.scroll_y == origin_scroll
+    finally:
+        delete_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_stale_session_admission_cannot_reach_delete() -> None:
+    service = _GatedInteractionLibraryNotesScopeService(_two_notes())
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+        stale_admission = screen._library_note_session.destructive_admission
+        assert stale_admission is not None
+
+        outcome = await screen._library_note_session.open_session("n-2")
+        assert outcome.kind is NoteLoadOutcomeKind.LOADED
+        assert screen._library_note_session.destructive_admission is None
+        screen.query_one("#library-note-delete-confirm").press()
+        await pilot.pause()
+
+        assert service.delete_attempts == []
+        assert screen._library_note_session.snapshot is not None
+        assert screen._library_note_session.snapshot.note_id == "n-2"
+        assert screen._library_note_session.snapshot.session_generation != (
+            stale_admission.session_generation
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_stale_version_fails_without_deleting_newer_note() -> (
+    None
+):
+    service = _GatedInteractionLibraryNotesScopeService(_two_notes())
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-context").press()
+        await _wait_for_display(screen, pilot, "#library-note-context-region")
+        screen.query_one("#library-note-context-delete").press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+        admission = screen._library_note_session.destructive_admission
+        assert admission is not None
+
+        _bump_note_version_externally(service, "n-1", content="newer server body")
+        screen.query_one("#library-note-delete-confirm").press()
+        await _wait_for_display(screen, pilot, "#library-note-context-region")
+
+        assert len(service.delete_attempts) == 1
+        assert service.delete_attempts[0]["version"] == admission.expected_version
+        stored = next(note for note in service.notes if note["id"] == "n-1")
+        assert stored["version"] == admission.expected_version + 1
+        assert stored["content"] == "newer server body"
+        assert screen._library_note_session.destructive_admission is None
+        assert screen._library_note_session.snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_exit() -> (
+    None
+):
+    delete_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(), delete_gates=(delete_release,)
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(60, 20)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-create-note").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+            screen.query_one("#library-notes-create-blank").press()
+            discard = await _wait_for_selector(
+                screen, pilot, "#library-note-discard-new"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: discard.display,
+                message="Untouched create never exposed Discard.",
+            )
+
+            discard.press()
+            discard.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(service.delete_attempts) == 1,
+                message="Discard never reached its service gate.",
+            )
+            assert screen._library_note_session.destructive_running is True
+            await pilot.press("ctrl+s")
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(service.delete_attempts) == 1
+            assert screen._library_notes_view == "editor"
+
+            delete_release.set()
+            await _wait_for_selector(screen, pilot, "#library-notes-list")
+            assert screen._library_notes_view == "list"
+            assert screen._library_note_session.snapshot is None
+    finally:
+        delete_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_note_pilot_stale_create_token_blocks_discard_activation() -> (
+    None
+):
+    service = _GatedInteractionLibraryNotesScopeService(_two_notes())
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
+        await _wait_for_condition(
+            pilot,
+            lambda: discard.display,
+            message="Untouched create never exposed Discard.",
+        )
+
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.press("end")
+        await pilot.press("space", "k", "e", "p", "t")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.untouched_create_token is None,
+            message="A genuine edit did not revoke the create token.",
+        )
+        discard.press()
+        await pilot.pause()
+
+        assert service.delete_attempts == []
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert snapshot.title.endswith(" kept")

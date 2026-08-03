@@ -139,6 +139,7 @@ from ...Library.library_notes_session import (
     DatabaseNotePortLoadReply,
     DatabaseNotePortSaveReply,
     DatabaseNoteSessionCoordinator,
+    DestructiveAdmission,
     DestructiveAdmissionOutcomeKind,
     DestructiveKind,
     NoteFlushOutcome,
@@ -4139,6 +4140,15 @@ class LibraryScreen(BaseAppScreen):
         snapshot = self._library_note_session.snapshot
         if self._library_note_confirming_delete:
             if self._library_note_session.destructive_running:
+                self._show_library_note_shortcut_refusal(
+                    "Delete is running — wait for it to finish."
+                )
+                return
+            admission = self._library_note_session.destructive_admission
+            if (
+                admission is not None
+                and not self._library_note_session.cancel_destructive(admission)
+            ):
                 self._show_library_note_shortcut_refusal(
                     "Delete is running — wait for it to finish."
                 )
@@ -18756,7 +18766,9 @@ class LibraryScreen(BaseAppScreen):
         action row for a "Delete" / "Cancel" confirm affordance (mirroring
         ``handle_library_media_delete``); the actual service call only
         happens once the confirm button (``#library-note-delete-confirm``)
-        is pressed.
+        is pressed. Before confirmation is shown, the coordinator atomically
+        admits this exact note/session/version tuple so typing, Save, and a
+        duplicate destructive action cannot race the user's decision.
 
         Flushes a dirty edit first (awaited) so the version the confirmed
         delete sends is never stale; an unsaved edit surviving the flush
@@ -18766,19 +18778,60 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
-        # LIB-14: the user is now explicitly managing this note's deletion
-        # themselves via the normal confirm-then-delete flow below -- clear
-        # any pending blank-note GC state first so ``_flush_library_note_
-        # save`` (called next) does not delete it out from under that flow
-        # (which would otherwise make the confirm button's own delete call
-        # fail against an already-gone row and surface a spurious warning).
+        initiating_snapshot = self._library_note_session.snapshot
+        if (
+            initiating_snapshot is None
+            or initiating_snapshot.note_id != self._selected_note_id
+        ):
+            return
+        initiating_note_id = initiating_snapshot.note_id
+        initiating_session_generation = initiating_snapshot.session_generation
+        origin_context = self._library_note_context
+        origin_preview = self._library_note_preview
+        # The user is explicitly managing deletion now; disarm the legacy
+        # blank-note GC path so it cannot race the admitted destructive flow.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
-        self._library_note_delete_origin_context = self._library_note_context
-        self._library_note_delete_origin_preview = self._library_note_preview
+        snapshot = self._library_note_session.snapshot
+        if (
+            snapshot is None
+            or snapshot.note_id != initiating_note_id
+            or snapshot.session_generation != initiating_session_generation
+            or snapshot.note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+        ):
+            return
+        admission_outcome = (
+            await self._library_note_session.request_destructive_admission(
+                DestructiveKind.DELETE,
+                note_id=snapshot.note_id,
+                session_generation=snapshot.session_generation,
+                expected_version=snapshot.version,
+            )
+        )
+        if (
+            admission_outcome.kind is not DestructiveAdmissionOutcomeKind.ADMITTED
+            or admission_outcome.admission is None
+        ):
+            self._library_note_shortcut_status = admission_outcome.message
+            self._apply_library_note_presentation_state()
+            return
+        admission = admission_outcome.admission
+        current = self._library_note_session.snapshot
+        if (
+            current is None
+            or current.note_id != initiating_note_id
+            or current.session_generation != initiating_session_generation
+            or current.note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+        ):
+            self._library_note_session.cancel_destructive(admission)
+            return
+        self._library_note_delete_origin_context = origin_context
+        self._library_note_delete_origin_preview = origin_preview
         self._library_note_confirming_delete = True
         self._library_note_preview = False
         self._library_note_context = False
@@ -18817,33 +18870,40 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
+        admission = self._library_note_session.destructive_admission
+        if admission is not None and not self._library_note_session.cancel_destructive(
+            admission
+        ):
+            self._show_library_note_shortcut_refusal(
+                "Delete is running — wait for it to finish."
+            )
+            return
         self._restore_library_note_delete_origin()
 
     @on(Button.Pressed, "#library-note-delete-confirm")
     def handle_library_note_delete_confirm(self, event: Button.Pressed) -> None:
         """Hand the confirmed delete off to a worker that removes the note.
 
-        Reads the currently selected note id/version synchronously (before
-        any recompose can clear them) and defers the actual service call
-        and state mutation to ``_delete_library_note`` -- mirroring
-        ``handle_library_media_delete_confirm``.
+        Reads the coordinator-issued admission synchronously and defers its
+        final revalidation plus the actual service call to
+        ``_delete_library_note``. Duplicate workers may be scheduled, but
+        only one can mark that admission running and reach the service.
 
         Args:
             event: Button press event emitted by the confirm affordance's
                 "Delete" action.
         """
         event.stop()
-        note_id = self._selected_note_id
-        if not note_id:
+        admission = self._library_note_session.destructive_admission
+        if admission is None or admission.kind is not DestructiveKind.DELETE:
             self._restore_library_note_delete_origin()
             return
         self.run_worker(
-            self._delete_library_note(note_id, version=self._library_note_version),
-            exclusive=True,
+            self._delete_library_note(admission),
             group="library_note_delete",
         )
 
-    async def _delete_library_note(self, note_id: str, *, version: int | None) -> None:
+    async def _delete_library_note(self, admission: DestructiveAdmission) -> None:
         """Delete the selected Library note, then return to the list view.
 
         Calls ``delete_note`` through the offloaded service seam. The real
@@ -18871,50 +18931,63 @@ class LibraryScreen(BaseAppScreen):
         ``_save_library_note``.
 
         Args:
-            note_id: The Library note id to delete.
-            version: The note's in-memory version at confirm time.
+            admission: Coordinator-issued authority for this exact session.
         """
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        delete_note = getattr(service, "delete_note", None)
-        if not callable(delete_note):
-            self._notify_library_note_delete_warning("Note deletion is unavailable.")
-            if self.is_mounted:
+        if not self._library_note_session.mark_destructive_running(admission):
+            cancelled = self._library_note_session.cancel_destructive(admission)
+            if (
+                cancelled
+                and self.is_mounted
+                and self._library_note_session.snapshot is not None
+            ):
                 self._restore_library_note_delete_origin()
             return
+        self._apply_library_note_presentation_state()
 
-        try:
-            deleted = await self._run_library_service_call(
-                delete_note,
-                scope="local_note",
-                note_id=note_id,
-                version=version,
-                user_id=self._library_notes_user_id(),
-                isolate_in_worker=True,
-            )
-        except ConflictError:
-            deleted = False
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to delete Library note {note_id!r}."
-            )
-            if (
-                note_id != self._selected_note_id
-                or self._library_notes_view != "editor"
-            ):
-                return
-            self._notify_library_note_delete_warning("Could not delete this note.")
-            if self.is_mounted:
-                self._restore_library_note_delete_origin()
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        delete_note = getattr(service, "delete_note", None)
+        deleted = False
+        failure_message = ""
+        if not callable(delete_note):
+            failure_message = "Note deletion is unavailable."
+        else:
+            try:
+                deleted = bool(
+                    await self._run_library_service_call(
+                        delete_note,
+                        scope="local_note",
+                        note_id=admission.note_id,
+                        version=admission.expected_version,
+                        user_id=self._library_notes_user_id(),
+                        isolate_in_worker=True,
+                    )
+                )
+            except ConflictError:
+                failure_message = "This note changed elsewhere — refresh and try again."
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library note {admission.note_id!r}."
+                )
+                failure_message = "Could not delete this note."
+
+        finished = self._library_note_session.finish_destructive(
+            admission, success=deleted
+        )
+        if not finished:
             return
 
         # Discard a stale result: the user has since switched to a different
         # note (or left the editor) while this delete was in flight.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+        if (
+            admission.note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+        ):
             return
 
         if not deleted:
             self._notify_library_note_delete_warning(
-                "This note changed elsewhere — refresh and try again."
+                failure_message
+                or "This note changed elsewhere — refresh and try again."
             )
             if self.is_mounted:
                 self._restore_library_note_delete_origin()
