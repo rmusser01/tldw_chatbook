@@ -1830,3 +1830,427 @@ def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
     # And the destination is disclosed rather than hidden behind the label.
     assert "https://evil.test/steal" in plain
     assert "https://evil.test/autolink" in plain
+
+
+# --- TASK-1494: the reader's `[full page]`/`[previous snapshot]` affordances -
+
+
+@pytest.mark.asyncio
+async def test_a_change_item_gets_both_snapshot_affordance_buttons():
+    """The design spec's promised affordances, finally wired to a `change`
+    item. Both buttons must be compact (1 row) -- CONTENT's budget is tight,
+    same discipline as the mark-unread button (see its own comment).
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "anthropic.com/news changed",
+                "content": "+ a\n- b",
+                "content_kind": "change",
+                "content_format": "diff",
+                "change_percentage": 5.0,
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        full_page = app.query_one("#content-full-page-button", Button)
+        previous = app.query_one("#content-previous-snapshot-button", Button)
+        assert full_page.compact
+        assert previous.compact
+
+
+@pytest.mark.asyncio
+async def test_an_article_item_gets_neither_snapshot_affordance_button():
+    """Article items never gain these: `URLMonitor.check_url` is the only
+    `url_snapshots` writer and it only ever produces `change`-kind items, so
+    an article has no rows there for the buttons to show.
+    """
+    from textual.app import App
+    from textual.css.query import NoMatches
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "Claude Opus 4.5 is now available",
+                "content": "The model is available in the API today.",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with pytest.raises(NoMatches):
+            app.query_one("#content-full-page-button", Button)
+        with pytest.raises(NoMatches):
+            app.query_one("#content-previous-snapshot-button", Button)
+        # And the mark-unread button, common to both kinds, is untouched.
+        assert app.query_one("#content-mark-unread-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_pressing_full_page_posts_view_snapshot_requested_with_full_page():
+    """The button press must post the message the screen handler reads,
+    carrying the item and the right `which` -- not just exist visually.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ViewSnapshotRequested,
+    )
+
+    captured: list[ViewSnapshotRequested] = []
+    item = {
+        "title": "anthropic.com/news changed",
+        "content": "+ a\n- b",
+        "content_kind": "change",
+        "content_format": "diff",
+        "source_id": 7,
+        "url": "https://anthropic.com/news",
+    }
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = item
+            yield pane
+
+        def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+            captured.append(event)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-full-page-button", Button).press()
+        await pilot.pause()
+
+    assert len(captured) == 1
+    assert captured[0].which == "full_page"
+    assert captured[0].item is item
+
+
+@pytest.mark.asyncio
+async def test_pressing_previous_snapshot_posts_view_snapshot_requested_with_previous():
+    """The other button, the other `which` value."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ViewSnapshotRequested,
+    )
+
+    captured: list[ViewSnapshotRequested] = []
+    item = {
+        "title": "anthropic.com/news changed",
+        "content": "+ a\n- b",
+        "content_kind": "change",
+        "content_format": "diff",
+        "source_id": 7,
+        "url": "https://anthropic.com/news",
+    }
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = item
+            yield pane
+
+        def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+            captured.append(event)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-previous-snapshot-button", Button).press()
+        await pilot.pause()
+
+    assert len(captured) == 1
+    assert captured[0].which == "previous"
+    assert captured[0].item is item
+
+
+def _seed_change_item_with_snapshots(db, *, snapshot_rows):
+    """One subscription with one `change`-kind item, plus `url_snapshots` rows.
+
+    Args:
+        db: A real `SubscriptionsDB` (the app fixture's own, via
+            `app.local_watchlists_service._db()`).
+        snapshot_rows: A sequence of `(content_hash, extracted_content,
+            created_at)` tuples to insert into `url_snapshots` for the same
+            (subscription, url) the item carries. Inserted directly by SQL
+            -- `_store_snapshot` (the production writer) lives in
+            `monitoring_engine.py` and is not exercised here, the same
+            choice `Tests/DB/test_subscriptions_db.py`'s own
+            `get_url_snapshots` tests make.
+
+    Returns:
+        `(source_id, url)`.
+    """
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    url = "https://anthropic.com/news"
+    source_id = db.add_subscription(
+        name="Anthropic", type="url", source=url
+    )
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": url,
+                "title": "anthropic.com/news changed",
+                "content": "+ Opus 4.5 available\n- Opus 4.1 available",
+                "content_kind": "change",
+                "content_format": "diff",
+                "content_hash": "hash-change-item",
+                "change_percentage": 12.0,
+                "change_type": "content",
+            },
+            run_id=None,
+            now="2026-07-28T09:00:00+00:00",
+        )
+    for content_hash, extracted_content, created_at in snapshot_rows:
+        db.conn.execute(
+            """
+            INSERT INTO url_snapshots
+                (subscription_id, url, content_hash, extracted_content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (source_id, url, content_hash, extracted_content, created_at),
+        )
+    db.conn.commit()
+    return source_id, url
+
+
+@pytest.mark.asyncio
+async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
+    """The screen's handler must resolve `"full_page"` to the newest
+    `url_snapshots` row and push `SnapshotViewModal` with it -- driven
+    through a real button press, not a direct method call.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-older", "the page as it was before", "2026-07-27T09:00:00"),
+            ("hash-newest", "the page as it is now", "2026-07-28T09:00:00"),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-full-page-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None, "the full-page button must push the snapshot modal"
+
+        body = str(modal.query_one("#svm-body", Static).renderable)
+        assert "the page as it is now" in body
+        assert "the page as it was before" not in body, (
+            "full page must be the NEWEST snapshot, not the previous one"
+        )
+        header = str(modal.query_one("#svm-header", Static).renderable)
+        assert "https://anthropic.com/news" in header
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen_stack[-1], SnapshotViewModal)
+
+
+@pytest.mark.asyncio
+async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
+    """`"previous"` must resolve to the SECOND-newest row, not the newest --
+    the whole reason `_SNAPSHOTS_KEPT_PER_URL` keeps three rows instead of
+    one.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-oldest", "oldest of three", "2026-07-26T09:00:00"),
+            ("hash-previous", "the previous page", "2026-07-27T09:00:00"),
+            ("hash-newest", "the newest page", "2026-07-28T09:00:00"),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None, "the previous-snapshot button must push the modal"
+
+        body = str(modal.query_one("#svm-body", Static).renderable)
+        assert "the previous page" in body
+        assert "the newest page" not in body
+        assert "oldest of three" not in body
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toast():
+    """AC#2: no previous snapshot exists yet (only one check has ever run)
+    must degrade to an honest toast, never an empty modal and never a
+    silent no-op.
+    """
+    from unittest.mock import Mock
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-only", "the only snapshot so far", "2026-07-28T09:00:00"),
+        ],
+    )
+    app.notify = Mock()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "the absence must be reported, not silent"
+        args, kwargs = app.notify.call_args
+        assert "no previous snapshot" in str(args[0]).lower()
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False, (
+            "this item's own url/title are not this app's text to interpret "
+            "as markup"
+        )
+        assert not isinstance(host.screen_stack[-1], SnapshotViewModal), (
+            "AC#2: an absent snapshot must never open an empty modal"
+        )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_modal_renders_remote_markup_as_literal_text():
+    """AC#3: `extracted_content` is scraped from a page this app does not
+    control. A markup-shaped fragment in it must paint as literal
+    characters -- never be interpreted as a style, and never become a live
+    hyperlink -- the same property `test_markup_shaped_body_is_rendered_
+    as_characters_not_interpreted` pins for the article renderer.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            (
+                "hash-hostile",
+                "before [bold red]INJECTED[/] and [link=evil]click[/link] after",
+                "2026-07-28T09:00:00",
+            ),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-full-page-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None
+
+        renderable = modal.query_one("#svm-body", Static).renderable
+        plain, ansi = _render_to_console(renderable, width=160)
+
+        assert "[bold red]INJECTED[/]" in plain, (
+            "the tag text must reach the screen verbatim, characters intact"
+        )
+        assert "[link=evil]click[/link]" in plain
+        assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
+        assert "\x1b]8;;" not in ansi, "the [link=...] tag must not have become a hyperlink"
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)

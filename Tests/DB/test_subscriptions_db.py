@@ -660,3 +660,200 @@ def test_ensure_watchlists_schema_idempotent_on_in_memory_db():
         for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert "watchlists" in tables
+
+
+# --- get_url_snapshots (task-1494) ------------------------------------------
+#
+# The reader's `[full page]`/`[previous snapshot]` affordances read this
+# method directly against `url_snapshots`. `_store_snapshot`
+# (`monitoring_engine.py`) is the only production writer of that table and
+# is not exercised here -- these tests insert rows by hand, the same idiom
+# `test_subscription_filters_action_constraint_allows_include` above already
+# uses for a sibling table.
+
+
+def _insert_snapshot(db, *, subscription_id, url, content_hash, extracted_content, created_at):
+    """Insert one `url_snapshots` row with an explicit `created_at`.
+
+    `created_at` must be given explicitly (not left to the column's
+    `CURRENT_TIMESTAMP` default) -- these tests need to control ordering
+    precisely, including same-timestamp ties, and the default has only
+    one-second resolution.
+    """
+    db.conn.execute(
+        """
+        INSERT INTO url_snapshots
+            (subscription_id, url, content_hash, extracted_content, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (subscription_id, url, content_hash, extracted_content, created_at),
+    )
+    db.conn.commit()
+
+
+def test_get_url_snapshots_returns_newest_then_second_newest(db):
+    """The core contract: newest first, second-newest second -- and the
+    `ORDER BY` must be `created_at DESC` to get there, not insertion order
+    or an ascending sort (either of those would silently swap which page
+    "full page" and "previous snapshot" show).
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    url = "https://a.example/page"
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-1",
+        extracted_content="oldest",
+        created_at="2026-01-01T00:00:00",
+    )
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-2",
+        extracted_content="middle",
+        created_at="2026-01-02T00:00:00",
+    )
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-3",
+        extracted_content="newest",
+        created_at="2026-01-03T00:00:00",
+    )
+
+    rows = db.get_url_snapshots(source_id, url, limit=2)
+
+    assert [row["extracted_content"] for row in rows] == ["newest", "middle"]
+    assert [row["created_at"] for row in rows] == [
+        "2026-01-03T00:00:00",
+        "2026-01-02T00:00:00",
+    ]
+
+
+def test_get_url_snapshots_breaks_a_created_at_tie_by_id_descending(db):
+    """`created_at` has one-second resolution; two snapshots captured inside
+    the same second must still order deterministically, newest-inserted
+    first -- the same `id DESC` tie-break `_store_snapshot`'s prune and
+    `URLMonitor.check_url`'s baseline SELECT both rely on (the "TASK-1393
+    ordering pact").
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    url = "https://a.example/page"
+    same_timestamp = "2026-01-01T00:00:00"
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-1",
+        extracted_content="first-inserted",
+        created_at=same_timestamp,
+    )
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-2",
+        extracted_content="second-inserted",
+        created_at=same_timestamp,
+    )
+
+    rows = db.get_url_snapshots(source_id, url, limit=2)
+
+    assert [row["extracted_content"] for row in rows] == [
+        "second-inserted",
+        "first-inserted",
+    ]
+
+
+def test_get_url_snapshots_is_scoped_to_its_own_subscription_and_url(db):
+    """A `url_list`/`sitemap` source shares one `subscription_id` across
+    many URLs, and another subscription can coincidentally reuse the same
+    URL string -- neither may leak into this (subscription, url) pair's
+    result. Reproduces the exact hazard `_store_snapshot`'s own comment on
+    its `url` predicate names.
+    """
+    target_source_id = db.add_subscription(
+        name="Target", type="rss", source="https://a.example/feed"
+    )
+    other_url_same_source = "https://a.example/other-page"
+    other_source_id = db.add_subscription(
+        name="Other", type="rss", source="https://b.example/feed"
+    )
+    target_url = "https://a.example/page"
+
+    _insert_snapshot(
+        db,
+        subscription_id=target_source_id,
+        url=target_url,
+        content_hash="hash-target",
+        extracted_content="target snapshot",
+        created_at="2026-01-01T00:00:00",
+    )
+    # Same subscription, different URL -- must not leak in.
+    _insert_snapshot(
+        db,
+        subscription_id=target_source_id,
+        url=other_url_same_source,
+        content_hash="hash-same-sub-other-url",
+        extracted_content="wrong url",
+        created_at="2026-01-02T00:00:00",
+    )
+    # Different subscription, same URL string -- must not leak in either.
+    _insert_snapshot(
+        db,
+        subscription_id=other_source_id,
+        url=target_url,
+        content_hash="hash-other-sub-same-url",
+        extracted_content="wrong subscription",
+        created_at="2026-01-03T00:00:00",
+    )
+
+    rows = db.get_url_snapshots(target_source_id, target_url, limit=2)
+
+    assert [row["extracted_content"] for row in rows] == ["target snapshot"]
+
+
+def test_get_url_snapshots_returns_fewer_than_limit_when_fewer_exist(db):
+    """A URL checked exactly once has one snapshot, not two -- the
+    `[previous snapshot]` affordance must be able to tell "only one exists"
+    apart from "the call is broken", which means this must return a short
+    list rather than padding or raising.
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    url = "https://a.example/page"
+    _insert_snapshot(
+        db,
+        subscription_id=source_id,
+        url=url,
+        content_hash="hash-1",
+        extracted_content="only one",
+        created_at="2026-01-01T00:00:00",
+    )
+
+    rows = db.get_url_snapshots(source_id, url, limit=2)
+
+    assert len(rows) == 1
+    assert rows[0]["extracted_content"] == "only one"
+
+
+def test_get_url_snapshots_returns_empty_when_none_exist(db):
+    """No snapshot at all yet (first check never ran, or this source never
+    matched this URL) must return an empty list, not raise -- the screen's
+    handler treats this the same as "fewer than limit".
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+
+    rows = db.get_url_snapshots(source_id, "https://a.example/never-checked", limit=2)
+
+    assert rows == []
