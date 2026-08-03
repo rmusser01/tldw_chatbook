@@ -739,11 +739,20 @@ class LocalWorkspaceRegistryService:
         # first agent send must never absorb the cost of hashing a whole
         # tree. Best-effort: failures log and are disclosed on first use.
         try:
+            from tldw_chatbook.Workspaces.change_bounds import (
+                change_review_enabled_globally,
+            )
             from tldw_chatbook.Workspaces.change_turn_tracker import (
                 initial_snapshot_in_background,
             )
 
-            initial_snapshot_in_background(resolved)
+            # TASK-1979 (Qodo #1264): the opt-out gates registration too —
+            # a disabled workspace (or a global kill) must not grow shadow
+            # state when a binding is added.
+            if change_review_enabled_globally() and self.change_review_enabled(
+                workspace_id
+            ):
+                initial_snapshot_in_background(resolved)
         except Exception:  # noqa: BLE001 -- registration must never fail on this
             logger.opt(exception=True).debug(
                 "change_review: initial-snapshot hook failed at registration"
@@ -868,6 +877,69 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
+
+    def change_review_enabled(self, workspace_id: str) -> bool:
+        """Whether change review tracks this workspace's roots (TASK-1979).
+
+        Absent row reads as ENABLED (the toggle is an opt-out); a storage
+        error also reads as enabled — tracking availability must not flip
+        off because a read failed.
+
+        Args:
+            workspace_id: Workspace identifier.
+
+        Returns:
+            The stored toggle, default True.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT enabled FROM workspace_change_review
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            logger.opt(exception=True).debug(
+                "change_review toggle read failed; treating as enabled"
+            )
+            return True
+        if row is None:
+            return True
+        return bool(row["enabled"])
+
+    def set_change_review_enabled(self, workspace_id: str, enabled: bool) -> None:
+        """Persist the per-workspace change-review toggle (TASK-1979).
+
+        Args:
+            workspace_id: Workspace identifier.
+            enabled: Whether the workspace's roots are tracked.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the write fails.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO workspace_change_review
+                        (workspace_id, enabled, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        enabled = excluded.enabled,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        safe_workspace_id,
+                        1 if enabled else 0,
+                        self._now_factory(),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def get_workspace_scope(self, workspace_id: str) -> RagScope | None:
         """Return a workspace's stored RAG retrieval scope, guarded.

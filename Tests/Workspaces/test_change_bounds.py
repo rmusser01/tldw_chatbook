@@ -819,3 +819,148 @@ def test_end_turn_survives_a_still_running_discovery_thread(tracked):
     assert len(mine) == 1, (
         f"churned roots produced {len(mine)} records for one root"
     )
+
+
+# -- settings + gating (TASK-1979) -------------------------------------------
+
+
+class TestChangeReviewGating:
+    def _registry(self, tmp_path):
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        return LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
+        )
+
+    def _bound_workspace(self, registry, tmp_path):
+        root = tmp_path / "wsroot"
+        root.mkdir()
+        registry.create_workspace(workspace_id="ws-1", name="WS")
+        registry.add_folder_binding("ws-1", root)
+        return root
+
+    def test_global_kill_knob_empties_the_root_list(
+        self, tmp_path, monkeypatch
+    ):
+        import tldw_chatbook.Tools.workspace_file_roots as wfr
+
+        registry = self._registry(tmp_path)
+        root = self._bound_workspace(registry, tmp_path)
+        monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+        assert wfr.folder_binding_roots("ws-1") == (root.resolve(),)
+        monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+        assert wfr.folder_binding_roots("ws-1") == (), (
+            "the global knob must stop tracking on the NEXT read"
+        )
+
+    def test_workspace_toggle_gates_only_that_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        import tldw_chatbook.Tools.workspace_file_roots as wfr
+
+        registry = self._registry(tmp_path)
+        root = self._bound_workspace(registry, tmp_path)
+        other_root = tmp_path / "other"
+        other_root.mkdir()
+        registry.create_workspace(workspace_id="ws-2", name="Other")
+        registry.add_folder_binding("ws-2", other_root)
+        monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+        registry.set_change_review_enabled("ws-1", False)
+
+        assert registry.change_review_enabled("ws-1") is False
+        assert registry.change_review_enabled("ws-2") is True, (
+            "absent row must read as enabled"
+        )
+        assert wfr.folder_binding_roots("ws-1") == ()
+        assert wfr.folder_binding_roots("ws-2") == (other_root.resolve(),)
+
+    def test_reenabling_restores_tracking_without_restart(
+        self, tmp_path, monkeypatch
+    ):
+        import tldw_chatbook.Tools.workspace_file_roots as wfr
+
+        registry = self._registry(tmp_path)
+        root = self._bound_workspace(registry, tmp_path)
+        monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+        registry.set_change_review_enabled("ws-1", False)
+        assert wfr.folder_binding_roots("ws-1") == ()
+        registry.set_change_review_enabled("ws-1", True)
+        assert wfr.folder_binding_roots("ws-1") == (root.resolve(),)
+
+
+class TestGatingCoversRegistrationHook:
+    """Qodo #1264: the opt-out must gate the registration-time snapshot too."""
+
+    def test_disabled_workspace_add_binding_takes_no_snapshot(
+        self, tmp_path, monkeypatch
+    ):
+        import time
+
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
+        )
+        registry.create_workspace(workspace_id="ws-off", name="Off WS")
+        registry.set_change_review_enabled("ws-off", False)
+        root = tmp_path / "offroot"
+        root.mkdir()
+        appdata = tmp_path / "appdata-gate"
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+        registry.add_folder_binding("ws-off", root)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        from tldw_chatbook.Utils.paths import get_user_data_dir
+
+        change_dir = get_user_data_dir() / "change_review"
+        containers = (
+            [d for d in change_dir.iterdir() if d.is_dir()]
+            if change_dir.is_dir()
+            else []
+        )
+        assert containers == [], (
+            "a change-review-disabled workspace still snapshotted on "
+            f"binding add: {containers}"
+        )
+
+    def test_global_kill_gates_the_registration_hook(
+        self, tmp_path, monkeypatch
+    ):
+        import time
+
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg2"))
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces2.db", client_id="t")
+        )
+        registry.create_workspace(workspace_id="ws-g", name="G WS")
+        root = tmp_path / "groot"
+        root.mkdir()
+
+        registry.add_folder_binding("ws-g", root)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        from tldw_chatbook.Utils.paths import get_user_data_dir
+
+        change_dir = get_user_data_dir() / "change_review"
+        containers = (
+            [d for d in change_dir.iterdir() if d.is_dir()]
+            if change_dir.is_dir()
+            else []
+        )
+        assert containers == [], (
+            f"globally-disabled change review still snapshotted: {containers}"
+        )
