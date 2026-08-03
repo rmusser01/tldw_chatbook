@@ -120,6 +120,18 @@ class WorkspaceDB(BaseDB):
                         REFERENCES workspace_records(workspace_id)
                         ON DELETE CASCADE
                 );
+
+                -- TASK-1979: per-workspace change-review toggle. Absent
+                -- row = enabled (opt-out), mirroring the scopes table's
+                -- co-location rationale.
+                CREATE TABLE IF NOT EXISTS workspace_change_review (
+                    workspace_id TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(workspace_id)
+                        REFERENCES workspace_records(workspace_id)
+                        ON DELETE CASCADE
+                );
                 """
             )
             conn.commit()

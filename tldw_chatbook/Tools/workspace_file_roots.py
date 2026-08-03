@@ -88,9 +88,20 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
     """
     if not workspace_id:
         return ()
+    # TASK-1979: this function exists solely as the change-review tracker's
+    # root source, so the enable gates live HERE — one choke point, read
+    # fresh per turn, no restart needed.
+    from tldw_chatbook.Workspaces.change_bounds import (
+        change_review_enabled_globally,
+    )
+
+    if not change_review_enabled_globally():
+        return ()
     roots: list[Path] = []
     try:
         registry = _registry_factory()
+        if not registry.change_review_enabled(workspace_id):
+            return ()
         for binding in registry.list_folder_bindings(workspace_id):
             folder = Path(binding.locator)
             if not folder.is_dir():

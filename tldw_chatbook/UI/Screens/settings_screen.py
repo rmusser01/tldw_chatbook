@@ -11156,6 +11156,48 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_workspace_folder_bindings(
                 registry, record.workspace_id
             )
+            yield from self._render_workspace_change_review(
+                registry, record.workspace_id
+            )
+
+    def _render_workspace_change_review(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the per-workspace change-review toggle (TASK-1979).
+
+        Honest availability: without a git binary the feature is absent,
+        so the row states the reason instead of offering a dead toggle.
+        Copy stays monochrome per the pane's conventions.
+        """
+        yield Static(
+            "Change review (post-run diffs)", classes="destination-section"
+        )
+        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+
+        if not ShadowRepoService().available:
+            yield Static(
+                "Change review needs git — install git to enable.",
+                id="settings-workspace-change-review-unavailable",
+                classes="settings-detail-row",
+            )
+            return
+        enabled = registry.change_review_enabled(workspace_id)
+        yield Static(
+            "Tracking enabled: agent runs record per-turn diffs for this "
+            "workspace's folders."
+            if enabled
+            else "Tracking disabled for this workspace: runs record no "
+            "diffs and offer no review.",
+            id="settings-workspace-change-review-state",
+            classes="settings-detail-row",
+        )
+        yield Button(
+            "Disable change review" if enabled else "Enable change review",
+            id="settings-workspace-change-review-toggle",
+            compact=True,
+        )
 
     def _render_workspace_folder_bindings(
         self,
@@ -13333,6 +13375,29 @@ class SettingsScreen(BaseAppScreen):
             return
         try:
             registry.unarchive_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-change-review-toggle")
+    def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:
+        """Flip the selected workspace's change-review toggle (TASK-1979).
+
+        Takes effect on the NEXT run without restart — the tracker's root
+        source reads the registry fresh per turn.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            enabled = registry.change_review_enabled(workspace_id)
+            registry.set_change_review_enabled(workspace_id, not enabled)
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
             return

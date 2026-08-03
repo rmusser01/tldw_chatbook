@@ -406,3 +406,64 @@ async def test_overview_pins_workspaces_recovery_copy() -> None:
             "Settings > Workspaces; switch in Console (Alt+W); run "
             "sync from the owning sync surfaces." in text
         )
+
+
+@pytest.mark.asyncio
+async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
+    """TASK-1979: the per-workspace change-review toggle round-trips."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-cr", name="CR WS")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-cr", Button).press()
+        await pilot.pause(0.2)
+
+        assert registry.change_review_enabled("ws-cr") is True
+        assert "Tracking enabled" in _visible_text(screen)
+        screen.query_one(
+            "#settings-workspace-change-review-toggle", Button
+        ).press()
+        await pilot.pause(0.3)
+        assert registry.change_review_enabled("ws-cr") is False
+        assert "Tracking disabled" in _visible_text(screen)
+        screen.query_one(
+            "#settings-workspace-change-review-toggle", Button
+        ).press()
+        await pilot.pause(0.3)
+        assert registry.change_review_enabled("ws-cr") is True
+
+
+@pytest.mark.asyncio
+async def test_change_review_git_absent_shows_honest_copy(monkeypatch) -> None:
+    """TASK-1979 AC#2: no git — the row states the reason, no dead toggle."""
+    from textual.widgets import Button
+
+    import tldw_chatbook.Workspaces.change_tracking as ct
+
+    # Narrow seam: shutil is a shared module object — patching its `which`
+    # breaks unrelated services (file-notes git calls it with path=).
+    monkeypatch.setattr(
+        ct.ShadowRepoService, "available", property(lambda self: False)
+    )
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-nogit", name="NoGit WS")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-nogit", Button).press()
+        await pilot.pause(0.2)
+
+        assert (
+            "Change review needs git — install git to enable."
+            in _visible_text(screen)
+        )
+        assert not screen.query("#settings-workspace-change-review-toggle")
