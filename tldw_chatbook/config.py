@@ -3607,7 +3607,7 @@ enabled = true
 default_check_interval = 3600  # 1 hour in seconds
 max_concurrent_checks = 10
 check_timeout_seconds = 30
-auto_pause_after_failures = 10
+auto_pause_after_failures = 10  # Seeds auto_pause_threshold for NEW subscriptions only (task-1410); an explicit per-subscription value always overrides, and existing subscriptions keep their stored value
 enable_background_checking = true
 default_priority = 3  # 1-5, higher is more important
 

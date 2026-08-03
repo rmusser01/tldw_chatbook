@@ -30,10 +30,16 @@ Top to bottom on the main canvas:
   "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
   sources"), and **Run** (reads "Searching…" while a search is in flight).
   A one-line status sits underneath.
-- **"Sources"** — the scope block: a "Scope: all local sources" summary line
-  and one toggle per source type — ✓/○ **Notes**, **Media**,
-  **Conversations**, **Prompts**, each with its count, e.g. "✓ Media (1)".
-- **"Evidence · top 5 per source"** — the result rows (anatomy below).
+- **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
+  all local sources" when every available source is selected, otherwise the
+  selected sources followed by what's off, e.g. "Scope: Notes, Conversations
+  (Media, Prompts off)") and one toggle per source type — ✓/○ **Notes**,
+  **Media**, **Conversations**, **Prompts**, each with its count, e.g.
+  "✓ Media (1)".
+- **"Evidence · top 5 per source"** (Search mode) / **"Evidence · top 5"**
+  (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
+  drops "per source" because it runs one merged semantic query, not one
+  query per source the way Search mode does.
 - **"Recent searches"** — a collapsible fold of your recent queries.
 
 ## Features & controls
@@ -54,8 +60,9 @@ the current results.
   installed.
 - **RAG Answer** — semantic retrieval. If embeddings support isn't
   installed, the run blocks as "RAG unavailable" with the next step
-  "Install embeddings support or switch mode to Search" and the recovery
-  pointer "Settings > RAG". Installed but nothing indexed yet? The block is
+  `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
+  restart, or switch mode to Search.` and the recovery pointer
+  "Settings > RAG". Installed but nothing indexed yet? The block is
   "Index empty" — "The semantic index has no content yet" — with the
   recovery "Ingest content to index it automatically, run a semantic index
   backfill, or switch mode to Search".
@@ -72,13 +79,22 @@ media"** button ([Import & export](import-and-export.md)).
 
 Each hit is one block:
 
-- **Title** — numbered, e.g. "1. g2_demo_article", with a relevance score
-  appended when one applies (`| score 0.812`).
+- **Title** — numbered, e.g. "1. g2_demo_article", with a match band
+  appended when the row carries a score: `| match: strong` (≥ 0.5),
+  `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
+  keeps the raw number so you can see how weak. Keyword ("Search") mode
+  rows carry no score, so nothing is appended.
 - **Badge line** — the source type first (e.g. "media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row
   can't be used in the active workspace.
-- **Snippet** — the matched text, or "No snippet available."
+- **Snippet** — the matched text, or "No snippet available." On screen it is
+  clamped to roughly 320 characters at a word boundary (with a trailing "…"
+  when clamped) and Markdown structure is stripped — headings, emphasis
+  markers, list bullets, and code fences — so a long, heavily-formatted
+  match can't bury the results below it. Identifiers keep their punctuation:
+  `top_k` and `my_notes_2026.md` render intact. The full, unclamped text is
+  what travels to Console when you stage the evidence.
 - **"Citations: …"** — the citation labels, when present.
 - **Actions** — **Open** (jumps to the item in its own Library surface: the
   media viewer, notes editor, prompt editor, or that conversation) and
@@ -86,9 +102,22 @@ Each hit is one block:
   evidence"** and an inline **"Use in Console"** button appears beside it.
 
 Before any search the region shows "No evidence yet. Run Search/RAG to
-populate results." A search with no matches reports "No evidence matched
-the current query" and suggests "Revise the query or broaden the source
-scope".
+populate results." A search that runs cleanly but finds nothing is a quiet
+two-line note, not an error: "No evidence matched '\<your query>'." then
+"Try broader terms." (or "Try broader terms or turn on more sources." when
+a real source is still toggled off). A genuine retrieval failure — missing
+dependencies, an empty index, no provider, a policy block — is louder: a
+**"Blocked | \<reason>"** callout plus the full Why / Next / Recovery /
+Owner block described above.
+
+In RAG Answer mode, when results land but the semantic query didn't
+actually touch one of your selected sources (or every hit's match is weak),
+a quiet line appears above the rows, e.g. "Semantic search found nothing
+from: notes, conversations." or "No strong semantic matches — results
+below are weak." — telling you *why* a source is missing instead of leaving
+you to guess whether it has nothing relevant or was never searched. Search
+mode never shows this line; its keyword leg always queries every selected
+source.
 
 ### Recent searches
 
@@ -138,7 +167,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 | Key | Action |
 |---|---|
 | Enter (in the query box) | Run the search |
-| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library |
+| Tab | Move focus through the panel, including each evidence card in turn |
+| Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
+| `o` (on a focused evidence card) | Open that item in its own Library surface |
+| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
 
 ## Related settings & docs
 
@@ -160,16 +192,21 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Quirks & troubleshooting
 
-- **"top 5 per source" is fixed here.** The tunable top-k in Settings ▸
-  RAG does not change this canvas.
-- **The scope summary line never changes.** "Scope: all local sources" is a
-  fixed label — the ✓/○ toggles are the real record of what's in scope.
+- **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
+  change this canvas. "Per source" only appears in Search mode — RAG
+  Answer mode runs one merged semantic query across sources, not one per
+  source, so the heading doesn't claim it.
+- **The scope summary line tracks the toggles.** Deselecting a source (e.g.
+  turning Media off) updates "Scope: …" to name what's still in scope and
+  what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
+  label.
 - **Workspaces and Collections can't be searched yet.** They exist as
   source types, but retrieval doesn't reach them, so no toggle appears for
   either.
 - **RAG Answer mode needs embeddings support.** Without it, runs block with
-  "Install embeddings support or switch mode to Search" — Search mode
-  always works.
+  `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
+  restart, or switch mode to Search.` — Search mode always works, and is the
+  zero-cost escape while you decide whether to install.
 - **`u` works only on this row.** Elsewhere in Library the key does
   nothing, and the footer hint disappears.
 - **Citations don't flow into generated answers yet.** Evidence carries
@@ -181,3 +218,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 —
 *Verified against dev @ bd05a692a — 2026-07-31*
+
+*Updated for RAG UX v2 PR-2 (match bands, coverage notes, scope summary,
+quiet no-match, evidence-card keys, snippet clamping, deps copy) without a
+fresh live pass — the stamp above still refers to the last full live
+verification of this page.*

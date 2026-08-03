@@ -766,6 +766,13 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
     A3: the toggle button label is the single mode surface now --
     ``#library-rag-query-status`` (the old "Mode: {label} | Top {k}" Static)
     is retired, so this asserts against the button label directly.
+
+    (RAG-39/Task 13) The button's tooltip must also name which mode a
+    press switches TO -- a bare "Cycle Search/RAG mode." tooltip looks
+    identical whether the cycle has two states or five, so this pins both
+    the exact copy AND that it tracks the CURRENT mode (dynamic, not a
+    string frozen at compose time): after every press the tooltip must
+    name the OTHER mode, never the one currently showing on the label.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -778,9 +785,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
 
-        assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
-            "mode: Search ▸"
-        )
+        toggle = screen.query_one("#library-rag-mode-toggle", Button)
+        assert str(toggle.label) == "mode: Search ▸"
+        assert toggle.tooltip == "Cycle Search/RAG mode. Next: RAG Answer."
         assert not screen.query("#library-rag-query-status")
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
@@ -791,6 +798,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched to RAG Answer.")
+        assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
+            "Cycle Search/RAG mode. Next: Search."
+        )
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
@@ -800,6 +810,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched back to Search.")
+        assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
+            "Cycle Search/RAG mode. Next: RAG Answer."
+        )
 
 
 @pytest.mark.asyncio
@@ -12168,6 +12181,200 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
         assert (
             screen.query_one("#library-search-input", Input).value == ""
         ), "deleted search text resurrected on recompose"
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_path):
+    """(RAG-27) A background ingest done-count growth while the user is on
+    the Search/RAG canvas -- mid-search, with results already on screen --
+    must sync the rail and the panel's scope-toggle counts/Run-gate state
+    IN PLACE, mirroring the Ingest canvas and Prompts-editor guards
+    (``_apply_local_source_snapshot``'s narrow-path branch, PR #1261). The
+    fall-through whole-screen ``refresh(recompose=True)`` this guard
+    otherwise takes would remount ``LibrarySearchRagPanel`` (and the rail)
+    from scratch -- destroying the just-landed Evidence results and any
+    unsubmitted state -- exactly the ejection UAT (critique RAG-27)
+    observed live.
+
+    Also covers the fix-review finding that the scope-toggle ``(N)`` counts
+    must actually go live (not just "no recompose"): a second media row is
+    added to the real DB between the initial load and the growth event, and
+    the Media toggle's label is asserted to change from ``(1)`` to ``(2)``
+    -- proving ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` (the
+    plain, non-``await``ed sync that replaced the earlier
+    ``_refresh_search_rag_panel_state_widgets`` worker call -- see that
+    coroutine's docstring for the mount/remove interleaving race the
+    earlier version risked against ``update_library_rag_query`` /
+    ``_start_library_rag_query`` / ``select_library_rag_result`` /
+    ``_apply_library_rag_search_outcome``, all of which await it directly
+    with no shared coordination) actually reads fresh counts, not stale
+    ones.
+
+    Mirrors ``test_library_search_typed_text_survives_registry_recompose``
+    above: a real ``LibraryIngestQueueMixin``-backed harness, with the
+    registry-changed event simulated directly via
+    ``_handle_library_ingest_registry_changed`` rather than running a full
+    ingest job (a scripted registry double supplies the done-count growth,
+    matching ``test_completion_toast_survives_mid_batch_clear``'s
+    technique below).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="rag27-search")
+    db.add_media_with_keywords(
+        title="Tides",
+        content="Tide charts for the coastal survey.",
+        media_type="article",
+    )
+    harness = _LibraryIngestCanvasHarness(db)
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Tides",
+                    "snippet": "Tide charts for the coastal survey.",
+                    "source_id": "media-1",
+                    "chunk_id": "chunk-1",
+                    "provenance": {"source_type": "media"},
+                }
+            ]
+        }
+    )
+    harness.library_rag_search_service = service
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "tides"
+        await _wait_for_library_rag_query_ready(screen, pilot, "tides")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        panel = screen.query_one("#library-search-rag-panel")
+        rail = screen.query_one("#library-rail")
+        results_container = screen.query_one("#library-rag-results")
+        results_before = list(results_container.children)
+        assert results_before, "the static service result never mounted"
+
+        media_toggle = screen.query_one("#library-rag-scope-toggle-media", Button)
+        media_label_before = str(media_toggle.label)
+        assert media_label_before == "✓ Media (1)", (
+            f"unexpected pre-event toggle label: {media_label_before!r}"
+        )
+
+        # A second real media row -- the next snapshot fetch (triggered by
+        # the growth event below) must pick this up and the toggle label
+        # must reflect it, not just "no recompose happened".
+        db.add_media_with_keywords(
+            title="Storms",
+            content="Storm patterns for the coastal survey.",
+            media_type="article",
+        )
+
+        # Spy (not replace) so the real in-place sync still runs -- this
+        # both proves the call happened AND, via the identity/label checks
+        # below, that its effects match what the guard's comment promises.
+        rail.sync_state = Mock(wraps=rail.sync_state)
+        screen._sync_library_rag_scope_toggle_and_run_gate_widgets = Mock(
+            wraps=screen._sync_library_rag_scope_toggle_and_run_gate_widgets
+        )
+        # The shared coroutine every OTHER caller awaits directly (fix-
+        # review finding 2) must NOT be touched by this snapshot-driven
+        # path. Installed fresh here (after the initial query-submit's own
+        # legitimate call already happened), so any call recorded below can
+        # only have come from the ingest-growth event that follows.
+        screen._refresh_search_rag_panel_state_widgets = Mock(
+            wraps=screen._refresh_search_rag_panel_state_widgets
+        )
+
+        class _DoneGrowthRegistry:
+            """Minimal registry double reporting one completed job.
+
+            Mirrors ``_ScriptedRegistry`` in
+            ``test_completion_toast_survives_mid_batch_clear`` below --
+            only ``counts()``/``jobs()``/``add_listener``/
+            ``remove_listener`` are exercised by
+            ``_handle_library_ingest_registry_changed``.
+            """
+
+            def counts(self):
+                return {
+                    "queued": 0,
+                    "parsing": 0,
+                    "writing": 0,
+                    "done": 1,
+                    "failed": 0,
+                }
+
+            def jobs(self):
+                return ()
+
+            def add_listener(self, _listener):
+                pass
+
+            def remove_listener(self, _listener):
+                pass
+
+        harness.library_ingest_jobs = _DoneGrowthRegistry()
+        screen._handle_library_ingest_registry_changed()
+
+        # The done-count growth chains an async worker
+        # (`_refresh_local_source_snapshot`) into the new synchronous
+        # `_sync_library_rag_scope_toggle_and_run_gate_widgets` call -- poll
+        # rather than assume a single `pilot.pause()` drains the worker.
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if screen._sync_library_rag_scope_toggle_and_run_gate_widgets.called:
+                break
+
+        # The canvas (and the rail) must be the SAME mounted widget
+        # instances -- not merely present-and-equal, which a whole-screen
+        # recompose would also satisfy.
+        assert screen.query_one("#library-search-rag-panel") is panel, (
+            "the Search/RAG canvas was recomposed (widget identity lost) on "
+            "an ingest done-count growth"
+        )
+        assert screen.query_one("#library-rail") is rail, (
+            "the rail was recomposed (widget identity lost) on an ingest "
+            "done-count growth"
+        )
+
+        # Evidence rows must be the SAME Static instances -- proving the
+        # snapshot-driven sync never touches results/history.
+        results_after = list(screen.query_one("#library-rag-results").children)
+        assert len(results_after) == len(results_before) and all(
+            before is after
+            for before, after in zip(results_before, results_after)
+        ), (
+            "Evidence result widgets were rebuilt -- the snapshot-driven "
+            "sync must never touch results/history"
+        )
+
+        assert rail.sync_state.called, "the rail was not synced in place"
+        assert screen._sync_library_rag_scope_toggle_and_run_gate_widgets.called, (
+            "the panel's scope-toggle/run-gate sync never ran"
+        )
+
+        # The headline fix-review finding: the toggle count must actually
+        # be fresh, not just "the canvas survived".
+        media_label_after = str(
+            screen.query_one("#library-rag-scope-toggle-media", Button).label
+        )
+        assert media_label_after == "✓ Media (2)", (
+            f"scope-toggle count went stale: {media_label_before!r} -> "
+            f"{media_label_after!r} (expected the Media count to grow "
+            "from 1 to 2)"
+        )
+
+        # Race-avoidance finding: the shared coroutine every other caller
+        # awaits directly must not have been invoked by this path at all.
+        assert screen._refresh_search_rag_panel_state_widgets.call_count == 0, (
+            "the snapshot-driven path called the shared "
+            "_refresh_search_rag_panel_state_widgets coroutine after all -- "
+            "this is exactly the interleaving hazard the fix-review flagged"
+        )
 
 
 @pytest.mark.asyncio

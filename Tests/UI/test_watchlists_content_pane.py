@@ -12,11 +12,23 @@ def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
     is remote text that happens to be bracket-shaped. Rendering through a
     Console and reading both the painted characters and the style codes is
     what actually distinguishes "rendered as text" from "parsed as markup".
+
+    `file=io.StringIO()` keeps this rendering off real stdout -- without it,
+    `force_terminal=True` makes `console.print` write the rendered article to
+    the actual test-run stdout on every call (task-1347), which is cosmetic
+    noise but noise nonetheless. `record=True` still captures everything
+    printed to that buffer, so `export_text()` is unaffected.
     """
+    import io
+
     from rich.console import Console
 
     console = Console(
-        width=width, record=True, color_system="standard", force_terminal=True
+        width=width,
+        record=True,
+        color_system="standard",
+        force_terminal=True,
+        file=io.StringIO(),
     )
     console.print(renderable)
     return console.export_text(clear=False), console.export_text(styles=True)
@@ -365,6 +377,10 @@ async def test_content_region_is_gated_to_the_items_read_tab():
     `ItemSelected` ever comes from), so CONTENT must occupy real space
     there and nowhere else, regardless of the user's stored collapse
     preference for it.
+
+    TASK-1344 AC#4: gated regions UNMOUNT rather than keep a one-row
+    header, so "nowhere else" means CONTENT has no DOM presence at all off
+    the Read tab -- no `#wl-header-content`, not just no `#wl-region-content`.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -377,10 +393,10 @@ async def test_content_region_is_gated_to_the_items_read_tab():
         screen = host.screen_stack[-1]
 
         # Default section is "overview" -- not Read -- so CONTENT must be
-        # gated to its collapsed header despite the un-gated default
-        # (`region_layout`) being expanded.
+        # unmounted despite the un-gated default (`region_layout`) being
+        # expanded.
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
-        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
@@ -390,7 +406,7 @@ async def test_content_region_is_gated_to_the_items_read_tab():
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
 
@@ -424,7 +440,11 @@ async def test_content_region_gating_does_not_clobber_a_real_collapse_preference
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert screen.query("#wl-header-content")
+        # TASK-1344 AC#4: CONTENT unmounts off the Read tab -- no header,
+        # not even the collapsed one the user's real preference would
+        # otherwise still show on Items.
+        assert not screen.query("#wl-header-content")
+        assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
         await pilot.pause(0.2)
@@ -1166,15 +1186,18 @@ async def test_opening_an_item_does_not_cancel_unrelated_background_work():
 
 @pytest.mark.asyncio
 async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persists():
-    """The gate force-collapses CONTENT off the Read tab, which renders a
-    real, focusable `▸ Content` button. Clicking it (or pressing `z` with it
-    focused) ran the toggle against the REAL `region_layout` rather than the
-    derived view, so nothing visibly changed, the user's genuine preference
-    silently flipped to collapsed, and `"content"` was written to
-    `[watchlists].collapsed_regions` on disk -- honoured forever, since the
-    Phase D migration marker is already set. That permanently recreates the
-    exact state the migration exists to repair, from a control that looked
-    inert.
+    """TASK-1344 AC#4: CONTENT UNMOUNTS off the Read tab, so there is no
+    `▸ Content` chevron left to click at all -- the affordance this test
+    used to defend against no longer exists. What remains reachable is a
+    STALE `focused_region` (e.g. the user last focused CONTENT on Read, then
+    switched tabs without moving focus): `z`/`Z` can still be invoked with it
+    pointed at a region that is not currently mounted, so
+    `_refuse_region_gesture_off_read_tab` must refuse the toggle rather than
+    running it against the REAL `region_layout` -- which would silently flip
+    the user's genuine preference to collapsed and, once persisted, be
+    honoured forever thanks to the Phase D migration marker already being
+    set. That permanently recreates the exact state the migration exists to
+    repair, from a gesture that produced no visible feedback at all.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -1188,28 +1211,32 @@ async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persis
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        assert screen.query("#wl-header-content"), "the gate collapsed CONTENT"
+        assert not screen.query("#wl-header-content"), "CONTENT must be unmounted, not collapsed"
+        assert not screen.query("#wl-region-content")
         assert not screen.region_layout.is_collapsed(Region.CONTENT), (
             "the real preference is still expanded -- the precondition"
         )
 
-        await pilot.click("#wl-header-content")
+        # A stale `focused_region` (left over from a prior visit to Read) is
+        # the one remaining route that could still reach CONTENT here.
+        screen.focused_region = Region.CONTENT
+        screen.action_toggle_region()
         await pilot.pause(0.3)
 
         assert not screen.region_layout.is_collapsed(Region.CONTENT), (
-            "clicking the gated chevron must not flip the real preference"
+            "the gesture must be refused, not run against the real preference"
         )
         assert Region.CONTENT not in (screen._last_persisted_collapsed or frozenset()), (
             "and it must never reach the persisted collapse set"
         )
 
-        # `z` with CONTENT focused is the same action by another route.
-        screen.focused_region = Region.CONTENT
-        screen.action_toggle_region()
+        # `Z` (solo) with CONTENT focused is the same class of route.
+        screen.action_solo_region()
         await pilot.pause(0.3)
+        assert screen.region_layout.solo_region is None
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
 
-        # And back on Read the reader is still there.
+        # And back on Read the reader is still there, untouched.
         screen.active_section = "items"
         await pilot.pause(0.3)
         assert screen.query("#wl-region-content")
@@ -1660,19 +1687,21 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
 async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded():
     """PR #1091 review, F2: the workbench must never render an empty centre.
 
-    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab
-    `_visible_region_layout` force-collapses CONTENT as well, and it used to
-    add that to the SOLO view -- collapsing all three centre regions, so the
-    workbench mounted three header buttons and nothing else. Deriving from
-    the pre-solo baseline instead leaves the user's real layout showing, and
-    their solo is still there when they come back to Read.
+    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab,
+    FEEDS and CONTENT are both hidden outright now (TASK-1344 AC#1/#4:
+    `_hidden_centre_regions` unmounts them, independent of `collapsed`), so
+    the old failure mode this test was written against -- a force-collapse
+    derivation that added CONTENT to the solo's own collapsed set and left
+    all three centre regions collapsed with nothing expanded -- can no
+    longer happen structurally: hiding never touches `collapsed`, and ITEMS
+    (the one region that must survive) is forced OUT of `collapsed` by
+    `_rendered_region_layout` on every non-Read tab regardless of what
+    happened on Read. This test now pins that ITEMS is what is actually left
+    on screen, and that the user's solo is untouched and comes back on Read.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
-        CENTRE_REGIONS,
-        Region,
-    )
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -1693,17 +1722,20 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
         screen.active_section = "sources"
         await pilot.pause(0.3)
 
-        rendered = screen._visible_region_layout()
-        expanded = [r for r in CENTRE_REGIONS if not rendered.is_collapsed(r)]
-        assert expanded, (
-            "leaving Read with CONTENT soloed collapsed every centre region: "
-            f"rendered layout was {sorted(r.value for r in rendered.collapsed)}"
+        # TASK-1344 widened the gate to hide FEEDS off Read too (AC#1), so
+        # the only centre region ever mounted on Sources is now ITEMS --
+        # assert against the DOM directly rather than the old
+        # `_visible_region_layout` derivation, which no longer exists in
+        # that shape (`_hidden_centre_regions` + `_rendered_region_layout`
+        # replaced it; hiding is now orthogonal to `RegionLayout.collapsed`
+        # rather than expressed through it, so there is nothing left to
+        # probe for "still collapsed").
+        assert screen.query("#wl-region-items"), (
+            "at least one centre region must be mounted expanded, not an "
+            "empty centre"
         )
-        # Not just the derived value -- what actually mounted.
-        assert screen.query("#wl-region-feeds") or screen.query("#wl-region-items"), (
-            "at least one centre region must be mounted expanded, not three "
-            "header buttons over an empty centre"
-        )
+        assert not screen.query("#wl-region-feeds"), "FEEDS is hidden off Read too"
+        assert not screen.query("#wl-region-content"), "and CONTENT stays hidden"
 
         screen.active_section = "items"
         await pilot.pause(0.3)
@@ -1718,10 +1750,12 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
 async def test_solo_on_content_off_the_read_tab_is_refused():
     """PR #1091 review, F2 (second half) / TASK-1344 AC#2.
 
-    The collapsed `▸ Content` header is focusable on every tab, so `Z` could
-    still solo a region the user cannot see -- collapsing FEEDS and ITEMS
-    around it and leaving nothing on screen. The chevron and `z` are already
-    refused there; `Z` must be too.
+    CONTENT is unmounted off the Read tab (AC#4), so there is no chevron to
+    click there -- but `focused_region` is a screen-level reactive that
+    outlives the widget that last set it, so `Z` can still be invoked with
+    it pointing at CONTENT after a tab switch. That must be refused rather
+    than soloing a region the user cannot see, which would otherwise
+    collapse FEEDS and ITEMS around it and leave nothing on screen.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -1796,3 +1830,427 @@ def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
     # And the destination is disclosed rather than hidden behind the label.
     assert "https://evil.test/steal" in plain
     assert "https://evil.test/autolink" in plain
+
+
+# --- TASK-1494: the reader's `[full page]`/`[previous snapshot]` affordances -
+
+
+@pytest.mark.asyncio
+async def test_a_change_item_gets_both_snapshot_affordance_buttons():
+    """The design spec's promised affordances, finally wired to a `change`
+    item. Both buttons must be compact (1 row) -- CONTENT's budget is tight,
+    same discipline as the mark-unread button (see its own comment).
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "anthropic.com/news changed",
+                "content": "+ a\n- b",
+                "content_kind": "change",
+                "content_format": "diff",
+                "change_percentage": 5.0,
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        full_page = app.query_one("#content-full-page-button", Button)
+        previous = app.query_one("#content-previous-snapshot-button", Button)
+        assert full_page.compact
+        assert previous.compact
+
+
+@pytest.mark.asyncio
+async def test_an_article_item_gets_neither_snapshot_affordance_button():
+    """Article items never gain these: `URLMonitor.check_url` is the only
+    `url_snapshots` writer and it only ever produces `change`-kind items, so
+    an article has no rows there for the buttons to show.
+    """
+    from textual.app import App
+    from textual.css.query import NoMatches
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "Claude Opus 4.5 is now available",
+                "content": "The model is available in the API today.",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with pytest.raises(NoMatches):
+            app.query_one("#content-full-page-button", Button)
+        with pytest.raises(NoMatches):
+            app.query_one("#content-previous-snapshot-button", Button)
+        # And the mark-unread button, common to both kinds, is untouched.
+        assert app.query_one("#content-mark-unread-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_pressing_full_page_posts_view_snapshot_requested_with_full_page():
+    """The button press must post the message the screen handler reads,
+    carrying the item and the right `which` -- not just exist visually.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ViewSnapshotRequested,
+    )
+
+    captured: list[ViewSnapshotRequested] = []
+    item = {
+        "title": "anthropic.com/news changed",
+        "content": "+ a\n- b",
+        "content_kind": "change",
+        "content_format": "diff",
+        "source_id": 7,
+        "url": "https://anthropic.com/news",
+    }
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = item
+            yield pane
+
+        def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+            captured.append(event)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-full-page-button", Button).press()
+        await pilot.pause()
+
+    assert len(captured) == 1
+    assert captured[0].which == "full_page"
+    assert captured[0].item is item
+
+
+@pytest.mark.asyncio
+async def test_pressing_previous_snapshot_posts_view_snapshot_requested_with_previous():
+    """The other button, the other `which` value."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ViewSnapshotRequested,
+    )
+
+    captured: list[ViewSnapshotRequested] = []
+    item = {
+        "title": "anthropic.com/news changed",
+        "content": "+ a\n- b",
+        "content_kind": "change",
+        "content_format": "diff",
+        "source_id": 7,
+        "url": "https://anthropic.com/news",
+    }
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = item
+            yield pane
+
+        def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+            captured.append(event)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-previous-snapshot-button", Button).press()
+        await pilot.pause()
+
+    assert len(captured) == 1
+    assert captured[0].which == "previous"
+    assert captured[0].item is item
+
+
+def _seed_change_item_with_snapshots(db, *, snapshot_rows):
+    """One subscription with one `change`-kind item, plus `url_snapshots` rows.
+
+    Args:
+        db: A real `SubscriptionsDB` (the app fixture's own, via
+            `app.local_watchlists_service._db()`).
+        snapshot_rows: A sequence of `(content_hash, extracted_content,
+            created_at)` tuples to insert into `url_snapshots` for the same
+            (subscription, url) the item carries. Inserted directly by SQL
+            -- `_store_snapshot` (the production writer) lives in
+            `monitoring_engine.py` and is not exercised here, the same
+            choice `Tests/DB/test_subscriptions_db.py`'s own
+            `get_url_snapshots` tests make.
+
+    Returns:
+        `(source_id, url)`.
+    """
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    url = "https://anthropic.com/news"
+    source_id = db.add_subscription(
+        name="Anthropic", type="url", source=url
+    )
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": url,
+                "title": "anthropic.com/news changed",
+                "content": "+ Opus 4.5 available\n- Opus 4.1 available",
+                "content_kind": "change",
+                "content_format": "diff",
+                "content_hash": "hash-change-item",
+                "change_percentage": 12.0,
+                "change_type": "content",
+            },
+            run_id=None,
+            now="2026-07-28T09:00:00+00:00",
+        )
+    with db.transaction() as conn:
+        for content_hash, extracted_content, created_at in snapshot_rows:
+            conn.execute(
+                """
+                INSERT INTO url_snapshots
+                    (subscription_id, url, content_hash, extracted_content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (source_id, url, content_hash, extracted_content, created_at),
+            )
+    return source_id, url
+
+
+@pytest.mark.asyncio
+async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
+    """The screen's handler must resolve `"full_page"` to the newest
+    `url_snapshots` row and push `SnapshotViewModal` with it -- driven
+    through a real button press, not a direct method call.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-older", "the page as it was before", "2026-07-27T09:00:00"),
+            ("hash-newest", "the page as it is now", "2026-07-28T09:00:00"),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-full-page-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None, "the full-page button must push the snapshot modal"
+
+        body = str(modal.query_one("#svm-body", Static).renderable)
+        assert "the page as it is now" in body
+        assert "the page as it was before" not in body, (
+            "full page must be the NEWEST snapshot, not the previous one"
+        )
+        header = str(modal.query_one("#svm-header", Static).renderable)
+        assert "https://anthropic.com/news" in header
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen_stack[-1], SnapshotViewModal)
+
+
+@pytest.mark.asyncio
+async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
+    """`"previous"` must resolve to the SECOND-newest row, not the newest --
+    the whole reason `_SNAPSHOTS_KEPT_PER_URL` keeps three rows instead of
+    one.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-oldest", "oldest of three", "2026-07-26T09:00:00"),
+            ("hash-previous", "the previous page", "2026-07-27T09:00:00"),
+            ("hash-newest", "the newest page", "2026-07-28T09:00:00"),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None, "the previous-snapshot button must push the modal"
+
+        body = str(modal.query_one("#svm-body", Static).renderable)
+        assert "the previous page" in body
+        assert "the newest page" not in body
+        assert "oldest of three" not in body
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toast():
+    """AC#2: no previous snapshot exists yet (only one check has ever run)
+    must degrade to an honest toast, never an empty modal and never a
+    silent no-op.
+    """
+    from unittest.mock import Mock
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            ("hash-only", "the only snapshot so far", "2026-07-28T09:00:00"),
+        ],
+    )
+    app.notify = Mock()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "the absence must be reported, not silent"
+        args, kwargs = app.notify.call_args
+        assert "no previous snapshot" in str(args[0]).lower()
+        assert kwargs.get("severity") == "warning"
+        assert kwargs.get("markup") is False, (
+            "this item's own url/title are not this app's text to interpret "
+            "as markup"
+        )
+        assert not isinstance(host.screen_stack[-1], SnapshotViewModal), (
+            "AC#2: an absent snapshot must never open an empty modal"
+        )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_modal_renders_remote_markup_as_literal_text():
+    """AC#3: `extracted_content` is scraped from a page this app does not
+    control. A markup-shaped fragment in it must paint as literal
+    characters -- never be interpreted as a style, and never become a live
+    hyperlink -- the same property `test_markup_shaped_body_is_rendered_
+    as_characters_not_interpreted` pins for the article renderer.
+    """
+    from textual.widgets import Button, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_change_item_with_snapshots(
+        db,
+        snapshot_rows=[
+            (
+                "hash-hostile",
+                "before [bold red]INJECTED[/] and [link=evil]click[/link] after",
+                "2026-07-28T09:00:00",
+            ),
+        ],
+    )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        content_pane.query_one("#content-full-page-button", Button).press()
+
+        modal = None
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(host.screen_stack[-1], SnapshotViewModal):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None
+
+        renderable = modal.query_one("#svm-body", Static).renderable
+        plain, ansi = _render_to_console(renderable, width=160)
+
+        assert "[bold red]INJECTED[/]" in plain, (
+            "the tag text must reach the screen verbatim, characters intact"
+        )
+        assert "[link=evil]click[/link]" in plain
+        assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
+        assert "\x1b]8;;" not in ansi, "the [link=...] tag must not have become a hyperlink"
+
+        modal.query_one("#svm-close", Button).press()
+        await pilot.pause(0.3)

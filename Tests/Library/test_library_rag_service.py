@@ -118,6 +118,44 @@ async def test_run_library_rag_search_normalizes_results_and_preserves_metadata(
 
 
 @pytest.mark.asyncio
+async def test_run_library_rag_search_threads_semantic_scope_coverage_diagnostics() -> (
+    None
+):
+    """(Task 8) `_diagnostics_from_result` already threads whatever a backend
+    attaches under "diagnostics" -- confirms `semantic_scope_coverage`
+    (populated by `_search_semantic`) survives the trip from a raw
+    service-result mapping to `LibraryRagSearchOutcome.diagnostics`
+    unchanged; no code change to this module was needed for Task 8."""
+    service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Media doc",
+                    "source_id": "media-1",
+                    "provenance": {"source_type": "media"},
+                }
+            ],
+            "diagnostics": {
+                "semantic_scope_coverage": {
+                    "covered": ["media"],
+                    "uncovered": ["notes"],
+                }
+            },
+        }
+    )
+    app = SimpleNamespace(library_rag_search_service=service)
+    request = LibraryRagSearchRequest(
+        query="cake", source_types=("notes", "media"), mode="rag"
+    )
+
+    outcome = await run_library_rag_search(app, request)
+
+    assert outcome.diagnostics == {
+        "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_library_rag_search_returns_unavailable_recovery_without_service() -> (
     None
 ):

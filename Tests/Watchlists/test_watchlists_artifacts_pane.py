@@ -371,12 +371,18 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
         # change for this section -- but nothing was asserting that, so a
         # future edit to the gate could quietly hand Artifacts a reader with
         # nothing to show and take a third of the centre column for it.
+        # TASK-1344 AC#4: gated regions UNMOUNT rather than keep a one-row
+        # header, so CONTENT has no DOM presence here at all, not even a
+        # collapsed one -- and FEEDS is gated the same way now (AC#1).
         assert not screen.query("#wl-region-content"), (
             "Artifacts must not mount the CONTENT reader"
         )
-        assert screen.query_one("#wl-header-content"), (
-            "CONTENT must still be reachable as its collapsed header"
+        assert not screen.query("#wl-header-content"), (
+            "CONTENT must be unmounted, not merely collapsed"
         )
+        assert not screen.query("#wl-region-feeds") and not screen.query(
+            "#wl-header-feeds"
+        ), "FEEDS must be unmounted too -- Artifacts gets the full centre width"
         assert screen.query_one("#watchlists-detail-title", Static)
 
 

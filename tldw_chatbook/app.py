@@ -7592,7 +7592,35 @@ class TldwCli(
                     message += f": {type(cause).__name__}: {cause}"
                 raise RuntimeError(message) from cause
 
-        await self.push_screen(screen_class(self))
+        new_screen = screen_class(self)
+
+        # A configured default tab that is itself a legacy alias route (e.g.
+        # "search"/"prompts"/"skills" -> Library) carries the same nav-context
+        # promise on boot as it does when navigated to in-app -- otherwise
+        # `default_tab = "search"` silently degrades to generic Library
+        # instead of the Search/RAG canvas the alias promises. The table is
+        # keyed on the PRE-resolution route id, so `initial_tab` (captured
+        # above, before `_resolve_screen_navigation_target` rewrote it) is
+        # the correct lookup key. Mirrors the guarded apply in
+        # `handle_screen_navigation` (~:6672-6687); the screen is always
+        # unmounted here, so `apply_navigation_context` takes its sync path.
+        navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
+            initial_tab, {}
+        )
+        if navigation_context and hasattr(new_screen, "apply_navigation_context"):
+            try:
+                result = new_screen.apply_navigation_context(navigation_context)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                logger.warning(
+                    "Initial navigation context application failed "
+                    "(route={}, exception_category={}).",
+                    initial_tab,
+                    type(exc).__name__,
+                )
+
+        await self.push_screen(new_screen)
         self.current_tab = resolved_tab
         self._initial_screen_pushed = True
         logger.info(

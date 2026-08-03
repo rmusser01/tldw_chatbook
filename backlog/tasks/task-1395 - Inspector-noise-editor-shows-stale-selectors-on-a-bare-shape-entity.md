@@ -1,7 +1,7 @@
 ---
 id: TASK-1395
 title: Inspector noise editor shows stale selectors on a bare-shape entity
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-30 05:20'
 labels:
@@ -26,6 +26,25 @@ to make the reader and the patcher agree on one shape (drop the bare-key fallbac
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The editor's read path and the post-save patch use the same single shape
-- [ ] #2 A test constructs the dual-shape entity and proves a cleared field stays cleared on re-render
+- [x] #1 The editor's read path and the post-save patch use the same single shape
+- [x] #2 A test constructs the dual-shape entity and proves a cleared field stays cleared on re-render
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1: dropped the bare-key fallback from `InspectorPane._ignore_selectors_text` (the reader), so it
+reads ONLY the `settings["ignore_selectors"]` shape -- the single shape `normalize_local_subscription_row`
+publishes AND the one `_patch_entity_ignore_selectors` (the post-save patch) writes. Reader and patcher
+now agree. Verified the bare-key fallback was dead for real entities: every bare `entity["ignore_selectors"]`
+reference in tests reads the DB COLUMN (`db.get_subscription(...)["ignore_selectors"]`) or the create-source
+API, never a bare-key entity fed to the reader; the one direct reader test (`test_watchlists_inspector.py:1106`)
+passes a normalized settings-shape entity.
+
+AC#2: `test_cleared_selectors_stay_cleared_on_a_dual_shape_entity` constructs a dual-shape entity
+(settings list + a stale bare key), confirms the settings shape wins when populated, then asserts the
+post-clear state (settings entry popped, stale bare key still present) reads back "" -- not the stale
+bare value. Mutation-verified: restoring the bare-key fallback reds it.
+
+Files: `tldw_chatbook/UI/Watchlists_Modules/inspector_pane.py`, `Tests/UI/test_watchlists_inspector.py`.
+<!-- SECTION:NOTES:END -->

@@ -1,4 +1,5 @@
 import json
+import logging
 from inspect import isawaitable
 from types import SimpleNamespace
 
@@ -794,6 +795,225 @@ async def test_local_watchlists_service_url_list_partial_error_still_resets_brea
     assert row["is_paused"] == 0
 
 
+@pytest.fixture
+def _loguru_to_caplog():
+    """Bridge loguru output into pytest's ``caplog`` for the tests below.
+
+    loguru does not propagate to stdlib ``logging`` (and therefore not to
+    ``caplog``) without an explicit bridge -- the same pattern used in
+    ``Tests/Model_Artifacts/test_credentials_and_boundaries.py``. Scoped to
+    an explicit, non-autouse fixture so it only applies to the tests that
+    request it.
+    """
+    from loguru import logger as loguru_logger
+
+    class PropagateHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            logging.getLogger(record.name).handle(record)
+
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}")
+    yield
+    loguru_logger.remove(handler_id)
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_record_run_failure_auto_pauses_at_threshold(
+    tmp_path, caplog, _loguru_to_caplog
+):
+    """task-1410 AC#2.
+
+    The MAIN failure path -- ``LocalWatchlistsService.record_run_failure``
+    calling ``SubscriptionsDB.record_check_error`` -- previously bumped
+    ``consecutive_failures`` but never consulted ``auto_pause_threshold`` at
+    all, so a source that failed forever would never auto-pause. This drives
+    the fix through the REAL path (``execute_run`` raising ->
+    ``record_run_failure`` -> ``record_check_error``), not by calling
+    ``SubscriptionsDB.record_check_error`` directly -- the AC explicitly
+    forbids that shortcut, since bypassing the service is exactly how this
+    path stayed unreachable in the first place.
+
+    Reds if the threshold check inside the shared
+    ``_advance_failure_and_maybe_pause`` helper is removed or bypassed:
+    ``is_paused`` stays 0 after 3 failures and no WARNING is logged.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+        caplog: pytest log capture, asserts the auto-pause WARNING.
+        _loguru_to_caplog: routes loguru into `caplog` for the assertion.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def always_fails(subscription):
+        raise TimeoutError("connect timed out")
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_fails)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": 3,
+        }
+    )
+    source_id = source["source_id"]
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            launched = await service.launch_run(source_id=source_id)
+            completed = await service.execute_run(launched["run_id"])
+            assert completed["status"] == "failed"
+
+    row = db.get_subscription(source_id)
+    assert row["consecutive_failures"] == 3
+    assert row["is_paused"] == 1, "threshold reached via the real failure path -- must auto-pause"
+
+    auto_pause_warnings = [
+        record for record in caplog.records if "Auto-paused subscription" in record.message
+    ]
+    assert len(auto_pause_warnings) == 1, (
+        "exactly one auto-pause WARNING must fire (on the 3rd failure only), got "
+        f"{[r.message for r in auto_pause_warnings]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_threshold(
+    tmp_path,
+):
+    """task-1410 consistency guard.
+
+    ``record_check_result``'s error branch (reached for an all-error
+    ``url_list``/``sitemap`` run, task-1394) and ``record_check_error`` (the
+    main failure path, reached via ``record_run_failure``) now share
+    ``_advance_failure_and_maybe_pause``. This proves they cannot diverge:
+    an all-error ``url_list`` run AND a plain single-URL failure, each with
+    the same ``auto_pause_threshold``, both end paused after the same
+    number of consecutive failures.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+    """
+    threshold = 2
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            raise TimeoutError("connect timed out")
+
+    async def always_fails(subscription):
+        raise TimeoutError("connect timed out")
+
+    # Path 1: record_check_result's error branch, via an all-error url_list run.
+    service_a = LocalWatchlistsService(db_factory=lambda: db)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+            FakeURLMonitor,
+        )
+        source_a = await service_a.create_source(
+            {
+                "name": "Docs",
+                "source_type": "url_list",
+                "auto_pause_threshold": threshold,
+                "extraction_rules": {"urls": ["https://example.com/a"]},
+            }
+        )
+        source_a_id = source_a["source_id"]
+        for _ in range(threshold):
+            launched = await service_a.launch_run(source_id=source_a_id)
+            await service_a.execute_run(launched["run_id"])
+
+    # Path 2: record_check_error, via a plain source whose executor always raises.
+    service_b = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_fails)
+    source_b = await service_b.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": threshold,
+        }
+    )
+    source_b_id = source_b["source_id"]
+    for _ in range(threshold):
+        launched = await service_b.launch_run(source_id=source_b_id)
+        await service_b.execute_run(launched["run_id"])
+
+    row_a = db.get_subscription(source_a_id)
+    row_b = db.get_subscription(source_b_id)
+    assert row_a["consecutive_failures"] == threshold
+    assert row_b["consecutive_failures"] == threshold
+    assert row_a["is_paused"] == 1, "record_check_result's error branch must pause at threshold"
+    assert row_b["is_paused"] == 1, "record_check_error must pause at threshold"
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paused_source(
+    tmp_path,
+):
+    """Fix wave for the task-1410 review, Finding #1 (the important one).
+
+    Once a source auto-pauses, the scheduler never re-checks it:
+    `get_pending_checks` excludes `is_paused = 1` rows and
+    `WatchlistCheckHandler` skips them too. But `launch_run`/`execute_run`
+    have no paused guard at all -- a MANUAL re-check of a paused source
+    still runs. That is meant to be the source's only recourse, but until
+    this fix wave nothing on the success side ever cleared `is_paused`
+    (the auto-pause helper only ever writes `is_paused = 1`;
+    `reset_subscription_errors` has zero callers app-wide) -- so even a
+    manual re-check that fully succeeded left the source stranded, paused
+    forever.
+
+    Drives the real path end to end: an already-paused source, a manual
+    `launch_run` + `execute_run` whose executor succeeds, and confirms
+    `is_paused` clears with the failure counters reset -- exactly as an
+    ordinary successful check resets them.
+
+    Reds if `record_check_result`'s success branch drops its new
+    `is_paused = 0` write.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def always_succeeds(subscription):
+        return []
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_succeeds)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+            "auto_pause_threshold": 3,
+        }
+    )
+    source_id = source["source_id"]
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscriptions
+            SET is_paused = 1, error_count = 3, consecutive_failures = 3,
+                last_error = 'connection refused'
+            WHERE id = ?
+            """,
+            (source_id,),
+        )
+
+    launched = await service.launch_run(source_id=source_id)
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed"
+    row = db.get_subscription(source_id)
+    assert row["is_paused"] == 0, "a successful manual re-check must resume a paused source"
+    assert row["consecutive_failures"] == 0
+    assert row["error_count"] == 0
+    assert row["last_error"] is None
+
+
 @pytest.mark.asyncio
 async def test_local_watchlists_service_executes_api_sources_with_json_field_mapping(
     tmp_path, monkeypatch
@@ -953,6 +1173,9 @@ async def test_create_source_persists_check_frequency(tmp_path):
 
     ``WatchlistProjection`` computes ``next_run_at`` from ``check_frequency``, so a
     source that does not carry one is never queued and never checked.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
@@ -1057,6 +1280,9 @@ async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path)
     A missing row raises rather than returning a falsy status: the guard's
     caller treats an exception as a refusal, and "the item is gone" is an
     unanswered question, not permission to overwrite.
+
+    Args:
+        tmp_path: pytest temp dir for the on-disk `SubscriptionsDB`.
     """
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 

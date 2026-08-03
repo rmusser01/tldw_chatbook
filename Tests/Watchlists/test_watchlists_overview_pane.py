@@ -68,6 +68,58 @@ async def test_overview_pane_renders_failed_runs():
         assert list(table.get_row_at(0)) == ["RSS A", "timeout", "slow"]
 
 
+# -- task-1347: first-run guidance has two variants, and neither was ever
+# asserted on its actual copy -- every existing test only checked that
+# `#overview-first-run` existed, so blanking `_first_run_body` left them all
+# green. These mount the pane the same way the rest of this file does and
+# read the rendered `Static` the user would actually see, rather than calling
+# `_first_run_body()` as a pure function.
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_first_run_guidance_for_a_brand_new_profile():
+    """`watchlist_count == 0`: the user has not made a watchlist yet."""
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.watchlist_count = 0
+        pane.data = {"total_sources": 0, "failed_runs": []}
+        await pilot.pause()
+
+        assert pane.query_one("#overview-first-run")
+        body = str(pane.query_one("#overview-first-run-body").renderable)
+        assert "A watchlist is a folder of feeds" in body, (
+            f"a brand-new profile must be told what a watchlist is; it renders {body!r}"
+        )
+        assert "Your watchlists have no sources yet" not in body, (
+            "the has-sources variant must not leak into the no-watchlists one"
+        )
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_first_run_guidance_for_a_watchlist_with_no_sources():
+    """The has-watchlists first-run variant shows the sources guidance.
+
+    `watchlist_count > 0`: telling this user to make a watchlist is the same
+    dead end the copy exists to remove, one step further along.
+    """
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.watchlist_count = 1
+        pane.data = {"total_sources": 0, "failed_runs": []}
+        await pilot.pause()
+
+        assert pane.query_one("#overview-first-run")
+        body = str(pane.query_one("#overview-first-run-body").renderable)
+        assert "Your watchlists have no sources yet" in body, (
+            f"a watchlist with no sources must be told to add one; it renders {body!r}"
+        )
+        assert "A watchlist is a folder of feeds" not in body, (
+            "the no-watchlists variant must not leak into the has-sources one"
+        )
+
+
 # -- task-670: RecomposeCaptureGuard extended to OverviewPane -------------
 # OverviewPane.data is a `recompose=True` reactive; before this fix the pane
 # carried no guard against task-637's bug class (a capture landing in the

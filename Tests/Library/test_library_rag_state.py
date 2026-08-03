@@ -7,11 +7,18 @@ import pytest
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+    LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
     LibraryRagScopeState,
+    library_rag_all_matches_weak,
+    library_rag_coverage_note,
+    library_rag_empty_state_quiet_copy,
+    library_rag_score_suffix,
+    library_rag_scope_summary,
     searching_status_line,
     update_search_history,
 )
@@ -65,6 +72,91 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
     assert empty_scope.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
     assert "Owner:" not in empty_scope.recovery_copy
     assert "Recovery checklist" not in empty_scope.recovery_copy
+
+
+class TestLibraryRagScopeSummary:
+    """(RAG-32) `library_rag_scope_summary` is the ONE builder both the
+    panel's compose() and the screen's incremental refresh path delegate
+    to -- see `Tests/UI/test_library_shell.py::
+    test_library_shell_search_scope_strip_refresh_path_uses_shared_copy`
+    for the agreement test that pins the two seams stay in sync.
+
+    Live UAT (critique RAG-32): the strip printed the hardcoded "all local
+    sources" copy even when a user had switched a source off. The common
+    case (every available source selected) keeps that exact copy verbatim;
+    only a genuine subset gets the explicit list.
+    """
+
+    def test_all_selected_keeps_the_unchanged_common_case_copy(self):
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2, media=1, conversations=3, prompts=1
+        )
+        assert scope.selected_source_types == (
+            "notes",
+            "media",
+            "conversations",
+            "prompts",
+        )
+        assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+
+    def test_subset_lists_selected_and_parenthesizes_the_off_sources(self):
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("notes", "conversations"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Notes, Conversations (Media, Prompts off)"
+        )
+
+    def test_subset_orders_selected_and_off_in_canonical_source_order(self):
+        """Selected/off lists follow LIBRARY_RAG_SOURCE_TYPES order, not
+        the order `selected` was passed in."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("prompts", "media"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Media, Prompts (Notes, Conversations off)"
+        )
+
+    def test_single_source_off_reads_as_a_compact_callout(self):
+        """The RAG-32 headline scenario: a user switches exactly one
+        source off and the strip must say so, not claim "all local
+        sources"."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("notes", "conversations", "prompts"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Notes, Conversations, Prompts (Media off)"
+        )
+
+    def test_no_sources_selected_reads_as_none_selected_not_all_off_list(self):
+        """Deselect-all is already surfaced by the run gate's own quiet
+        line ("Select at least one Library source.") -- repeating every
+        available source in a parenthetical "off" list here would just be
+        noise restating the same fact."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2, media=1, selected=()
+        )
+        assert library_rag_scope_summary(scope) == "Scope: no sources selected"
+
+    def test_none_available_keeps_the_unchanged_common_case_copy(self):
+        """The empty-library edge is already owned by
+        `LIBRARY_RAG_NO_SOURCES_GATE_COPY` elsewhere on screen -- this
+        builder must not invent a second, conflicting message for it."""
+        scope = LibraryRagScopeState.from_source_counts()
+        assert scope.has_available_sources is False
+        assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
 def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
@@ -196,6 +288,14 @@ def test_result_row_preserves_snippet_score_citations_and_provenance() -> None:
 
 
 def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
+    """Title/citation-label assertions updated for the 2026-08-03 task-15
+    finding-1 fix: `_sanitize_display_text` no longer HTML-entity-escapes
+    for display (a Rich `Static` never decodes "&lt;"/"&gt;" back to literal
+    characters, so the old "&lt;b&gt;Release&lt;/b&gt;" expectation pinned
+    the same over-escaping bug finding 1 fixed for "&amp;" -- see
+    `test_sanitize_display_text_decodes_html_entities_for_display`).
+    `<b>`/`<i>` are not dangerous patterns (only `<script>`/`javascript:`/
+    `onclick=`/`onerror=` are), so they now pass through as literal text."""
     row = LibraryRagResultRow.from_result(
         {
             "title": "<b>Release</b>",
@@ -211,11 +311,251 @@ def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
     assert row.result_id == "0:0"
     assert row.source_id == "0"
     assert row.chunk_id == "0"
-    assert row.title == "&lt;b&gt;Release&lt;/b&gt;"
+    assert row.title == "<b>Release</b>"
     assert "Line one\nLine two" in row.snippet
     assert "<script" not in row.snippet
-    assert row.citation_labels == ("&lt;i&gt;Citation&lt;/i&gt;",)
+    assert row.citation_labels == ("<i>Citation</i>",)
     assert row.citations[0].url == ""
+
+
+def test_result_row_display_snippet_strips_markdown_structure() -> None:
+    """(RAG-30/31) Evidence rows carry raw Markdown from notes/media -- the
+    on-screen `display_snippet` reads as plain prose, never literal
+    `##`/`**`/`-` notation. The stored `snippet` is untouched (below)."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Project Doc",
+            "snippet": "## Project Overview\n**Status:** Planning\n- item",
+        }
+    )
+
+    assert row.display_snippet == "Project Overview Status: Planning item"
+    # The full, structured snippet is preserved for Console handoff.
+    assert row.snippet == "## Project Overview\n**Status:** Planning\n- item"
+
+
+def test_result_row_display_snippet_strips_links_and_code_syntax() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Doc",
+            "snippet": (
+                "See [the guide](https://example.test/guide) and run "
+                "`make test` for details."
+            ),
+        }
+    )
+
+    assert row.display_snippet == "See the guide and run make test for details."
+
+
+def test_result_row_display_snippet_preserves_technical_identifiers() -> None:
+    """(RAG-30/31 review) The emphasis-marker strip must not delete `_`/`*`
+    characters embedded in real content -- snippets exist so a user can
+    judge relevance from quoted source text, and a snake_case identifier, a
+    filename, or an env-var name silently losing its underscores defeats
+    that. Pins the strip-vs-preserve boundary from the preserve side; the
+    strip side is pinned above and by the `**bold**`/`_italic_` cases."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Config Notes",
+            "snippet": (
+                "Call chat_api_call() with top_k tuned via OPENAI_API_KEY; "
+                "see my_notes_2026.md for user_id=42 details."
+            ),
+        }
+    )
+
+    assert row.display_snippet == row.snippet
+    assert "chat_api_call()" in row.display_snippet
+    assert "top_k" in row.display_snippet
+    assert "OPENAI_API_KEY" in row.display_snippet
+    assert "my_notes_2026.md" in row.display_snippet
+    assert "user_id=42" in row.display_snippet
+
+
+@pytest.mark.parametrize(
+    ("snippet", "preserved"),
+    [
+        ("config [*/etc/hosts*]", ("etc", "hosts")),
+        ("[*/tmp/*] is the scratch dir", ("tmp", "scratch")),
+        ("[_TODO_] finish this", ("TODO", "finish")),
+        ("[*bold*] emphasis in brackets", ("bold", "emphasis")),
+    ],
+)
+def test_result_row_display_snippet_bracketed_emphasis_stays_inert(
+    snippet: str, preserved: tuple[str, ...]
+) -> None:
+    """(final-review C1) Markdown stripping must run BEFORE the terminal
+    markup escape, never after it.
+
+    When the strip ran on already-escaped text, removing the `*`/`_`
+    emphasis delimiters inside a bracket exposed a `[...]` that
+    `escape_markup` had deliberately left alone (rich only escapes brackets
+    that already look like tags). Ordinary technical note content then
+    became LIVE Textual markup: `config [*/etc/hosts*]` turned into
+    `config [/etc/hosts]`, which raises `MarkupError` and crashes the app,
+    and `[_TODO_] finish this` turned into `[TODO] finish this`, whose text
+    Textual silently swallowed as an unknown tag.
+
+    Pins both halves of the contract: nothing parses as markup, and the
+    words a user needs in order to judge relevance survive."""
+    from rich.text import Text
+
+    row = LibraryRagResultRow.from_result({"title": "Notes", "snippet": snippet})
+
+    rendered = Text.from_markup(row.display_snippet)
+    assert rendered.spans == []
+    for word in preserved:
+        assert word in rendered.plain
+
+
+def test_result_row_display_snippet_clamps_long_text_at_word_boundary() -> None:
+    words = [f"word{i}" for i in range(120)]
+    long_text = " ".join(words)  # well over 320 plain-prose chars, no Markdown
+    row = LibraryRagResultRow.from_result({"title": "Long", "snippet": long_text})
+
+    # Stored snippet keeps the full text -- only the display projection clamps.
+    assert row.snippet == long_text
+    assert len(row.snippet) > LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS
+
+    display = row.display_snippet
+    assert len(display) <= LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS
+    assert display.endswith("…")
+    body = display[:-1].rstrip()
+    assert body and not body.endswith(" ")
+    # Clamp lands on a word boundary: every token in the clamped body is a
+    # whole word from the source, never a mid-word cut.
+    assert set(body.split(" ")) <= set(words)
+
+
+def test_result_row_display_snippet_passes_through_short_snippet_unclamped() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Short",
+            "snippet": "Root cause was an expired credential.",
+        }
+    )
+
+    assert row.display_snippet == row.snippet
+    assert "…" not in row.display_snippet
+
+
+def test_sanitize_display_text_decodes_html_entities_for_display() -> None:
+    """(RAG-30/31, revised 2026-08-03 task-15 live-UAT finding 1) The
+    display surface is a Textual/Rich `Static`, which renders Rich markup,
+    not HTML -- it never decodes HTML entities back to literal characters.
+    The original RAG-30/31 fix kept text HTML-escaped (re-escaping once,
+    not twice) to avoid "R&amp;amp;D" on screen, but that still put the
+    literal string "&amp;" on screen for a user who typed (or whose source
+    stored) a plain "&" -- confirmed live: a Note containing "Alice & Bob"
+    rendered as "Alice &amp; Bob" in the evidence card. Text arriving
+    HTML-entity-escaped (e.g. an upstream source that ran html.escape on
+    "R&D" and stored "R&amp;D Report") must now decode to the literal
+    character for display instead."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "R&amp;D Report",
+            "snippet": "Budget covers R&amp;D spending this quarter.",
+        }
+    )
+
+    assert row.title == "R&D Report"
+    assert "&amp;" not in row.title
+
+    assert row.snippet == "Budget covers R&D spending this quarter."
+    assert "&amp;" not in row.snippet
+    assert row.display_snippet == row.snippet
+    assert "&amp;" not in row.display_snippet
+
+
+def test_result_row_stays_inert_for_script_markup_and_encoded_payloads_round_trip() -> (
+    None
+):
+    """Security invariant: the html.unescape pre-step must not open a
+    bypass. A literal <script> block stays fully removed, live Rich markup
+    ([bold]/[red]) stays neutralized behind a backslash.
+
+    2026-08-03 task-15 finding-1 fix, ROUND-2 CORRECTION: this test was
+    briefly (and wrongly) reported as "left unmodified" by the fix. It was
+    NOT -- a scoping error in that edit orphaned this function's last 7
+    assertions and 2 comments outside its body, and a later cleanup pass
+    deleted them believing them to be stray leftovers, instead of
+    recognizing they were this test's own tail. Reconstructed from git
+    history (commit 3f65de5d4) and re-verified line by line against the
+    fix: 5 of those 7 assertions still hold and are restored below
+    unchanged. The other 2 pinned that an entity-encoded payload
+    (`&lt;script&gt;...&lt;/script&gt;`) was a "fixed point" of
+    unescape+escape -- it round-tripped back to the SAME single-escaped,
+    visually-inert text, still literally readable as
+    "&lt;script&gt;...". That is no longer true and is not restored: under
+    the fix, `_sanitize_display_text` no longer re-escapes for display, and
+    its dangerous-pattern scrubber now runs a SECOND time after unescaping
+    (closing the sequencing gap the fix targets -- see the sequencing-gap
+    test below), so an entity-encoded <script> payload is decoded and then
+    stripped outright by that second pass, exactly like a literal one. The
+    new, explicit contract: encoded and literal <script> payloads both end
+    up fully removed -- neither survives anywhere, encoded, decoded, or
+    escaped."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "[bold]spoof[/] &lt;script&gt;alert(1)&lt;/script&gt;",
+            "snippet": (
+                "<script>alert(1)</script> [red]inject[/] "
+                "&lt;script&gt;alert(2)&lt;/script&gt;"
+            ),
+        }
+    )
+
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "<script" not in text.lower()
+        assert "&amp;lt;" not in text
+        assert "&amp;amp;" not in text
+
+    # Restored verbatim from the original (commit 3f65de5d4) -- still hold
+    # under the fix: Rich markup is escaped (backslash breaks the live
+    # "[tag]...[/]" run) rather than merely present-but-inert-looking.
+    assert "[bold]spoof[/]" not in row.title
+    assert r"\[bold]spoof\[/]" in row.title
+    assert "[red]inject[/]" not in row.snippet
+    assert r"\[red]inject\[/]" in row.snippet
+    assert "[red]inject[/]" not in row.display_snippet
+
+    # NEW (round-2 correction): the already-encoded payload is no longer a
+    # fixed point of unescape+escape -- it must not survive at all, encoded
+    # or decoded, in any of the three text fields.
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "script" not in text.lower()
+        assert "alert(" not in text
+
+
+def test_sanitize_display_text_rescrubs_dangerous_patterns_unescaping_reveals() -> None:
+    """(2026-08-03 task-15 finding-1 fix review) Pins the exact sequencing
+    gap the reviewer flagged: `_remove_dangerous_display_patterns` runs once
+    on the RAW/still-entity-encoded text, before any unescaping -- an
+    entity-encoded `<script>` payload (`&lt;script&gt;...&lt;/script&gt;`)
+    does not look dangerous at that point, so it passes through untouched.
+    Naively deleting `html.escape` and returning `escape_markup(html.
+    unescape(text))` would then decode that payload into a LIVE `<script>`
+    tag that reaches the final `Static(...)` unescaped -- `escape_markup`
+    only neutralizes Rich's own `[`/`]` markup syntax, never `<script`.
+    The fix re-scrubs a second time, after unescaping, closing the gap."""
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "&lt;script&gt;alert(1)&lt;/script&gt;",
+            "snippet": (
+                "safe text [danger] &lt;script&gt;alert(2)&lt;/script&gt; more text"
+            ),
+        }
+    )
+
+    for text in (row.title, row.snippet, row.display_snippet):
+        assert "<script" not in text.lower()
+        assert "&amp;" not in text
+
+    # A bracket payload (Rich markup syntax, not HTML) must still come out
+    # backslash-escaped rather than stripped or left live -- the re-scrub
+    # pass only targets <script>/javascript:/onclick=/onerror=, never `[`/`]`.
+    assert r"\[danger]" in row.snippet
 
 
 def test_result_row_provenance_is_immutable_snapshot() -> None:
@@ -404,6 +744,45 @@ def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
     assert "No evidence matched the current query." in empty.recovery_copy
 
 
+def test_panel_state_computes_coverage_note_from_diagnostics() -> None:
+    """(Task 8) `LibraryRagPanelState.from_values` threads `diagnostics`
+    into `library_rag_coverage_note`, keyed off the actual normalized
+    `results` it was given -- not a bare pass-through of the raw dict."""
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Media doc",
+            "score": 0.6,
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        }
+    )
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+        diagnostics={
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": ["notes"],
+            }
+        },
+    )
+
+    assert ready.coverage_note == "Semantic search found nothing from: Notes."
+
+    # Default: no `diagnostics` kwarg at all -> no coverage claim (keyword
+    # mode, and every rag-mode call site that predates Task 8's diagnostics
+    # plumbing, never pass one).
+    silent = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+    )
+    assert silent.coverage_note == ""
+
+
 def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> None:
     scope = LibraryRagScopeState.from_source_counts(notes=2, media=1, selected=())
 
@@ -578,3 +957,263 @@ class TestPanelStateHistory:
             LibraryRagPanelState.from_values(history_collapsed=True).history_collapsed
             is True
         )
+
+
+class TestLibraryRagScoreSuffix:
+    """(RAG-34) Evidence rows render an honest match band instead of a raw
+    three-decimal cosine score -- keyword-mode rows carry score=None by
+    deliberate service design (FTS relevance was dropped as misleading) and
+    must render as an empty string, not "unknown"."""
+
+    def test_none_renders_empty_string(self):
+        assert library_rag_score_suffix(None) == ""
+
+    def test_strong_band_above_threshold(self):
+        assert library_rag_score_suffix(0.93) == " | match: strong"
+
+    def test_strong_band_inclusive_at_exact_boundary(self):
+        """0.5 lands in "strong", not "moderate" -- the strong band is
+        `>= 0.5`, so the boundary value itself must not silently drift into
+        the band below it under a future refactor."""
+        assert library_rag_score_suffix(0.5) == " | match: strong"
+
+    def test_moderate_band_between_thresholds(self):
+        assert library_rag_score_suffix(0.35) == " | match: moderate"
+
+    def test_moderate_band_inclusive_at_exact_boundary(self):
+        """0.2 lands in "moderate", not "weak" -- the moderate band is
+        `>= 0.2`, pinned from the low side the same way strong is pinned
+        from its own boundary above."""
+        assert library_rag_score_suffix(0.2) == " | match: moderate"
+
+    def test_moderate_band_just_below_strong_boundary(self):
+        assert library_rag_score_suffix(0.499) == " | match: moderate"
+
+    def test_weak_band_keeps_raw_two_decimal_number_for_transparency(self):
+        """Weak is "the best of a bad lot" -- unlike strong/moderate, the
+        raw number stays visible so a user can tell how weak."""
+        assert library_rag_score_suffix(0.091) == " | match: weak (0.09)"
+
+    def test_weak_band_just_below_moderate_boundary(self):
+        assert library_rag_score_suffix(0.199) == " | match: weak (0.20)"
+
+    def test_weak_band_at_zero(self):
+        assert library_rag_score_suffix(0.0) == " | match: weak (0.00)"
+
+
+class TestLibraryRagAllMatchesWeak:
+    """(RAG-34/Task 8) `library_rag_all_matches_weak` feeds Task 8's
+    coverage note -- it must be True only when there is at least one scored
+    row and every scored row bands weak; unscored (keyword) rows are
+    ignored entirely, and a result set with no scored rows at all is False,
+    not True."""
+
+    def test_no_rows_is_false(self):
+        assert library_rag_all_matches_weak(()) is False
+
+    def test_all_scored_rows_weak_is_true(self):
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B", "score": 0.15}),
+        )
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_one_strong_or_moderate_row_makes_it_false(self):
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B", "score": 0.35}),
+        )
+        assert library_rag_all_matches_weak(rows) is False
+
+    def test_unscored_rows_are_ignored_not_counted_toward_all(self):
+        """A keyword-mode row (score=None) sitting alongside a weak scored
+        row does not flip the verdict either way -- it is simply excluded
+        from the "every scored row" check."""
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A", "score": 0.09}),
+            LibraryRagResultRow.from_result({"title": "B"}),
+        )
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_only_unscored_rows_is_false(self):
+        """No scored rows at all (pure keyword mode) is False -- "everything
+        is weak" is a claim about actual scores, not about their absence."""
+        rows = (
+            LibraryRagResultRow.from_result({"title": "A"}),
+            LibraryRagResultRow.from_result({"title": "B"}),
+        )
+        assert library_rag_all_matches_weak(rows) is False
+
+    def test_weak_boundary_row_counts_as_weak(self):
+        rows = (LibraryRagResultRow.from_result({"title": "A", "score": 0.2 - 1e-9}),)
+        assert library_rag_all_matches_weak(rows) is True
+
+    def test_moderate_boundary_row_is_not_weak(self):
+        rows = (LibraryRagResultRow.from_result({"title": "A", "score": 0.2}),)
+        assert library_rag_all_matches_weak(rows) is False
+
+
+class TestLibraryRagCoverageNote:
+    """(Task 8) `library_rag_coverage_note` builds the Evidence region's
+    one-line semantic-coverage note from `_search_semantic`'s
+    `semantic_scope_coverage` diagnostic plus Task 7's all-weak predicate.
+
+    Live UAT (RAG-29): a "cake" query in rag mode returned unrelated media
+    fixtures and no conversation, with nothing distinguishing "your notes
+    have nothing relevant" from "semantic search never looked at your
+    notes" -- this is the honesty note that closes that gap.
+    """
+
+    @staticmethod
+    def _row(score: float | None = 0.6) -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result({"title": "A", "score": score})
+
+    def test_empty_when_diagnostics_carries_no_coverage_key(self):
+        """Keyword mode's diagnostics only ever carry the scope-exclusion
+        slot (conversations/prompts excluded) or are entirely empty -- no
+        coverage claim is made either way."""
+        rows = (self._row(score=None),)
+        assert library_rag_coverage_note({}, rows) == ""
+        assert (
+            library_rag_coverage_note(
+                {"scope": [{"status": "excluded", "reason": "conversations"}]}, rows
+            )
+            == ""
+        )
+
+    def test_none_diagnostics_is_treated_as_empty(self):
+        assert library_rag_coverage_note(None, (self._row(),)) == ""
+
+    def test_empty_when_everything_covered_and_not_weak(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["notes", "media"], "uncovered": []}
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == ""
+
+    def test_uncovered_types_render_the_found_nothing_from_sentence(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": ["notes", "conversations"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Notes, Conversations."
+        )
+
+    def test_uncovered_types_route_through_the_display_label_table(self):
+        """(controller amendment to Task 8) The Sources toggles two lines
+        above render capitalized display labels (e.g. "✓ Notes") from
+        `LIBRARY_RAG_SOURCE_TYPES` -- this note must speak the same
+        vocabulary, not the raw lowercase source-type identifiers the
+        service's diagnostics payload actually carries."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["media", "prompts"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Media, Prompts."
+        )
+
+    def test_unknown_uncovered_type_falls_back_to_the_raw_identifier(self):
+        """Diagnostics are service-supplied, not a closed enum this module
+        controls -- an unrecognized source type still renders (verbatim)
+        rather than disappearing or raising."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["mystery_source"]}
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: mystery_source."
+        )
+
+    def test_all_weak_with_everything_covered_renders_only_the_weak_prefix(self):
+        rows = (self._row(0.09),)
+        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "No strong semantic matches — results below are weak."
+        )
+
+    def test_all_weak_and_uncovered_combine_weak_prefix_then_sentence(self):
+        rows = (self._row(0.09),)
+        diagnostics = {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}}
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: Notes."
+        )
+
+    def test_empty_rows_never_render_a_coverage_note(self):
+        """Edge case (c): zero results overall is the no-match state's
+        territory (Task 11), not a coverage note listing every requested
+        source -- even a diagnostics payload claiming every requested type
+        uncovered must not render anything when there are no rows at all."""
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]}
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == ""
+
+
+class TestLibraryRagEmptyStateQuietCopy:
+    """(RAG-33/Task 11) `library_rag_empty_state_quiet_copy` builds the
+    Evidence region's quiet two-line no-match copy, replacing the retired
+    Unavailable/Why/Next/Recovery/Owner dump for the routine "your library
+    has nothing matching this query" case."""
+
+    def test_two_line_copy_quotes_the_query_with_no_dump_language(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(notes=1, media=1)
+        copy = library_rag_empty_state_quiet_copy("unicorn migration guide", scope)
+        assert copy == (
+            "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+        )
+        for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+            assert jargon not in copy
+
+    def test_escapes_rich_markup_in_the_query(self) -> None:
+        """Precedent: the history-row builder escapes stored queries before
+        handing them to a `Static`/`Button` (a raw `[bold]x[/]` would either
+        inject markup or raise `MarkupError`); this is the other place the
+        panel renders raw query text, so it must do the same. A single
+        bracket pair like "[bold]x" round-trips as a substring of its own
+        escaped form (the closing `]` is never escaped) -- a tag with an
+        explicit close, as the provenance-label precedent test uses, is
+        the form that actually proves escaping happened."""
+        scope = LibraryRagScopeState.from_source_counts(notes=1)
+        copy = library_rag_empty_state_quiet_copy("[bold]spoof[/]", scope)
+        assert "[bold]spoof[/]" not in copy
+        assert r"\[bold]spoof\[/]" in copy
+
+    def test_second_line_offers_to_turn_on_sources_still_switched_off(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=1, media=1, selected=("notes",)
+        )
+        copy = library_rag_empty_state_quiet_copy("cake", scope)
+        assert copy.endswith("Try broader terms or turn on more sources.")
+
+    def test_second_line_stays_constant_when_no_more_sources_exist_to_enable(
+        self,
+    ) -> None:
+        """Every available source is already selected -- offering to "turn
+        on more sources" would be a false claim, so the line drops that
+        clause instead of showing it regardless of whether it's true."""
+        scope = LibraryRagScopeState.from_source_counts(notes=1, media=1)
+        copy = library_rag_empty_state_quiet_copy("cake", scope)
+        assert copy.endswith("Try broader terms.")
+        assert "turn on" not in copy
+
+    def test_clamps_a_very_long_query_at_a_word_boundary(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(notes=1)
+        long_query = "word " * 60
+        copy = library_rag_empty_state_quiet_copy(long_query, scope)
+        first_line = copy.splitlines()[0]
+        assert first_line.startswith("No evidence matched 'word")
+        assert first_line.endswith("…'.")
+        assert len(first_line) < len(long_query)

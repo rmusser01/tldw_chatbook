@@ -29,19 +29,30 @@ from typing import Any, Mapping
 #: *is* the captured body -- so the fallback below is the common path.
 RULE_MATCH_TEXT_KEY = "rule_match_text"
 
+#: The segment of a site change's text that is newly present, for a rule
+#: scoped to "appeared" (TASK-1363).
+#:
+#: Set by ``URLMonitor.check_url`` (``added_and_removed_text``), from the same
+#: diff the reader's change pane already shows. Matching-only, like
+#: :data:`RULE_MATCH_TEXT_KEY`: not a persisted column (``persist_subscription_item``
+#: reads a fixed key set and ignores this one), and not set at all by the feed
+#: or API producers, whose items have no "previous version" to diff against.
+RULE_MATCH_ADDED_TEXT_KEY = "rule_match_added_text"
 
-def build_rule_haystack(item: Mapping[str, Any]) -> str:
-    """Build the lowercased text a filter or alert rule is matched against.
+#: The segment of a site change's text that is no longer present, for a rule
+#: scoped to "disappeared" (TASK-1363). Same provenance and non-persistence as
+#: :data:`RULE_MATCH_ADDED_TEXT_KEY`, above.
+RULE_MATCH_REMOVED_TEXT_KEY = "rule_match_removed_text"
 
-    Args:
-        item: A raw fetched item, before persistence.
 
-    Returns:
-        ``title``, ``summary``, the item's body and ``author`` joined by single
-        spaces and lowercased. The body is :data:`RULE_MATCH_TEXT_KEY` when the
-        producer supplied it, otherwise ``content``; it *replaces* ``content``
-        rather than adding to it, so that a phrase which was only ever in the
-        text the previous check removed does not start matching.
+def _page_wide_haystack(item: Mapping[str, Any]) -> str:
+    """The original, page-wide haystack: title/summary/body/author, lowercased.
+
+    This is the whole of ``scope="anywhere"`` and also the fallback a wholly
+    new item (no diff to narrow against) uses under ``scope="appeared"`` --
+    kept as one function so the two paths cannot drift apart, and so a rule
+    with no ``scope`` at all produces byte-identical output to before this
+    parameter existed.
     """
     body = item.get(RULE_MATCH_TEXT_KEY)
     if body is None:
@@ -53,3 +64,68 @@ def build_rule_haystack(item: Mapping[str, Any]) -> str:
         str(item.get("author") or ""),
     ]
     return " ".join(parts).lower()
+
+
+def build_rule_haystack(item: Mapping[str, Any], scope: str = "anywhere") -> str:
+    """Build the lowercased text a filter or alert rule is matched against.
+
+    Three scopes (TASK-1363), chosen per rule and passed in by the caller --
+    ``build_rule_haystack`` itself has no notion of "the rule", only of the
+    item and which slice of it to search:
+
+    * ``"anywhere"`` (the default, and what any unrecognized value falls back
+      to): the whole page -- ``title``/``summary``/body/``author``, where the
+      body is :data:`RULE_MATCH_TEXT_KEY` when the producer supplied it,
+      otherwise ``content``. Unchanged from before this parameter existed, so
+      an existing rule with no ``scope`` key, and :class:`WatchlistFilterService`
+      (which never passes ``scope`` at all, because a narrowed *exclude*
+      filter could admit an item the user told the app to drop), keep matching
+      the whole page exactly as before.
+    * ``"appeared"``: only the text a site change newly introduced --
+      :data:`RULE_MATCH_ADDED_TEXT_KEY` and nothing else, symmetric with
+      ``"disappeared"`` below. NOT ``title``/``summary``/``author``: a change
+      item's title is the synthetic ``"Change detected: <source name>"``,
+      present on every change, so a pattern that happened to sit in the source
+      name would match every check and defeat the point of scoping to what is
+      new. When that key is absent -- a feed or API item, which has no
+      "previous version" to diff against -- the *entire* new item just
+      appeared, so this falls back to the page-wide haystack rather than
+      matching nothing.
+    * ``"disappeared"``: only :data:`RULE_MATCH_REMOVED_TEXT_KEY`, and nothing
+      else -- not ``title``/``summary``/``author``, because those describe the
+      item as it now stands, not text that disappeared. When the key is
+      absent, nothing is known to have disappeared, so the haystack is empty
+      and the rule can never match (rather than silently falling back to the
+      whole page, which would defeat the point of scoping to what left).
+
+    Args:
+        item: A raw fetched item, before persistence.
+        scope: One of ``"anywhere"``, ``"appeared"``, ``"disappeared"``. Any
+            other value (including an absent/``None`` scope) is treated as
+            ``"anywhere"``.
+
+    Returns:
+        The scoped haystack, lowercased.
+    """
+    normalized_scope = str(scope or "anywhere").lower()
+
+    if normalized_scope == "disappeared":
+        if RULE_MATCH_REMOVED_TEXT_KEY not in item:
+            return ""
+        return str(item.get(RULE_MATCH_REMOVED_TEXT_KEY) or "").lower()
+
+    if normalized_scope == "appeared":
+        if RULE_MATCH_ADDED_TEXT_KEY not in item:
+            return _page_wide_haystack(item)
+        # Only the newly-added text -- symmetric with "disappeared", and NOT
+        # title/summary/author. A site change's title is the synthetic
+        # "Change detected: <source name>", which is present on every change,
+        # so including it would fire an "appeared" rule whose pattern happened
+        # to sit in the source name on EVERY check -- exactly the page-wide
+        # noise "appeared" exists to escape (task-1363 review). The item's own
+        # metadata is not "text that just appeared on the page"; the added
+        # segments are.
+        return str(item.get(RULE_MATCH_ADDED_TEXT_KEY) or "").lower()
+
+    # "anywhere" and any unrecognized scope value (safe default).
+    return _page_wide_haystack(item)

@@ -57,7 +57,14 @@ CSS_MODULES = [
     "features/_conversations.tcss",
     "features/_notes.tcss",
     "features/_media.tcss",
-    "features/_search-rag.tcss",
+    # RAG UX v2 PR-2 Task 2: "features/_search-rag.tcss" removed -- an audit
+    # found only 5 of its 104 selectors had live users. Three of those
+    # (.action-button, .settings-section, .status-bar) were already shadowed
+    # by same-name rules defined later in this manifest (_evaluation_unified.tcss,
+    # _wizards.tcss), so dropping this sheet's copies is a no-op. The other two
+    # (.action-spacer, .param-group) were this sheet's SOLE definitions with
+    # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
+    # verbatim to components/_shared_components.tcss to preserve them.
     "features/_llm-management.tcss",
     "features/_tools-settings.tcss",
     "features/_ingest.tcss",

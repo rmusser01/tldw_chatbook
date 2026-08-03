@@ -197,6 +197,11 @@ async def test_feeds_heading_names_the_scope_with_a_live_count():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
+        # TASK-1344: FEEDS (and its `#wl-feeds-scope-heading`) is gated to
+        # the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
+
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
         )
@@ -219,6 +224,10 @@ async def test_feeds_source_row_escapes_an_untrusted_name():
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
+
+        # TASK-1344: FEEDS is gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
 
         watchlist = service.create("Morning AI Brief")
         source_id = db.add_subscription(
@@ -260,6 +269,11 @@ async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
+
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
+        # gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
 
         morning = service.create("Morning AI Brief")
         a = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
@@ -394,6 +408,10 @@ async def test_feeds_lists_each_source_once_under_the_all_scope():
         # rebuild. This is the resting state a user actually lands on.
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS (`#watchlists-list-pane`) is gated to the Read
+        # tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         for _ in range(20):
             await pilot.pause()
             if list(screen.query(".watchlist-feed-source-row")):
@@ -417,6 +435,10 @@ async def test_feeds_heading_escapes_an_untrusted_source_name():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
+        # gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         service = app.watchlist_bundle_service
         watchlist = service.create("Morning AI Brief")
         source_id = service._db.add_subscription(
@@ -442,6 +464,62 @@ async def test_feeds_heading_escapes_an_untrusted_source_name():
         assert heading == "Feeds in [bold red]Not Actually Bold[/bold red] (1)"
         summary = _static_text(screen.query_one("#wc-watchlists-summary", Static))
         assert "[bold red]Not Actually Bold[/bold red]" in summary
+
+
+@pytest.mark.asyncio
+async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
+    """task-1344 fix wave (Qodo correctness): off the Read tab, FEEDS is
+    unmounted (`_hidden_centre_regions`) and `#wl-centre-status`
+    (`_build_centre_status_header`) carries the scoped summary instead.
+    `watch_tree_scope` used to refresh only FEEDS
+    (`_refresh_feeds_region_for_scope`), a silent no-op here since FEEDS is
+    not mounted -- `WatchlistsWorkbench.refresh_region_content` cannot find
+    `#wl-region-feeds` to replace -- so the header kept showing the
+    PREVIOUS scope's summary until some unrelated recompose came along.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        morning = service.create("Morning AI Brief")
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
+        service.add_source(morning["id"], arxiv)
+        screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert not screen.query("#wl-region-feeds"), (
+            "precondition: FEEDS is unmounted off the Read tab"
+        )
+
+        summary_before = _static_text(
+            screen.query_one("#wc-watchlists-summary", Static)
+        )
+        assert summary_before == "Local Watchlists snapshot: All sources (2 sources)"
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
+        )
+        summary_after = summary_before
+        for _ in range(20):
+            await pilot.pause()
+            summary_after = _static_text(
+                screen.query_one("#wc-watchlists-summary", Static)
+            )
+            if "Morning AI Brief" in summary_after:
+                break
+
+        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+            f"the header must reflect the NEW scope's counts, not the old: "
+            f"{summary_after!r}"
+        )
 
 
 # --- task-876: the tree's own selection highlight --------------------------
@@ -708,6 +786,10 @@ async def test_renaming_a_watchlist_updates_the_rail():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
+        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`,
+        # asserted below) is gated to the Read tab, like CONTENT.
+        screen.active_section = "items"
+        await pilot.pause()
         assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
 
         screen.post_message(

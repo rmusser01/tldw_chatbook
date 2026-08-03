@@ -90,6 +90,13 @@ async def test_the_overview_shows_a_loading_state_while_the_request_is_in_flight
             "a brand-new user must get the guidance as soon as the load lands"
         )
         assert not overview.query("#overview-loading")
+        # task-1347: the container existing is not evidence it says anything
+        # -- assert the actual no-watchlists guidance sentence reached the
+        # pane, not just its wrapper.
+        body_text = str(overview.query_one("#overview-first-run-body").renderable)
+        assert "a watchlist is a folder of feeds" in body_text.lower(), (
+            f"the first-run guidance is missing or empty; it renders {body_text!r}"
+        )
 
 
 async def _wait_for_overview_first_run(screen, pilot) -> OverviewPane:
@@ -136,6 +143,16 @@ async def test_the_inspector_follows_the_same_three_states():
         assert inspector.query("#inspector-first-run-hint"), (
             "once the load resolves empty, the Inspector shows first-run text"
         )
+        # task-1347: the hint container existing is not evidence it says
+        # anything -- assert the actual guidance sentence, which names the
+        # two controls (New, then New Source) that get a brand-new profile
+        # unstuck.
+        hint_text = str(
+            inspector.query_one("#inspector-first-run-hint").renderable
+        )
+        assert "start with new in the rail, then new source under sources" in (
+            hint_text.lower()
+        ), f"the Inspector's first-run hint is missing or empty; it renders {hint_text!r}"
 
 
 @pytest.mark.asyncio

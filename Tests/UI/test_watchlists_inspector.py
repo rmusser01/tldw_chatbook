@@ -1108,6 +1108,32 @@ async def test_saving_selectors_does_not_recompose_the_screen():
         )
 
 
+def test_cleared_selectors_stay_cleared_on_a_dual_shape_entity():
+    """TASK-1395: the reader and the post-save patch agree on ONE shape.
+
+    An entity can in principle carry BOTH the published
+    `settings["ignore_selectors"]` list AND a stale bare top-level
+    `ignore_selectors` key. `_patch_entity_ignore_selectors` only ever
+    touches the `settings` shape, so a reader that fell back to the bare key
+    would re-display the stale bare value after the field was cleared (the
+    patch pops the settings entry but never the bare key). The reader now
+    reads ONLY the settings shape, so a clear stays cleared. Reds under the
+    old bare-key fallback: the cleared entity would read back the stale
+    ".stale-bare-value".
+    """
+    dual = {
+        "id": 1,
+        "settings": {"ignore_selectors": [".ad", ".promo"]},
+        "ignore_selectors": ".stale-bare-value",
+    }
+    assert InspectorPane._ignore_selectors_text(dual) == ".ad\n.promo"
+
+    # The post-clear state the patcher produces: settings entry gone, stale
+    # bare key still present. The reader must ignore the bare key.
+    cleared = {"id": 1, "settings": {}, "ignore_selectors": ".stale-bare-value"}
+    assert InspectorPane._ignore_selectors_text(cleared) == ""
+
+
 @pytest.mark.asyncio
 async def test_a_save_that_cannot_write_says_so():
     """Fix round 1 (Minor 4): no silent no-op behind the Save button.
