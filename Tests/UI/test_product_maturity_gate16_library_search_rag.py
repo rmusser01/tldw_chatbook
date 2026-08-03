@@ -2517,3 +2517,128 @@ async def test_panel_refresh_rechecks_the_panel_after_taking_the_lock() -> None:
 
         await queued  # must return quietly, not raise NoMatches
         assert queued.done() and queued.exception() is None
+
+
+# --- PR-3 Task 5: retrieval-honesty signals reach the generated answer -----
+#
+# Task 4 already pinned that `panel_state.coverage_note` travels into
+# `generate_library_rag_answer` (`test_library_search_rag_rag_mode_
+# generates_answer_after_results_land`), and that same test asserts the
+# UNCOVERED-sources sentence lands in the recorded prompt with display-cased
+# labels ("Media, Conversations") -- so brief item (b) is already pinned
+# there and is not repeated here. What Task 4's fixture never exercised is a
+# genuinely ALL-WEAK result set (its one row scores 0.93, a strong match) or
+# a citation-free reply (its fake always echoes `[S1]`) -- those two
+# compositions are the gap this section closes.
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_all_weak_matches_reach_the_generation_prompt() -> (
+    None
+):
+    """(Task 5a) `library_rag_all_matches_weak`'s weak-prefix sentence is not
+    just PASSED into `generate_library_rag_answer` (Task 4's pin used a
+    strong-scoring fixture) -- it actually reaches the prompt the provider
+    receives, when the retrieval grounding it is genuinely all-weak. Every
+    scored row here bands weak and nothing is reported uncovered, so the
+    note is the bare `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` sentence with no
+    second clause -- isolating this composition from Task 4's already-pinned
+    uncovered-sources one."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+    )
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": "0.08",
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "rag-semantic",
+                    "provenance": {"source_type": "note"},
+                }
+            ],
+            "runtime_backend": "rag-semantic",
+        }
+    )
+    chat = RecordingAnswerChat()
+    app.library_rag_answer_chat = chat
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _switch_to_rag_mode(screen, pilot)
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-answer-text")
+
+        assert len(chat.calls) == 1
+        user_message = chat.calls[0]["messages_payload"][0]["content"]
+        assert LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX in user_message
+        # Isolation check: nothing is reported uncovered here, so Task 4's
+        # sentence must NOT also be riding along in this fixture's prompt.
+        assert "Semantic search found nothing from" not in user_message
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to_end() -> (
+    None
+):
+    """(Task 5c) A reply carrying no `[S#]` marker at all validates as
+    `citation_status == "uncited"` (`build_answer_citation_validation`), and
+    that must reach the MOUNTED panel through the real worker -- not just
+    the builder-level pin
+    (`test_answer_region_flags_a_non_validated_status_with_no_recovery_
+    copy`/`test_answer_region_ready_status_branches_on_citation_status_
+    before_clean_render`, both of which construct `LibraryRagPanelState` by
+    hand). The caution callout must render above the answer text, carry
+    Task 3's `is-caution`/`library-rag-callout` classes, and the clean-answer
+    citation note must never render alongside it."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        _rag_result_fixture()
+    )
+    chat = RecordingAnswerChat(
+        replies=["An expired credential caused the incident."]
+    )
+    app.library_rag_answer_chat = chat
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _switch_to_rag_mode(screen, pilot)
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-answer-caution")
+
+        assert screen._library_rag_answer is not None
+        assert screen._library_rag_answer.citation_status == "uncited"
+
+        answer_region = screen.query_one("#library-rag-answer")
+        region_ids = [child.id for child in answer_region.children]
+        assert region_ids.index("library-rag-answer-caution") < region_ids.index(
+            "library-rag-answer-text"
+        )
+        caution = screen.query_one("#library-rag-answer-caution")
+        assert caution.has_class("library-rag-callout")
+        assert caution.has_class("is-caution")
+        caution_text = str(caution.renderable)
+        assert "does not cite available staged evidence" in caution_text
+        # The clean-answer note must never also render alongside a caution.
+        assert not screen.query("#library-rag-answer-citation-note")
