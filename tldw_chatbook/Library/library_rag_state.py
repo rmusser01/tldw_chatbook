@@ -1625,7 +1625,16 @@ class LibraryRagPanelState:
                 ),
             )
 
-        can_use_console = normalized_status == "ready" and selected_result is not None
+        # "answering" counts as usable evidence (PR-3 Task 4 review): the
+        # retrieval that produced `selected_result` has already settled and
+        # its bundle is frozen -- generation cannot change what is stageable.
+        # Disabling the action mid-generation greyed the button AND made the
+        # `u` key answer "Run a query and select usable evidence before
+        # sending to Console.", which is false in that state: a query HAS
+        # run and evidence IS selected.
+        can_use_console = (
+            normalized_status in {"ready", "answering"} and selected_result is not None
+        )
         answer_status = answer.status if answer is not None else ""
         return cls(
             scope=scope,

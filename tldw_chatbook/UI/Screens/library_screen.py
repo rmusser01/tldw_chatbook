@@ -1182,6 +1182,16 @@ class LibraryScreen(BaseAppScreen):
         # screen is a new instance with no worker running, so a restored
         # "answering" status could never be resolved by anything.
         self._library_rag_answer_in_flight: bool = False
+        # What the Answer region currently shows, as
+        # `(mode, is_answering, answer_object)` -- the three inputs
+        # `library_rag_answer_children` reads. `_refresh_library_rag_answer_
+        # widgets` skips its teardown/remount when this still matches, which
+        # is what keeps a landed answer (up to
+        # `LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH` characters of `Static`)
+        # from being remounted on every keystroke in rag mode -- the exact
+        # churn class task-284 removed for results/history. `None` means
+        # "unknown, rebuild" and is set on every compose.
+        self._library_rag_answer_render_key: tuple[str, bool, Any] | None = None
         # B2: source types the user has toggled OFF (deselected) in the
         # scope region. Empty = every available source is in scope (the
         # default). Persists across rail switches within the session, same
@@ -4348,6 +4358,12 @@ class LibraryScreen(BaseAppScreen):
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
+                    # A fresh compose replaces the Answer region's widgets
+                    # with new instances; drop the "what is currently
+                    # rendered" key so the next incremental refresh rebuilds
+                    # unconditionally instead of reasoning about whether
+                    # compose happened to render the same thing.
+                    self._library_rag_answer_render_key = None
                     yield LibrarySearchRagPanel(
                         self._library_rag_panel_state(),
                         id="library-search-rag-panel",
@@ -17068,6 +17084,17 @@ class LibraryScreen(BaseAppScreen):
             return
 
         async with self._library_rag_panel_refresh_lock:
+            # Re-checked INSIDE the lock: the check above happened before an
+            # unbounded wait, and the panel can be gone by the time this
+            # refresh actually runs (a rail switch, or a recompose, while a
+            # prior refresh held the lock). Every `query_one` below would
+            # then raise `NoMatches` out of whichever worker called us.
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+                or not self.query("#library-search-rag-panel")
+            ):
+                return
+
             panel_state = self._library_rag_panel_state()
 
             await self._refresh_library_rag_query_status_widgets(panel_state)
@@ -17178,15 +17205,41 @@ class LibraryScreen(BaseAppScreen):
         (`_refresh_library_rag_results_widgets`) removes every child not in
         `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, and would destroy the answer
         on every results refresh.
+
+        Skipped entirely when nothing this region renders from has changed
+        (`_library_rag_answer_render_key`). This refresh runs on EVERY panel
+        refresh, including the per-keystroke one, and an answer only ever
+        changes when generation settles -- without the check, typing in rag
+        mode would tear down and remount the whole answer (up to
+        `LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH` characters of `Static`) on
+        each character, which is exactly the churn class task-284 removed
+        for the results/history lists. Identity (`is`) is used for the
+        answer: `LibraryRagAnswer` is frozen and replaced wholesale, so a
+        new object always means new content, and this avoids deep-comparing
+        an embedded evidence bundle.
         """
         panel_widgets = list(self.query("#library-search-rag-panel"))
         if not panel_widgets:
             return
         panel = panel_widgets[0]
+        render_key = (
+            panel_state.query_state.mode,
+            panel_state.retrieval_status == "answering",
+            panel_state.answer,
+        )
+        previous_key = self._library_rag_answer_render_key
+        if (
+            previous_key is not None
+            and previous_key[0] == render_key[0]
+            and previous_key[1] == render_key[1]
+            and previous_key[2] is render_key[2]
+        ):
+            return
         for widget in list(self.query("#library-rag-answer")):
             await widget.remove()
         for child in library_rag_answer_children(panel_state):
             await panel.mount(child, before="#library-rag-results")
+        self._library_rag_answer_render_key = render_key
 
     async def _refresh_library_rag_history_widget(
         self,

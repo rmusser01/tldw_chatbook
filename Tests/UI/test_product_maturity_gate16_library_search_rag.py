@@ -2441,3 +2441,79 @@ async def test_library_search_rag_starting_a_new_search_drops_the_previous_answe
         )
         assert screen._library_rag_answer_query == second_query
         assert screen._library_rag_answer_in_flight is False
+
+
+def test_library_rag_answer_seam_absent_resolves_to_the_shipping_default() -> None:
+    """(PR-3 Task 4 review) The path PRODUCTION takes, which no other test
+    exercises: the shipping `TldwCli` carries no `library_rag_answer_chat`
+    attribute at all, so the screen sends no `chat=` override and the answer
+    service resolves its own `chat_api_call`. Every other test here runs
+    against the factory's `None` (generation disabled), so without this pin a
+    future `library_rag_answer_chat = None` class attribute on `TldwCli`
+    would silently kill the whole feature with a green suite.
+
+    The resolution is asserted, never invoked -- calling it would be the very
+    live provider call the rest of this section exists to prevent."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        _resolve_answer_chat,
+        chat_api_call,
+    )
+
+    app = _build_test_app()
+    # Undo the factory's test-only disable to recreate the shipping shape.
+    del app.library_rag_answer_chat
+    assert not hasattr(app, "library_rag_answer_chat")
+
+    screen = LibraryScreen(app)
+    chat_kwargs = screen._library_rag_answer_chat_kwargs()
+
+    # No override -> the service's own default...
+    assert chat_kwargs == {}
+    # ...which resolves to the real provider entry point.
+    assert _resolve_answer_chat(chat_kwargs.get("chat")) is chat_api_call
+
+    # And the two other cases still hold on the same helper.
+    app.library_rag_answer_chat = None
+    assert screen._library_rag_answer_chat_kwargs() is None  # disabled
+    fake = RecordingAnswerChat()
+    app.library_rag_answer_chat = fake
+    assert screen._library_rag_answer_chat_kwargs() == {"chat": fake}
+
+
+@pytest.mark.asyncio
+async def test_panel_refresh_rechecks_the_panel_after_taking_the_lock() -> None:
+    """(PR-3 Task 4 review) The panel-presence check happens before the
+    refresh lock, and the lock inserts an unbounded wait between that check
+    and the `query_one` calls that act on it -- so the panel can be gone by
+    the time a queued refresh actually runs (a rail switch, or a recompose,
+    while a prior refresh held the lock). Without a re-check inside the lock
+    every `query_one` raises `NoMatches` out of whichever worker called it.
+
+    Forced deterministically here: hold the lock, queue a refresh behind it,
+    tear the panel out, then release."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        _rag_result_fixture()
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        async with screen._library_rag_panel_refresh_lock:
+            queued = asyncio.create_task(
+                screen._refresh_search_rag_panel_state_widgets()
+            )
+            # Let it clear the pre-lock check and park on the lock.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            # The panel goes away while the refresh is parked.
+            await screen.query_one("#library-search-rag-panel").remove()
+
+        await queued  # must return quietly, not raise NoMatches
+        assert queued.done() and queued.exception() is None

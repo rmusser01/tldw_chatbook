@@ -802,6 +802,52 @@ def test_panel_state_answering_status_overrides_run_action_only_when_reached() -
     assert answering_blocked.query_state.run_action.enabled is False
 
 
+def test_panel_state_answering_keeps_selected_evidence_usable_in_console() -> None:
+    """PR-3 Task 4 review: generation must not disable "Use in Console" for
+    already-selected evidence. Retrieval has settled and its bundle is
+    frozen by the time answering starts, so the answer cannot change what is
+    stageable -- and the disabled copy ("Run a query and select usable
+    evidence before sending to Console.") would be a plain falsehood in a
+    state where a query HAS run and evidence IS selected. Only the run
+    action is in-flight-disabled here.
+    """
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.93,
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+        }
+    )
+    answering = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        results=(result,),
+        selected_result_id=result.result_id,
+        retrieval_status="answering",
+    )
+
+    assert answering.retrieval_status == "answering"
+    assert answering.selected_result == result
+    assert answering.use_in_console_action.enabled is True
+    assert answering.use_in_console_action.disabled_reason == ""
+    # ...while the run gate itself stays honestly in-flight.
+    assert answering.query_state.run_action.enabled is False
+    assert answering.query_state.run_action.label == "Answering…"
+
+    # With nothing selected, "answering" is no more usable than "ready" is.
+    nothing_selected = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        results=(result,),
+        retrieval_status="answering",
+    )
+    assert nothing_selected.use_in_console_action.enabled is False
+
+
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
     failed = LibraryRagPanelState.from_values(
         source_counts={"notes": 1},

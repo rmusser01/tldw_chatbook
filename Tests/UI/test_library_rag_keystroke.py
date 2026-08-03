@@ -243,3 +243,65 @@ def test_refresh_search_rag_panel_state_widgets_skips_results_and_history_when_a
 
     signature = inspect.signature(LibraryScreen._refresh_search_rag_panel_state_widgets)
     assert signature.parameters["include_results_and_history"].default is True
+
+
+@pytest.mark.asyncio
+async def test_rag_mode_query_edit_never_remounts_the_landed_answer():
+    """AC#1, extended to PR-3's Answer region (Task 4 review).
+
+    The answer region is rebuilt on EVERY panel refresh, including the cheap
+    per-keystroke one -- it has to be, or the in-flight "Generating answer…"
+    line would outlive the flag the keystroke path clears. But an answer only
+    ever changes when generation settles, so re-mounting it per character is
+    the same pure waste task-284 removed for results/history, just with up to
+    8,000 characters of `Static` instead of 100+ rows. The keyboard pilots
+    above never caught it because they all run in keyword mode, where the
+    region does not exist at all.
+    """
+    from Tests.UI.test_product_maturity_gate16_library_search_rag import (
+        RecordingAnswerChat,
+        StaticLibraryRagSearchService,
+        _rag_result_fixture,
+        _switch_to_rag_mode,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        _rag_result_fixture()
+    )
+    app.library_rag_answer_chat = RecordingAnswerChat()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        await _switch_to_rag_mode(screen, pilot)
+
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = "first query"
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
+        await _wait_for_library_rag_query_ready(screen, pilot, "first query")
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-answer-text")
+
+        answer_region_before = screen.query_one("#library-rag-answer")
+        answer_text_before = screen.query_one("#library-rag-answer-text")
+
+        for suffix in (" refined", " again"):
+            query_input.value += suffix
+            await screen.update_library_rag_query(
+                Input.Changed(query_input, query_input.value)
+            )
+            await pilot.pause()
+
+        # Same widget instances -- proves no remove()/mount() cycle happened.
+        assert screen.query_one("#library-rag-answer") is answer_region_before
+        assert screen.query_one("#library-rag-answer-text") is answer_text_before
+        assert screen._library_rag_answer is not None

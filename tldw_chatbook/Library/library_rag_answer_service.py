@@ -326,6 +326,26 @@ def build_library_rag_answer_prompt(
     return "\n".join(sections)
 
 
+def _resolve_answer_chat(chat: Callable[..., Any] | None) -> Callable[..., Any]:
+    """The chat seam one generation call should use.
+
+    `None` -- the default, and what every caller that has no override passes
+    -- resolves to this module's `chat_api_call` AT CALL TIME, deliberately
+    not as a `def`-time default binding: a default bound at import would
+    capture the original function object forever, so a conftest (or any test)
+    that defensively patches `library_rag_answer_service.chat_api_call`
+    suite-wide would be silently ignored and a stray call could still reach a
+    real provider.
+
+    Args:
+        chat: An explicit chat seam, or `None` for the module default.
+
+    Returns:
+        The callable to make the one provider call with.
+    """
+    return chat if chat is not None else chat_api_call
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -367,7 +387,7 @@ async def generate_library_rag_answer(
     coverage_note: str,
     provider: str,
     model: str | None = None,
-    chat: Callable[..., Any] = chat_api_call,
+    chat: Callable[..., Any] | None = None,
 ) -> LibraryRagAnswer:
     """Answer one Library RAG query from its own retrieved evidence.
 
@@ -385,8 +405,11 @@ async def generate_library_rag_answer(
         provider: Chat endpoint to answer with.
         model: Model name to pass through, or `None` to let the provider
             handler pick its own default.
-        chat: The chat seam. Defaults to `Chat_Functions.chat_api_call`; may
-            be sync or async. The only seam faked in tests.
+        chat: The chat seam; may be sync or async. The only seam faked in
+            tests. `None` (the default) resolves to this module's
+            `chat_api_call` when the call is made, NOT at import time --
+            see `_resolve_answer_chat`, which is what lets a test patch the
+            module attribute and have it take effect.
 
     Returns:
         The attempt's outcome, whatever its status.
@@ -413,7 +436,7 @@ async def generate_library_rag_answer(
 
     try:
         raw = await _invoke_chat(
-            chat,
+            _resolve_answer_chat(chat),
             endpoint=provider,
             model=model,
             system=LIBRARY_RAG_ANSWER_SYSTEM_PROMPT,

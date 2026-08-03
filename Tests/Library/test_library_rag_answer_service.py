@@ -232,6 +232,54 @@ async def test_an_async_chat_seam_is_awaited():
     assert answer.text == GROUNDED_ANSWER
 
 
+async def test_the_default_chat_seam_is_resolved_at_call_time(monkeypatch):
+    """(PR-3 Task 4 review) `chat` defaults to `None`, resolved to this
+    module's `chat_api_call` when the call is made -- never bound as a
+    `def`-time default.
+
+    Two things ride on that. The shipping app passes no override at all
+    (`LibraryScreen._library_rag_answer_chat_kwargs` returns `{}` when the
+    app carries no seam), so this IS production's provider path and it must
+    really be `chat_api_call`. And because the resolution reads the module
+    attribute, a defensive suite-wide patch of
+    `library_rag_answer_service.chat_api_call` actually takes effect -- with
+    an import-time default binding it would be silently ignored and a stray
+    call could still reach a real provider.
+    """
+    import inspect
+
+    from tldw_chatbook.Library import library_rag_answer_service
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        _resolve_answer_chat,
+        chat_api_call,
+    )
+
+    assert (
+        inspect.signature(generate_library_rag_answer).parameters["chat"].default
+        is None
+    )
+    assert _resolve_answer_chat(None) is chat_api_call
+
+    # Patch the module attribute: the resolution must follow it.
+    patched = _FakeChat()
+    monkeypatch.setattr(library_rag_answer_service, "chat_api_call", patched)
+    assert _resolve_answer_chat(None) is patched
+    # An explicit seam still wins over the module default.
+    explicit = _FakeChat()
+    assert _resolve_answer_chat(explicit) is explicit
+
+    # End to end, with NO `chat=` argument at all -- the call the shipping
+    # app makes -- reaches exactly that module attribute.
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+    )
+    assert len(patched.calls) == 1
+    assert answer.status == ANSWER_STATUS_READY
+
+
 # --- Contract 3: what the model is actually shown -----------------------
 
 
