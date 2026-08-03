@@ -1,7 +1,7 @@
 ---
 id: TASK-1394
 title: One failing URL fails a whole url_list run and discards collected items
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 05:20'
 labels:
