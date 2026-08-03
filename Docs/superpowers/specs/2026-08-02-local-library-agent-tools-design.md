@@ -62,6 +62,11 @@ The implementation follows these observed repository seams:
   can discover and load them through the existing catalog tools.
 - `Chat/console_agent_bridge.py` composes the per-run tool registry. The direct
   Library provider belongs after built-ins and before Skills and MCP providers.
+- The Console MCP bridge renames built-in MCP tools to model-facing names such
+  as `mcp__tldw_chatbook__<tool>`. Name-collision filtering alone therefore
+  cannot prevent the new Library MCP tools from reappearing in Console when
+  the direct provider is absent. Console composition needs a source-aware
+  exclusion for the built-in server's 18 raw Library tool names.
 - `UI/Screens/chat_screen.py` is the actual Console bridge construction and
   settings-injection seam. The app instance already owns the local services
   needed to construct the Library service.
@@ -121,10 +126,16 @@ discoverable through the existing `find_tools`/`load_tools` flow rather than
 all being forced into every model request. MCP clients see all 18 normal MCP
 tools.
 
+The direct provider is registered after built-ins and before Skills and MCP.
+Its names participate in Skill and MCP collision filtering, while the
+`builtin_names` set used to constrain skill-triggered child agents remains the
+original safe built-in set. This keeps the existing narrowed child-agent trust
+boundary intact.
+
 ## 2. Shared Service and Descriptor Source
 
-Add one asynchronous `LocalLibraryToolService` that owns the public operation
-contract and delegates storage work to the existing local services:
+Add one synchronous `LocalLibraryToolService` core that owns the public
+operation contract and delegates storage work to the existing local services:
 
 - `LocalMediaReadingService`
 - `NotesInteropService` / the corrected local Notes scope seam
@@ -136,6 +147,14 @@ contract and delegates storage work to the existing local services:
 The service depends only on local backends. It never selects a server scope,
 calls an embedding model, or invokes the RAG service for any of its 18 direct
 operations.
+
+The synchronous core matches the Console `ToolProvider.invoke` contract and
+runs inside the Console agent's existing worker thread. Small adapters may use
+`asyncio.run` to call local service methods that are declared async but perform
+local work. FastMCP and direct MCP runtime handlers run the synchronous core
+with `asyncio.to_thread`, so SQLite and filesystem reads never block the MCP or
+Textual event loop. The core is not called synchronously from an event-loop
+thread.
 
 One descriptor table is the source of truth for tool names, descriptions,
 input JSON schemas, and operation routing. The Console provider, FastMCP
@@ -150,6 +169,12 @@ dispatch. `MCP/local_control_service.py` maps every new tool to a read-only
 Library policy action, including a distinct Collections read action rather
 than reusing a semantically unrelated reading-list action.
 
+The local capability manifest retains AST-derived legacy entries and appends
+descriptor-derived Library entries with their input schemas. Hub inventory
+normalization preserves those schemas. Runtime diagnostics treat an
+allow-listed descriptor-dispatched Library tool as implemented even though it
+does not have a dedicated `_tool_<name>` method.
+
 The standalone MCP constructor uses the configured path helpers, including
 `get_media_db_path`, and constructs the current local service classes with
 their real signatures. These corrections are limited to what is required to
@@ -163,10 +188,8 @@ storage.
 
 Preferred backing identities are:
 
-- Media and Conversations: their existing UUIDs.
-- Prompts: the normalized existing UUID when present.
-- Notes and Collections: their existing stable local primary identity when no
-  UUID is available.
+- Media, Notes, Prompts, and Conversations: their existing UUIDs.
+- Collections: the existing stable `collection_id`.
 - Skills: the existing local skill record identity. A folder/name rename is a
   new skill identity under the current storage model.
 
@@ -189,7 +212,9 @@ List and search return this common envelope:
   "limit": 20,
   "offset": 0,
   "has_more": false,
-  "next_offset": null
+  "next_offset": null,
+  "response_truncated": false,
+  "omitted_fields": []
 }
 ```
 
@@ -211,6 +236,9 @@ Rules:
   Lists use the type's existing user-facing order, normally most recently
   updated first. Search prefers exact title/name matches, then backend lexical
   rank where available, then recency and stable ID.
+- SQL-backed offset pagination uses `LIMIT`/`OFFSET` on the final deduplicated
+  query. It must not fetch and materialize all rows before the requested
+  offset, even where an existing adapter currently emulates offsets that way.
 - `has_more` and `next_offset` are derived from `offset`, returned item count,
   and `total`; an empty terminal page returns `next_offset: null`.
 
@@ -256,7 +284,8 @@ Search implementation by type:
   combine title/content FTS or substrings with keyword matching.
 - **Prompts:** preserve the underlying database's exact totals and include the
   keywords field in lexical search instead of discarding those capabilities in
-  the adapter.
+  the adapter. Searchable text is name, details, compiled system prompt,
+  compiled user prompt, structured prompt definition, and keywords.
 - **Skills:** perform a bounded case-insensitive scan over managed local skill
   name, description, `SKILL.md` body, and metadata keywords. No SQLite index is
   added. Trust restrictions still govern returned evidence and content.
@@ -279,6 +308,11 @@ at least:
 - Supported keywords/tags, bounded to 20 values.
 - `keyword_total` and `keywords_truncated` when more keywords exist.
 
+Brief titles/names and previews are each bounded to 240 displayed characters.
+Individual returned keyword values are bounded to 120 displayed characters.
+The underlying exact match and count use the complete stored values; these are
+response bounds only.
+
 The exact fields may differ by Library type, but Console and MCP receive the
 same normalized shape for a given operation. Missing source metadata is
 represented explicitly or omitted according to the descriptor schema; it is
@@ -289,14 +323,40 @@ the skill trust model. Their body, supporting-file excerpts, and content-based
 preview are withheld. A match may report that restricted content matched, but
 must not reproduce that content.
 
-## 7. Bounded Get and Continuation Contract
+## 7. Bounded Reads, Get, and Continuation Contract
+
+Output bounds apply at the storage projection as well as at serialization.
+The implementation must not load a BLOB or an unbounded related-content set
+and merely discard it afterward:
+
+- Media queries explicitly exclude `vector_embedding` and return only the
+  textual fields needed by the contract.
+- Conversation message queries explicitly exclude `image_data`; they may
+  return bounded MIME/attachment-presence metadata but never image bytes.
+- Skill detail gains bounded, trust-aware read methods that reuse the existing
+  validated-path boundary. The current eager detail method, which reads every
+  supporting file, is not used by these tools.
+- Prompt reads project only the selected textual fields or section instead of
+  materializing unrelated version-history data.
+
+Every operation has a 32 KiB serialized-result hard ceiling. Mandatory page
+fields are bounded so a maximum 50-item page fits. If optional data would cross
+the ceiling, the serializer trims in this fixed order: additional keyword
+values, previews, then optional metadata.
+It preserves every item in the requested page and always preserves each item's
+`id`, `type`, bounded title/name, and keyword counts. The envelope then returns
+`response_truncated: true` plus `omitted_fields`; otherwise it returns
+`response_truncated: false`. It never relies on the model runtime to truncate
+an oversized result.
+
+If response-level trimming removes keyword values, the affected item's
+`keywords_truncated` remains true and `keyword_total` remains the exact stored
+count. `omitted_fields` reports stable field paths rather than including any
+omitted values.
 
 Get responses return metadata plus one bounded content segment or child page.
-The default text budget is 8,000 characters, the maximum caller-selectable
-budget is 16,000 characters, and the complete serialized tool result has an
-approximately 32 KiB hard ceiling. The service trims optional fields before it
-can exceed that ceiling and reports truncation; it never relies on the model
-runtime to truncate an oversized result.
+The default text budget is 8,000 characters and the maximum caller-selectable
+budget is 16,000 characters.
 
 Text continuation metadata includes:
 
@@ -319,35 +379,55 @@ revision. Continuation validates that the current item revision still matches.
 If content changed, the tool returns `content_changed` and a fresh-start hint
 instead of splicing different revisions together.
 
+The revision is the stored item/message version when that version changes with
+the returned content. Where a store cannot guarantee that property, it is a
+hash of the exact canonical text section being paged. Conversation
+within-message cursors bind to the message version or message-content hash;
+Skill cursors bind to the selected file-content hash.
+
 Type-specific get behavior:
 
 - **Media:** returns textual metadata/content only. It never returns a binary
   payload or local path.
-- **Notes and Prompts:** return their primary text in chunks using the common
-  cursor contract.
+- **Notes:** returns its content in chunks using the common cursor contract.
+- **Prompts:** returns metadata plus a bounded section manifest for `details`,
+  `system_prompt`, `user_prompt`, and `prompt_definition`. The optional
+  `section` argument selects one manifest section for chunked reading. When it
+  is omitted, the response includes a bounded overview of details and compiled
+  System/User text plus the manifest; canonical structured definitions remain
+  directly retrievable through `section="prompt_definition"`.
 - **Skills:** returns safe metadata and the main `SKILL.md` content when the
   skill is trusted. Supporting files are first returned as a bounded manifest.
   A later call selects a manifest file through its opaque file token and reads
   that file in chunks; callers cannot submit arbitrary paths. Blocked skills
   never return body or supporting-file content.
-- **Conversations:** returns conversation metadata and a paginated message page
-  with an exact `message_total`. The structured continuation state identifies
-  message offset, stable message ID, and within-message character offset so a
-  single long message can be continued without losing message boundaries.
+- **Conversations:** returns conversation metadata and a text-only paginated
+  message page with an exact `message_total`. The structured continuation
+  state identifies message offset, stable message ID, and within-message
+  character offset so a single long message can be continued without losing
+  message boundaries.
   `include_rag_context` is always false.
 - **Collections:** returns Collection metadata and a paginated direct-membership
-  page with an exact `member_total`. Members include their stored source type,
-  source identity, and title. Collection get does not inline member content.
+  page with an exact `member_total`. Each member includes its stable
+  `membership_id`, stored source type, title, and a type-prefixed `item_id`
+  accepted by the corresponding get tool when the source type is supported.
+  Unsupported source types return `item_id: null` and an opaque source
+  reference. Collection get does not inline member content.
 
 ## 8. Console Mode Setting and RAG Fallback
 
-Console adds a persisted setting, enabled by default:
+Console adds one global application preference under
+`[console].direct_library_tools`, enabled by default. It is presented in
+Settings > Library/RAG under a Console agent retrieval subsection, not stored
+per conversation:
 
 > **Use direct Library tools**
 >
-> On: Agents use lexical list, view, and search tools across your local Library.
+> On: Console agents may automatically list, count, read, and lexically search
+> your local Library.
 >
-> Off: Agents use Library RAG as the default search method. RAG currently
+> Off: Direct list, count, view, and lexical search tools are unavailable.
+> Console agents use Library RAG as the default retrieval method. RAG currently
 > covers Notes, Media, and Conversations and requires an available, populated
 > index.
 >
@@ -355,6 +435,9 @@ Console adds a persisted setting, enabled by default:
 > included in model requests. If you use a cloud model, this Library data
 > leaves your device and is handled by that provider. Use a local model if the
 > data must remain on-device.
+>
+> **Scope:** This setting affects Console agents only. MCP Library access is
+> controlled separately.
 
 The privacy warning is visible below the toggle, not hidden in a tooltip.
 Changing the setting applies to the next Console agent run.
@@ -372,6 +455,14 @@ remain available under MCP's own enablement, transport, and read-policy
 controls. The toggle is not described as a privacy kill switch: both direct
 tool results and RAG excerpts may be transmitted to the selected model.
 
+Enabling the setting is the Console consent boundary for automatic read-only
+Library tool execution; this design does not add a second per-call approval
+prompt. To prevent duplication or bypass in either setting state, the
+Console-specific `MCPToolProvider` composition always excludes tools whose
+source identity is `builtin:tldw_chatbook` and whose raw name is one of the 18
+descriptor-defined Library names. It does not exclude similarly named tools
+from external MCP profiles, which remain governed by existing MCP permissions.
+
 ## 9. Errors, Validation, and Security
 
 Expected failures use a normalized structured error with a stable code,
@@ -388,15 +479,37 @@ Required codes are:
 - `feature_unavailable`
 - `storage_error`
 
+The common error payload is:
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "The requested Library item was not found.",
+    "retryable": false,
+    "details": {}
+  }
+}
+```
+
+The service produces one JSON-safe error object. MCP returns that object
+directly. Console preserves the existing `ToolResult` model: successful
+payloads are JSON-serialized into `content`, while failures JSON-serialize the
+same error object into the string `error` field with `ToolResult.ok = false`.
+After JSON decoding, Console and MCP expose the same Library payload/error
+shape; the shared agent runtime does not need a new error type.
+
 JSON schemas enforce type and numeric bounds, and runtime validation repeats
 security-critical checks because not every caller is schema-conforming. SQL
 values are parameterized. Opaque ID and continuation codecs fail closed.
 
-All 18 tools are read-only and use the existing Console approval behavior and
-MCP read policies. Returned Library text is untrusted data, not instructions.
-Tool descriptions and model-facing wrappers must make that boundary explicit.
-The service returns structured fields rather than concatenating Library text
-into instruction-like prose.
+All 18 tools are read-only. Console calls obey the global setting, catalog
+allow-list, and agent-run tool controls described above; there is no per-call
+Library approval prompt. MCP calls obey their existing read policies. Returned
+Library text is untrusted data, not instructions. Tool descriptions and
+model-facing wrappers must make that boundary explicit. The service returns
+structured fields rather than concatenating Library text into instruction-like
+prose.
 
 ## 10. Data Flow
 
@@ -404,19 +517,23 @@ Direct Console execution is:
 
 1. Console constructs its per-run bridge with the persisted direct-tools
    setting.
-2. `LibraryToolProvider` contributes descriptor-backed tools when enabled.
-3. The model discovers and loads the required type-specific tool.
-4. The provider validates arguments and calls `LocalLibraryToolService`.
-5. The service queries the existing local backend, normalizes stable IDs and
+2. Console composes MCP with the built-in Library names source-filtered out.
+3. `LibraryToolProvider` contributes descriptor-backed tools when enabled, or
+   the bounded RAG provider contributes `search_library_rag` when disabled.
+4. The model discovers and loads the required tool.
+5. The provider validates arguments and calls `LocalLibraryToolService` on the
+   existing agent worker thread.
+6. The service queries the existing local backend, normalizes stable IDs and
    fields, enforces bounds, and returns structured data.
-6. The existing Console tool-result path records the bounded result for the
+7. The existing Console tool-result path records the bounded result for the
    model and UI.
 
 Local MCP execution is:
 
 1. FastMCP exposes descriptor-backed `library_*` schemas.
 2. The control service authorizes the corresponding read action.
-3. Direct or standalone delegation resolves the allow-listed operation.
+3. Direct or standalone delegation resolves the allow-listed operation and
+   offloads the synchronous service call from the event loop.
 4. The same `LocalLibraryToolService` returns the same normalized payload used
    by Console.
 
@@ -431,6 +548,8 @@ skill directories. They must cover:
 
 - Descriptor completeness and uniqueness for all 18 canonical tool names.
 - Console catalog discovery/loading and per-run provider composition.
+- Source-aware suppression of the 18 built-in Library MCP duplicates in both
+  Console toggle states, without suppressing external MCP profiles.
 - MCP registration, capability/schema exposure, generic delegation, and
   read-policy mapping.
 - Standalone MCP bootstrap using configured current database paths.
@@ -446,17 +565,30 @@ skill directories. They must cover:
 - Deduplication when one item matches multiple fields, keywords, messages, or
   members.
 - Keyword value/count bounds and search evidence bounds.
+- Maximum-page serialization proving required item fields are preserved below
+  the hard ceiling and deterministic `response_truncated` metadata identifies
+  omitted optional fields.
 - Text chunk sizes, serialized hard ceiling, cursor continuation, terminal
   chunks, tampered cursors, and revision-change rejection.
 - Conversation message totals, message pagination, long-message continuation,
-  and exclusion of RAG-context messages.
+  exclusion of RAG-context messages, and proof that message image BLOBs are not
+  selected or returned.
 - Collection membership totals/pagination without member-content expansion.
 - Trusted-skill content access, blocked-skill discoverability, and blocked
   content/supporting-file withholding.
 - Media content responses containing no binary data or local filesystem path.
+- Media detail queries that do not select vector-embedding BLOBs, Skill reads
+  that do not eagerly load supporting-file content, and large-offset SQL pages
+  that do not materialize all preceding rows.
+- Prompt section manifests, bounded overview/default behavior, direct section
+  selection, and structured-definition continuation.
+- Collection member `item_id` round trips for supported Library source types.
 - Console/MCP input-schema and normalized-result parity.
 - Toggle default, persistence, next-run application, direct-tool omission, RAG
-  replacement, unavailable-index behavior, and exact visible privacy copy.
+  replacement, unavailable-index behavior, global-not-session scope, automatic
+  read consent, and exact visible privacy/scope copy.
+- MCP runtime diagnostics recognizing descriptor-dispatched tools as
+  implemented and built-in inventory preserving descriptor input schemas.
 - Compatibility tests proving existing unnamespaced MCP tools retain their
   current public behavior.
 
