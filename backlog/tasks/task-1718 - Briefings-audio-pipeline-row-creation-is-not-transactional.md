@@ -1,7 +1,7 @@
 ---
 id: TASK-1718
 title: 'Briefings audio: pipeline row creation is not transactional'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-31 23:59'
 labels:
