@@ -2926,6 +2926,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._focus_in_centre_header = True
                 return
             node = node.parent
+        # Focus landed in neither zone -- a widget outside both the centre
+        # regions and the status header (e.g. `#watchlists-backend-select`, a
+        # sibling of the workbench). The flag tracks ONLY "focus is in the
+        # status header", so anything else must clear it; leaving a stale
+        # `True` from a prior header focus would wrongly refuse a later
+        # `z`/`Z` (task-1344 fix wave re-review, Qodo-follow-up). `focused_
+        # region` keeps its last real value, as it already did for this case.
+        self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
         # A tab switch always fully recomposes the centre (below): whatever

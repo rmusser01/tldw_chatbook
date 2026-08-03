@@ -2315,3 +2315,35 @@ async def test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_r
         )
         assert screen.region_layout.solo_region is None
         screen.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag():
+    """Re-review follow-up (task-1344): the `_focus_in_centre_header` sentinel
+    must be True ONLY while focus is genuinely in the status header. Focus
+    that moves from the header to a widget in NEITHER zone (here the
+    top-level backend picker `#watchlists-backend-select`, a sibling of the
+    workbench) has to clear the flag -- `on_descendant_focus`'s ancestor walk
+    otherwise falls off the top without touching it, leaving a stale `True`
+    that a later `z`/`Z` would wrongly consult. Reds without the explicit
+    else-reset: the flag stays True after focus leaves the header.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+        assert screen._focus_in_centre_header, "precondition: focus is in the header"
+
+        # `#watchlists-backend-select` sits in `#watchlists-header-bar`, a
+        # top-level bar outside both `wl-region-*`/`wl-header-*` and the
+        # status header -- the exact "neither zone" case.
+        screen.query_one("#watchlists-backend-select").focus()
+        await pilot.pause()
+        assert not screen._focus_in_centre_header, (
+            "focus outside the status header must clear the sentinel; a stale "
+            "True would wrongly refuse a later z/Z"
+        )
