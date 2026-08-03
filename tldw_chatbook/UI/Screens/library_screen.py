@@ -240,6 +240,7 @@ from ...Widgets.Library import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     next_skill_context,
+    results_heading_text,
     scope_toggle_label,
     skill_context_toggle_label,
     skill_disable_model_label,
@@ -1096,6 +1097,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        # Task 8: the current results' non-result-shaped retrieval
+        # diagnostics (e.g. `semantic_scope_coverage`) -- travels with
+        # `_library_rag_results` through every reset/outcome/save-restore
+        # path below so the coverage note built from it can never drift
+        # from the results it describes.
+        self._library_rag_diagnostics: Mapping[str, Any] = {}
         # B2: source types the user has toggled OFF (deselected) in the
         # scope region. Empty = every available source is in scope (the
         # default). Persists across rail switches within the session, same
@@ -1624,6 +1631,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
         state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        state["library_rag_diagnostics"] = dict(self._library_rag_diagnostics)
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
@@ -1716,6 +1724,10 @@ class LibraryScreen(BaseAppScreen):
             recovery_state
             if isinstance(recovery_state, DestinationRecoveryState)
             else None
+        )
+        rag_diagnostics = state.get("library_rag_diagnostics")
+        self._library_rag_diagnostics = (
+            dict(rag_diagnostics) if isinstance(rag_diagnostics, Mapping) else {}
         )
 
         media_type_filter = state.get("library_media_type_filter")
@@ -3576,6 +3588,7 @@ class LibraryScreen(BaseAppScreen):
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
+            diagnostics=self._library_rag_diagnostics,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -15850,6 +15863,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
+        self._library_rag_diagnostics = {}
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -15992,6 +16006,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
+        self._library_rag_diagnostics = {}
         # The rail-top search box can invoke this mid-recompose -- it selects
         # the Search canvas via ``_select_library_rail_row`` and then runs the
         # query immediately after, before the scheduled recompose has mounted
@@ -16392,6 +16407,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_results = outcome.results
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
+        self._library_rag_diagnostics = outcome.diagnostics
         self._library_rag_selected_result_id = ""
         # D1: the results-arrival transition is the ONLY place allowed to
         # force the `Recent searches` collapsible open/closed -- collapse it
@@ -16659,7 +16675,7 @@ class LibraryScreen(BaseAppScreen):
         """
         results_container = self.query_one("#library-rag-results", Vertical)
         self.query_one("#library-rag-results-heading", Static).update(
-            f"Evidence · top {panel_state.query_state.top_k} per source"
+            results_heading_text(panel_state)
         )
         for child in list(results_container.children):
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:

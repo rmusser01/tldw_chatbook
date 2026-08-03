@@ -33,7 +33,10 @@ Top to bottom on the main canvas:
 - **"Sources"** — the scope block: a "Scope: all local sources" summary line
   and one toggle per source type — ✓/○ **Notes**, **Media**,
   **Conversations**, **Prompts**, each with its count, e.g. "✓ Media (1)".
-- **"Evidence · top 5 per source"** — the result rows (anatomy below).
+- **"Evidence · top 5 per source"** (Search mode) / **"Evidence · top 5"**
+  (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
+  drops "per source" because it runs one merged semantic query, not one
+  query per source the way Search mode does.
 - **"Recent searches"** — a collapsible fold of your recent queries.
 
 ## Features & controls
@@ -89,6 +92,15 @@ Before any search the region shows "No evidence yet. Run Search/RAG to
 populate results." A search with no matches reports "No evidence matched
 the current query" and suggests "Revise the query or broaden the source
 scope".
+
+In RAG Answer mode, when results land but the semantic query didn't
+actually touch one of your selected sources (or every hit's match is weak),
+a quiet line appears above the rows, e.g. "Semantic search found nothing
+from: notes, conversations." or "No strong semantic matches — results
+below are weak." — telling you *why* a source is missing instead of leaving
+you to guess whether it has nothing relevant or was never searched. Search
+mode never shows this line; its keyword leg always queries every selected
+source.
 
 ### Recent searches
 
@@ -160,8 +172,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Quirks & troubleshooting
 
-- **"top 5 per source" is fixed here.** The tunable top-k in Settings ▸
-  RAG does not change this canvas.
+- **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
+  change this canvas. "Per source" only appears in Search mode — RAG
+  Answer mode runs one merged semantic query across sources, not one per
+  source, so the heading doesn't claim it.
 - **The scope summary line never changes.** "Scope: all local sources" is a
   fixed label — the ✓/○ toggles are the real record of what's in scope.
 - **Workspaces and Collections can't be searched yet.** They exist as

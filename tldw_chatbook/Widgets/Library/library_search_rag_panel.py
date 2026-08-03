@@ -101,7 +101,7 @@ class LibrarySearchRagPanel(VerticalScroll):
 
         with Vertical(id="library-rag-results", classes="library-rag-region"):
             yield Static(
-                _results_heading_text(self.state),
+                results_heading_text(self.state),
                 id="library-rag-results-heading",
                 classes="destination-section",
             )
@@ -273,9 +273,43 @@ def _mode_toggle_label(state: LibraryRagPanelState) -> str:
     return f"mode: {state.query_state.mode_label} ▸"
 
 
-def _results_heading_text(state: LibraryRagPanelState) -> str:
-    """Return the Evidence region heading, surfacing top-k (A3)."""
-    return f"Evidence · top {state.query_state.top_k} per source"
+def results_heading_text(state: LibraryRagPanelState) -> str:
+    """Return the Evidence region heading, surfacing top-k (A3).
+
+    Public (Task 8): shared by the panel's own `compose()` and the screen's
+    incremental refresh (`_refresh_library_rag_results_widgets`), mirroring
+    every other body/heading builder in this module.
+
+    "Per source" is only true for keyword mode: `_search_keyword` fans out
+    one query per selected source and caps each independently at `top_k`.
+    Rag mode's semantic leg is ONE store query (or one per allowlisted
+    source type under an active scope, still merged by score) trimmed to a
+    single `top_k` overall -- so the suffix is dropped there rather than
+    making a claim that live UAT showed was false (RAG-29/scout item 3).
+    """
+    suffix = "" if state.query_state.mode == "rag" else " per source"
+    return f"Evidence · top {state.query_state.top_k}{suffix}"
+
+
+def library_rag_coverage_note_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the Evidence region's semantic coverage-note `Static`, or none.
+
+    Shared by `compose()` and the screen's incremental refresh (folded into
+    `library_rag_results_body_children` below, so both paths get it for
+    free). Reuses the existing `library-rag-quiet-line` styling -- no new
+    CSS. Empty (`[]`) whenever `state.coverage_note` has nothing to say
+    (everything the query's semantic leg was asked to cover came back
+    covered, and no result banded weak) -- see `library_rag_coverage_note`.
+    """
+    if not state.coverage_note:
+        return []
+    return [
+        Static(
+            state.coverage_note,
+            id="library-rag-coverage-note",
+            classes="library-rag-quiet-line",
+        )
+    ]
 
 
 def library_rag_result_row_children(
@@ -368,8 +402,14 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     Returns:
         The widgets to mount directly below the Evidence heading.
     """
+    # Task 8: the coverage note, when there is one, is the very first thing
+    # under the heading -- ahead of the row list. `state.coverage_note` is
+    # only ever non-empty alongside `state.results` (see
+    # `library_rag_coverage_note`'s empty-rows guard), so prepending it
+    # unconditionally here is a no-op in every other branch below rather
+    # than needing its own conditional per branch.
     if state.results:
-        children: list[Widget] = []
+        children: list[Widget] = list(library_rag_coverage_note_children(state))
         for index, result in enumerate(state.results):
             children.extend(
                 library_rag_result_row_children(result, index, state.selected_result_id)

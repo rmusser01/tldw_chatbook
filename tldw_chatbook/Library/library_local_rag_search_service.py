@@ -487,7 +487,25 @@ class LibraryLocalRagSearchService:
                 recovery_state=_scope_zero_results_recovery_state(item_count),
                 runtime_backend=_RAG_RUNTIME_BACKEND,
             )
-        return {"results": rows, "runtime_backend": _RAG_RUNTIME_BACKEND}
+        result: dict[str, Any] = {
+            "results": rows,
+            "runtime_backend": _RAG_RUNTIME_BACKEND,
+        }
+        if rows and source_types:
+            # Task 8: report which requested source types the semantic leg
+            # actually touched. Deliberately omitted (not an empty dict)
+            # when `rows` is empty -- the zero-rows path is the empty/
+            # no-match state (Task 11's territory), not a coverage claim,
+            # and omitting the key keeps the pre-existing bare
+            # `{"results": [], "runtime_backend": ...}` contract for that
+            # path byte-identical (see the two callers above and
+            # `test_rag_mode_zero_results_with_populated_index_stays_generic`).
+            result["diagnostics"] = {
+                "semantic_scope_coverage": _semantic_scope_coverage(
+                    source_types, rows
+                )
+            }
+        return result
 
     async def _resolve_rag_runtime(self) -> Any:
         """Return a usable RAG runtime, lazily creating the shared one.
@@ -693,6 +711,53 @@ def _semantic_row_matches_scope(row: Mapping[str, Any], scope: tuple[str, ...]) 
     if canonical is None:
         return True
     return canonical in scope
+
+
+def _semantic_scope_coverage(
+    source_types: tuple[str, ...], rows: Sequence[Mapping[str, Any]]
+) -> dict[str, list[str]]:
+    """Which requested source types the semantic leg actually touched (Task 8).
+
+    The semantic leg is one merged store query trimmed to `top_k` (or one
+    per-type query merged and trimmed, when scoped) -- unlike keyword mode,
+    which fans out one query per selected source (always "per source"). A
+    requested type can therefore come back with zero rows even though other
+    requested types matched well, and there is nothing on screen today that
+    tells a user "semantic search never looked at your notes" versus "your
+    notes have nothing relevant" (live UAT, RAG-29/Task 8).
+
+    Args:
+        source_types: The caller's requested Library source type
+            identifiers (e.g. `notes`, `media`) -- never empty; the caller
+            guards that case before calling this.
+        rows: The final, already scope-post-filtered `_semantic_row` rows
+            (i.e. what will actually be shown as evidence).
+
+    Returns:
+        `{"covered": [...], "uncovered": [...]}`, both in `source_types`
+        order. A row whose provenance is missing or unrecognized (edge case:
+        it survives the scope post-filter because it cannot be attributed to
+        any toggle) contributes to neither list -- it cannot prove any
+        specific requested type was actually searched-and-found, so it must
+        not mask a genuinely uncovered type.
+    """
+    present: set[str] = set()
+    for row in rows:
+        provenance = row.get("provenance")
+        raw_source_type = (
+            provenance.get("source_type") if isinstance(provenance, Mapping) else None
+        )
+        canonical = _SEMANTIC_SOURCE_TYPE_MAP.get(
+            str(raw_source_type or "").strip().lower()
+        )
+        if canonical:
+            present.add(canonical)
+    return {
+        "covered": [source_type for source_type in source_types if source_type in present],
+        "uncovered": [
+            source_type for source_type in source_types if source_type not in present
+        ],
+    }
 
 
 def _semantic_citation(citation: Any) -> dict[str, Any]:

@@ -946,6 +946,78 @@ def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
     return all(score < LIBRARY_RAG_MATCH_MODERATE_THRESHOLD for score in scored)
 
 
+# Task 8: the Evidence region's one-line semantic-coverage note prefix when
+# every scored row bands weak (`library_rag_all_matches_weak`). Kept as its
+# own constant (rather than inlined into `library_rag_coverage_note`) so the
+# exact wording has one source of truth.
+LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX = (
+    "No strong semantic matches — results below are weak."
+)
+
+
+def library_rag_coverage_note(
+    diagnostics: Mapping[str, Any] | None,
+    rows: Sequence[LibraryRagResultRow],
+) -> str:
+    """Return the Evidence region's one-line semantic coverage note (Task 8).
+
+    Live UAT (RAG-29): a "cake" query in rag mode returned unrelated media
+    fixtures and no conversation, even though a conversation plainly
+    discussing cake existed -- with nothing on screen distinguishing "your
+    notes contain nothing relevant" from "semantic search never looked at
+    your notes". `_search_semantic` (`library_local_rag_search_service.py`)
+    now reports, per query, which of the *requested* source types are
+    actually present in the returned rows' provenance under
+    `diagnostics["semantic_scope_coverage"]`; this renders that into one
+    honest, specific sentence -- or stays silent when there is nothing to
+    say.
+
+    Args:
+        diagnostics: The outcome's `LibraryRagSearchOutcome.diagnostics`
+            mapping. Only the `"semantic_scope_coverage"` slot is
+            consulted; any other shape (keyword mode's scope-exclusion
+            slot, an empty mapping, `None`) renders no coverage claim.
+        rows: The panel's current, already-normalized evidence rows (i.e.
+            what is about to be shown).
+
+    Returns:
+        `""` when `rows` is empty (edge case: zero results overall is the
+        no-match/empty state's territory, not a coverage note enumerating
+        every requested source as "uncovered"), when every requested source
+        type is covered and no row bands weak, or when `diagnostics` carries
+        no `semantic_scope_coverage` entry at all (e.g. keyword mode).
+        Otherwise `"Semantic search found nothing from: <types>."` (types
+        in the order `semantic_scope_coverage["uncovered"]` lists them),
+        with `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined)
+        when `library_rag_all_matches_weak(rows)` is True -- or just the
+        weak-prefix alone when nothing is uncovered.
+    """
+    if not rows:
+        return ""
+    coverage = (
+        diagnostics.get("semantic_scope_coverage")
+        if isinstance(diagnostics, Mapping)
+        else None
+    )
+    uncovered = (
+        tuple(str(item) for item in coverage.get("uncovered", ()) or ())
+        if isinstance(coverage, Mapping)
+        else ()
+    )
+    message = (
+        f"Semantic search found nothing from: {', '.join(uncovered)}."
+        if uncovered
+        else ""
+    )
+    if library_rag_all_matches_weak(rows):
+        return (
+            f"{LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX} {message}"
+            if message
+            else LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+        )
+    return message
+
+
 @dataclass(frozen=True)
 class LibraryRagPanelState:
     """Display state for the destination-native Library Search/RAG panel."""
@@ -962,6 +1034,11 @@ class LibraryRagPanelState:
     recovery_selector: str = ""
     history: tuple[str, ...] = ()
     history_collapsed: bool = False
+    #: Evidence region one-line semantic coverage note (Task 8), built by
+    #: `library_rag_coverage_note` from the retrieval outcome's
+    #: `diagnostics["semantic_scope_coverage"]` and the panel's own
+    #: `results`. Empty string when there is nothing to say.
+    coverage_note: str = ""
 
     @classmethod
     def from_values(
@@ -981,6 +1058,7 @@ class LibraryRagPanelState:
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
         history_collapsed: bool = False,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -1003,6 +1081,11 @@ class LibraryRagPanelState:
                 render collapsed (D1). The caller owns this decision -- it is
                 only forced on the results-arrival transition, not on every
                 render -- so this is a plain passthrough, not derived here.
+            diagnostics: The retrieval outcome's non-result-shaped notices
+                (`LibraryRagSearchOutcome.diagnostics`), e.g.
+                `semantic_scope_coverage` (Task 8). `None` (the default --
+                every call site that predates Task 8) renders no coverage
+                note.
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -1032,6 +1115,7 @@ class LibraryRagPanelState:
             else LibraryRagResultRow.from_result(result)
             for result in results
         )
+        coverage_note = library_rag_coverage_note(diagnostics, result_rows)
         normalized_selected_result_id = _clean_text(selected_result_id)
         selected_result = next(
             (
@@ -1143,6 +1227,7 @@ class LibraryRagPanelState:
             recovery_selector=active_recovery_selector,
             history=tuple(str(h) for h in history),
             history_collapsed=bool(history_collapsed),
+            coverage_note=coverage_note,
         )
 
 

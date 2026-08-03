@@ -165,6 +165,74 @@ async def _wait_for_evidence_selected(
     )
 
 
+# --- Task 8: mode-aware Evidence heading + semantic coverage note ----------
+
+
+def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> None:
+    """(Task 8) RAG mode's Evidence heading drops the false "per source"
+    claim -- the semantic leg is one merged store query trimmed to top_k,
+    not a fan-out per selected source the way the keyword leg is -- and the
+    coverage-note Static mounts directly under the heading, only when there
+    is a specific, honest thing to say."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import (
+        library_rag_results_body_children,
+        results_heading_text,
+    )
+
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Media doc",
+            "score": 0.6,
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        }
+    )
+    rag_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+        diagnostics={
+            "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+        },
+    )
+    search_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="search",
+        results=(result,),
+    )
+
+    # A3's "top_k" claim is only accurate for keyword mode's per-source
+    # fan-out; rag mode drops the "per source" suffix outright.
+    assert results_heading_text(rag_state) == "Evidence · top 5"
+    assert results_heading_text(search_state) == "Evidence · top 5 per source"
+
+    rag_children = library_rag_results_body_children(rag_state)
+    coverage_statics = [
+        child
+        for child in rag_children
+        if getattr(child, "id", None) == "library-rag-coverage-note"
+    ]
+    assert len(coverage_statics) == 1
+    assert coverage_statics[0].has_class("library-rag-quiet-line")
+    assert (
+        str(coverage_statics[0].renderable)
+        == "Semantic search found nothing from: notes."
+    )
+    # It renders directly under the heading -- the first body child.
+    assert rag_children[0] is coverage_statics[0]
+
+    # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
+    # coverage claim to make) -> no widget mounted at all.
+    search_children = library_rag_results_body_children(search_state)
+    assert not any(
+        getattr(child, "id", None) == "library-rag-coverage-note"
+        for child in search_children
+    )
+
+
 def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
     result = LibraryRagResultRow.from_result(
         {
@@ -456,6 +524,110 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
         assert "Expired credential caused the incident." in visible_text
         assert "Incident Review p.2" in visible_text
         assert len(screen.query("#library-rag-service-error")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() -> None:
+    """(Task 8) Full plumbing: a rag-mode outcome whose `diagnostics` carry
+    `semantic_scope_coverage` renders the honest heading and coverage note
+    on screen -- not just at the pure display-state layer."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Fixture doc",
+                    "snippet": "Unrelated fixture content.",
+                    "score": "0.08",
+                    "source_id": "media-1",
+                    "runtime_backend": "rag-semantic",
+                    "provenance": {"source_type": "media"},
+                }
+            ],
+            "runtime_backend": "rag-semantic",
+            "diagnostics": {
+                "semantic_scope_coverage": {
+                    "covered": ["media"],
+                    "uncovered": ["notes", "conversations"],
+                }
+            },
+        }
+    )
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "cake"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(150):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-coverage-note")
+
+        visible_text = _visible_text(screen)
+        # Scout item 3: the semantic leg is one merged query, not a
+        # per-source fan-out -- the heading must not claim "per source".
+        assert "Evidence · top 5" in visible_text
+        assert "per source" not in visible_text
+        assert (
+            "Semantic search found nothing from: notes, conversations."
+            in visible_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> None:
+    """Keyword mode's per-source fan-out keeps the "per source" heading
+    claim (it is true there), and no coverage note is ever attached --
+    `_search_semantic` is the only diagnostics producer for this slot."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "source_id": "note-42",
+                    "runtime_backend": "local-fts",
+                    "provenance": {"source_type": "note"},
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "incident"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        visible_text = _visible_text(screen)
+        assert "Evidence · top 5 per source" in visible_text
+        assert not screen.query("#library-rag-coverage-note")
 
 
 @pytest.mark.asyncio

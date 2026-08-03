@@ -14,6 +14,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagResultRow,
     LibraryRagScopeState,
     library_rag_all_matches_weak,
+    library_rag_coverage_note,
     library_rag_score_suffix,
     searching_status_line,
     update_search_history,
@@ -554,6 +555,45 @@ def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
     assert "No evidence matched the current query." in empty.recovery_copy
 
 
+def test_panel_state_computes_coverage_note_from_diagnostics() -> None:
+    """(Task 8) `LibraryRagPanelState.from_values` threads `diagnostics`
+    into `library_rag_coverage_note`, keyed off the actual normalized
+    `results` it was given -- not a bare pass-through of the raw dict."""
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Media doc",
+            "score": 0.6,
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        }
+    )
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+        diagnostics={
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": ["notes"],
+            }
+        },
+    )
+
+    assert ready.coverage_note == "Semantic search found nothing from: notes."
+
+    # Default: no `diagnostics` kwarg at all -> no coverage claim (keyword
+    # mode, and every rag-mode call site that predates Task 8's diagnostics
+    # plumbing, never pass one).
+    silent = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="cake",
+        mode="rag",
+        results=(result,),
+    )
+    assert silent.coverage_note == ""
+
+
 def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> None:
     scope = LibraryRagScopeState.from_source_counts(notes=2, media=1, selected=())
 
@@ -822,3 +862,81 @@ class TestLibraryRagAllMatchesWeak:
     def test_moderate_boundary_row_is_not_weak(self):
         rows = (LibraryRagResultRow.from_result({"title": "A", "score": 0.2}),)
         assert library_rag_all_matches_weak(rows) is False
+
+
+class TestLibraryRagCoverageNote:
+    """(Task 8) `library_rag_coverage_note` builds the Evidence region's
+    one-line semantic-coverage note from `_search_semantic`'s
+    `semantic_scope_coverage` diagnostic plus Task 7's all-weak predicate.
+
+    Live UAT (RAG-29): a "cake" query in rag mode returned unrelated media
+    fixtures and no conversation, with nothing distinguishing "your notes
+    have nothing relevant" from "semantic search never looked at your
+    notes" -- this is the honesty note that closes that gap.
+    """
+
+    @staticmethod
+    def _row(score: float | None = 0.6) -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result({"title": "A", "score": score})
+
+    def test_empty_when_diagnostics_carries_no_coverage_key(self):
+        """Keyword mode's diagnostics only ever carry the scope-exclusion
+        slot (conversations/prompts excluded) or are entirely empty -- no
+        coverage claim is made either way."""
+        rows = (self._row(score=None),)
+        assert library_rag_coverage_note({}, rows) == ""
+        assert (
+            library_rag_coverage_note(
+                {"scope": [{"status": "excluded", "reason": "conversations"}]}, rows
+            )
+            == ""
+        )
+
+    def test_none_diagnostics_is_treated_as_empty(self):
+        assert library_rag_coverage_note(None, (self._row(),)) == ""
+
+    def test_empty_when_everything_covered_and_not_weak(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["notes", "media"], "uncovered": []}
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == ""
+
+    def test_uncovered_types_render_the_found_nothing_from_sentence(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": ["notes", "conversations"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: notes, conversations."
+        )
+
+    def test_all_weak_with_everything_covered_renders_only_the_weak_prefix(self):
+        rows = (self._row(0.09),)
+        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "No strong semantic matches — results below are weak."
+        )
+
+    def test_all_weak_and_uncovered_combine_weak_prefix_then_sentence(self):
+        rows = (self._row(0.09),)
+        diagnostics = {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}}
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: notes."
+        )
+
+    def test_empty_rows_never_render_a_coverage_note(self):
+        """Edge case (c): zero results overall is the no-match state's
+        territory (Task 11), not a coverage note listing every requested
+        source -- even a diagnostics payload claiming every requested type
+        uncovered must not render anything when there are no rows at all."""
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]}
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == ""
