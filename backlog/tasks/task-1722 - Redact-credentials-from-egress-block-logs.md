@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 16:06'
-updated_date: '2026-08-01 18:38'
+updated_date: '2026-08-03 20:43'
 labels:
   - security
   - logging
@@ -46,11 +46,5 @@ Implementation plan: Docs/superpowers/plans/2026-08-01-egress-log-url-redaction.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented origin-only sanitization for both URL-bearing egress log sites. `_log_origin()` now renders only `scheme://host[:port]` (with IPv6 brackets) and returns `<invalid-url>` for malformed or unsupported input; request evaluation and public error behavior are unchanged. Added warning- and debug-path regression tests covering userinfo, path, query-token, and fragment removal. Refreshed only the reviewed `tldw_chatbook/Utils/egress.py` diagnostic digest; owner counts and sink topology are unchanged.
-
-Verification: demonstrated both tests failing before the fix and passing afterward; post-rebase `Tests/Utils/test_egress.py` passed 72/72; the egress diagnostic owner and full sink topology match generated inventory; scoped Ruff (excluding pre-existing E402/F821 findings) and production-file format checks passed; commit/diff whitespace checks passed. The unrestricted full suite completed with 25,865 passed, 171 skipped, and four unrelated UI failures; serial reruns passed two and reproduced two deterministic latest-dev failures in unchanged Evals UI and Library worker-count sentinel paths. Latest dev also contains unrelated stale Voice V2 diagnostic inventory entries, which this task intentionally did not absorb.
-
-ADR required: no. This is a localized logging-boundary security fix. Independent review found no Critical or Important issues; its whitespace finding was fixed before the final squash.
-
-Modified: tldw_chatbook/Utils/egress.py, Tests/Utils/test_egress.py, Docs/security/production-diagnostic-inventory.json, approved design/plan documents, and this task file.
+Merged as PR #1288 on 2026-08-03. Twist: the log-site redaction had ALREADY landed via PR #1173 (adopted branch B's _log_origin) after this task was filed -- the claim-time in-flight check only looks for OPEN PRs, so reproduce-before-implementing is the real guard. This PR closed the leak that remained: str()/repr() of EgressBlockedError and EgressFetchError embedded the full URL, and callers (Article_Extractor_Lib.py:344, acquisition.py, monitoring_engine.py) log str(exc) verbatim. Messages now render via _log_origin; the .url ATTRIBUTE keeps the full URL for programmatic consumers, pinned by test. Added the marker-absence test coverage the redaction never had (both log sites, both exceptions, never-raises over garbage input). Residual noted for a future sweep: Article_Extractor_Lib.py:344 logs its own raw url variable caller-side. TASK-1723 (trusted_private_origins) remains the other branch-B egress item, low priority.
 <!-- SECTION:NOTES:END -->
