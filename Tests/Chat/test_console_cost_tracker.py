@@ -9,8 +9,12 @@ from types import SimpleNamespace
 
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCacheState,
+    ConsoleCostRow,
+    ConsoleCostRowTotals,
     ConsoleCostSnapshot,
     PayloadFingerprint,
+    build_cost_rows,
+    build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
     fingerprint_break_reason,
@@ -251,3 +255,118 @@ def test_truncated_history_is_a_break():
 def test_list_content_rows_hash_stably():
     rows = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
     assert _fp(rows) == _fp([dict(r) for r in rows])
+
+
+# --- build_cost_rows (task-5: per-message breakdown for the cost modal) -----
+
+
+def test_build_cost_rows_prices_a_usage_row():
+    usage = ProviderUsage(
+        uncached_input=1000, cache_read=200, cache_write=50, output=500,
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    rows = build_cost_rows(
+        [_msg(usage=usage)], provider="anthropic", model="claude-sonnet-4-6"
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert isinstance(row, ConsoleCostRow)
+    assert row.index == 0
+    assert row.model == "claude-sonnet-4-6"
+    assert row.uncached_input == 1000
+    assert row.cache_read == 200
+    assert row.cache_write == 50
+    assert row.output == 500
+    assert row.estimated is False
+    assert row.cost_usd is not None and row.cost_usd > 0
+
+
+def test_build_cost_rows_estimates_row_without_usage_role_aware():
+    content = "x" * 400
+    rows = build_cost_rows(
+        [
+            _msg(content=content, usage=None, role="user"),
+            _msg(content=content, usage=None, role="assistant"),
+        ],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    assert len(rows) == 2
+    user_row, assistant_row = rows
+    assert user_row.estimated is True and assistant_row.estimated is True
+    # user tokens land in uncached_input, assistant tokens land in output --
+    # never double-counted across buckets.
+    assert user_row.uncached_input > 0 and user_row.output == 0
+    assert assistant_row.output > 0 and assistant_row.uncached_input == 0
+    # Output rate (15.00) > input rate (3.00) for equal token counts.
+    assert assistant_row.cost_usd > user_row.cost_usd
+    assert user_row.index == 0 and assistant_row.index == 1
+
+
+def test_build_cost_rows_unknown_model_yields_unpriced_row():
+    usage = ProviderUsage(uncached_input=100, provider="anthropic", model="mystery-9000")
+    rows = build_cost_rows(
+        [_msg(usage=usage)], provider="anthropic", model="mystery-9000"
+    )
+    assert len(rows) == 1
+    assert rows[0].cost_usd is None
+
+
+def test_build_cost_rows_skips_blank_content_rows():
+    rows = build_cost_rows(
+        [_msg(content="", usage=None), _msg(content="   ", usage=None)],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    assert rows == []
+
+
+def test_build_cost_rows_indices_skip_dropped_rows():
+    """A blank row is skipped, not counted -- the next real row keeps the
+    transcript-order index of its own position, not a compacted 0/1/2..."""
+    rows = build_cost_rows(
+        [
+            _msg(content="hello", usage=None, role="user"),
+            _msg(content="", usage=None),
+            _msg(content="world", usage=None, role="user"),
+        ],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    assert [row.index for row in rows] == [0, 2]
+
+
+def test_build_cost_rows_totals_sums_priced_rows():
+    rows = [
+        ConsoleCostRow(0, "user", "m", 100, 0, 0, 0, 0.10, False),
+        ConsoleCostRow(1, "assistant", "m", 0, 0, 0, 50, 0.05, False),
+    ]
+    totals = build_cost_rows_totals(rows)
+    assert isinstance(totals, ConsoleCostRowTotals)
+    assert totals.total_tokens == 150
+    assert totals.total_cost_usd == 0.15
+    assert totals.has_estimated_entries is False
+    assert totals.row_count == 2
+
+
+def test_build_cost_rows_totals_none_when_any_row_unpriced():
+    rows = [
+        ConsoleCostRow(0, "user", "m", 100, 0, 0, 0, 0.10, False),
+        ConsoleCostRow(1, "assistant", "m", 0, 0, 0, 50, None, False),
+    ]
+    totals = build_cost_rows_totals(rows)
+    assert totals.total_cost_usd is None
+    assert totals.total_tokens == 150
+
+
+def test_build_cost_rows_totals_marks_estimated_flag():
+    rows = [ConsoleCostRow(0, "user", "m", 100, 0, 0, 0, 0.10, True)]
+    totals = build_cost_rows_totals(rows)
+    assert totals.has_estimated_entries is True
+
+
+def test_build_cost_rows_totals_empty_is_unpriced_zero():
+    totals = build_cost_rows_totals([])
+    assert totals.total_tokens == 0
+    assert totals.total_cost_usd is None
+    assert totals.row_count == 0

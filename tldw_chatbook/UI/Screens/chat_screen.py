@@ -47,7 +47,18 @@ from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_cost_tracker import (
+    ConsoleCacheState,
+    ConsoleCostRowTotals,
+    ConsoleCostState,
+    build_cost_rows,
+    build_cost_rows_totals,
+    build_cost_snapshot,
+    build_cost_state,
+    fingerprint_break_reason,
+)
 from ...Chat.provider_usage import ProviderUsage
+from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
     console_attached_dictionaries,
@@ -146,6 +157,7 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    _estimate_tokens_locally,
     _summary_row_value,
     build_console_context_estimate,
     build_console_rail_system_line,
@@ -358,6 +370,7 @@ from ...Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
 )
@@ -372,6 +385,7 @@ from ...Widgets.Console.console_rag_settings_modal import (
 from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
+    ConsoleCostChip,
     ConsoleRagChip,
     ConsoleScopeChip,
     ConsoleStatusChips,
@@ -588,6 +602,12 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
 # correctness backstop" philosophy).
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+# Cost-ticker PR3 (task-5): the 0.2s transcript tick stops once a run leaves
+# an active status (`_start_console_transcript_sync_timer`), so a WARM
+# prompt cache that later goes EXPIRED on its own -- with no further sync
+# call to notice -- needs its own slow repaint timer. 10s keeps the
+# countdown's staleness bound well under the 300s cache TTL it is watching.
+CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
 # the transcript inline-image row's `fit_image_cell_size` usage, sized
 # smaller for the rail's narrower column).
@@ -3138,6 +3158,12 @@ class ChatScreen(BaseAppScreen):
         #: it pushes the post-swipe messages.
         self._pending_console_swipe_selection: str | None = None
         self._console_transcript_sync_timer: Any | None = None
+        # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
+        # mirrors `_console_transcript_sync_timer` (started/stopped via the
+        # `_record_ui_timer_created/_stopped("console-cost-ttl")` audit
+        # pair, stopped in `on_unmount`) but on its own cadence, since the
+        # 0.2s tick above stops as soon as a run leaves an active status.
+        self._console_cost_ttl_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
@@ -3155,6 +3181,25 @@ class ChatScreen(BaseAppScreen):
         self._last_console_workbench_focus_id: str | None = None
         self._last_console_control_state: ConsoleControlState | None = None
         self._last_console_workbench_state: Any | None = None
+        # Cost-ticker PR3 (task-5). `_last_console_cost_state` mirrors
+        # `_last_console_control_state` above: the last pushed
+        # `ConsoleCostState`, so `_sync_console_cost_chip` only re-renders
+        # the chip on an actual change. `_console_cost_cache_state` holds
+        # the raw `ConsoleCacheState` enum the last build computed --
+        # `ConsoleCostState` itself only exposes `alert`/`cold` (a WARM
+        # cache with no break reason renders identically to no cache
+        # activity at all), so the TTL timer's start/stop decision needs
+        # this separately. `_console_cost_fp_revisions`/
+        # `_console_cost_break_reasons` memoize the last payload-fingerprint
+        # comparison per session id (`!=`, not `>` -- `ConsoleChatStore.
+        # restore_state` can reset a session's revision counter back down)
+        # so the (relatively expensive) fingerprint recompute only runs
+        # when the session's payload has actually changed since the last
+        # check, and never while a run is actively streaming.
+        self._last_console_cost_state: ConsoleCostState | None = None
+        self._console_cost_cache_state: ConsoleCacheState = ConsoleCacheState.NONE
+        self._console_cost_fp_revisions: dict[str, int] = {}
+        self._console_cost_break_reasons: dict[str, str | None] = {}
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
@@ -7036,6 +7081,190 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
         )
 
+    def _build_console_cost_state(self) -> ConsoleCostState | None:
+        """Build the cost chip's display state for the active session (task-5).
+
+        Returns ``None`` when there is no active NATIVE Console session (the
+        chip renders hidden) -- this is a normal condition, not a failure,
+        so it is not subject to the best-effort fallback below.
+
+        Everything past that point is best-effort: an unexpected failure is
+        logged and this returns the last computed state (``None`` if there
+        never was one) rather than raising into the sync path -- a stale or
+        missing chip is fine, a broken send is not.
+        """
+        try:
+            session = self._active_native_console_session()
+            store = self._console_chat_store
+            if session is None or store is None:
+                self._console_cost_cache_state = ConsoleCacheState.NONE
+                return None
+            session_id = session.id
+            try:
+                messages = store.messages_for_session(session_id)
+            except KeyError:
+                self._console_cost_cache_state = ConsoleCacheState.NONE
+                return None
+
+            # Spec: "No mid-stream cost animation -- the chip updates at
+            # message completion." `messages_for_session` materializes
+            # buffered stream chunks straight into `.content` (so the
+            # transcript can render live text), and this method is called
+            # from the same 0.2s tick that drives that materialization --
+            # so an in-flight row (no `usage` yet) would otherwise get a
+            # bigger `_estimate_tokens_locally` estimate on every tick,
+            # visibly growing the chip while the reply streams in. `{
+            # "pending", "streaming"}` is the store's own established
+            # "not yet finalized" status set (see e.g.
+            # ``ConsoleChatStore._validate_can_mark_terminal``); excluding
+            # it here freezes the snapshot at its pre-send total until the
+            # row lands as "complete"/"stopped"/"failed" (all of which bump
+            # the payload revision and stop changing further).
+            snapshot_messages = [
+                message
+                for message in messages
+                if getattr(message, "status", "complete") not in {"pending", "streaming"}
+            ]
+            provider, model, _settings = self._active_console_provider_model_display()
+            snapshot = build_cost_snapshot(snapshot_messages, provider=provider, model=model)
+
+            controller = self._console_chat_controller
+            run_status = (
+                controller.run_state_for(session_id).status
+                if controller is not None
+                else ConsoleRunStatus.IDLE
+            )
+            # Fingerprint compare is the expensive step (rebuilds the
+            # pre-compaction provider payload) -- only pay it when the
+            # session isn't actively streaming AND its payload has actually
+            # changed since the last check (revision `!=`, not `>`: a
+            # restore can reset the store's counter back down).
+            break_reason = self._console_cost_break_reasons.get(session_id)
+            if controller is not None and run_status not in CONSOLE_ACTIVE_RUN_STATUSES:
+                current_revision = store.payload_revision(session_id)
+                if current_revision != self._console_cost_fp_revisions.get(session_id):
+                    baseline = controller.payload_fingerprint_baseline(session_id)
+                    break_reason = None
+                    if baseline is not None:
+                        current_fp = controller.compute_current_fingerprint(session_id)
+                        break_reason = fingerprint_break_reason(baseline, current_fp)
+                    self._console_cost_fp_revisions[session_id] = current_revision
+                    self._console_cost_break_reasons[session_id] = break_reason
+
+            cache_state = ConsoleCacheState.NONE
+            ttl_remaining_s: float | None = None
+            if controller is not None:
+                warm_until, had_activity = controller.cache_ttl_snapshot(session_id)
+                if had_activity and warm_until is not None:
+                    now = time.monotonic()
+                    if now < warm_until:
+                        cache_state = ConsoleCacheState.WARM
+                        ttl_remaining_s = warm_until - now
+                    else:
+                        cache_state = ConsoleCacheState.EXPIRED
+            self._console_cost_cache_state = cache_state
+
+            projected_delta_usd: float | None = None
+            pricing_as_of: str | None = None
+            catalog = get_pricing_catalog()
+            provider_key = provider_config_key(provider)
+            pricing = catalog.get_pricing(provider_key, model or "")
+            if pricing is not None:
+                pricing_as_of = pricing.as_of
+                if (
+                    cache_state == ConsoleCacheState.WARM
+                    and pricing.cache_write_per_mtok is not None
+                    and pricing.cache_read_per_mtok is not None
+                ):
+                    # `snapshot_messages` (not `messages`): same mid-stream-
+                    # animation guard as the snapshot above -- an in-flight
+                    # row's growing content must not grow the projected
+                    # break-delta either, e.g. when a NEW turn starts
+                    # streaming while a PRIOR turn's alert is still showing
+                    # (fingerprint recompute -- and so `break_reason` /
+                    # `alert` -- is frozen during the run, but this
+                    # projection is computed fresh every call).
+                    dict_messages = [
+                        {
+                            "role": str(
+                                getattr(message.role, "value", message.role)
+                            ),
+                            "content": message.content,
+                        }
+                        for message in snapshot_messages
+                    ]
+                    estimated_tokens = _estimate_tokens_locally(
+                        dict_messages, model or "", provider_key
+                    )
+                    rate_delta = (
+                        pricing.cache_write_per_mtok - pricing.cache_read_per_mtok
+                    ) / 1_000_000
+                    projected_delta_usd = round(estimated_tokens * rate_delta, 6)
+
+            return build_cost_state(
+                snapshot,
+                cache_state=cache_state,
+                break_reason=break_reason,
+                projected_delta_usd=projected_delta_usd,
+                ttl_remaining_s=ttl_remaining_s,
+                pricing_as_of=pricing_as_of,
+            )
+        except Exception:
+            logger.warning("cost_chip_state_failed", exc_info=True)
+            return self._last_console_cost_state
+
+    def _sync_console_cost_chip(self) -> None:
+        """Refresh the cost chip from freshly built state (task-5).
+
+        Called at the END of ``_sync_console_control_bar`` -- deliberately
+        OUTSIDE that method's ``control_state_changed``/
+        ``workbench_state_changed`` guard (mirroring the unconditional
+        inspector build right above it there), since cost/cache state can
+        change independently of whether the control labels changed -- and
+        from the 10s TTL repaint timer below so a WARM cache that goes
+        EXPIRED with no other sync call in between still repaints.
+        """
+        cost_state = self._build_console_cost_state()
+        if cost_state != self._last_console_cost_state:
+            self._last_console_cost_state = cost_state
+            try:
+                status_chips = self.query_one(
+                    "#console-status-chips", ConsoleStatusChips
+                )
+            except QueryError:
+                status_chips = None
+            if status_chips is not None:
+                status_chips.sync_cost_state(cost_state)
+        if self._console_cost_cache_state == ConsoleCacheState.WARM:
+            self._start_console_cost_ttl_timer()
+        else:
+            self._stop_console_cost_ttl_timer()
+
+    def _start_console_cost_ttl_timer(self) -> None:
+        """Start the 10s WARM->EXPIRED cost-chip repaint timer (task-5).
+
+        No-ops when already running. Mirrors
+        ``_start_console_transcript_sync_timer``'s audit pairing, but on its
+        own cadence and stop condition -- see that method's docstring for
+        why the 0.2s tick alone cannot cover this repaint.
+        """
+        if self._console_cost_ttl_timer is not None:
+            return
+        self._console_cost_ttl_timer = self.set_interval(
+            CONSOLE_COST_TTL_TICK_SECONDS, self._sync_console_cost_chip
+        )
+        self._record_ui_timer_created("console-cost-ttl")
+
+    def _stop_console_cost_ttl_timer(self) -> None:
+        """Stop the cost-chip TTL repaint timer, if running."""
+        if self._console_cost_ttl_timer is None:
+            return
+        try:
+            self._console_cost_ttl_timer.stop()
+        finally:
+            self._record_ui_timer_stopped("console-cost-ttl")
+            self._console_cost_ttl_timer = None
+
     def _build_console_staged_context_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -7528,6 +7757,39 @@ class ChatScreen(BaseAppScreen):
         """Open Library RAG settings from the RAG chip."""
         event.stop()
         self._open_console_rag_settings()
+
+    @on(ConsoleCostChip.ConsoleCostChipPressed)
+    def _console_cost_chip_activated(
+        self, event: ConsoleCostChip.ConsoleCostChipPressed
+    ) -> None:
+        """Open the per-message cost breakdown modal from the cost chip (task-5)."""
+        event.stop()
+        self._open_console_cost_breakdown()
+
+    def _open_console_cost_breakdown(self) -> None:
+        """Push the cost breakdown modal for the active native session (task-5).
+
+        Rows/totals are computed once here (``build_cost_rows``/
+        ``build_cost_rows_totals`` are already best-effort and never raise
+        on their own) and handed to the modal at construction -- the modal
+        itself never queries the store, matching ``ConsoleRunLogModal``'s
+        "already computed, just render it" shape.
+        """
+        store = self._console_chat_store
+        messages: list[Any] = []
+        if store is not None and store.active_session_id is not None:
+            try:
+                messages = store.messages_for_session(store.active_session_id)
+            except KeyError:
+                messages = []
+        provider, model, _settings = self._active_console_provider_model_display()
+        try:
+            rows = build_cost_rows(messages, provider=provider, model=model)
+        except Exception:
+            logger.warning("cost_breakdown_rows_failed", exc_info=True)
+            rows = []
+        totals: ConsoleCostRowTotals = build_cost_rows_totals(rows)
+        self.app.push_screen(ConsoleCostModal(rows, totals))
 
     def _open_console_rag_settings(self) -> None:
         """Open the Library RAG settings modal, prefilled with the best query.
@@ -13624,6 +13886,17 @@ class ChatScreen(BaseAppScreen):
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")
+            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
+            # flag below -- compose the cost chip correctly on the very
+            # first frame rather than waiting for a post-mount sync call.
+            # Best-effort: `_build_console_cost_state` already never raises
+            # on its own, but this call site still tolerates an unexpected
+            # failure rather than ever taking down the whole compose.
+            try:
+                initial_cost_state = self._build_console_cost_state()
+            except Exception:
+                logger.warning("cost_chip_state_failed", exc_info=True)
+                initial_cost_state = None
             yield ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
@@ -13632,6 +13905,7 @@ class ChatScreen(BaseAppScreen):
                 # that some code paths (screen recreation via
                 # restore_state) never make.
                 ephemeral=self._console_active_session_is_ephemeral(),
+                cost_state=initial_cost_state,
                 id="console-status-chips",
                 classes="ds-panel",
             )
@@ -13805,6 +14079,7 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
+        self._stop_console_cost_ttl_timer()
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
         dictation_session = self._console_dictation_session
@@ -19289,6 +19564,14 @@ class ChatScreen(BaseAppScreen):
         if rail_state is None:
             rail_state = self._current_console_rail_state()
         self._sync_console_rail_visibility_if_changed(rail_state)
+        # Cost-ticker PR3 (task-5): deliberately OUTSIDE the
+        # `control_state_changed or workbench_state_changed` guard above
+        # (same reasoning as the unconditional inspector build) -- cost/
+        # cache state changes independently of whether the control labels
+        # did, e.g. every streamed token grows the running total, and the
+        # cache TTL counts down with no control-state change at all.
+        # `_sync_console_cost_chip` owns its own equality guard.
+        self._sync_console_cost_chip()
 
     def _sync_console_workbench_state(
         self,

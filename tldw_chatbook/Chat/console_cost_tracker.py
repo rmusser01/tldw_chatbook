@@ -112,6 +112,68 @@ class ConsoleCostState:
 
 
 @dataclass(frozen=True)
+class ConsoleCostRow:
+    """One transcript row's per-bucket token/cost breakdown (task-5 modal).
+
+    Built by :func:`build_cost_rows`, one row per contributing message, in
+    transcript order -- the per-message counterpart to
+    :class:`ConsoleCostSnapshot`'s rolled-up totals. A widget renders these
+    directly; nothing here is pre-formatted (unlike :class:`ConsoleCostState`)
+    since the modal table needs the raw numbers for column alignment.
+
+    Attributes:
+        index: 0-based position of this row's source message within the
+            transcript rows :func:`build_cost_rows` was given (rows with no
+            contribution -- no usage and blank content -- are skipped, so
+            this is not necessarily contiguous with neighboring rows).
+        role: The message's role (``"user"``, ``"assistant"``, ...).
+        model: The model this row's usage/estimate is attributed to --
+            the row's own recorded ``ProviderUsage.model`` when present,
+            otherwise the current session model passed to
+            :func:`build_cost_rows`.
+        uncached_input: Uncached input tokens (0 for an estimated
+            ``assistant`` row -- see ``estimated``).
+        cache_read: Cache-read input tokens (always 0 for estimated rows;
+            the local estimator has no cache concept).
+        cache_write: Cache-write input tokens (always 0 for estimated rows).
+        output: Output tokens (0 for a non-``assistant`` estimated row).
+        cost_usd: Dollar cost for this row, or ``None`` when the row's
+            model has no known pricing.
+        estimated: True when this row had no recorded ``ProviderUsage`` and
+            its tokens/cost came from the local character-ratio estimator.
+    """
+
+    index: int
+    role: str
+    model: str
+    uncached_input: int
+    cache_read: int
+    cache_write: int
+    output: int
+    cost_usd: Optional[float]
+    estimated: bool
+
+
+@dataclass(frozen=True)
+class ConsoleCostRowTotals:
+    """Aggregate totals row for a :func:`build_cost_rows` breakdown.
+
+    Attributes:
+        total_tokens: Summed tokens across every row.
+        total_cost_usd: Summed dollar cost, or ``None`` when at least one
+            contributing row has unknown pricing (never a partial total).
+        has_estimated_entries: True when at least one row was estimated
+            rather than priced from recorded usage.
+        row_count: Number of rows the totals were computed from.
+    """
+
+    total_tokens: int
+    total_cost_usd: Optional[float]
+    has_estimated_entries: bool
+    row_count: int
+
+
+@dataclass(frozen=True)
 class PayloadFingerprint:
     """A digest of one provider payload's shape, for cache-break detection.
 
@@ -601,6 +663,155 @@ def build_cost_state(
             alert=False,
             cold=False,
         )
+
+
+#
+#######################################################################################################################
+#
+# build_cost_rows (task-5: per-message breakdown for the cost modal)
+#
+
+
+def build_cost_rows(
+    messages: Sequence[Any], *, provider: str, model: Optional[str]
+) -> list[ConsoleCostRow]:
+    """Build one breakdown row per transcript message, for the cost modal.
+
+    Mirrors :func:`build_cost_snapshot`'s per-row pricing rules -- a row's
+    own recorded usage prices at THAT usage's own provider/model, a row
+    without usage falls back to the local token estimate priced at the
+    CURRENT session provider/model, and an estimated row is priced
+    role-aware (``assistant`` at the output rate, everything else at the
+    input rate) -- but keeps every row separate instead of summing them, so
+    the modal can render a per-message table.
+
+    Args:
+        messages: Transcript rows (duck-typed like :func:`build_cost_snapshot`:
+            each is read via ``.content``, ``.usage``, and ``.role``).
+        provider: Current session provider, used to price estimated rows.
+            Normalized once through ``provider_config_key``.
+        model: Current session model, used to price estimated rows and as
+            the fallback ``ConsoleCostRow.model`` for rows without their
+            own recorded usage. May be ``None``.
+
+    Returns:
+        One :class:`ConsoleCostRow` per contributing message (rows with
+        neither usage nor non-blank content are skipped), in transcript
+        order. Never raises -- a catalog-init failure returns an empty
+        list, and a single row's failure is logged and that row skipped
+        rather than aborting the whole breakdown.
+    """
+    rows: list[ConsoleCostRow] = []
+    try:
+        catalog = get_pricing_catalog()
+        provider_key = provider_config_key(provider)
+    except Exception:
+        logger.warning(
+            "console_cost_tracker.build_cost_rows: failed to init pricing catalog",
+            exc_info=True,
+        )
+        return rows
+
+    for index, message in enumerate(messages):
+        try:
+            usage = getattr(message, "usage", None)
+            role = str(getattr(message, "role", "") or "")
+
+            if isinstance(usage, ProviderUsage):
+                breakdown = catalog.cost_for_usage(usage)
+                rows.append(
+                    ConsoleCostRow(
+                        index=index,
+                        role=role,
+                        model=usage.model or (model or ""),
+                        uncached_input=usage.uncached_input,
+                        cache_read=usage.cache_read,
+                        cache_write=usage.cache_write,
+                        output=usage.output,
+                        cost_usd=breakdown.total if breakdown is not None else None,
+                        estimated=False,
+                    )
+                )
+                continue
+
+            content = getattr(message, "content", "") or ""
+            if not str(content).strip():
+                continue
+
+            estimated_tokens = _estimate_tokens_locally(
+                [{"role": role, "content": content}], model or "", provider_key
+            )
+            pricing = catalog.get_pricing(provider_key, model or "")
+            cost_usd: Optional[float] = None
+            if pricing is not None:
+                # role is a plain string or ConsoleMessageRole (a str Enum),
+                # both of which compare equal to "assistant" by value --
+                # same role-aware rule as build_cost_snapshot.
+                rate = (
+                    pricing.output_per_mtok
+                    if role == "assistant"
+                    else pricing.input_per_mtok
+                )
+                cost_usd = round(estimated_tokens * rate / 1_000_000, 6)
+
+            is_assistant = role == "assistant"
+            rows.append(
+                ConsoleCostRow(
+                    index=index,
+                    role=role,
+                    model=model or "",
+                    uncached_input=0 if is_assistant else estimated_tokens,
+                    cache_read=0,
+                    cache_write=0,
+                    output=estimated_tokens if is_assistant else 0,
+                    cost_usd=cost_usd,
+                    estimated=True,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "console_cost_tracker.build_cost_rows: failed to build row {}",
+                index,
+                exc_info=True,
+            )
+            continue
+
+    return rows
+
+
+def build_cost_rows_totals(rows: Sequence[ConsoleCostRow]) -> ConsoleCostRowTotals:
+    """Sum a :func:`build_cost_rows` breakdown into one totals row.
+
+    Args:
+        rows: The rows to total (typically the output of
+            :func:`build_cost_rows`, but any sequence of
+            :class:`ConsoleCostRow` works).
+
+    Returns:
+        A :class:`ConsoleCostRowTotals`. ``total_cost_usd`` is ``None``
+        when at least one row's cost is unknown or ``rows`` is empty (never
+        a partial dollar total), mirroring
+        :class:`ConsoleCostSnapshot`'s ``pricing_known`` contract.
+    """
+    total_tokens = 0
+    total_cost_accum = 0.0
+    cost_known = True
+    has_estimated = False
+    for row in rows:
+        total_tokens += row.uncached_input + row.cache_read + row.cache_write + row.output
+        has_estimated = has_estimated or row.estimated
+        if row.cost_usd is None:
+            cost_known = False
+        else:
+            total_cost_accum += row.cost_usd
+
+    pricing_known = cost_known and len(rows) > 0
+    return ConsoleCostRowTotals(
+        total_tokens=total_tokens,
+        total_cost_usd=round(total_cost_accum, 6) if pricing_known else None,
+        has_estimated_entries=has_estimated,
+        row_count=len(rows),
+    )
 
 
 #
