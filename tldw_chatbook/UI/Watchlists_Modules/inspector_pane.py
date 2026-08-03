@@ -265,8 +265,16 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         `normalize_local_subscription_row` publishes them under
         `settings["ignore_selectors"]` as a **list** (and omits the key
         entirely when the column is empty), so the stored newline text has to
-        be reassembled here. The bare `ignore_selectors` key is the fallback
-        shape a hand-built dict uses.
+        be reassembled here.
+
+        Reads ONLY the `settings` shape -- the single shape the backend
+        publishes AND the one the post-save patch
+        (`_patch_entity_ignore_selectors`) writes. TASK-1395: an earlier
+        version also fell back to a bare `entity["ignore_selectors"]` key,
+        but the patcher never cleared that key, so on an entity carrying both
+        shapes a cleared field would re-display the stale bare value on
+        reopen. Reader and patcher now agree on one shape, so a clear stays
+        cleared.
 
         Args:
             entity: A normalized source entity.
@@ -274,18 +282,12 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         Returns:
             One rule per line, or "" when the source has none.
         """
-        candidates = []
         settings = entity.get("settings")
-        if isinstance(settings, dict):
-            candidates.append(settings.get("ignore_selectors"))
-        candidates.append(entity.get("ignore_selectors"))
-        for stored in candidates:
-            if isinstance(stored, (list, tuple)):
-                joined = "\n".join(str(selector) for selector in stored)
-                if joined:
-                    return joined
-            elif stored:
-                return str(stored)
+        stored = settings.get("ignore_selectors") if isinstance(settings, dict) else None
+        if isinstance(stored, (list, tuple)):
+            return "\n".join(str(selector) for selector in stored)
+        if stored:
+            return str(stored)
         return ""
 
     def _noise_selectors_editor(self, entity: dict[str, Any]):
