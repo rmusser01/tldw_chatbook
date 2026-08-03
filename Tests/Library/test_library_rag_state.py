@@ -195,6 +195,52 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     assert ready_query.run_action.enabled is True
 
 
+def test_query_state_provider_gate_is_rag_only() -> None:
+    """(PR-3 task 2) `provider_ready` feeds the ONE existing blocked branch
+    at `Library/library_rag_state.py:893-897` -- and that branch is gated on
+    `normalized_mode == "rag"`. A not-ready provider must therefore block
+    `rag` mode with the pre-existing "Select a provider/model..." copy, and
+    must leave `search` (keyword) mode completely unaffected: keyword mode
+    never calls a provider at all, so gating it on one would block a query
+    that could otherwise run.
+    """
+    blocked_rag = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=False,
+    )
+
+    assert blocked_rag.status == "blocked"
+    assert blocked_rag.run_action.enabled is False
+    assert blocked_rag.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+    assert "Owner: LLM provider." in blocked_rag.recovery_copy
+    assert (
+        "Next: Select a provider and model before running a RAG answer."
+        in blocked_rag.recovery_copy
+    )
+
+    unaffected_search = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="search",
+        provider_ready=False,
+    )
+
+    assert unaffected_search.status == "ready"
+    assert unaffected_search.run_action.enabled is True
+    assert unaffected_search.run_action.disabled_reason == ""
+
+    ready_rag = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=True,
+    )
+
+    assert ready_rag.status == "ready"
+    assert ready_rag.run_action.enabled is True
+
+
 def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
     """A1: `blocked_is_empty_query`/`blocked_is_no_scope` key the Search
     canvas's single quiet line, distinct from real-failure blockers (which

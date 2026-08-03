@@ -146,6 +146,53 @@ Write plain prose, and no preamble about what you are about to do.
 """
 
 
+def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
+    """The provider (and, optionally, model) `generate_library_rag_answer`
+    should call.
+
+    Reads `config.default_api_endpoint` THROUGH the module (`from .. import
+    config as app_config; app_config.default_api_endpoint`), not imported
+    once into this module's own namespace -- precedent
+    `Subscriptions/briefing_service.py:315 _default_provider()`. Reading
+    through the module lets a test monkeypatch `app_config.default_
+    api_endpoint` directly and have this function observe the patched value
+    on its very next call; importing the name once here would freeze
+    whatever value was bound at import time.
+
+    No model is resolved: the provider handler picks its own default (same
+    briefing_service precedent, and matches `generate_library_rag_answer`'s
+    own `model: str | None = None`).
+
+    Returns:
+        `(provider, model)`. `provider` is `None` when no default endpoint
+        is configured (blank or unset) -- `model` is then always `None` too,
+        since a provider-less model has nothing to run against.
+    """
+    from .. import config as app_config
+
+    endpoint = str(app_config.default_api_endpoint or "").strip()
+    if not endpoint:
+        return None, None
+    return endpoint, None
+
+
+def library_rag_answer_provider_ready() -> bool:
+    """Whether a provider is configured to answer a Library RAG query.
+
+    Feeds `LibraryRagQueryState.from_values`'s `provider_ready` parameter
+    (`Library/library_rag_state.py:893-897`), the RAG-mode-only run gate
+    whose blocked copy already reads "Select a provider/model before asking
+    for a RAG answer." -- this is what makes that branch reachable instead
+    of permanently dead code.
+
+    Returns:
+        `True` when `resolve_library_rag_answer_provider` resolves a
+        provider; `False` otherwise.
+    """
+    provider, _ = resolve_library_rag_answer_provider()
+    return provider is not None
+
+
 @dataclass(frozen=True)
 class LibraryRagAnswer:
     """One attempt at answering a Library RAG query from staged evidence.

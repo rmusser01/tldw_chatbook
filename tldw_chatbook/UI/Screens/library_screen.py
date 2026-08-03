@@ -150,6 +150,7 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from ...Library.library_rag_answer_service import library_rag_answer_provider_ready
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -3629,14 +3630,27 @@ class LibraryScreen(BaseAppScreen):
             # Deliberately always ready: the UI path never imports torch (or
             # any other optional Search/RAG dependency), and the retrieval
             # service double-guards missing runtimes/indexes at call time.
-            # `provider_ready` joined that contract in task-249: rag mode now
-            # lazily initializes the shared RAG runtime at query time, and
-            # when embeddings support is missing the retrieval service itself
-            # returns the "RAG unavailable" recovery state routing to setup
-            # -- honest copy a disabled Run button could not carry.
+            # rag mode lazily initializes the shared RAG runtime at query
+            # time, and when embeddings support is missing the retrieval
+            # service itself returns the "RAG unavailable" recovery state
+            # routing to setup -- honest copy a disabled Run button could not
+            # carry.
             dependencies_ready=True,
             index_ready=True,
-            provider_ready=True,
+            # `provider_ready` joined this contract in task-249 as a
+            # hardcoded `True` -- PR-3 task 2 activates the gate for real:
+            # `library_rag_answer_provider_ready()` resolves whether a
+            # provider is actually configured
+            # (`Library/library_rag_answer_service.py`, precedent
+            # `Subscriptions/briefing_service.py:315 _default_provider()`),
+            # so a Library with no default LLM endpoint configured now sees
+            # the pre-existing "Select a provider/model before asking for a
+            # RAG answer." copy (`Library/library_rag_state.py:893-897`)
+            # instead of a Run button that silently could not answer.
+            # rag-mode-only by construction (`LibraryRagQueryState.
+            # from_values`'s `normalized_mode == "rag"` check) -- keyword
+            # Search mode never calls a provider and stays unaffected.
+            provider_ready=library_rag_answer_provider_ready(),
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,

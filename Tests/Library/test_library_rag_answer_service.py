@@ -24,6 +24,7 @@ import threading
 
 import pytest
 
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -45,6 +46,8 @@ from tldw_chatbook.Library.library_rag_answer_service import (
     LIBRARY_RAG_NO_EVIDENCE_TEXT,
     _is_abstention,
     generate_library_rag_answer,
+    library_rag_answer_provider_ready,
+    resolve_library_rag_answer_provider,
 )
 
 pytestmark = pytest.mark.unit
@@ -511,3 +514,73 @@ def test_the_system_prompt_pins_the_honesty_contract():
     assert "retrieved by similarity, not by judgement" in prompt
     assert "still have nothing to do with the question" in prompt
     assert "abstain" in prompt
+
+
+# --- Provider resolution (PR-3 task 2) --------------------------------------
+#
+# `LibraryRagQueryState.from_values`'s `provider_ready` gate
+# (`Library/library_rag_state.py:893-897`) has existed since before this
+# feature but was always fed a hardcoded `True` by the screen
+# (`UI/Screens/library_screen.py`, under task-249's "the runtime initializes
+# lazily" contract) -- these two functions are what task 2 uses to feed it
+# honestly. Precedent for the resolution shape (read `config.default_
+# api_endpoint` THROUGH the module, so a test can monkeypatch it) is
+# `Subscriptions/briefing_service.py:315 _default_provider()`; unlike that
+# function this one also reports "not ready" for an empty/missing endpoint
+# rather than assuming config.py's own "openai" fallback always holds.
+
+
+def test_resolve_provider_reads_the_configured_default_endpoint(monkeypatch):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+
+    provider, model = resolve_library_rag_answer_provider()
+
+    assert provider == "local-llama"
+    # No model is resolved here -- the provider handler picks its own
+    # default (briefing_service precedent), matching `generate_library_rag_
+    # answer`'s own `model: str | None = None` contract.
+    assert model is None
+
+
+def test_resolve_provider_rereads_the_module_global_on_every_call(monkeypatch):
+    """Read THROUGH the module (`app_config.default_api_endpoint`), not
+    imported once into this module's own namespace -- otherwise a test (or a
+    future caller) monkeypatching the module attribute after import would be
+    silently ignored. Two calls straddling a monkeypatch must see two
+    different answers."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    assert resolve_library_rag_answer_provider()[0] == "openai"
+
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    assert resolve_library_rag_answer_provider()[0] == "anthropic"
+
+
+@pytest.mark.parametrize("blank_endpoint", ["", "   ", None])
+def test_resolve_provider_reports_none_for_an_empty_or_missing_endpoint(
+    monkeypatch, blank_endpoint
+):
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", blank_endpoint, raising=False
+    )
+
+    provider, model = resolve_library_rag_answer_provider()
+
+    assert provider is None
+    assert model is None
+
+
+def test_provider_ready_is_true_when_a_default_endpoint_is_configured(monkeypatch):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+
+    assert library_rag_answer_provider_ready() is True
+
+
+@pytest.mark.parametrize("blank_endpoint", ["", "   ", None])
+def test_provider_ready_is_false_for_an_empty_or_missing_endpoint(
+    monkeypatch, blank_endpoint
+):
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", blank_endpoint, raising=False
+    )
+
+    assert library_rag_answer_provider_ready() is False
