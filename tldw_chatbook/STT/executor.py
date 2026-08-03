@@ -7,8 +7,14 @@ objects without loading a native speech runtime.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import multiprocessing
+import shutil
+import tempfile
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from enum import Enum
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +22,11 @@ from .contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
     TranscriptionFailureCode,
+)
+from .executor_process_tree import (
+    ExecutorProcessTree,
+    ProcessContainmentError,
+    WorkerContainmentIdentity,
 )
 
 _MAX_RECOVERY_ACTIONS = 8
@@ -41,6 +52,14 @@ class WorkerPhase(str, Enum):
     LOADING = "loading"
     TRANSCRIBING = "transcribing"
     POST_PROCESSING = "post-processing"
+
+
+class ExecutorBusyError(RuntimeError):
+    """Raised when the single active-request slot is occupied."""
+
+
+class ExecutorUnavailableError(RuntimeError):
+    """Raised when another worker generation cannot be started safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +161,20 @@ class ExecutorEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutorResident:
+    """Worker confirmation that one exact model identity is resident."""
+
+    generation: int
+    attempt_id: str
+    identity: ModelIdentity
+
+    def __post_init__(self) -> None:
+        _require_generation_and_attempt(self.generation, self.attempt_id)
+        if type(self.identity) is not ModelIdentity:
+            raise TypeError("identity must be a ModelIdentity")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutorResult:
     """Successful parsed-media payload from one worker attempt."""
 
@@ -165,6 +198,7 @@ class ExecutorFailure:
     recovery_actions: tuple[str, ...] = ()
     failed_attempt: dict[str, Any] | None = field(default=None, repr=False)
     device_failure_origin: DeviceFailureOrigin | None = None
+    failed_device: ExecutionDevice | None = None
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
@@ -188,6 +222,11 @@ class ExecutorFailure:
             and type(self.device_failure_origin) is not DeviceFailureOrigin
         ):
             raise TypeError("device_failure_origin must be a DeviceFailureOrigin")
+        if (
+            self.failed_device is not None
+            and type(self.failed_device) is not ExecutionDevice
+        ):
+            raise TypeError("failed_device must be an ExecutionDevice")
 
 
 class _AttemptTerminalGuard:
@@ -216,12 +255,632 @@ class _AttemptTerminalGuard:
         return True
 
 
+@dataclass(slots=True)
+class _ActiveCallbacks:
+    on_event: Callable[[ExecutorEvent], None]
+    on_result: Callable[[ExecutorResult], None]
+    on_failure: Callable[[ExecutorFailure], None]
+
+
+@dataclass(slots=True)
+class _DetachedWorker:
+    generation: int
+    process: Any
+    connection: Connection
+    tree: ExecutorProcessTree
+    scratch_path: Path
+
+
+def _ignore_event(_event: ExecutorEvent) -> None:
+    return
+
+
+def _ignore_result(_result: ExecutorResult) -> None:
+    return
+
+
+def _ignore_failure(_failure: ExecutorFailure) -> None:
+    return
+
+
+class LocalSTTExecutor:
+    """Own one generation-fenced spawn worker and no private request queue."""
+
+    def __init__(
+        self,
+        *,
+        worker_target: Callable[..., None] | None = None,
+        completed_job_limit: int = 20,
+        startup_timeout: float = 10.0,
+        graceful_shutdown_timeout: float = 1.0,
+        force_stop_timeout: float = 2.0,
+    ) -> None:
+        if type(completed_job_limit) is not int or completed_job_limit <= 0:
+            raise ValueError("completed_job_limit must be a positive integer")
+        for name, value in (
+            ("startup_timeout", startup_timeout),
+            ("graceful_shutdown_timeout", graceful_shutdown_timeout),
+            ("force_stop_timeout", force_stop_timeout),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be non-negative")
+        self._context = multiprocessing.get_context("spawn")
+        self._worker_target = worker_target
+        self._completed_job_limit = completed_job_limit
+        self._startup_timeout = float(startup_timeout)
+        self._graceful_shutdown_timeout = float(graceful_shutdown_timeout)
+        self._force_stop_timeout = float(force_stop_timeout)
+        self._lock = threading.RLock()
+        self._generation_counter = 0
+        self._worker_generation: int | None = None
+        self._process: Any | None = None
+        self._connection: Connection | None = None
+        self._cancellation_event: Any | None = None
+        self._tree: ExecutorProcessTree | None = None
+        self._scratch_path: Path | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._retirement_thread: threading.Thread | None = None
+        self._active_request: ExecutorRequest | None = None
+        self._active_callbacks: _ActiveCallbacks | None = None
+        self._terminal_guard: _AttemptTerminalGuard | None = None
+        self._resident_identity: ModelIdentity | None = None
+        self._unhealthy_identity: ModelIdentity | None = None
+        self._latest_phase: WorkerPhase | None = None
+        self._completed_jobs = 0
+        self._cpu_retry_used = False
+        self._busy = False
+        self._retiring = False
+        self._unavailable = False
+        self._closed = False
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation_counter
+
+    @property
+    def busy(self) -> bool:
+        with self._lock:
+            return self._busy
+
+    @property
+    def retiring(self) -> bool:
+        with self._lock:
+            return self._retiring
+
+    @property
+    def unavailable(self) -> bool:
+        with self._lock:
+            return self._unavailable or self._closed
+
+    @property
+    def resident_identity(self) -> ModelIdentity | None:
+        with self._lock:
+            return self._resident_identity
+
+    @property
+    def unhealthy_identity(self) -> ModelIdentity | None:
+        with self._lock:
+            return self._unhealthy_identity
+
+    def submit(
+        self,
+        *,
+        attempt_id: str,
+        job_id: str,
+        source_path: Path,
+        identity: ModelIdentity,
+        options: dict[str, Any],
+        local_source: LocalSourceSnapshot | None = None,
+        managed_store_root: Path | None = None,
+        on_event: Callable[[ExecutorEvent], None] = _ignore_event,
+        on_result: Callable[[ExecutorResult], None] = _ignore_result,
+        on_failure: Callable[[ExecutorFailure], None] = _ignore_failure,
+        explicit_retry: bool = False,
+    ) -> int:
+        """Dispatch one request immediately or fail without queueing it."""
+
+        with self._lock:
+            self._assert_dispatch_available(identity, explicit_retry=explicit_retry)
+            if self._busy:
+                raise ExecutorBusyError("Local STT executor already has active work")
+            if self._retiring:
+                raise ExecutorUnavailableError("Local STT executor is still stopping")
+            identity_changed = (
+                self._resident_identity is not None
+                and self._resident_identity != identity
+            )
+            lifetime_exhausted = self._completed_jobs >= self._completed_job_limit
+            if self._process is not None and (identity_changed or lifetime_exhausted):
+                if not self._retire_idle_worker_locked():
+                    raise ExecutorUnavailableError(
+                        "Previous local STT worker did not stop safely"
+                    )
+            if self._process is None:
+                self._start_worker_locked()
+            assert self._worker_generation is not None
+            assert self._connection is not None
+            assert self._cancellation_event is not None
+            self._cancellation_event.clear()
+            request = ExecutorRequest(
+                generation=self._worker_generation,
+                attempt_id=attempt_id,
+                job_id=job_id,
+                source_path=source_path,
+                identity=identity,
+                options=dict(options),
+                local_source=local_source,
+                managed_store_root=managed_store_root,
+            )
+            self._active_request = request
+            self._active_callbacks = _ActiveCallbacks(
+                on_event=on_event,
+                on_result=on_result,
+                on_failure=on_failure,
+            )
+            self._terminal_guard = _AttemptTerminalGuard(
+                generation=request.generation,
+                attempt_id=request.attempt_id,
+            )
+            self._latest_phase = None
+            self._cpu_retry_used = False
+            self._busy = True
+            try:
+                self._connection.send(request)
+            except (BrokenPipeError, EOFError, OSError) as error:
+                self._clear_active_locked()
+                raise ExecutorUnavailableError(
+                    "Local STT worker rejected the request"
+                ) from error
+            return request.generation
+
+    def cancel(self, attempt_id: str) -> bool:
+        """Request cooperative cancellation for the exact active attempt."""
+
+        with self._lock:
+            request = self._active_request
+            if (
+                not self._busy
+                or request is None
+                or request.attempt_id != attempt_id
+                or self._cancellation_event is None
+            ):
+                return False
+            self._cancellation_event.set()
+            return True
+
+    def force_stop(self, attempt_id: str) -> bool:
+        """Detach one attempt, emit cancellation once, then kill off-thread."""
+
+        callback: Callable[[ExecutorFailure], None] | None = None
+        failure: ExecutorFailure | None = None
+        with self._lock:
+            request = self._active_request
+            guard = self._terminal_guard
+            callbacks = self._active_callbacks
+            if (
+                not self._busy
+                or request is None
+                or request.attempt_id != attempt_id
+                or guard is None
+                or callbacks is None
+            ):
+                return False
+            failure = ExecutorFailure(
+                request.generation,
+                request.attempt_id,
+                TranscriptionFailureCode.CANCELLED,
+            )
+            if not guard.accept(failure):
+                return False
+            callback = callbacks.on_failure
+            self._clear_active_locked()
+            detached = self._detach_worker_locked()
+            if detached is None:
+                return False
+            self._retiring = True
+            thread = threading.Thread(
+                target=self._terminate_detached,
+                args=(detached,),
+                name=f"local-stt-retire-{request.generation}",
+                daemon=True,
+            )
+            self._retirement_thread = thread
+            thread.start()
+        assert callback is not None and failure is not None
+        self._deliver(callback, failure)
+        return True
+
+    def clear_unhealthy_identity(self, identity: ModelIdentity) -> bool:
+        """Clear the one session-local unhealthy identity for explicit retry."""
+
+        with self._lock:
+            if self._unhealthy_identity != identity:
+                return False
+            self._unhealthy_identity = None
+            return True
+
+    def close(self) -> None:
+        """Idempotently detach and stop the current generation."""
+
+        detached: _DetachedWorker | None = None
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._clear_active_locked()
+                detached = self._detach_worker_locked()
+            retirement = self._retirement_thread
+        if detached is not None:
+            self._terminate_detached(detached, update_state=False)
+        if retirement is not None and retirement is not threading.current_thread():
+            retirement.join(self._force_stop_timeout * 2 + 1.0)
+
+    def _assert_dispatch_available(
+        self, identity: ModelIdentity, *, explicit_retry: bool
+    ) -> None:
+        if self._closed or self._unavailable:
+            raise ExecutorUnavailableError("Local STT executor is unavailable")
+        if self._unhealthy_identity == identity:
+            if not explicit_retry:
+                raise ExecutorUnavailableError(
+                    "Local STT model requires an explicit retry"
+                )
+            self._unhealthy_identity = None
+
+    def _start_worker_locked(self) -> None:
+        if self._unavailable or self._closed:
+            raise ExecutorUnavailableError("Local STT executor is unavailable")
+        target = self._worker_target
+        if target is None:
+            from .executor_worker import run_executor_worker
+
+            target = run_executor_worker
+        self._generation_counter += 1
+        generation = self._generation_counter
+        scratch_path = Path(tempfile.mkdtemp(prefix=f"tldw_stt_g{generation}_"))
+        scratch_path.chmod(0o700)
+        parent_connection, child_connection = self._context.Pipe(duplex=True)
+        admission_event = self._context.Event()
+        cancellation_event = self._context.Event()
+        process = self._context.Process(
+            target=target,
+            args=(
+                child_connection,
+                admission_event,
+                cancellation_event,
+                generation,
+                str(scratch_path),
+            ),
+            name=f"local-stt-worker-{generation}",
+        )
+        tree: ExecutorProcessTree | None = None
+        try:
+            process.start()
+            child_connection.close()
+            if not parent_connection.poll(self._startup_timeout):
+                raise ProcessContainmentError("worker bootstrap timed out")
+            bootstrap = parent_connection.recv()
+            if (
+                type(bootstrap) is not tuple
+                or len(bootstrap) != 2
+                or bootstrap[0] != "bootstrap"
+                or type(bootstrap[1]) is not WorkerContainmentIdentity
+            ):
+                raise ProcessContainmentError("worker bootstrap was invalid")
+            tree = ExecutorProcessTree(process, admission_event, bootstrap[1])
+            tree.admit()
+        except BaseException as error:
+            child_connection.close()
+            if tree is not None:
+                stopped = tree.terminate_tree(
+                    term_timeout=self._force_stop_timeout,
+                    kill_timeout=self._force_stop_timeout,
+                )
+            else:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(self._force_stop_timeout)
+                stopped = not process.is_alive()
+            parent_connection.close()
+            if stopped:
+                shutil.rmtree(scratch_path, ignore_errors=True)
+            else:
+                self._unavailable = True
+            raise ExecutorUnavailableError(
+                "Local STT worker could not start safely"
+            ) from error
+        self._worker_generation = generation
+        self._process = process
+        self._connection = parent_connection
+        self._cancellation_event = cancellation_event
+        self._tree = tree
+        self._scratch_path = scratch_path
+        self._resident_identity = None
+        self._completed_jobs = 0
+        reader = threading.Thread(
+            target=self._reader_loop,
+            args=(parent_connection, generation, process),
+            name=f"local-stt-reader-{generation}",
+            daemon=True,
+        )
+        self._reader_thread = reader
+        reader.start()
+
+    def _reader_loop(
+        self,
+        connection: Connection,
+        generation: int,
+        process: Any,
+    ) -> None:
+        while True:
+            try:
+                envelope = connection.recv()
+            except (EOFError, OSError):
+                self._handle_worker_exit(generation, process)
+                return
+            if type(envelope) is tuple:
+                continue
+            self._handle_worker_envelope(envelope)
+
+    def _handle_worker_envelope(self, envelope: object) -> None:
+        callback: Callable[[Any], None] | None = None
+        delivered: object | None = None
+        retry: tuple[ExecutorRequest, _ActiveCallbacks] | None = None
+        with self._lock:
+            request = self._active_request
+            callbacks = self._active_callbacks
+            if request is None or callbacks is None:
+                return
+            if type(envelope) is ExecutorEvent:
+                if not self._matches_active(envelope):
+                    return
+                self._latest_phase = envelope.phase
+                callback = callbacks.on_event
+                delivered = envelope
+            elif type(envelope) is ExecutorResident:
+                if (
+                    not self._matches_active(envelope)
+                    or envelope.identity != request.identity
+                ):
+                    return
+                self._resident_identity = envelope.identity
+            elif type(envelope) in {ExecutorResult, ExecutorFailure}:
+                if not self._matches_active(envelope):
+                    return
+                if type(envelope) is ExecutorFailure and self._should_retry_on_cpu(
+                    request, envelope
+                ):
+                    retry = (request, callbacks)
+                    self._cpu_retry_used = True
+                else:
+                    guard = self._terminal_guard
+                    if guard is None or not guard.accept(envelope):
+                        return
+                    if type(envelope) is ExecutorResult:
+                        self._completed_jobs += 1
+                        callback = callbacks.on_result
+                    else:
+                        callback = callbacks.on_failure
+                        if (
+                            envelope.code is TranscriptionFailureCode.ENGINE_CRASHED
+                            and self._latest_phase
+                            in {WorkerPhase.LOADING, WorkerPhase.TRANSCRIBING}
+                        ):
+                            self._unhealthy_identity = request.identity
+                    delivered = envelope
+                    self._clear_active_locked()
+            else:
+                return
+        if retry is not None:
+            self._retry_on_cpu(*retry)
+        elif callback is not None and delivered is not None:
+            self._deliver(callback, delivered)
+
+    def _retry_on_cpu(
+        self, request: ExecutorRequest, callbacks: _ActiveCallbacks
+    ) -> None:
+        failure: ExecutorFailure | None = None
+        deliver: Callable[[ExecutorFailure], None] | None = None
+        with self._lock:
+            if self._active_request != request:
+                return
+            self._clear_active_locked()
+            if not self._retire_idle_worker_locked():
+                failure = ExecutorFailure(
+                    request.generation,
+                    request.attempt_id,
+                    TranscriptionFailureCode.ENGINE_CRASHED,
+                )
+                deliver = callbacks.on_failure
+            else:
+                retry_identity = replace(request.identity, device=ExecutionDevice.CPU)
+                self._start_worker_locked()
+                assert self._worker_generation is not None
+                assert self._connection is not None
+                assert self._cancellation_event is not None
+                self._cancellation_event.clear()
+                retry_request = replace(
+                    request,
+                    generation=self._worker_generation,
+                    identity=retry_identity,
+                )
+                self._active_request = retry_request
+                self._active_callbacks = callbacks
+                self._terminal_guard = _AttemptTerminalGuard(
+                    generation=retry_request.generation,
+                    attempt_id=retry_request.attempt_id,
+                )
+                self._latest_phase = None
+                self._cpu_retry_used = True
+                self._busy = True
+                self._connection.send(retry_request)
+                return
+        if deliver is not None and failure is not None:
+            self._deliver(deliver, failure)
+
+    def _should_retry_on_cpu(
+        self,
+        request: ExecutorRequest,
+        failure: ExecutorFailure,
+    ) -> bool:
+        if (
+            self._cpu_retry_used
+            or failure.device_failure_origin is None
+            or failure.failed_device is None
+        ):
+            return False
+        from .coordinator import device_retry_policy_for_failure
+
+        policy = device_retry_policy_for_failure(
+            requested_device=request.identity.device,
+            failed_device=failure.failed_device,
+            origin=failure.device_failure_origin,
+            retry_device=ExecutionDevice.CPU,
+            worker_will_recycle=True,
+        )
+        return policy.max_retries == 1
+
+    def _matches_active(self, envelope: Any) -> bool:
+        request = self._active_request
+        return bool(
+            request is not None
+            and envelope.generation == request.generation
+            and envelope.attempt_id == request.attempt_id
+            and envelope.generation == self._worker_generation
+        )
+
+    def _handle_worker_exit(self, generation: int, process: Any) -> None:
+        process.join(0.1)
+        callback: Callable[[ExecutorFailure], None] | None = None
+        failure: ExecutorFailure | None = None
+        with self._lock:
+            if generation != self._worker_generation or process is not self._process:
+                return
+            request = self._active_request
+            callbacks = self._active_callbacks
+            guard = self._terminal_guard
+            if request is not None and callbacks is not None and guard is not None:
+                failure = ExecutorFailure(
+                    generation,
+                    request.attempt_id,
+                    TranscriptionFailureCode.ENGINE_CRASHED,
+                )
+                if guard.accept(failure):
+                    callback = callbacks.on_failure
+                    if self._latest_phase in {
+                        WorkerPhase.LOADING,
+                        WorkerPhase.TRANSCRIBING,
+                    }:
+                        self._unhealthy_identity = request.identity
+            detached = self._detach_worker_locked()
+            self._clear_active_locked()
+        if detached is not None:
+            proven = detached.tree.close()
+            detached.connection.close()
+            if proven:
+                shutil.rmtree(detached.scratch_path, ignore_errors=True)
+            else:
+                with self._lock:
+                    self._unavailable = True
+        if callback is not None and failure is not None:
+            self._deliver(callback, failure)
+
+    def _retire_idle_worker_locked(self) -> bool:
+        detached = self._detach_worker_locked()
+        if detached is None:
+            return True
+        if detached.process.is_alive():
+            try:
+                detached.connection.send(("close", detached.generation))
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+            detached.process.join(self._graceful_shutdown_timeout)
+        if detached.process.is_alive():
+            proven = detached.tree.terminate_tree(
+                term_timeout=self._force_stop_timeout,
+                kill_timeout=self._force_stop_timeout,
+            )
+        else:
+            proven = detached.tree.close()
+        detached.connection.close()
+        if proven:
+            shutil.rmtree(detached.scratch_path, ignore_errors=True)
+        else:
+            self._unavailable = True
+        return proven
+
+    def _detach_worker_locked(self) -> _DetachedWorker | None:
+        if (
+            self._worker_generation is None
+            or self._process is None
+            or self._connection is None
+            or self._tree is None
+            or self._scratch_path is None
+        ):
+            return None
+        detached = _DetachedWorker(
+            generation=self._worker_generation,
+            process=self._process,
+            connection=self._connection,
+            tree=self._tree,
+            scratch_path=self._scratch_path,
+        )
+        self._worker_generation = None
+        self._process = None
+        self._connection = None
+        self._cancellation_event = None
+        self._tree = None
+        self._scratch_path = None
+        self._reader_thread = None
+        self._resident_identity = None
+        self._completed_jobs = 0
+        return detached
+
+    def _terminate_detached(
+        self, detached: _DetachedWorker, *, update_state: bool = True
+    ) -> None:
+        proven = detached.tree.terminate_tree(
+            term_timeout=self._force_stop_timeout,
+            kill_timeout=self._force_stop_timeout,
+        )
+        detached.connection.close()
+        if proven:
+            shutil.rmtree(detached.scratch_path, ignore_errors=True)
+        with self._lock:
+            if not proven:
+                self._unavailable = True
+            if update_state:
+                self._retiring = False
+
+    def _clear_active_locked(self) -> None:
+        self._active_request = None
+        self._active_callbacks = None
+        self._terminal_guard = None
+        self._latest_phase = None
+        self._busy = False
+
+    @staticmethod
+    def _deliver(callback: Callable[[Any], None], envelope: object) -> None:
+        try:
+            callback(envelope)
+        except Exception:
+            return
+
+
 __all__ = [
+    "ExecutorBusyError",
     "ExecutorEvent",
     "ExecutorFailure",
     "ExecutorRequest",
+    "ExecutorResident",
     "ExecutorResult",
+    "ExecutorUnavailableError",
     "LocalSourceSnapshot",
+    "LocalSTTExecutor",
     "ModelIdentity",
     "WorkerPhase",
 ]
