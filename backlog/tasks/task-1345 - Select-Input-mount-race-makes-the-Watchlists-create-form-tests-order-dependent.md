@@ -192,3 +192,19 @@ Both files (`sources_pane.py`, `watchlists_collections_screen.py`) were confirme
 their committed state (`git diff` clean) after reverting. Full diagnosis, both rejected mitigations,
 and next-step candidates carried forward to **task-1960** rather than re-derived from scratch.
 <!-- SECTION:NOTES:END -->
+
+## Qodo fix wave (2026-08-02)
+
+Qodo flagged two real defects in the sticky mechanism: (1) `_confirm_create_focus` rescheduled via
+`call_after_refresh` forever when focus never reached the exact `target`, with the intent stuck
+armed; (2) `recompose` computed `restore = pending or focused_field`, so the stale intent WON over
+the user's current field — a rebuild during the confirm window could yank them off a field they had
+Tabbed to. Fixed by: FIX A — `recompose` now prefers the user's current in-form field
+(`_focused_create_field_id() or _pending_create_focus`), so the intent only wins during the genuine
+mid-burst drop (focus None); FIX B — `_confirm_create_focus` clears the intent once focus lands on
+ANY real widget (in-form sibling or outside the form), and its remaining reschedule (focus still
+None) is bounded by `_CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS = 20`. During self-review the two clear
+branches (in-form / outside-form) were found behaviorally identical (both clear) and collapsed into
+one load-bearing branch, so the discriminating test is not backstopped by a redundant branch. Three
+new tests (yank-to-stale-target discriminator for FIX A; give-up-after-max and clear-on-non-target
+for FIX B), all mutation-verified; ordered-pair focus run 3×3 clean.
