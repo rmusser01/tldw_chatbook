@@ -31,6 +31,8 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextAr
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chatbooks.chatbook_models import ContentType
 from ...config import (
+    TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+    TLDW_API_PLACEHOLDER_BASE_URL,
     get_cli_setting,
     resolve_tldw_api_config,
     save_setting_to_cli_config,
@@ -5996,14 +5998,11 @@ class LibraryScreen(BaseAppScreen):
             )
         self._update_library_ingest_gate(new_state)
 
-    # The exact values config.py's CONFIG_TOML_CONTENT writes into a fresh
-    # profile's [tldw_api] section. A binding still matching them is the
-    # template, not a user decision. Drift here fails OPEN (the hint
-    # reappears for fresh installs) -- never hides a real server.
-    _SHIPPED_PLACEHOLDER_SERVER_URL = "http://127.0.0.1:8000"
-    _SHIPPED_PLACEHOLDER_SERVER_TOKEN = "default-secret-key-for-single-user"
-
     def _server_binding_is_shipped_placeholder(self) -> bool:
+        # A binding still matching config.py's shipped [tldw_api] template
+        # values is the template, not a user decision. Drift fails OPEN
+        # (the hint reappears for fresh installs) -- never hides a real
+        # server -- and a test pins the constants against the template.
         api_config = resolve_tldw_api_config(
             getattr(self.app_instance, "app_config", None)
         )
@@ -6015,8 +6014,8 @@ class LibraryScreen(BaseAppScreen):
         ).strip()
         token = str(api_config.get("auth_token") or "").strip()
         return (
-            url.rstrip("/") == self._SHIPPED_PLACEHOLDER_SERVER_URL
-            and token == self._SHIPPED_PLACEHOLDER_SERVER_TOKEN
+            url.rstrip("/") == TLDW_API_PLACEHOLDER_BASE_URL
+            and token == TLDW_API_PLACEHOLDER_AUTH_TOKEN
         )
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
@@ -14069,9 +14068,11 @@ class LibraryScreen(BaseAppScreen):
         form = self._library_ingest_form
         state = self._build_library_ingest_state()
         form.expanded_type_groups.update(state.type_groups)
-        # (task-2100) In place: the registry listener already updated
-        # the queue; a trailing full recompose yanked the scroll off
-        # the queue (stranding the armed clear confirm off-screen).
+        # (task-2100 review) Panel collapsed state is set at compose time,
+        # so the in-place updater alone leaves mounted panels shut -- write
+        # `collapsed` on them directly (Textual's reactive handles the
+        # reveal), keeping the press non-structural.
+        self._set_library_ingest_panels_collapsed(state.type_groups, False)
         self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#ingest-collapse-all")
@@ -14079,8 +14080,20 @@ class LibraryScreen(BaseAppScreen):
         """Collapse every per-type options panel."""
         event.stop()
         form = self._library_ingest_form
+        state = self._build_library_ingest_state()
         form.expanded_type_groups.clear()
-        self.refresh(recompose=True)
+        self._set_library_ingest_panels_collapsed(state.type_groups, True)
+        self._update_library_ingest_dynamic_regions()
+
+    def _set_library_ingest_panels_collapsed(
+        self, groups: Sequence[str], collapsed: bool
+    ) -> None:
+        for group in groups:
+            try:
+                panel = self.query_one(f"#type-group-{group}", Collapsible)
+            except (NoMatches, QueryError):
+                continue
+            panel.collapsed = collapsed
 
     @on(Button.Pressed, ".library-ingest-option-reset")
     def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:

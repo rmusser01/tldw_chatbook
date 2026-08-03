@@ -12908,11 +12908,64 @@ async def test_server_mode_line_requires_configured_server(tmp_path):
         # config template pre-fills [tldw_api] with a placeholder
         # URL+token, so every virgin profile reports True (live-verified).
         # The untouched template binding must stay silent.
+        from tldw_chatbook.config import (
+            CONFIG_TOML_CONTENT,
+            TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+            TLDW_API_PLACEHOLDER_BASE_URL,
+        )
+
+        # Drift guard: the screen's placeholder check fails OPEN, so if the
+        # template's values ever drift from these constants the hint would
+        # silently reappear for fresh installs -- fail HERE instead.
+        assert TLDW_API_PLACEHOLDER_BASE_URL in CONFIG_TOML_CONTENT
+        assert TLDW_API_PLACEHOLDER_AUTH_TOKEN in CONFIG_TOML_CONTENT
+
         harness.app_config = {
             "tldw_api": {
-                "base_url": "http://127.0.0.1:8000",
-                "auth_token": "default-secret-key-for-single-user",
+                "base_url": TLDW_API_PLACEHOLDER_BASE_URL,
+                "auth_token": TLDW_API_PLACEHOLDER_AUTH_TOKEN,
             }
         }
         placeholder = screen._build_library_ingest_state()
         assert placeholder.server_quiet_line == ""
+
+
+@pytest.mark.asyncio
+async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
+    """(task-2100 review) Panel collapsed state is compose-time, so the
+    in-place swap alone made Expand all a no-op on mounted panels -- the
+    handler must write `collapsed` on them directly, and the press must
+    stay non-structural (widget identity holds)."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-expand")
+    harness = _LibraryIngestCanvasHarness(db)
+    # The bulk buttons only compose with >1 type group -- stage a mixed
+    # folder so audio joins the always-present generic panel.
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("hello")
+    (folder / "talk.mp3").write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        screen.query_one("#library-ingest-path", Input).value = str(folder)
+        await _wait_for_selector(screen, pilot, "#ingest-expand-all")
+
+        from textual.widgets import Collapsible
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert panel.collapsed is True
+        start_before = screen.query_one("#library-ingest-start", Button)
+
+        screen.query_one("#ingest-expand-all", Button).press()
+        await pilot.pause()
+        assert panel.collapsed is False, "Expand all left the panel shut"
+        assert screen.query_one("#library-ingest-start", Button) is start_before
+
+        screen.query_one("#ingest-collapse-all", Button).press()
+        await pilot.pause()
+        assert panel.collapsed is True
+        assert screen.query_one("#library-ingest-start", Button) is start_before

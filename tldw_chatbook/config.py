@@ -773,6 +773,16 @@ def resolve_tldw_api_config(app_config) -> Dict:
     return dict(api_config)
 
 
+# The [tldw_api] values CONFIG_TOML_CONTENT ships into a fresh profile's
+# config file. NOT credentials: the pair exists so readers can recognize an
+# untouched template binding (e.g. the Library ingest canvas suppresses its
+# server-mode hint when the binding is still the placeholder). Single
+# definition here, beside the template's owner module, so the literals never
+# spread through the codebase.
+TLDW_API_PLACEHOLDER_BASE_URL = "http://127.0.0.1:8000"
+TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
+
+
 def load_settings(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
