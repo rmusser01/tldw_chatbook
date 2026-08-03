@@ -43,7 +43,7 @@ class LibrarySearchRagPanel(VerticalScroll):
             yield Button(
                 _mode_toggle_label(self.state),
                 id="library-rag-mode-toggle",
-                tooltip="Cycle Search/RAG mode.",
+                tooltip=_mode_toggle_tooltip(self.state),
             )
             yield Input(
                 value=self.state.query_state.query,
@@ -249,6 +249,29 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
 def _mode_toggle_label(state: LibraryRagPanelState) -> str:
     """Return the visible mode-cycle button label."""
     return f"mode: {state.query_state.mode_label} ▸"
+
+
+def _other_mode_label(state: LibraryRagPanelState) -> str:
+    """Return the label of the mode a toggle press would switch TO.
+
+    The cycle only ever has two states (`rag`/`search`), so the "other"
+    mode is simply whichever one isn't current -- see `_mode_toggle_tooltip`.
+    """
+    return "Search" if state.query_state.mode == "rag" else "RAG Answer"
+
+
+def _mode_toggle_tooltip(state: LibraryRagPanelState) -> str:
+    """Return the mode-cycle button's tooltip, naming the next mode (RAG-39).
+
+    A bare "Cycle Search/RAG mode." tooltip gives no hint how many modes
+    exist or what a press does -- a two-state cycle looks identical to a
+    five-state one. Naming the next mode makes the button's effect legible
+    before the user presses it, and stays honest across a mode flip because
+    it reads `state.query_state.mode` fresh on every build (recompose is
+    the only path that rebuilds this button -- see the mode-toggle
+    `Button.Pressed` handler in `library_screen.py`).
+    """
+    return f"Cycle Search/RAG mode. Next: {_other_mode_label(state)}."
 
 
 def results_heading_text(state: LibraryRagPanelState) -> str:
@@ -521,6 +544,16 @@ def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
             escape_markup(entry),
             id=f"library-rag-history-{index}",
             classes="library-rag-history-row",
+            # RAG-38: history entries are bare strings -- no mode was
+            # recorded when they ran -- so clicking one always re-runs
+            # under the CURRENT mode, not necessarily the one it first ran
+            # under. The tooltip says so honestly instead of implying an
+            # exact replay, and stays truthful across a mode flip because
+            # it reads `state.query_state.mode_label` fresh on every build.
+            tooltip=(
+                f"Re-runs under the current mode "
+                f"({state.query_state.mode_label})."
+            ),
         )
         for index, entry in enumerate(state.history)
     )

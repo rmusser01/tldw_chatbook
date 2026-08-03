@@ -766,6 +766,13 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
     A3: the toggle button label is the single mode surface now --
     ``#library-rag-query-status`` (the old "Mode: {label} | Top {k}" Static)
     is retired, so this asserts against the button label directly.
+
+    (RAG-39/Task 13) The button's tooltip must also name which mode a
+    press switches TO -- a bare "Cycle Search/RAG mode." tooltip looks
+    identical whether the cycle has two states or five, so this pins both
+    the exact copy AND that it tracks the CURRENT mode (dynamic, not a
+    string frozen at compose time): after every press the tooltip must
+    name the OTHER mode, never the one currently showing on the label.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -778,9 +785,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
 
-        assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
-            "mode: Search ▸"
-        )
+        toggle = screen.query_one("#library-rag-mode-toggle", Button)
+        assert str(toggle.label) == "mode: Search ▸"
+        assert toggle.tooltip == "Cycle Search/RAG mode. Next: RAG Answer."
         assert not screen.query("#library-rag-query-status")
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
@@ -791,6 +798,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched to RAG Answer.")
+        assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
+            "Cycle Search/RAG mode. Next: Search."
+        )
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
@@ -800,6 +810,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched back to Search.")
+        assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
+            "Cycle Search/RAG mode. Next: RAG Answer."
+        )
 
 
 @pytest.mark.asyncio

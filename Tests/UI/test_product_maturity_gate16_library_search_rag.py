@@ -285,6 +285,52 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
     assert "Unavailable: Library Search/RAG retrieval." in dump_text
 
 
+# --- Task 13: honest re-run hint on history rows (RAG-38) ------------------
+
+
+def test_history_row_tooltip_names_current_mode_and_tracks_mode_changes() -> None:
+    """(RAG-38) Clicking a search-history row re-runs the query under the
+    CURRENT mode, not the mode it originally ran under -- history entries
+    are bare strings, no mode is recorded per entry (an honest fix here is
+    a tooltip, not a persistence/data-model change). Each row's tooltip
+    must therefore name whichever mode is presently selected, and change
+    when the mode does -- a tooltip that always said e.g. "RAG Answer"
+    would go stale the moment the user flipped modes and become exactly
+    the kind of silent lie this task exists to remove."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_history_children
+
+    search_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        mode="search",
+        history=("cats", "dogs"),
+    )
+    rag_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        mode="rag",
+        history=("cats", "dogs"),
+    )
+
+    search_rows = {
+        child.id: child for child in library_rag_history_children(search_state)
+    }
+    rag_rows = {child.id: child for child in library_rag_history_children(rag_state)}
+
+    search_row = search_rows["library-rag-history-0"]
+    rag_row = rag_rows["library-rag-history-0"]
+    assert search_row.tooltip == "Re-runs under the current mode (Search)."
+    assert rag_row.tooltip == "Re-runs under the current mode (RAG Answer)."
+    # The dynamic pin: same history entry, same index, different mode ->
+    # different tooltip text. A hardcoded string could not satisfy this.
+    assert search_row.tooltip != rag_row.tooltip
+
+    # Second row gets the same treatment, not just the first.
+    assert (
+        search_rows["library-rag-history-1"].tooltip
+        == "Re-runs under the current mode (Search)."
+    )
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> (
     None
@@ -1322,7 +1368,17 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
 
         visible_text = _visible_text(screen)
         assert "RAG unavailable" in visible_text
-        assert "Install embeddings support or switch mode to Search" in visible_text
+        # (Task-14 enabler) the recovery copy now names the pip extra. The
+        # display sanitizer's `escape_markup` pass backslash-escapes the
+        # opening "[" (same reason `library-rag-history-*` labels escape
+        # entries -- unescaped, Rich would try to parse "[embeddings_rag]"
+        # as a style tag); the backslash resolves away at real paint time
+        # and is not visible to the user, but `_visible_text` reads
+        # `.renderable` directly, before that resolution.
+        assert (
+            'Install RAG support: pip install "tldw_chatbook\\[embeddings_rag]", '
+            "then restart." in visible_text
+        )
         # The display sanitizer HTML-escapes the recovery route's ">".
         assert "Recovery: Settings &gt; RAG." in visible_text
 

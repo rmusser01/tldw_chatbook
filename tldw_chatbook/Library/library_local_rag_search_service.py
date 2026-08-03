@@ -866,7 +866,15 @@ def _rag_mode_unavailable_recovery_state() -> DestinationRecoveryState:
         status_label="RAG unavailable",
         unavailable_what="Library Search/RAG retrieval",
         why="The RAG runtime is not available in this app instance",
-        next_action="Install embeddings support or switch mode to Search",
+        # (Task-14 enabler) name the pip extra to install -- "unavailable"
+        # alone leaves no next step. Voice mirrors
+        # RAG_Search/semantic_availability.py's SEMANTIC_REASON_DEPS_MISSING
+        # copy family (that module's own equivalent seam, deliberately
+        # untouched -- see its module docstring).
+        next_action=(
+            'Install RAG support: pip install "tldw_chatbook[embeddings_rag]", '
+            "then restart."
+        ),
         recovery_action="Settings > RAG",
         authority_owner="Library retrieval service",
         stable_selector=LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
