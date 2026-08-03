@@ -226,7 +226,24 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     BatchSTTRoutingError,
+    PARAKEET_V2_MODEL,
     resolve_batch_stt_route,
+)
+from tldw_chatbook.STT.contracts import (
+    TRANSCRIPTION_FAILURE_CONTRACT,
+    ExecutionDevice,
+    TranscriptionFailureCode,
+)
+from tldw_chatbook.STT.executor import (
+    ExecutorBusyError,
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorResult,
+    ExecutorUnavailableError,
+    LocalSTTExecutor,
+    ModelIdentity,
+    WorkerPhase,
+    snapshot_local_source,
 )
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
@@ -2411,6 +2428,386 @@ class LibraryIngestQueueMixin:
 
         return options
 
+    def _create_local_stt_executor(self) -> LocalSTTExecutor:
+        """Construct the one app-owned heavy STT executor lazily."""
+
+        return LocalSTTExecutor()
+
+    def _ensure_local_stt_executor(self) -> LocalSTTExecutor:
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Library ingest is shutting down")
+            executor = getattr(self, "_local_stt_executor", None)
+            if executor is None:
+                executor = self._create_local_stt_executor()
+                self._local_stt_executor = executor
+            return executor
+
+    def _build_local_stt_dispatch(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve the exact private model identity for one eligible job."""
+
+        provider = options["transcription_provider"]
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        local_source = None
+        managed_store_root = None
+        managed_artifact_ref = None
+        root_revision = None
+        closure_fingerprint = None
+        device = ExecutionDevice.CPU
+
+        if provider == "transcribe-cpp":
+            from tldw_chatbook.Model_Artifacts.gguf_admission import (
+                validate_local_gguf,
+            )
+
+            context = options.get("transcription_context") or {}
+            configured_path = (
+                context.get("model_path") if isinstance(context, dict) else None
+            )
+            model_id = "local-gguf:unavailable"
+            if isinstance(configured_path, str) and configured_path:
+                admission = validate_local_gguf(Path(configured_path))
+                local_source = snapshot_local_source((admission.path,))
+                model_id = f"local-gguf:{admission.metadata.architecture}"
+            device = ExecutionDevice.AUTO
+        else:
+            model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
+            selected_dir = options.get("transcription_model_dir")
+            if not selected_dir:
+                configured_dir = get_cli_setting(
+                    "transcription.parakeet_onnx_model_dir"
+                )
+                selected_dir = (
+                    configured_dir
+                    if isinstance(configured_dir, str) and configured_dir.strip()
+                    else None
+                )
+
+            if selected_dir:
+                model_root = Path(selected_dir)
+                required = tuple(
+                    model_root / filename
+                    for filename in (
+                        "config.json",
+                        "vocab.txt",
+                        "encoder-model.int8.onnx",
+                        "decoder_joint-model.int8.onnx",
+                    )
+                )
+                local_source = snapshot_local_source(required)
+                options["transcription_model_dir"] = str(model_root)
+            elif model_id == PARAKEET_V2_MODEL:
+                from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+                    active_managed_parakeet_v2_dir,
+                    parakeet_v2_managed_service,
+                    parakeet_v2_reference,
+                )
+                from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
+                    PARAKEET_V2_FILES,
+                    VERIFICATION_RECEIPT,
+                    parakeet_v2_install_dir,
+                )
+                from tldw_chatbook.Model_Artifacts.store import (
+                    managed_model_artifact_root,
+                )
+
+                service = parakeet_v2_managed_service()
+                reference = parakeet_v2_reference()
+                if active_managed_parakeet_v2_dir(service) is not None:
+                    leased = service.acquire(reference)
+                    try:
+                        root_revision = leased.handle.root.revision
+                        closure_fingerprint = leased.handle.closure_fingerprint
+                    finally:
+                        leased.close()
+                    managed_store_root = managed_model_artifact_root()
+                    managed_artifact_ref = (
+                        reference.artifact_id,
+                        reference.revision,
+                        reference.variant,
+                    )
+                else:
+                    legacy_root = parakeet_v2_install_dir()
+                    legacy_paths = (
+                        legacy_root / VERIFICATION_RECEIPT,
+                        *(
+                            legacy_root / descriptor.filename
+                            for descriptor in PARAKEET_V2_FILES
+                        ),
+                    )
+                    if all(path.is_file() for path in legacy_paths):
+                        local_source = snapshot_local_source(legacy_paths)
+                        options["transcription_model_dir"] = str(legacy_root)
+                        options["_verify_legacy_parakeet_v2"] = True
+
+        identity = ModelIdentity(
+            provider_id=provider,
+            model_id=model_id,
+            root_revision=root_revision,
+            closure_fingerprint=closure_fingerprint,
+            precision=options.get("transcription_precision") or "int8",
+            device=device,
+            local_snapshot_token=(
+                local_source.token if local_source is not None else None
+            ),
+        )
+        return {
+            "attempt_id": attempt_id,
+            "identity": identity,
+            "local_source": local_source,
+            "managed_store_root": managed_store_root,
+            "managed_artifact_ref": managed_artifact_ref,
+        }
+
+    def _submit_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> None:
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        self._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+        thread = threading.Thread(
+            target=self._dispatch_local_stt_job,
+            args=(job, options, attempt_id),
+            name=f"library-local-stt-dispatch-{job.job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception:
+            self._ingest_local_stt_jobs.pop(job.job_id, None)
+            raise
+
+    def _dispatch_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+        attempt_id: str,
+    ) -> None:
+        """Build identity and perform the bounded spawn handshake off-loop."""
+
+        try:
+            dispatch = self._build_local_stt_dispatch(job, options)
+            if dispatch["attempt_id"] != attempt_id:
+                raise RuntimeError("Local STT attempt identity changed")
+            executor = self._ensure_local_stt_executor()
+            generation = executor.submit(
+                attempt_id=attempt_id,
+                job_id=job.job_id,
+                source_path=Path(job.source_path),
+                identity=dispatch["identity"],
+                options=options,
+                local_source=dispatch["local_source"],
+                managed_store_root=dispatch["managed_store_root"],
+                managed_artifact_ref=dispatch["managed_artifact_ref"],
+                on_event=functools.partial(self._ingest_local_stt_event, job.job_id),
+                on_result=functools.partial(self._ingest_local_stt_result, job.job_id),
+                on_failure=functools.partial(
+                    self._ingest_local_stt_failure, job.job_id
+                ),
+            )
+        except Exception as exc:
+            provider = str(options.get("transcription_provider") or "")
+            code, actions = self._classify_local_stt_dispatch_error(provider, exc)
+            self._marshal_local_stt_call(
+                self._on_ingest_local_stt_dispatch_failure,
+                job.job_id,
+                attempt_id,
+                code,
+                actions,
+                type(exc).__name__,
+            )
+            return
+        self._marshal_local_stt_call(
+            self._on_ingest_local_stt_submitted,
+            job.job_id,
+            generation,
+            attempt_id,
+        )
+
+    @staticmethod
+    def _classify_local_stt_dispatch_error(
+        provider: str,
+        error: BaseException,
+    ) -> tuple[TranscriptionFailureCode, tuple[str, ...]]:
+        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
+        code = (
+            TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+            if unavailable
+            else TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        )
+        actions = ["retry_faster_whisper"]
+        if provider == "transcribe-cpp":
+            actions.insert(0, "choose_another_gguf")
+        return code, tuple(actions)
+
+    def _marshal_local_stt_call(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except RuntimeError:
+            if not self._ingest_shutdown:
+                logger.error("Library local STT callback could not be marshaled.")
+
+    def _on_ingest_local_stt_submitted(
+        self,
+        job_id: str,
+        generation: int,
+        attempt_id: str,
+    ) -> None:
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if (
+            self._ingest_shutdown
+            or binding is None
+            or binding[1] != attempt_id
+            or generation <= binding[0]
+        ):
+            return
+        self._ingest_local_stt_jobs[job_id] = (generation, attempt_id)
+
+    def _on_ingest_local_stt_dispatch_failure(
+        self,
+        job_id: str,
+        attempt_id: str,
+        code: TranscriptionFailureCode,
+        actions: tuple[str, ...],
+        error_type: str,
+    ) -> None:
+        if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
+            0,
+            attempt_id,
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+        logger.error(
+            "Library local STT dispatch failed "
+            f"(job_id={job_id}, error_type={error_type})."
+        )
+        self.library_ingest_jobs.mark_failed(
+            job_id,
+            error=message,
+            permanent=False,
+            error_detail={
+                "category": "stt_failure",
+                "code": code.value,
+                "message": message,
+                "actions": list(actions),
+            },
+        )
+        self._top_up_ingest_parse_pool()
+
+    def _marshal_local_stt_callback(
+        self,
+        callback: Callable[..., Any],
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_call(callback, job_id, envelope)
+
+    def _ingest_local_stt_event(self, job_id: str, event: ExecutorEvent) -> None:
+        self._marshal_local_stt_callback(self._on_ingest_local_stt_event, job_id, event)
+
+    def _ingest_local_stt_result(self, job_id: str, result: ExecutorResult) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_result, job_id, result
+        )
+
+    def _ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_failure, job_id, failure
+        )
+
+    def _local_stt_callback_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        return self._ingest_local_stt_jobs.get(job_id) == (
+            envelope.generation,
+            envelope.attempt_id,
+        )
+
+    def _on_ingest_local_stt_event(
+        self,
+        job_id: str,
+        event: ExecutorEvent,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        if not self._local_stt_callback_matches(job_id, event):
+            binding = self._ingest_local_stt_jobs.get(job_id)
+            if (
+                binding is None
+                or binding[1] != event.attempt_id
+                or event.generation <= binding[0]
+                or event.phase is not WorkerPhase.PREPARING
+            ):
+                return
+            self._ingest_local_stt_jobs[job_id] = (
+                event.generation,
+                event.attempt_id,
+            )
+        self.library_ingest_jobs.update_progress(
+            job_id,
+            progress={"phase": event.phase.value},
+        )
+
+    def _on_ingest_local_stt_result(
+        self,
+        job_id: str,
+        result: ExecutorResult,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_callback_matches(
+            job_id, result
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        self._ingest_parsed_payloads[job_id] = result.payload
+        self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
+
+    def _on_ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_callback_matches(
+            job_id, failure
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[failure.code][0]
+        if failure.code is TranscriptionFailureCode.CANCELLED:
+            self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
+        else:
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=message,
+                permanent=False,
+                error_detail={
+                    "category": "stt_failure",
+                    "code": failure.code.value,
+                    "message": message,
+                    "actions": list(failure.recovery_actions),
+                },
+                stt_failure_provenance=failure.failed_attempt,
+            )
+        self._top_up_ingest_parse_pool()
+
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
 
@@ -2458,7 +2855,11 @@ class LibraryIngestQueueMixin:
             _INGEST_HEAVY_TYPES
         )
         while parsing_count < worker_count:
-            heavy_full = heavy_parsing_count >= heavy_cap
+            # LocalSTTExecutor intentionally accepts one request at a time.
+            # A legacy heavy-lane override above one must not turn the next
+            # queued audio/video job into a spurious ExecutorBusyError.
+            local_stt_busy = bool(self._ingest_local_stt_jobs)
+            heavy_full = heavy_parsing_count >= heavy_cap or local_stt_busy
             job = self.library_ingest_jobs.next_queued(
                 skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
             )
@@ -2515,6 +2916,39 @@ class LibraryIngestQueueMixin:
                 continue
             job_id = claimed.job_id
             source_path = claimed.source_path
+            if options.get("transcription_provider") in {
+                "parakeet-onnx",
+                "transcribe-cpp",
+            }:
+                try:
+                    self._submit_local_stt_job(claimed, options)
+                except Exception as exc:
+                    code, recovery_actions = self._classify_local_stt_dispatch_error(
+                        str(options.get("transcription_provider") or ""), exc
+                    )
+                    message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+                    logger.error(
+                        "Library local STT dispatch failed "
+                        f"(job_id={job_id}, provider="
+                        f"{options.get('transcription_provider')}, "
+                        f"error_type={type(exc).__name__})."
+                    )
+                    self.library_ingest_jobs.mark_failed(
+                        job_id,
+                        error=message,
+                        permanent=False,
+                        error_detail={
+                            "category": "stt_failure",
+                            "code": code.value,
+                            "message": message,
+                            "actions": list(recovery_actions),
+                        },
+                    )
+                    parsing_count -= 1
+                    if claimed.detected_type in _INGEST_HEAVY_TYPES:
+                        heavy_parsing_count -= 1
+                    continue
+                continue
             try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
@@ -2791,6 +3225,19 @@ class LibraryIngestQueueMixin:
             the shutdown flag is still set in that case.
         """
         self._ingest_shutdown = True
+        with self._local_stt_executor_lock:
+            executor = getattr(self, "_local_stt_executor", None)
+            self._local_stt_executor = None
+        local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
+        if local_jobs is None:
+            self._ingest_local_stt_jobs = {}
+        else:
+            local_jobs.clear()
+        executor_thread = (
+            self._close_local_stt_executor_off_thread(executor)
+            if executor is not None
+            else None
+        )
         pool = getattr(self, "_ingest_parse_pool", None)
         stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
         if stop_event is not None:
@@ -2798,8 +3245,20 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
         if pool is None:
-            return None
+            return executor_thread
         return self._terminate_ingest_parse_pool_off_thread(pool)
+
+    @staticmethod
+    def _close_local_stt_executor_off_thread(executor: Any) -> threading.Thread:
+        """Close a detached heavy executor without blocking the UI thread."""
+
+        thread = threading.Thread(
+            target=executor.close,
+            name="library-local-stt-executor-close",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
 
@@ -4864,6 +5323,9 @@ class TldwCli(
         self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
+        self._local_stt_executor_lock = threading.Lock()
+        self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
     def _wire_research_services(self) -> None:

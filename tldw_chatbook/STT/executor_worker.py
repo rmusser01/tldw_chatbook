@@ -132,6 +132,7 @@ def _failure_from_exception(
         request.generation,
         request.attempt_id,
         TranscriptionFailureCode.INFERENCE_FAILED,
+        recovery_actions=("retry_faster_whisper",),
     )
 
 
@@ -295,9 +296,20 @@ def _transcribe_cpp_provider(
 
 
 def _parakeet_provider(
-    _request: ExecutorRequest,
+    request: ExecutorRequest,
     model_root: Path | None,
 ) -> ProviderRuntime:
+    if request.options.get("_verify_legacy_parakeet_v2"):
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
+            verify_parakeet_v2_bundle,
+        )
+
+        if model_root is None or not verify_parakeet_v2_bundle(model_root):
+            raise _ProviderLoadFailure(
+                TranscriptionFailureCode.ARTIFACT_CORRUPT,
+                ("retry_faster_whisper",),
+            )
+
     from tldw_chatbook.Local_Ingestion.transcription_service import (
         TranscriptionService,
     )
