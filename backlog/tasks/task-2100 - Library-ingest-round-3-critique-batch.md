@@ -2,7 +2,7 @@
 id: TASK-2100
 title: >-
   Library ingest round-3 critique batch (scroll-yank, vanishing focused title, P2 sweep)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-03 21:00'
 labels:
@@ -143,6 +143,15 @@ under the harness. Mechanism still unknown — but the round-3 live
 sessions drove clicks with byte-offset column math (see diagnosis
 record), so misplaced presses on gap rows are a plausible contaminant.
 Re-check at the next critique before treating it as an app defect.
+
+**Qodo round (post-PR #1291 review, fixed in `edb1b4174`).** (1) The
+sweep had over-swept the Expand-all handler, and panel collapsed state is
+compose-time-only — Expand all became a no-op on mounted panels. Both
+bulk handlers now write `collapsed` directly on the mounted Collapsibles
+(non-structural; regression test stages a mixed folder for two groups).
+(2) The placeholder literals moved to single-definition constants in
+config.py beside the owning template, with a drift-guard assertion
+pinning them against CONFIG_TOML_CONTENT.
 
 **Trap recorded for live driving:** compute tmux click columns with
 character indexing (python `str.find`), never `grep -bo`/`wc -c` — the
