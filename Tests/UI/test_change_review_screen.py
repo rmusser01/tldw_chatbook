@@ -545,3 +545,51 @@ async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
         assert not any("inner.txt" in l for l in labels), (
             "the nested edit leaked into the tree"
         )
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_tree_node_loads_that_files_diff(review_fixture):
+    """TASK-2032 (live-UAT defect): clicking a file row must load its diff.
+
+    Driven through Tree's own cursor-select action — the same NodeSelected
+    event a mouse click produces — so the mouse path is what's pinned.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        assert len(screen._leaves) >= 2, "fixture must offer multiple files"
+
+        target_row, target_change = screen._leaves[-1]
+        first_row, first_change = screen._leaves[0]
+        assert target_change.path != first_change.path
+
+        # Walk the tree cursor to the target leaf and select it — the event
+        # path a mouse click takes (click -> cursor + NodeSelected).
+        chosen = None
+        for line in range(tree.last_line + 1):
+            tree.cursor_line = line
+            node = tree.cursor_node
+            if node is not None and target_change.path in str(node.label):
+                chosen = line
+                break
+        assert chosen is not None, "target leaf not found in the tree"
+        tree.action_select_cursor()
+        await pilot.pause()
+
+        def diff_text() -> str:
+            body = screen.query(".change-review-diff-body")
+            return str(body.first().renderable) if body else ""
+
+        await _wait_for(
+            pilot,
+            lambda: target_change.path in diff_text(),
+            f"diff to switch to {target_change.path} (still showing "
+            f"{first_change.path})",
+        )

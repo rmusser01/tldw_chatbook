@@ -442,7 +442,12 @@ class ChangeReviewScreen(Screen):
                 continue
             branch = tree.root.add(f"{label} ({len(entries)})", expand=True)
             for row, change in entries:
-                branch.add_leaf(self._leaf_label(row, change, multi_root))
+                # TASK-2032: the node carries its leaf index so a MOUSE
+                # selection can load the diff (j/k was the only loader).
+                branch.add_leaf(
+                    self._leaf_label(row, change, multi_root),
+                    data=len(self._leaves),
+                )
                 self._leaves.append((row, change))
         other = [
             entry
@@ -453,7 +458,12 @@ class ChangeReviewScreen(Screen):
         if other:
             branch = tree.root.add(f"{_OTHER_GROUP} ({len(other)})", expand=True)
             for row, change in other:
-                branch.add_leaf(self._leaf_label(row, change, multi_root))
+                # TASK-2032: the node carries its leaf index so a MOUSE
+                # selection can load the diff (j/k was the only loader).
+                branch.add_leaf(
+                    self._leaf_label(row, change, multi_root),
+                    data=len(self._leaves),
+                )
                 self._leaves.append((row, change))
 
         banner = self.query_one("#change-review-banner", Static)
@@ -514,6 +524,17 @@ class ChangeReviewScreen(Screen):
         self._focused_leaf = max(0, min(index, len(self._leaves) - 1))
         row, change = self._leaves[self._focused_leaf]
         self._render_diff(row, change)
+
+    @on(Tree.NodeSelected, "#change-review-tree")
+    def _on_tree_node_selected(self, event: "Tree.NodeSelected") -> None:
+        """Load the selected file's diff — the mouse-click path (TASK-2032).
+
+        Group nodes carry no index and are ignored (their click just
+        expands/collapses).
+        """
+        index = getattr(event.node, "data", None)
+        if isinstance(index, int):
+            self._focus_leaf(index)
 
     def action_next_file(self) -> None:
         self._focus_leaf(self._focused_leaf + 1)
