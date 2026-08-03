@@ -1,7 +1,7 @@
 ---
 id: TASK-1344
 title: Watchlists region gating acts on regions that are not on screen
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
