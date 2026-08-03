@@ -1995,7 +1995,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _refuse_content_toggle_off_read_tab(self, region: Region) -> bool:
         """Refuse a CONTENT layout change off the Read tab, telling the user why.
 
-        Named as an ACTION, not a predicate (`_refuse_content_toggle_off_read_tab`
+        Named as an ACTION, not a predicate (it was `_content_toggle_is_blocked`
         before TASK-1349), because it is NOT pure: when it refuses it calls
         `self.notify(...)`. A side-effecting predicate is safe only until
         someone wires it into a render path -- this codebase already shipped

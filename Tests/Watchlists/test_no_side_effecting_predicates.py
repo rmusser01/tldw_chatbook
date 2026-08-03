@@ -46,7 +46,9 @@ _SIDE_EFFECTS = {
 def _python_files():
     for target in _WATCHLISTS_DIRS:
         if target.is_dir():
-            yield from target.glob("*.py")
+            # Recursive: a predicate in a future nested subpackage must be
+            # covered too (Qodo, TASK-1349).
+            yield from target.rglob("*.py")
         elif target.is_file():
             yield target
 
@@ -69,7 +71,10 @@ def _side_effects_in(node: ast.AST) -> set[str]:
 def test_no_predicate_named_function_in_watchlists_has_a_side_effect():
     offenders = []
     for path in _python_files():
-        tree = ast.parse(path.read_text())
+        # Explicit UTF-8: these sources carry non-ASCII glyphs (e.g. the
+        # `▸` collapsed-region marker), so a default-locale read could
+        # UnicodeDecodeError or mis-decode on some runners (Qodo, TASK-1349).
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
