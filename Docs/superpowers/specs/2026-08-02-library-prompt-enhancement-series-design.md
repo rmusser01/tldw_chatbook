@@ -1,7 +1,7 @@
 # Library Prompt Enhancement Series Design
 
 **Date:** 2026-08-02  
-**Status:** Approved in conversation and specification review
+**Status:** Final audit amendments pending specification re-review
 **Scope:** `tldw_chatbook` TASK-202, TASK-196, TASK-198, TASK-199,
 TASK-197, and TASK-203 as six sequential, merge-gated pull requests
 
@@ -228,6 +228,13 @@ index suitable for that query. History never calls
 `get_sync_log_entries(since_change_id=0)` and filters the entire result in
 Python.
 
+Each page query reads at most `page_size + 1` retained create/update snapshots.
+The extra older snapshot is used only as the predecessor for the last visible
+row's changed-field summary. A row is compared only with its immediately
+preceding version. Version gaps caused by pruning show `Earlier baseline
+unavailable` rather than comparing non-adjacent snapshots and claiming a false
+diff. Version 1 shows `Created`.
+
 History pages include create/update entries only. Each normalized snapshot
 contains:
 
@@ -237,10 +244,11 @@ contains:
 - keywords when captured by a modern snapshot;
 - an explicit flag when keywords were not captured historically.
 
-Future create/update sync payloads include the effective keywords without
-changing keyword-link ownership. Older consumers must ignore the additive
-field. Collection membership, usage counters, and deletion state are not
-versioned by this UI.
+Future create/update sync payloads include the effective keywords after keyword
+membership has settled in the same transaction, without changing keyword-link
+ownership. The row, keyword links, and snapshot either commit together or roll
+back together. Older consumers must ignore the additive field. Collection
+membership, usage counters, and deletion state are not versioned by this UI.
 
 `PromptScopeService.list_prompt_versions` routes both local and server sources
 to their adapters and normalizes one version envelope. The Library uses only
@@ -282,7 +290,11 @@ reported as no change and creates no new version.
 Immediately before restore, the service rechecks the expected current version.
 A mismatch produces the normal conflict state and requires Reload. Success
 reports, for example, `Restored v3 as current v8.` Older snapshots without
-keywords retain the current keywords and disclose that behavior.
+keywords retain the current keywords and disclose that behavior. A modern
+snapshot with captured keywords restores them in the same conditional
+transaction as the artifact fields. A duplicate-name conflict or keyword
+validation failure changes neither the current Prompt nor its history and
+leaves the selected version available for correction or retry.
 
 The UI consistently says retained history because sync-log cleanup may limit
 the oldest available version.
@@ -333,6 +345,13 @@ The list toolbar contains:
 - collection selector, default `All prompts`;
 - `New collection...`;
 - search, sort, and page controls.
+
+The collection selector is complete as well: it uses the collection service's
+exact total and bounded pages rather than stopping at the existing 200-row
+default. A small collection set renders directly; a larger set offers search
+and `Load more` within the chooser. Pre-existing case-fold name collisions are
+disambiguated as `Name · #id` in chooser and manager labels while writes remain
+ID-based.
 
 Search applies within the active collection. Changing collection, query, sort,
 or page creates a new browse-scope fingerprint.
@@ -406,6 +425,14 @@ active variables, and shows each unique name once with a lane-use label. Values
 are blank by default and may remain blank. The dialog is scrollable when the
 variable count is large.
 
+Destination copy is exact. A resolved `/prompt` command and a Console Prompt
+picker choice both replace the entire composer snapshot captured when that
+flow opened. If the picker was opened from the command palette over ordinary
+draft text, the dialog says `Replace the current Console draft`; it does not
+mislabel that draft as a `/prompt` command. Library `Use in Console` says
+`Append to the current Console draft`. The captured snapshot is the one later
+checked by the stale-composer guard.
+
 When a System lane exists, the checkbox reads:
 
 `Replace the current session System prompt with this System lane`
@@ -414,6 +441,10 @@ It is off by default. Toggling it recomputes the active variable list while
 preserving ephemeral values for variables that remain or later reappear. The
 dialog also states whether User text will replace the `/prompt` command draft
 or append to the Console draft from Library.
+
+If System replacement is off and there is no applicable User lane, the primary
+Apply action is disabled with a short `Select a lane to apply` explanation.
+Cancel and `Use original placeholders` remain available.
 
 Primary application renders the ephemeral copy. A secondary `Use original
 placeholders` action applies the selected lanes without interpolation. This is
@@ -437,10 +468,11 @@ System fingerprint, creation time, and expiry. It does not store the raw
 variable map, source Prompt body, or values separately; sensitive fields are
 excluded from representation and logs.
 
-The handoff is latest-wins, one-shot, owner-thread-only, and bounded by a short
-expiry. Console acknowledges and discards expired or wrong-session requests
-with a warning. A transient missing composer releases the claim for retry only
-while it remains valid.
+The handoff is latest-wins, one-shot, owner-thread-only, and expires 120 seconds
+after creation using a monotonic clock. Console checks expiry both when claiming
+and before applying, then acknowledges and discards expired or wrong-session
+requests with a warning. A transient missing composer releases the claim for
+retry only while it remains valid.
 
 For Library append, Console captures the composer snapshot when consuming the
 handoff so the text appends to the settled active draft. It rechecks the
@@ -470,6 +502,11 @@ write is reported honestly rather than described as an atomic rollback.
 Modern `content/prompts/prompt_<id>.json` files add
 `chatbook_prompt_record_version: 1`. This field is distinct from the artifact's
 `prompt_schema_version`.
+
+This versioned record is produced and consumed by the local Chatbook service in
+this client series. The Library's existing server-mode export gate remains in
+place, and the UI does not claim that server-created archives have adopted the
+new record until a server contract says so.
 
 The canonical record preserves:
 
@@ -516,6 +553,12 @@ codec rules, keywords, and local size limits. Invalid modern records fail
 closed per item and leave no partial Prompt row. Missing `artifact_type` is
 defaulted to Prompt only for legacy records, not malformed modern records.
 
+Prompt record lookup uses the matching manifest `ContentItem.file_path`,
+resolved through the importer's contained relative-path validator. It does not
+construct a path from the untrusted manifest ID. Duplicate Prompt IDs, duplicate
+Prompt file paths, type/path mismatches, missing files, and paths outside the
+extraction root fail closed before the affected item is parsed or written.
+
 ### Export scope
 
 Extend `ExportScope`, count resolution, and selection resolution with
@@ -525,7 +568,10 @@ Prompt page. `Everything` adds the Prompt/Recipe count and selections.
 The Prompt list's `Export...` action opens the existing Library export canvas
 pre-scoped to Prompts. TASK-203 later reuses the same scope with explicit IDs.
 Records deleted after scope resolution are skipped and included in the outcome
-summary.
+summary. If every Prompt in a Prompts-only scope disappears or becomes invalid
+before collection, no empty archive is finalized; the form reports that no
+selected Prompt remained. An Everything export may still complete with its
+other selected content and reports the skipped Prompt count.
 
 Archive creation retains the existing partial-file plus atomic-replace
 finalization. Prompt collection runs in the export worker. Export logs metadata,
@@ -537,6 +583,11 @@ Chatbook preview and selection show a combined Prompt/Recipe content count and
 allow the Prompt content type to be included or skipped. The importer reports
 imported, renamed, skipped, and failed Prompt records distinctly. Full error
 detail remains bounded and content-free.
+
+Prompt name conflicts use the existing conflict policy selected in the import
+workflow. `ASK` never chooses overwrite, rename, or skip silently inside the
+worker; an unresolved conflict is reported without a write. Prefixing or rename
+changes only the imported record's name.
 
 The existing Library Markdown Prompt importer remains separate; Chatbook
 archives continue through the Chatbook import workflow.
@@ -591,9 +642,17 @@ selection fingerprint; any selection or scope change invalidates it.
 `PromptScopeService.bulk_delete_prompts` owns routing, and this local-only
 Library surface calls it with local identities. Local deletion produces per-ID
 success/failure outcomes and uses existing soft-delete behavior. Successful
-identities clear; failed identities remain selected for retry. The active
-browse result and collection count refresh after settlement. Server and mixed-
-source bulk actions are not exposed by this series.
+identities clear; failed identities that remain visible after refresh remain
+selected for retry. The active browse result and collection count refresh after
+settlement. Server and mixed-source bulk actions are not exposed by this
+series.
+
+After refresh, the page is clamped to the new last valid page. If no rows
+remain, focus moves to the list toolbar and the honest empty state is shown. A
+failed identity remains selected only when it is still visible in the refreshed
+scope. A concurrently renamed/reordered failure that is no longer visible is
+reported in the bounded failure summary and cleared rather than retained as a
+hidden selection.
 
 ### Updated acceptance boundary
 
@@ -638,19 +697,22 @@ source bulk actions are not exposed by this series.
 ### TASK-196
 
 - Migration/index tests and `EXPLAIN QUERY PLAN` index-use regression.
-- Many unrelated sync-log rows with bounded Prompt-specific paging.
+- Many unrelated sync-log rows with bounded Prompt-specific paging, page-edge
+  predecessors, and pruned version gaps.
 - Old snapshots without keywords, modern Prompt/Recipe snapshots, malformed
   definitions, no-change restore, stale expected version, and type-changing
   restore.
+- Atomic keyword restore plus duplicate-name/keyword-validation rollback.
 - App-wired scope integration and UI dirty/preview/confirm/outcome pilots.
 
 ### TASK-198
 
 - More than 100 Prompts with exact totals and pagination.
-- Search plus collection plus sort, case-insensitive duplicate names, and local
-  transaction rollback.
+- Search plus collection plus sort, more than 200 collections, case-fold
+  collision labels, serialized duplicate prevention, and local transaction
+  rollback.
 - Debounce/stale token, error/Retry, empty collection, page focus restoration,
-  and unsupported server capability.
+  and local-only source behavior.
 - Policy routing tests prove widgets never bypass `PromptScopeService`.
 
 ### TASK-199
@@ -660,9 +722,11 @@ source bulk actions are not exposed by this series.
   rendering, and no input mutation.
 - Shared System/User variables, System toggle, use-original, cancel, variable
   limit, and scrollable dialog.
-- Exact slash, picker, and Library append integrations.
-- Expired/replaced/wrong-session handoff, stale composer/System fingerprints,
-  transient composer retry, persistence warning, and Recipe refusal.
+- Exact slash, picker, ordinary-draft replacement disclosure, and Library
+  append integrations.
+- 120-second boundary, expired/replaced/wrong-session handoff, stale
+  composer/System fingerprints, transient composer retry, persistence warning,
+  and Recipe refusal.
 - Log-capture tests assert values and rendered bodies never appear.
 
 ### TASK-197
@@ -672,15 +736,17 @@ source bulk actions are not exposed by this series.
   policies.
 - Older-reader compatibility projection.
 - Prompts-only, Everything, explicit-ID, beyond-page-cap, deleted-mid-export,
-  and atomic archive-finalization tests.
-- Import preview selection and bounded partial outcome UI.
+  all-items-disappeared, and atomic archive-finalization tests.
+- Validated manifest paths, duplicate ID/path rejection, unresolved ASK
+  conflicts, import preview selection, and bounded partial outcome UI.
 
 ### TASK-203
 
 - RowSelection scope-clear rules, Select visible, Enter/Space/Escape behavior,
   and targeted UI reconciliation.
 - Stale confirmation, changed artifact type, export selection retention, bulk
-  delete partial success, and collection refresh.
+  delete partial success, last-page clamping, off-view failure reconciliation,
+  and collection refresh.
 - Integration with TASK-197 explicit-ID export and narrow-terminal captures.
 
 Each PR also runs the affected Prompt Management, Library, Chatbook, Console,
