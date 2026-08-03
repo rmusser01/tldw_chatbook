@@ -1066,25 +1066,78 @@ async def test_callout_click_posts_server_row_selected_with_its_key():
 
 
 @pytest.mark.asyncio
-async def test_builtin_callout_label_is_plain_and_tooltip_keeps_technical_detail():
-    """F-050: the disabled built-in's callout is short, plain copy that
-    renders fully at 100 cols (no config-file syntax in the one-line label);
-    the technical detail moves to the tooltip."""
+async def test_off_builtin_gets_enable_affordance_not_problem_callout():
+    """F-051: the built-in server ships disabled BY CHOICE, so it is an
+    OFF/opt-in state, not a problem -- no recovery callout is filed for it.
+    Instead it gets a calm Enable affordance whose click performs the fix
+    directly (posts BuiltinFlagChanged("enabled", True), the same message
+    the detail view's Enabled checkbox sends)."""
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         await canvas.update_overview([builtin_readiness(enabled=False)])
         await pilot.pause()
-        callout = app.query_one("#mcp-callout-0", Button)
-        label = str(callout.label)
-        assert "Turned off" in label
+        assert not list(app.query("#mcp-callout-0"))
+        enable = app.query_one("#mcp-builtin-enable", Button)
+        label = str(enable.label)
+        assert "turned off" in label.lower()
+        assert "Enable" in label
         assert "[mcp]" not in label
         assert len(label) <= 98
-        assert "[mcp].enabled = false" in (callout.tooltip or "")
-        # The click-through destination is unchanged: still opens the row.
-        callout.press()
+        enable.press()
         await pilot.pause()
-        assert app.events and app.events[-1].server_key == "builtin:tldw_chatbook"
+        assert app.events
+        event = app.events[-1]
+        assert (event.key, event.value) == ("enabled", True)
+
+
+@pytest.mark.asyncio
+async def test_pristine_off_builtin_summary_is_calm_not_a_false_alarm():
+    """F-051: on a pristine install (only the disabled built-in), the
+    aggregate line no longer reads '0 of 1 servers ready — 1 needs setup'
+    and the summary glyph stays out of the warning state."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([builtin_readiness(enabled=False)])
+        await pilot.pause()
+        text = str(app.query_one("#mcp-overview-summary", Static).renderable)
+        assert "needs setup" not in text
+        assert "0 of 1" not in text
+        assert "off" in text.lower()
+        glyph = app.query_one("#mcp-overview-summary-glyph", Static)
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in glyph.classes
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in glyph.classes
+
+
+@pytest.mark.asyncio
+async def test_genuine_problem_still_files_callout_alongside_off_builtin():
+    """F-051: only the OFF/opt-in built-in leaves the problem path -- a real
+    problem (missing credentials) still gets its recovery callout and still
+    counts in the summary."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                builtin_readiness(enabled=False),
+                _snap(
+                    "local:web",
+                    "web",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        callout = app.query_one("#mcp-callout-0", Button)
+        assert "web" in str(callout.label)
+        assert app.query_one("#mcp-builtin-enable", Button)
+        text = str(app.query_one("#mcp-overview-summary", Static).renderable)
+        assert "0 of 1" in text
+        assert "needs setup" in text
+        assert "off" in text.lower()
 
 
 @pytest.mark.asyncio

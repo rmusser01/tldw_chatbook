@@ -21,6 +21,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
     aggregate_summary,
     env_placeholder_names,
+    is_off_opt_in,
     worst_state,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
@@ -576,6 +577,30 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             table.add_row(*row_cells, key=row_key)
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
+        callout_widgets: list[Widget] = []
+        # F-051: the disabled built-in is an OFF/opt-in state, not a
+        # problem -- it never files a recovery callout. Instead it gets a
+        # calm Enable affordance whose click performs the fix directly
+        # (BuiltinFlagChanged("enabled", True), the same message the detail
+        # view's Enabled checkbox posts), rendered in the same one-line
+        # callout row style.
+        for snap in self._snapshots:
+            if not is_off_opt_in(snap):
+                continue
+            technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+            enable_tooltip = (
+                f"{technical} Enable the built-in MCP server so an MCP client "
+                "can launch it."
+            ).strip()
+            callout_widgets.append(
+                Button(
+                    escape_markup(f"{snap.label} is turned off — Enable"),
+                    id="mcp-builtin-enable",
+                    classes="mcp-callout mcp-optin console-action-subdued",
+                    compact=True,
+                    tooltip=escape_markup(enable_tooltip),
+                )
+            )
         # Task 11: callouts are now actionable one-line Buttons (posting
         # ServerRowSelected straight to the problem row) instead of inert
         # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
@@ -585,11 +610,12 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             snap
             for snap in self._snapshots
             if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+            and not is_off_opt_in(snap)
         ]
         visible = problem_snapshots[:_CALLOUT_CAP]
         overflow = len(problem_snapshots) - len(visible)
         self._callout_keys = [snap.server_key for snap in visible]
-        callout_widgets: list[Widget] = [
+        callout_widgets.extend(
             Button(
                 escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
                 id=f"mcp-callout-{index}",
@@ -598,7 +624,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 tooltip=_callout_tooltip(snap),
             )
             for index, snap in enumerate(visible)
-        ]
+        )
         if overflow > 0:
             callout_widgets.append(
                 Static(
@@ -974,6 +1000,13 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # drives via MCPRail.ServerSelected(None).
             event.stop()
             self.post_message(self.ServerRowSelected(None))
+            return
+        if button_id == "mcp-builtin-enable":
+            # F-051: the off/opt-in affordance performs the fix itself --
+            # same message the detail view's Enabled checkbox posts; the
+            # workbench persists [mcp].enabled and resyncs.
+            event.stop()
+            self.post_message(self.BuiltinFlagChanged("enabled", True))
             return
         if button_id.startswith("mcp-callout-"):
             # Task 11: actionable callout -- jump straight to the problem

@@ -205,6 +205,27 @@ class ReadinessSnapshot:
         return f"{STATE_GLYPHS[self.state]} {STATE_LABELS[self.state]}"
 
 
+def is_off_opt_in(snapshot: ReadinessSnapshot) -> bool:
+    """Whether a snapshot is the built-in server in its OFF/opt-in state.
+
+    The built-in ships disabled: turning it on is a choice the user makes,
+    not a defect to fix (F-051). Surfaces that aggregate "what needs
+    attention" (`aggregate_summary()`, `worst_state()`, the Servers-mode
+    recovery callouts) exclude off/opt-in snapshots so a pristine install
+    does not open with a false alarm; the Servers mode presents a separate
+    Enable affordance for it instead.
+    """
+    if snapshot.source != "builtin":
+        return False
+    enabled = (snapshot.detail or {}).get("enabled")
+    if enabled is not None:
+        return not enabled
+    # Snapshots built without going through builtin_readiness() carry no
+    # detail["enabled"] -- fall back to the only reason the disabled
+    # built-in ever reports.
+    return snapshot.primary_reason is ReasonCode.NOT_CONFIGURED
+
+
 def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     """Build a one-line hub summary across all server readiness snapshots.
 
@@ -215,11 +236,17 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     Returns:
         A human-readable summary, e.g. "2 of 4 servers ready — 1 needs
         setup, 1 stale.", or "No MCP servers configured yet." when empty.
+        An off/opt-in built-in (F-051) is excluded from the ready/problem
+        math and reported separately as off instead.
     """
     if not snapshots:
         return "No MCP servers configured yet."
-    total = len(snapshots)
-    counts = Counter(snap.state for snap in snapshots)
+    counted = [snap for snap in snapshots if not is_off_opt_in(snap)]
+    off_opt_in = len(snapshots) - len(counted)
+    if not counted:
+        return "Built-in server is off — enable it to let MCP clients use chatbook's tools."
+    total = len(counted)
+    counts = Counter(snap.state for snap in counted)
     ready = counts.get(ReadinessState.READY, 0)
     problems = [
         f"{count} {STATE_LABELS[state].lower()}"
@@ -227,7 +254,8 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
         if state is not ReadinessState.READY and count
     ]
     suffix = f" — {', '.join(problems)}" if problems else ""
-    return f"{ready} of {total} servers ready{suffix}."
+    opt_in_note = " Built-in server is off (opt-in)." if off_opt_in else ""
+    return f"{ready} of {total} servers ready{suffix}.{opt_in_note}"
 
 
 # Task 11: severity order for the overview's aggregate status badge --
@@ -251,9 +279,11 @@ def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
 
     Used to color the overview's aggregate summary badge. An empty list (no
     servers configured yet) and an all-READY list both resolve to READY --
-    there is nothing to warn about in either case.
+    there is nothing to warn about in either case. Off/opt-in snapshots
+    (the disabled built-in, F-051) are skipped for the same reason: an
+    off-by-choice server is not something to warn about.
     """
-    present = {snap.state for snap in snapshots}
+    present = {snap.state for snap in snapshots if not is_off_opt_in(snap)}
     for state in STATE_SEVERITY:
         if state in present:
             return state

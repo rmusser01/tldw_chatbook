@@ -353,3 +353,12 @@ def test_worst_state_prioritizes_needs_attention_over_everything_else():
 def test_worst_state_checking_outranks_ready_only():
     snaps = [_raw_snap(ReadinessState.READY), _raw_snap(ReadinessState.CHECKING)]
     assert worst_state(snaps) is ReadinessState.CHECKING
+
+
+def test_worst_state_ignores_off_builtin_opt_in():
+    """F-051: the disabled built-in is an OFF/opt-in state, not a defect --
+    it must not pull the aggregate badge into a warning color on a pristine
+    install. Genuine problems still set the worst state."""
+    assert worst_state([builtin_readiness(enabled=False)]) is ReadinessState.READY
+    snaps = [builtin_readiness(enabled=False), _raw_snap(ReadinessState.NEEDS_SETUP)]
+    assert worst_state(snaps) is ReadinessState.NEEDS_SETUP

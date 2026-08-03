@@ -223,18 +223,19 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
 
             # The legacy Inventory section was retired with the MCP Hub
             # workbench. Recovery now starts in Servers mode: the primary
-            # Add server action is visible and usable, while the readiness
-            # callout explains why the built-in server needs setup.
+            # Add server action is visible and usable, while the turned-off
+            # built-in server offers an opt-in Enable affordance (F-051) --
+            # not a problem callout.
             def mcp_recovery_controls_are_ready() -> bool:
                 add_servers = list(app.screen.query("#mcp-add-server"))
-                setup_callouts = list(app.screen.query("#mcp-callout-0"))
+                enable_affordances = list(app.screen.query("#mcp-builtin-enable"))
                 return bool(
                     add_servers
-                    and setup_callouts
+                    and enable_affordances
                     and add_servers[0].region.width > 0
                     and add_servers[0].region.height > 0
-                    and setup_callouts[0].region.width > 0
-                    and setup_callouts[0].region.height > 0
+                    and enable_affordances[0].region.width > 0
+                    and enable_affordances[0].region.height > 0
                 )
 
             await _wait_until(
@@ -242,17 +243,18 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 mcp_recovery_controls_are_ready,
             )
             add_server = app.screen.query_one("#mcp-add-server", Button)
-            builtin_setup = app.screen.query_one("#mcp-callout-0", Button)
+            builtin_enable = app.screen.query_one("#mcp-builtin-enable", Button)
             assert str(add_server.label).strip() == "Add server"
             assert add_server.display is True
             assert add_server.disabled is False
             assert add_server.region.width > 0
             assert add_server.region.height > 0
-            assert builtin_setup.display is True
-            assert builtin_setup.disabled is False
-            assert builtin_setup.region.width > 0
-            assert builtin_setup.region.height > 0
-            assert "Turned off — open to enable." in str(builtin_setup.label)
+            assert builtin_enable.display is True
+            assert builtin_enable.disabled is False
+            assert builtin_enable.region.width > 0
+            assert builtin_enable.region.height > 0
+            assert "turned off" in str(builtin_enable.label).lower()
+            assert "Enable" in str(builtin_enable.label)
 
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(
