@@ -1,7 +1,7 @@
 ---
 id: TASK-1494
 title: The reader's full page and previous snapshot affordances were never built
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 13:30'
 labels:
@@ -36,3 +36,22 @@ are documented in `content_pane.py` and TASK-1348.
 - [ ] #2 When no previous snapshot exists (first check, or pruned by cap), the affordance degrades honestly rather than erroring or hiding silently
 - [ ] #3 Remote snapshot content renders as text, never as markup or live hyperlinks
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. DB: `Subscriptions_DB.get_url_snapshots(subscription_id, url, limit=2)` → newest-first rows
+   (id, extracted_content, created_at) `ORDER BY created_at DESC, id DESC` (SAME order as
+   `_store_snapshot`'s prune, so "newest"/"second-newest" agree with what is kept). Service async
+   wrapper `LocalWatchlistsService.get_url_snapshots(source_id, url, limit=2)`.
+2. ContentPane: on a `change`-kind item, render compact `[full page]` / `[previous snapshot]`
+   affordances (mark-unread button precedent); press posts `ViewSnapshotRequested(item, which)`.
+   Article items show neither. Pane has no DB — honest degradation happens at the screen.
+3. Screen `@on(ViewSnapshotRequested)`: fetch via service; newest = full page, second-newest =
+   previous. Absent (first check / pruned) → honest toast (markup=False), no empty modal (AC#2).
+4. `SnapshotViewModal(ModalScreen)`: url + captured-at header, snapshot `extracted_content` as
+   `Static(Text(raw))` — Text never parses markup, NO Markdown, NO hyperlinks (AC#3).
+5. Tests: query scoping/order + fewer-than-limit; pane shows affordances only on change items +
+   posts the right message; screen full-page→modal, previous-with-one-snapshot→honest toast; AC#3
+   remote markup renders literally.
+<!-- SECTION:PLAN:END -->
