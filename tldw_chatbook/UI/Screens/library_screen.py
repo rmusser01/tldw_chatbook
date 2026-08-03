@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import partial
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -1337,6 +1338,8 @@ class LibraryScreen(BaseAppScreen):
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
+        # (task-2043) Failed rows whose inline error details are expanded.
+        self._library_ingest_expanded_details: set[str] = set()
         # Explicit user-started curated model install. It is separate from
         # inference: providers never acquire models on first use. The same
         # worker slot tracks BOTH the preflight step (plan computation) and
@@ -4790,6 +4793,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_form = LibraryIngestFormState()
 
+    def _pause_library_ingest_transient_ui(self) -> None:
+        """Rail-switch hygiene WITHOUT wiping the staged form (task-2043).
+
+        Stops the typing debounce (it must not fire while another canvas is
+        showing) and disarms the two-press clear; the typed path, metadata,
+        and pre-flight echo persist for the session so a multi-batch
+        workflow survives a look at another rail row.
+        """
+        timer = self._library_ingest_path_debounce_timer
+        if timer is not None:
+            timer.stop()
+            self._library_ingest_path_debounce_timer = None
+        self._library_ingest_clear_finished_armed = False
+
     # ----- Export canvas -------------------------------------------------
 
     @staticmethod
@@ -6017,6 +6034,7 @@ class LibraryScreen(BaseAppScreen):
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
             clear_finished_armed=self._library_ingest_clear_finished_armed,
+            expanded_details=self._library_ingest_expanded_details,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -7297,7 +7315,12 @@ class LibraryScreen(BaseAppScreen):
         # unprompted on a later, unrelated entry into the skills view.
         self._library_skill_trust_confirming_reset = False
         self._reset_library_notes_sync_transient_state()
-        self._reset_library_ingest_transient_state()
+        # (task-2043) The ingest form now PERSISTS across rail switches --
+        # the old full reset discarded a typed path/metadata on every
+        # switch, destructive for multi-batch workflows (round-2 critique).
+        # Only switch-hygiene runs here; the deep-link entry keeps its
+        # documented full reset.
+        self._pause_library_ingest_transient_ui()
         # Always resets to the Everything scope (a plain rail-row press,
         # unlike a browse-canvas "Export…" action, never carries a
         # section-specific filter) -- see
@@ -12943,7 +12966,7 @@ class LibraryScreen(BaseAppScreen):
         self.app.push_screen(
             FileOpen(
                 location=self._library_ingest_browse_location(),
-                title="Import Media",
+                title="Import media",
                 filters=_ingestible_file_filters(),
             ),
             browse_callback,
@@ -13287,6 +13310,57 @@ class LibraryScreen(BaseAppScreen):
         if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._trigger_library_ingest_preflight(path)
 
+    def _annotate_preflight_duplicates(
+        self, result: PreflightResult
+    ) -> PreflightResult:
+        """Count staged text files already in the Library (task-2043).
+
+        Runs ON THE PRE-FLIGHT WORKER THREAD: ``MediaDatabase`` uses
+        thread-local connections (``check_same_thread=False``), so
+        read-only lookups from here are safe. Scoped to the ``generic``
+        group because the DB dedups on sha256 of PARSED content and only
+        text files' read ≈ parse (hashing a PDF's bytes would never match
+        its extracted text). Best-effort with caps (20 files, 8 MB each):
+        a forecast must never fail or slow the pre-flight, so per-file
+        problems are logged at debug and skipped.
+
+        Args:
+            result: The freshly analyzed pre-flight result.
+
+        Returns:
+            ``result`` with ``already_in_library`` populated when matches
+            were found, otherwise unchanged.
+        """
+        media_db = getattr(self.app_instance, "media_db", None)
+        if media_db is None:
+            return result
+        candidates = list(result.type_groups.get("generic", ()))[:20]
+        if not candidates:
+            return result
+        already = 0
+        for candidate in candidates:
+            try:
+                candidate_path = Path(str(candidate))
+                if (
+                    not candidate_path.is_file()
+                    or candidate_path.stat().st_size > 8 * 1024 * 1024
+                ):
+                    continue
+                text = candidate_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                digest = hashlib.sha256(text.encode()).hexdigest()
+                if media_db.get_media_by_hash(digest) is not None:
+                    already += 1
+            except Exception as exc:
+                logger.debug(
+                    f"Pre-flight duplicate check skipped {candidate!r}: {exc}"
+                )
+                continue
+        if not already:
+            return result
+        return dataclasses.replace(result, already_in_library=already)
+
     def _invalidate_library_ingest_preflight(self) -> None:
         """Drop the current pre-flight echo AND fence off in-flight workers.
 
@@ -13334,6 +13408,7 @@ class LibraryScreen(BaseAppScreen):
             scan_limit = 1000
         try:
             result = analyze_path(path, scan_limit=scan_limit)
+            result = self._annotate_preflight_duplicates(result)
         except Exception as exc:
             logger.opt(exception=True).debug(
                 f"Library ingest pre-flight failed for path: {path}"
@@ -13845,7 +13920,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
-        """Show a notification with a failed ingest job's structured error details.
+        """Toggle a failed row's inline error-detail lines (task-2043).
+
+        Replaces the old auto-expiring notification: a toast gave the user
+        ~4 unre-readable seconds with an uncopyable error. The lines render
+        under the row via the in-place queue update, and the button flips
+        Show/Hide.
 
         Args:
             event: Button press event emitted by a "Show details" row action.
@@ -13856,15 +13936,11 @@ class LibraryScreen(BaseAppScreen):
         )
         if job_id is None:
             return
-        registry = self._library_ingest_registry()
-        get_job = getattr(registry, "get_job", None)
-        if not callable(get_job):
-            return
-        job = get_job(job_id)
-        if job is None or not job.error_detail:
-            return
-        detail = job.error_detail.get("message") or str(job.error_detail)
-        self.notify(f"Error details: {detail}", title="Ingest error", timeout=10)
+        if job_id in self._library_ingest_expanded_details:
+            self._library_ingest_expanded_details.discard(job_id)
+        else:
+            self._library_ingest_expanded_details.add(job_id)
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
@@ -13888,6 +13964,7 @@ class LibraryScreen(BaseAppScreen):
             self._update_library_ingest_dynamic_regions()
             return
         self._library_ingest_clear_finished_armed = False
+        self._library_ingest_expanded_details.clear()
         registry = self._library_ingest_registry()
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
