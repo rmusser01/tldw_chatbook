@@ -2889,7 +2889,7 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
 def test_mcp_screen_bindings_include_add_refresh_and_test_tool_shortcuts():
     """T13/T8: `a`/`r`/`t` map to the documented actions, all hidden from the
     Footer widget's own binding list (`show=False`) -- the Phase 2 footer
-    shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
+    shortcut hint (`MCP_MODE_SHORTCUTS`, per-mode since F-055) documents them instead."""
     bindings = {b.key: b for b in MCPScreen.BINDINGS}
     assert bindings["a"].action == "mcp_add_server"
     assert bindings["a"].show is False
@@ -3102,7 +3102,9 @@ class MCPFooterHarness(App):
 async def test_mcp_destination_registers_footer_workbench_shortcuts():
     """T13: mounting the MCP destination registers its Phase 2 footer
     shortcut hint (source="mcp") -- same contract Console established
-    (`test_console_registers_footer_workbench_shortcuts`).
+    (`test_console_registers_footer_workbench_shortcuts`). F-055: the
+    hint is per-mode now -- Servers mode (the initial mode) has no
+    working `t`/`space` keys, so neither is advertised.
     """
     app = _build_test_app()
     host = MCPFooterHarness(app)
@@ -3114,10 +3116,39 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
 
-        assert (
-            footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-        )
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_footer_shortcuts_follow_mode():
+    """F-055: the footer only advertises keys that work in the ACTIVE mode
+    -- `t` appears in Tools mode, `space` in Permissions mode, and neither
+    leaks into the other modes where pressing it is dead or hijacking."""
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = screen.query_one(AppFooterStatus)
+        common = "1-4 mode | a add server | r refresh"
+        assert footer.shortcut_text == common
+
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common} | t test tool"
+
+        screen.action_mcp_mode("permissions")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common} | space cycle permission"
+
+        screen.action_mcp_mode("audit")
+        await pilot.pause()
+        assert footer.shortcut_text == common
+
+        screen.action_mcp_mode("servers")
+        await pilot.pause()
+        assert footer.shortcut_text == common
 
 
 @pytest.mark.asyncio
@@ -3137,10 +3168,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         # task-264: the registration lands on the SCREEN's own footer, not
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
-        assert (
-            footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-        )
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
 
         overlay = TextualScreen()
         await host.push_screen(overlay)
@@ -3149,10 +3177,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
 
         await host.pop_screen()
         await pilot.pause()
-        assert (
-            footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-        )
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
 
 
 def test_skills_screen_public_initializer_is_typed():

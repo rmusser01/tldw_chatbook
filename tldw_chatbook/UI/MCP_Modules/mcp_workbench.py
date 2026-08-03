@@ -2972,8 +2972,8 @@ class MCPWorkbench(Container):
 
     async def open_test_for_selected_tool(self) -> None:
         """T8: entry point for the `t` keybinding (mcp_screen.py's
-        `action_mcp_test_tool`) -- switch to Tools mode and open the Test
-        Tool panel for whatever tool the inspector currently has selected.
+        `action_mcp_test_tool`) -- open the Test Tool panel for whatever
+        tool the inspector currently has selected.
 
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
         that can reach a state a disabled/absent button would otherwise
@@ -2981,27 +2981,36 @@ class MCPWorkbench(Container):
         (server-source) tool -- neither has a `Test Tool` button to press --
         this notifies instead of silently no-opping. The two cases get
         distinct copy (`MCPInspector.open_test_panel()`'s three-way status
-        tells them apart): "Select a tool first." for no selection, and the
-        same "Server-source tools are display-only." copy the inline detail
-        view already shows (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-
-        note` `Static`) when a tool IS selected but isn't executable --
-        "select a tool" would be actively wrong there.
+        tells them apart): "Select a tool in Tools mode first." for no
+        selection, and the same "Server-source tools are display-only."
+        copy the inline detail view already shows
+        (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
+        when a tool IS selected but isn't executable -- "select a tool"
+        would be actively wrong there.
 
-        `set_mode("tools")` is a no-op once already there (no mode change
-        means `_clear_tool_view()` never fires -- see its own docstring),
-        so pressing `t` again on an already-selected tool re-opens/no-ops
-        cleanly rather than clearing the very selection it's about to test.
+        F-055: the panel is opened FIRST and the mode switch only happens
+        on success -- the old switch-first order force-landed the user in
+        Tools mode with a "Select a tool first." toast on top when nothing
+        was selected (a mode hijack for a key the footer advertised in
+        every mode). With no tool selected the active mode now stays put
+        and the hint says where the working key lives. (`set_mode("tools")`
+        is a no-op once already there -- no mode change means
+        `_clear_tool_view()` never fires, see its own docstring -- and a
+        non-None `_current_tool` only exists in Tools mode anyway, since
+        every mode change clears the tool view.)
         """
-        self.set_mode("tools")
         inspector = self.query_one(MCPInspector)
         status = await inspector.open_test_panel()
         if status == "no_tool":
-            self.app.notify("Select a tool first.", severity="warning")
-        elif status == "not_executable":
+            self.app.notify("Select a tool in Tools mode first.", severity="warning")
+            return
+        if status == "not_executable":
             self.app.notify(
                 "Server-source tools are display-only.",
                 severity="information",
             )
+            return
+        self.set_mode("tools")
 
     def _resolve_test_gate(
         self, tool: HubTool | None, server_key: str, tool_name: str

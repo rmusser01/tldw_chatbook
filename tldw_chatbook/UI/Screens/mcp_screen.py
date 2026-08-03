@@ -27,18 +27,22 @@ _MODE_TOOLTIPS = {
 # context model, source="mcp" so it cannot clobber another screen's context
 # (`clear_shortcut_context(source=...)` is a no-op unless "mcp" still owns
 # it).
-# T9 (P4): "space cycle permission" is display-only -- the actual `space`
-# binding lives on `MCPPermissionsMode` itself (its matrix `DataTable` must
-# own focus for the keypress to reach `action_cycle_state()`), not on this
-# screen, mirroring how `("1-4", "mode")` documents the mode-strip Buttons'
-# own bindings rather than a screen-level one.
-MCP_SHORTCUTS = (
+# F-055: the hint set is PER-MODE -- a key is only advertised where it
+# actually works. `1-4`/`a`/`r` work everywhere (screen-level bindings);
+# `t` only works in Tools mode (it needs a selected tool); `space` only
+# works in Permissions mode with the matrix focused (the binding lives on
+# `MCPPermissionsMode` itself, display-only here -- see T9 (P4) below).
+_COMMON_SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("1-4", "mode"),
     ("a", "add server"),
     ("r", "refresh"),
-    ("t", "test tool"),
-    ("space", "cycle permission"),
 )
+MCP_MODE_SHORTCUTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "servers": _COMMON_SHORTCUTS,
+    "tools": _COMMON_SHORTCUTS + (("t", "test tool"),),
+    "permissions": _COMMON_SHORTCUTS + (("space", "cycle permission"),),
+    "audit": _COMMON_SHORTCUTS,
+}
 
 # T13: shared reload-worker identity between the runtime-backend-change path
 # (`handle_runtime_backend_changed`) and the manual `r` keybinding
@@ -205,16 +209,16 @@ class MCPScreen(BaseAppScreen):
         )
 
     def action_mcp_test_tool(self) -> None:
-        """`t` keybinding: switch to Tools mode and open the Test Tool panel
-        for whatever tool the inspector currently has selected.
+        """`t` keybinding: open the Test Tool panel for whatever tool the
+        inspector currently has selected.
 
-        Drives the workbench's `open_test_for_selected_tool()`, which both
-        performs the mode switch and notifies "Select a tool first." when
-        nothing is selected -- unlike `action_mcp_add_server`, there is no
-        separate screen-level mode switch here because the mode switch
-        happens inside that one method (see its own docstring). Dispatched
-        via a worker because opening the panel is async (mounts
-        `MCPSchemaForm` + Run/Close/result, mirrors `action_mcp_add_server`).
+        Drives the workbench's `open_test_for_selected_tool()`, which opens
+        the panel first and only switches to Tools mode on success (F-055)
+        -- with nothing selected it no-ops with a "Select a tool in Tools
+        mode first." hint in the CURRENT mode instead of hijacking the mode
+        and toasting there. Dispatched via a worker because opening the
+        panel is async (mounts `MCPSchemaForm` + Run/Close/result, mirrors
+        `action_mcp_add_server`).
         """
         if self.workbench is None:
             return
@@ -225,9 +229,18 @@ class MCPScreen(BaseAppScreen):
             exclusive=True,
         )
 
-    def _register_footer_shortcuts(self) -> None:
-        """Register MCP Hub shortcuts via BaseAppScreen's persisting API."""
-        self.register_footer_shortcuts(source="mcp", shortcuts=MCP_SHORTCUTS)
+    def _register_footer_shortcuts(self, mode: str | None = None) -> None:
+        """Register MCP Hub shortcuts via BaseAppScreen's persisting API.
+
+        F-055: per-mode -- the active mode's set is the one registered, so
+        the footer never advertises a key that is dead (or worse,
+        hijacking) in the current context. Re-registered on every mode
+        change (`on_mcp_workbench_mode_changed`) and on mount/resume.
+        """
+        if mode is None:
+            mode = self.workbench.active_mode if self.workbench else "servers"
+        shortcuts = MCP_MODE_SHORTCUTS.get(mode, _COMMON_SHORTCUTS)
+        self.register_footer_shortcuts(source="mcp", shortcuts=shortcuts)
 
     def _clear_footer_shortcuts(self) -> None:
         """Clear MCP Hub shortcuts from this screen's own footer."""
@@ -257,6 +270,9 @@ class MCPScreen(BaseAppScreen):
     def on_mcp_workbench_mode_changed(self, event: MCPWorkbench.ModeChanged) -> None:
         event.stop()
         self._sync_mode_chips(event.mode)
+        # F-055: keep the footer hint honest about which keys work in the
+        # mode just entered.
+        self._register_footer_shortcuts(event.mode)
 
     def save_state(self) -> dict[str, Any]:
         state = super().save_state()

@@ -3278,10 +3278,12 @@ async def test_open_test_for_selected_tool_with_no_selection_notifies():
     """T8: the `t` keybinding's workbench entry point -- with nothing
     selected in the inspector's tool-detail view, notifies instead of
     silently no-opping, mirroring `open_add_server_form()`'s T13 rationale
-    for a keybinding that can reach a state no disabled button gates. Also
-    switches to Tools mode even though nothing is selected there yet --
-    same "the keybinding always lands you in the right mode" contract as
-    `action_mcp_add_server`.
+    for a keybinding that can reach a state no disabled button gates.
+
+    F-055: it must NOT hijack the mode to get there -- the old
+    switch-first behavior force-landed the user in Tools mode with a
+    "Select a tool first." toast on top. Now the mode stays put and the
+    hint says where the working key lives.
     """
     app = ToolTestApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3293,11 +3295,11 @@ async def test_open_test_for_selected_tool_with_no_selection_notifies():
         await workbench.open_test_for_selected_tool()
         await pilot.pause()
 
-        assert workbench.active_mode == "tools"
+        assert workbench.active_mode == "servers"
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert notifications
         message, severity = notifications[-1]
-        assert message == "Select a tool first."
+        assert message == "Select a tool in Tools mode first."
         assert severity == "warning"
 
 
