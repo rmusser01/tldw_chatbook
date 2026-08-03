@@ -1,7 +1,7 @@
 ---
 id: TASK-1494
 title: The reader's full page and previous snapshot affordances were never built
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 13:30'
 labels:
