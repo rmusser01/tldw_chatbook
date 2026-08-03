@@ -270,14 +270,22 @@ def test_log_origin_ipv6_host_is_bracketed():
 def test_log_origin_never_raises_for_non_http_or_unparseable_input(url):
     """Non-http(s) scheme, hostless, and unparseable input all redact to a fixed
     sentinel and never raise -- a logging helper that can throw would turn a
-    blocked request into a crash."""
+    blocked request into a crash.
+
+    Args:
+        url: Parametrized non-http(s) or unparseable input.
+    """
     assert egress._log_origin(url) == "<invalid-url>"
 
 
 def test_egress_block_log_omits_injected_query_marker(monkeypatch):
     """AC2: a blocked fetch of a URL with a token in the query string must not
     leak that token into the log line -- assert the marker's ABSENCE, not
-    merely the presence of a redacted form."""
+    merely the presence of a redacted form.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     marker = "SECRET-TOKEN-MARKER"
     messages = []
     monkeypatch.setattr(egress.logger, "warning", messages.append)
@@ -293,7 +301,11 @@ def test_egress_block_log_omits_injected_query_marker(monkeypatch):
 
 def test_disabled_egress_log_omits_injected_query_marker(monkeypatch):
     """Same as above for the disabled-check DEBUG log site (AC3: every site,
-    not just the block path)."""
+    not just the block path).
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     marker = "SECRET-TOKEN-MARKER"
     messages = []
     monkeypatch.setattr(egress.logger, "debug", messages.append)

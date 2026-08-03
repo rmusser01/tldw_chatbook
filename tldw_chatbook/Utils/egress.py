@@ -52,10 +52,20 @@ class EgressBlockedError(Exception):
     """URL blocked by the egress policy (SSRF guard)."""
 
     def __init__(self, url: str, reason: str, detail: str = ""):
-        # ``self.url`` keeps the full URL for programmatic consumers (retry
-        # logic, callers that need the real target); the redaction boundary
-        # is str()/repr() -- what actually reaches logs and end users -- so
-        # the exception MESSAGE gets the credential-free origin label only.
+        """Build the blocked-egress error with a credential-free message.
+
+        ``self.url`` keeps the full URL for programmatic consumers (retry
+        logic, callers that need the real target); the redaction boundary
+        is ``str()``/``repr()`` -- what actually reaches logs and end
+        users -- so the exception MESSAGE gets the credential-free origin
+        label only.
+
+        Args:
+            url: The full request URL, retained verbatim on ``self.url``
+                but rendered in the message via ``_log_origin``.
+            reason: Short policy-reason slug (e.g. ``"private-ip"``).
+            detail: Optional extra context appended to the message.
+        """
         self.url = url
         self.reason = reason
         self.detail = detail
@@ -272,8 +282,17 @@ class EgressFetchError(Exception):
     """Guarded-fetch transport failure: size cap, hop cap, missing Location."""
 
     def __init__(self, message: str, url: str = ""):
-        # Same redaction boundary as EgressBlockedError: ``self.url`` keeps
-        # the full URL, the message gets the origin label only.
+        """Build the fetch-failure error with a credential-free message.
+
+        Same redaction boundary as ``EgressBlockedError``: ``self.url``
+        keeps the full URL, the message gets the origin label only.
+
+        Args:
+            message: Human-readable failure description.
+            url: Optional full request URL, retained verbatim on
+                ``self.url`` but rendered in the message via
+                ``_log_origin``.
+        """
         self.url = url
         super().__init__(f"{message}" + (f" [{_log_origin(url)}]" if url else ""))
 
