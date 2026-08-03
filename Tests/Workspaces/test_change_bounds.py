@@ -590,3 +590,57 @@ class TestNestedRepoDetection:
         (root / "small.txt").write_text("edited\n")
         records = tracker.end_turn(handle)
         assert records[0].nested_repos == ()
+
+
+class TestNestedRepoBudgetIsolation:
+    """PR #1254 Qodo round: nested content must not distort budgets."""
+
+    def test_nested_content_does_not_count_against_the_budget(self, scanroot):
+        (scanroot / "a.txt").write_bytes(b"x")
+        child = scanroot / "bigchild"
+        (child / ".git").mkdir(parents=True)
+        for i in range(50):
+            (child / f"f{i}.bin").write_bytes(b"z" * 100)
+        scan = scan_root(scanroot, max_files=10, max_total_bytes=1000)
+        assert scan.over_budget is False, (
+            "a large NESTED repo tripped the whole root's budget"
+        )
+        assert scan.files == 1
+        assert scan.nested_repos == ("bigchild",)
+
+    def test_oversized_inside_nested_is_not_disclosed(self, scanroot):
+        (scanroot / "a.txt").write_bytes(b"x")
+        child = scanroot / "child"
+        (child / ".git").mkdir(parents=True)
+        (child / "fat.bin").write_bytes(b"z" * 500)
+        scan = scan_root(scanroot, max_file_bytes=100)
+        assert scan.oversized == (), (
+            "never-trackable nested files polluted the oversize disclosure"
+        )
+
+    def test_newline_named_commitless_child_does_not_kill_tracking(
+        self, tracked
+    ):
+        import subprocess as _sp
+
+        tracker, service, root = tracked
+        evil = root / "evil\nrepo"
+        evil.mkdir()
+        _sp.run(["git", "init", "--quiet", str(evil)], check=True)
+        (evil / "inner.txt").write_text("x\n")
+
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.tracking_error == "", (
+            "an unexcludable commitless child killed tracking for the root"
+        )
+        assert "evil\nrepo" in rec.nested_repos
+        repo = service.repo_for_root(root)
+        changed = {c.path for c in repo.changed_files(rec.baseline_sha, rec.end_sha)}
+        assert "small.txt" in changed
+        assert not any("inner.txt" in p for p in changed)

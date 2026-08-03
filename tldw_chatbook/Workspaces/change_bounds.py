@@ -154,6 +154,12 @@ def scan_root(
                 nested.append(Path(dirpath).relative_to(root).as_posix())
             except ValueError:  # pragma: no cover -- walk stays inside
                 pass
+            # Qodo #1254 finding 4: nothing under a nested repo is ever
+            # trackable, so none of it may count against the root's budget
+            # or pollute the oversize disclosure -- do not descend, do not
+            # count its files.
+            dirnames[:] = []
+            continue
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR_NAMES]
         for name in filenames:
             path = Path(dirpath) / name
