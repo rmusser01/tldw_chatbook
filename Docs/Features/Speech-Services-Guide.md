@@ -479,10 +479,10 @@ or mouse required once it's running.
 
 **Entering and exiting.** Say **"Console, hands free."** while a capture is
 already open (the current capture becomes the loop's first turn — nothing
-you already dictated is lost), or press **`Alt+H`** at any time, from an
+you already dictated is lost), or press **`Ctrl+Shift+H`** at any time, from an
 open capture or from idle (idle opens a fresh capture).
 
-To leave the loop, **`Alt+H`** again, **Esc**, or the mic button work from
+To leave the loop, **`Ctrl+Shift+H`** again, **Esc**, or the mic button work from
 **any point** in the loop (mid-listen, mid-countdown, while the reply is
 still generating, or while it is being spoken) and return the Console to
 its ordinary, pre-loop behavior. While the loop is running, **Esc takes
@@ -561,7 +561,7 @@ package installed, hands-free still opens the microphone and dictates, but
 the pause-to-send countdown and any voice-triggered barge-in never fire (the
 same limitation the plain Console dictation capture already has in this
 mode — see "Choreography and latency" above); a warning explains this the
-moment you enter the loop in that state. Use the mic button, Esc, `Alt+H`,
+moment you enter the loop in that state. Use the mic button, Esc, `Ctrl+Shift+H`,
 or spoken "Console, stop." to end a turn manually instead.
 
 **What actually speaks the reply.** Reply speech goes out through each
@@ -836,7 +836,7 @@ service.start_dictation(
 - `Ctrl+Shift+C`: Clear transcript
 
 ### Console Hands-Free Loop
-- `Alt+H`: Enter the hands-free conversation loop (from idle or an open
+- `Ctrl+Shift+H`: Enter the hands-free conversation loop (from idle or an open
   capture), or exit it if already running.
 - `Esc` / mic button / spoken "Console, stop.": Exit the loop from any
   state — see "Hands-Free Conversation Loop" above.

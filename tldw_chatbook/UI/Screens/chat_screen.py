@@ -757,7 +757,7 @@ _VOICE_ACK_NOTHING_TO_INSERT = "Nothing to insert."
 CONSOLE_HANDS_FREE_DEGRADED_MESSAGE = (
     "Hands-free is degraded: voice-activity detection (webrtcvad) is not "
     "installed, so it cannot auto-send on a pause or hear a spoken barge-in. "
-    "Use the mic button, \"Console, stop.\", or Esc/alt+h to end a turn."
+    "Use the mic button, \"Console, stop.\", or Esc/ctrl+shift+h to end a turn."
 )
 
 
@@ -1735,8 +1735,12 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
+        # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
+        # key, which types a composed character (˙) unless the profile
+        # opts into Option-as-Meta -- the first live gate hit exactly that.
+        # ctrl+shift+<letter> follows the existing ctrl+shift+p precedent.
         Binding(
-            "alt+h",
+            "ctrl+shift+h",
             "toggle_console_hands_free",
             "Hands-free",
             show=True,
@@ -5816,7 +5820,7 @@ class ChatScreen(BaseAppScreen):
             # auto-send (`VoiceSpeechResumed`/mid-capture `VoiceFinal`
             # never fire without webrtcvad -- see this event's own
             # docstring) will not work; only a manual mic press, spoken
-            # "stop", or Esc/alt+h will ever end a turn.
+            # "stop", or Esc/ctrl+shift+h will ever end a turn.
             self._console_hands_free_vad_degraded = True
             if not getattr(
                 self.app_instance, "_console_dictation_vad_unavailable_notified", False
@@ -5932,7 +5936,7 @@ class ChatScreen(BaseAppScreen):
     #: it, not match it exactly). Giving up here is a safe failure mode: no
     #: `on_capture_ended` is delivered at all, so the FSM's own bookkeeping
     #: is never told something that did not (yet) happen, and the user can
-    #: still exit manually (Esc/mic/alt+h/spoken "stop").
+    #: still exit manually (Esc/mic/ctrl+shift+h/spoken "stop").
     _CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS: float = 40.0
 
     async def _deliver_console_hands_free_capture_ended(
@@ -7085,7 +7089,7 @@ class ChatScreen(BaseAppScreen):
     # ------------------------------------------------------------------
 
     def action_toggle_console_hands_free(self) -> None:
-        """`alt+h`: enter the hands-free loop, or exit it if already running."""
+        """`ctrl+shift+h`: enter the hands-free loop, or exit it if already running."""
         if self._console_hands_free is not None:
             self._console_hands_free.controller.on_exit_request()
             return
