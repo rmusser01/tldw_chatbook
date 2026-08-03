@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -27,6 +27,16 @@ from Tests.UI.test_destination_shells import (
     _wait_for_wc_snapshot,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _wait_for_library_rag_query_ready,
+    _wait_for_library_shell,
+    _wait_for_selector,
+)
+from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 
@@ -281,3 +291,121 @@ async def test_personas_default_state_disables_false_console_handoff() -> None:
         visible_text = _visible_text(screen)
         assert "Console blocked: select an item" in visible_text
         assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_library_rag_mode_dependency_missing_state_names_install_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase-1.6 re-add (task-14, RAG UX v2 PR-2): the SearchRAGWindow
+    dependency-missing exemplar this file used to carry.
+
+    PR #1258 (task 7b470c344) retired the standalone Search screen and
+    deleted that exemplar outright rather than mechanically re-pointing it
+    -- SearchRAGWindow's harness (a bare widget mount) has no equivalent
+    against the Library RAG panel (a full rail-shell screen). The
+    retirement commit flagged re-adding equivalent coverage against
+    Library's RAG panel as backlog; this is that re-add, against the sole
+    surviving Search/RAG surface. Uses ``LibraryHarness`` (the Library
+    screen's own dedicated harness from ``test_library_shell``), not the
+    generic ``DestinationHarness`` this file otherwise uses, so the panel
+    mounts exactly as production wires it and the flow reaches
+    ``LibraryScreen._start_library_rag_query`` the same way a live rail
+    press -> mode toggle -> Run press would.
+
+    Task 13 (625a20a16) taught the RAG-unavailable recovery copy to name
+    the pip extra to install; this test pins that exact copy so a future
+    revert of Task 13 fails here.
+
+    Two assertions, not one: the failure path (RAG mode renders the
+    recovery copy, install hint included) AND the positive control
+    (keyword "search" mode -- the default canvas mode -- still returns
+    real results with the same deps missing). The recovery copy's own
+    "or switch mode to Search" escape clause only means something if
+    keyword mode genuinely keeps working when the embeddings deps are
+    gone; a test that only checked the failure path would let a
+    regression that broke that escape hatch pass silently.
+    """
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "embeddings_rag_deps_installed",
+        lambda: False,
+    )
+
+    app = _build_test_app()
+    assert getattr(app, "_rag_service", None) is None
+    _seed_conversations(
+        app,
+        [
+            {
+                "title": "Planning Chat",
+                "conversation_id": "chat-1",
+                "message_count": 2,
+                "updated_at": "2026-06-01T10:00:00Z",
+            }
+        ],
+        notes=[
+            {
+                "title": "Quarterly Retention Policy",
+                "id": "note-1",
+                "content": "Applies to all local archives.",
+            }
+        ],
+    )
+    host = LibraryHarness(app)
+    query = "Quarterly"
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        # --- Positive control: keyword ("search") mode, the default
+        # canvas mode, must keep returning real results -- it never
+        # touches the RAG runtime the deps gate blocks.
+        assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
+            "mode: Search ▸"
+        )
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_library_rag_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        assert not screen.query("#library-rag-service-error")
+        assert "Quarterly Retention Policy" in _visible_text(screen)
+
+        # --- Failure path: cycle to RAG mode and run the same query.
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(150):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        await _wait_for_library_rag_query_ready(screen, pilot, query)
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        assert run_button.disabled is False
+
+        run_button.press()
+        await _wait_for_selector(screen, pilot, "#library-rag-service-error")
+
+        visible_text = _visible_text(screen)
+        assert "RAG unavailable" in visible_text
+        # The display sanitizer's ``escape_markup`` pass backslash-escapes
+        # the opening "[" (same reason ``library-rag-history-*`` labels
+        # escape entries -- unescaped, Rich would try to parse
+        # "[embeddings_rag]" as a style tag); the backslash resolves away
+        # at real paint time and is not visible to the user, but
+        # ``_visible_text`` reads ``.renderable`` directly, before that
+        # resolution. Mirrors
+        # ``test_product_maturity_gate16_library_search_rag.py``'s Task 13
+        # assertion for the same copy.
+        assert (
+            'Install RAG support: pip install "tldw_chatbook\\[embeddings_rag]", '
+            "then restart, or switch mode to Search." in visible_text
+        )
+        assert "Recovery: Settings &gt; RAG." in visible_text
