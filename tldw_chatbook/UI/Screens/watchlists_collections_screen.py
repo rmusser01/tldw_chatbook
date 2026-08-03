@@ -6797,7 +6797,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 markup=False,
             )
             return
-        index = 0 if which == "full_page" else 1
+        # Closed vocabulary, refused rather than defaulted (task-1494 Qodo):
+        # an unrecognized `which` silently treated as "previous" would open
+        # the WRONG snapshot after a typo'd/future caller, with a misleading
+        # toast on the absent case. Type-only log; nothing user-derived.
+        _SNAPSHOT_INDEX = {"full_page": 0, "previous": 1}
+        index = _SNAPSHOT_INDEX.get(which)
+        if index is None:
+            logger.warning(
+                f"ViewSnapshotRequested with unknown which={which!r}; refusing."
+            )
+            return
         if index >= len(snapshots):
             self._notify_watchlists(
                 "No page snapshot saved yet for this item."

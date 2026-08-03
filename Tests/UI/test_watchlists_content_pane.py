@@ -2025,16 +2025,16 @@ def _seed_change_item_with_snapshots(db, *, snapshot_rows):
             run_id=None,
             now="2026-07-28T09:00:00+00:00",
         )
-    for content_hash, extracted_content, created_at in snapshot_rows:
-        db.conn.execute(
-            """
-            INSERT INTO url_snapshots
-                (subscription_id, url, content_hash, extracted_content, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (source_id, url, content_hash, extracted_content, created_at),
-        )
-    db.conn.commit()
+    with db.transaction() as conn:
+        for content_hash, extracted_content, created_at in snapshot_rows:
+            conn.execute(
+                """
+                INSERT INTO url_snapshots
+                    (subscription_id, url, content_hash, extracted_content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (source_id, url, content_hash, extracted_content, created_at),
+            )
     return source_id, url
 
 

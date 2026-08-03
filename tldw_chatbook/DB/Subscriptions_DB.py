@@ -1864,18 +1864,21 @@ class SubscriptionsDB(BaseDB):
             -- newest first. Empty when this (subscription, url) pair has no
             stored snapshot at all.
         """
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, extracted_content, created_at
-            FROM url_snapshots
-            WHERE subscription_id = ? AND url = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?
-            """,
-            (subscription_id, url, limit),
-        )
-        return [dict(row) for row in cursor.fetchall()]
+        # `transaction()` like the sibling reads (`get_item_status` above):
+        # this file's convention, unlike some other DB modules (task-1494
+        # Qodo round).
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, extracted_content, created_at
+                FROM url_snapshots
+                WHERE subscription_id = ? AND url = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (subscription_id, url, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def mark_item_status(
         self,

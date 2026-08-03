@@ -680,15 +680,15 @@ def _insert_snapshot(db, *, subscription_id, url, content_hash, extracted_conten
     precisely, including same-timestamp ties, and the default has only
     one-second resolution.
     """
-    db.conn.execute(
-        """
-        INSERT INTO url_snapshots
-            (subscription_id, url, content_hash, extracted_content, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (subscription_id, url, content_hash, extracted_content, created_at),
-    )
-    db.conn.commit()
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO url_snapshots
+                (subscription_id, url, content_hash, extracted_content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (subscription_id, url, content_hash, extracted_content, created_at),
+        )
 
 
 def test_get_url_snapshots_returns_newest_then_second_newest(db):
