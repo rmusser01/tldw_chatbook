@@ -233,6 +233,92 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
     )
 
 
+# --- Task 11: quiet no-match state (RAG-33) ---------------------------------
+
+
+def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
+    """(RAG-33/Task 11) A routine "your library has nothing matching this
+    query" search (`retrieval_status == "empty"`) renders the quiet-line
+    idiom (`.library-rag-quiet-line`, already used by the empty-query and
+    no-scope gates) instead of the retired Unavailable/Why/Next/Recovery/
+    Owner dump -- but a REAL failure at the same render seam
+    (`retrieval_status == "failed"`: missing dependencies, empty index,
+    provider unavailable, policy denial) still renders that dump verbatim,
+    because the user genuinely has to act on infrastructure there."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    empty_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="unicorn migration guide",
+        retrieval_status="empty",
+    )
+    empty_children = library_rag_results_body_children(empty_state)
+    assert len(empty_children) == 1
+    quiet_static = empty_children[0]
+    assert quiet_static.id == "library-rag-empty-state"
+    assert quiet_static.has_class("library-rag-quiet-line")
+    quiet_text = str(quiet_static.renderable)
+    assert quiet_text == (
+        "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+    )
+    for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+        assert jargon not in quiet_text
+
+    # Real failure: same render seam, different retrieval_status -> the
+    # full recovery dump is unchanged.
+    failed_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="unicorn migration guide",
+        retrieval_status="failed",
+    )
+    failed_children = library_rag_results_body_children(failed_state)
+    assert len(failed_children) == 1
+    dump_static = failed_children[0]
+    assert dump_static.id == "library-rag-service-error"
+    assert not dump_static.has_class("library-rag-quiet-line")
+    dump_text = str(dump_static.renderable)
+    assert "Owner: Library retrieval." in dump_text
+    assert "Unavailable: Library Search/RAG retrieval." in dump_text
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> (
+    None
+):
+    """(RAG-33/Task 11) Full plumbing: a real zero-row service outcome
+    renders the quiet two-line no-match state, not the six-line dump the
+    2026-07 UAT flagged (critique RAG-33)."""
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = StaticLibraryRagSearchService([])
+    app.library_rag_search_service = service
+    host = DestinationHarness(app, "library")
+    query = "unicorn migration guide"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-empty-state")
+
+        quiet_line = screen.query_one("#library-rag-empty-state", Static)
+        assert quiet_line.has_class("library-rag-quiet-line")
+
+        visible_text = _visible_text(screen)
+        assert "No evidence matched 'unicorn migration guide'." in visible_text
+        assert "Try broader terms" in visible_text
+        assert "Owner:" not in visible_text
+        assert "Unavailable:" not in visible_text
+        assert len(screen.query("#library-rag-service-error")) == 0
+
+
 def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
     result = LibraryRagResultRow.from_result(
         {

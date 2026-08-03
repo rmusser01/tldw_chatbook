@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagScopeState,
     library_rag_all_matches_weak,
     library_rag_coverage_note,
+    library_rag_empty_state_quiet_copy,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -1058,3 +1059,60 @@ class TestLibraryRagCoverageNote:
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]}
         }
         assert library_rag_coverage_note(diagnostics, ()) == ""
+
+
+class TestLibraryRagEmptyStateQuietCopy:
+    """(RAG-33/Task 11) `library_rag_empty_state_quiet_copy` builds the
+    Evidence region's quiet two-line no-match copy, replacing the retired
+    Unavailable/Why/Next/Recovery/Owner dump for the routine "your library
+    has nothing matching this query" case."""
+
+    def test_two_line_copy_quotes_the_query_with_no_dump_language(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(notes=1, media=1)
+        copy = library_rag_empty_state_quiet_copy("unicorn migration guide", scope)
+        assert copy == (
+            "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+        )
+        for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+            assert jargon not in copy
+
+    def test_escapes_rich_markup_in_the_query(self) -> None:
+        """Precedent: the history-row builder escapes stored queries before
+        handing them to a `Static`/`Button` (a raw `[bold]x[/]` would either
+        inject markup or raise `MarkupError`); this is the other place the
+        panel renders raw query text, so it must do the same. A single
+        bracket pair like "[bold]x" round-trips as a substring of its own
+        escaped form (the closing `]` is never escaped) -- a tag with an
+        explicit close, as the provenance-label precedent test uses, is
+        the form that actually proves escaping happened."""
+        scope = LibraryRagScopeState.from_source_counts(notes=1)
+        copy = library_rag_empty_state_quiet_copy("[bold]spoof[/]", scope)
+        assert "[bold]spoof[/]" not in copy
+        assert r"\[bold]spoof\[/]" in copy
+
+    def test_second_line_offers_to_turn_on_sources_still_switched_off(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=1, media=1, selected=("notes",)
+        )
+        copy = library_rag_empty_state_quiet_copy("cake", scope)
+        assert copy.endswith("Try broader terms or turn on more sources.")
+
+    def test_second_line_stays_constant_when_no_more_sources_exist_to_enable(
+        self,
+    ) -> None:
+        """Every available source is already selected -- offering to "turn
+        on more sources" would be a false claim, so the line drops that
+        clause instead of showing it regardless of whether it's true."""
+        scope = LibraryRagScopeState.from_source_counts(notes=1, media=1)
+        copy = library_rag_empty_state_quiet_copy("cake", scope)
+        assert copy.endswith("Try broader terms.")
+        assert "turn on" not in copy
+
+    def test_clamps_a_very_long_query_at_a_word_boundary(self) -> None:
+        scope = LibraryRagScopeState.from_source_counts(notes=1)
+        long_query = "word " * 60
+        copy = library_rag_empty_state_quiet_copy(long_query, scope)
+        first_line = copy.splitlines()[0]
+        assert first_line.startswith("No evidence matched 'word")
+        assert first_line.endswith("…'.")
+        assert len(first_line) < len(long_query)

@@ -92,9 +92,13 @@ Each hit is one block:
   evidence"** and an inline **"Use in Console"** button appears beside it.
 
 Before any search the region shows "No evidence yet. Run Search/RAG to
-populate results." A search with no matches reports "No evidence matched
-the current query" and suggests "Revise the query or broaden the source
-scope".
+populate results." A search that runs cleanly but finds nothing is a quiet
+two-line note, not an error: "No evidence matched '\<your query>'." then
+"Try broader terms." (or "Try broader terms or turn on more sources." when
+a real source is still toggled off). A genuine retrieval failure — missing
+dependencies, an empty index, no provider, a policy block — is louder: a
+**"Blocked | \<reason>"** callout plus the full Why / Next / Recovery /
+Owner block described above.
 
 In RAG Answer mode, when results land but the semantic query didn't
 actually touch one of your selected sources (or every hit's match is weak),

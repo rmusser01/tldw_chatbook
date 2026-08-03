@@ -71,6 +71,11 @@ LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
 # live UAT found a low-relevance result rendering 25+ unclamped lines and
 # burying later results (RAG-30/31). `snippet` itself is never clamped.
 LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS = 320
+# The Evidence region's quiet no-match line (RAG-33/Task 11) quotes the
+# submitted query inline in one sentence -- a far shorter budget than the
+# snippet clamp above, since this needs to stay a single row, not a
+# multi-line card.
+LIBRARY_RAG_EMPTY_QUERY_QUOTE_MAX_CHARS = 80
 LIBRARY_RAG_TOP_K_MAX = 50
 # Match-band thresholds (RAG-34): honest bands instead of a raw
 # three-decimal cosine score. Both boundaries are inclusive on their upper
@@ -629,6 +634,58 @@ def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
         _source_type_display_label(source_type) for source_type in off_types
     )
     return f"Scope: {selected_labels} ({off_labels} off)"
+
+
+def library_rag_empty_state_quiet_copy(query: str, scope: LibraryRagScopeState) -> str:
+    """Return the Evidence region's quiet no-match copy (RAG-33/Task 11).
+
+    Live UAT (critique RAG-33): a routine "your library has nothing
+    matching this query" search rendered the full Unavailable/Why/Next/
+    Recovery/Owner dump, ending in the internal-process line "Owner:
+    Library retrieval" -- ceremony for what is honestly one sentence. The
+    render seam (`library_rag_results_body_children` in
+    `library_search_rag_panel.py`) reserves this quiet copy for the
+    routine no-match case only (`retrieval_status == "empty"`); real
+    failures (missing dependencies, empty index, provider unavailable,
+    policy denial) still render the full recovery dump -- this function
+    does NOT build that dump and is never called for those statuses.
+
+    The second line adapts to whether a real, available Library source is
+    still switched off (RAG-27/B2 toggles): when one is, "turn on more
+    sources" is true, actionable advice; when every available source is
+    already selected, offering to enable sources that don't exist would be
+    a false claim -- this project's established honesty bar for retrieval
+    copy (RAG-29's coverage note, RAG-34's match bands) -- so that clause
+    is dropped rather than shown regardless of whether it's true.
+
+    Args:
+        query: The submitted query (`LibraryRagQueryState.query`, already
+            sanitized/collapsed plain text). Escaped and clamped for
+            display here -- this is the one place in the panel that
+            renders raw query text inside a `Static` rather than passing
+            it through as an `Input` value or an already-escaped history
+            `Button` label (mirrors that builder's rich-markup escaping,
+            e.g. a query of `[bold]x` must not inject markup).
+        scope: Current source-scope display state, consulted only to
+            check whether a real source is still switched off.
+
+    Returns:
+        Two-line quiet copy: `"No evidence matched '<query>'."` then the
+        adaptive follow-up line, joined by a single newline.
+    """
+    display_query = _clamp_display_text(query, LIBRARY_RAG_EMPTY_QUERY_QUOTE_MAX_CHARS)
+    escaped_query = escape_markup(display_query)
+    has_more_sources = any(
+        scope.option_by_type(source_type).available
+        for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+        if source_type not in scope.selected_source_types
+    )
+    second_line = (
+        "Try broader terms or turn on more sources."
+        if has_more_sources
+        else "Try broader terms."
+    )
+    return f"No evidence matched '{escaped_query}'.\n{second_line}"
 
 
 @dataclass(frozen=True)

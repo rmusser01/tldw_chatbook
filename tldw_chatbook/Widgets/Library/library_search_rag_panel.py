@@ -16,6 +16,7 @@ from ...Library.library_rag_state import (
     LibraryRagResultRow,
     LibraryRagScopeState,
     LibraryRagSourceOption,
+    library_rag_empty_state_quiet_copy,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -373,6 +374,18 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     recovery copy, or empty-state guidance, depending on retrieval status
     and result count.
 
+    The `retrieval_status == "empty"` case (RAG-33/Task 11: a routine
+    "your library has nothing matching this query" search) renders the
+    quiet two-line `library_rag_empty_state_quiet_copy` instead of
+    `state.recovery_copy`'s full Unavailable/Why/Next/Recovery/Owner
+    dump -- that dump is reserved for real failures (`"blocked"`/
+    `"failed"`: missing dependencies, empty index, provider unavailable,
+    policy denial), which still render it verbatim because the user
+    genuinely has to act on infrastructure there. Both branches keep
+    `state.recovery_selector` as the rendered `Static`'s id, so existing
+    selectors (`#library-rag-empty-state`, `#library-rag-service-error`)
+    are unaffected.
+
     Args:
         state: Current Library Search/RAG panel display state.
 
@@ -413,6 +426,16 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
             )
         ]
     if state.recovery_copy and state.recovery_selector:
+        if state.retrieval_status == "empty":
+            return [
+                Static(
+                    library_rag_empty_state_quiet_copy(
+                        state.query_state.query, state.scope
+                    ),
+                    id=state.recovery_selector,
+                    classes="library-rag-quiet-line",
+                )
+            ]
         return [Static(state.recovery_copy, id=state.recovery_selector)]
     if not state.scope.has_available_sources:
         # No Library sources at all: the scope region's single quiet gate
