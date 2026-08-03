@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
+import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.permission_store import (
@@ -38,6 +39,10 @@ from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -143,6 +148,55 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
         canvas = app.query_one(MCPServersMode)
         assert canvas.query_one("#mcp-servers-overview").display
+
+
+class WorkbenchAppWithBundledCSS(WorkbenchApp):
+    """WorkbenchApp under the real bundled stylesheet, so bundle-layer rules
+    (e.g. `.ds-status-badge { height: 1; }` in _agentic_terminal.tcss) apply
+    exactly as in the live app -- mirrors `CanvasAppWithBundledCSS` in
+    test_mcp_servers_mode.py."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+
+@pytest.mark.asyncio
+async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
+    """F-057: below ~120 cols the hub must not silently lose primary
+    content -- the summary wraps (the bundle's `.ds-status-badge`
+    `height: 1` used to clip it mid-sentence), the overview table switches
+    to a compact column set that fits the viewport (dropped columns' facts
+    stay one click away in the detail pane), primary actions stay on
+    screen, and rail rows truncate with an ellipsis instead of cropping
+    mid-word."""
+    # Deterministic builtin state (off/opt-in -> the Enable affordance).
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = WorkbenchAppWithBundledCSS()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Summary wraps to multiple lines instead of clipping at one.
+        summary = app.query_one("#mcp-overview-summary", Static)
+        assert summary.region.height >= 2
+        # Compact columns: everything shown fits the viewport -- no column
+        # silently lost behind horizontal overflow.
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert [str(c.label) for c in table.ordered_columns] == [
+            "Name",
+            "Status",
+            "Tools",
+        ]
+        assert table.max_scroll_x == 0
+        # Primary actions stay reachable.
+        assert app.query_one("#mcp-add-server", Button).region.width > 0
+        assert app.query_one("#mcp-builtin-enable", Button).region.width > 0
+        # The built-in rail row truncates with an ellipsis (honest
+        # truncation) rather than cropping mid-word.
+        rows = list(app.query("Button.mcp-rail-row"))
+        assert "..." in str(rows[1].label)
 
 
 class ProblemRecordsService(FakeHubService):

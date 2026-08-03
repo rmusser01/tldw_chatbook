@@ -210,6 +210,11 @@ _LEGACY_SECTIONS = [
     ("Advanced", "advanced"),
 ]
 
+# F-057: terminal-width threshold (cols) below which `#mcp-hub-grid` gets
+# the `.mcp-compact` class and the triad rebalances toward the canvas (see
+# DEFAULT_CSS and its _agentic_terminal.tcss mirror).
+_COMPACT_WIDTH = 120
+
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
 # the short verb used throughout `_in_flight_action`/notifications. Maps to
 # the typed T2 methods on `UnifiedMCPControlPlaneService` -- each raises with
@@ -425,6 +430,27 @@ class MCPWorkbench(Container):
         min-width: 38;
         height: 100%;
         min-height: 0;
+    }
+    /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
+    `on_resize`) the triad rebalances toward the canvas so the servers
+    table keeps its primary columns in-viewport; the rail/inspector take
+    narrower shares + min-widths (their content wraps/truncates honestly --
+    see #mcp-inspector-state's wrap override and MCPRail's width-aware row
+    truncation budget). Bare-harness copy; the REAL app gets the identical
+    rules from _agentic_terminal.tcss (app-tier CSS beats widget
+    DEFAULT_CSS on ties in this Textual version -- the established lockstep
+    pattern documented there). */
+    #mcp-hub-grid.mcp-compact #mcp-hub-rail {
+        width: 2fr;
+        min-width: 16;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
+        width: 7fr;
+        min-width: 30;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
+        width: 2fr;
+        min-width: 20;
     }
     """
 
@@ -676,7 +702,6 @@ class MCPWorkbench(Container):
 
     def on_mount(self) -> None:
         """Mount now, load after (TASK-1320).
-
         This is deliberately SYNCHRONOUS. Textual awaits a widget's `on_mount`
         as part of mounting, and the app awaits the whole mount inside its own
         `NavigateToScreen` handler -- so awaiting the service here awaited it on
@@ -710,6 +735,31 @@ class MCPWorkbench(Container):
         # Vertical(id='mcp-perm-server-profiles') is mounted"). Deferring one
         # refresh puts the load after the subtree has settled.
         self.call_after_refresh(self._start_initial_load)
+        # F-057: set the initial compact-mode class once the first layout
+        # gives the grid a real width (`on_resize` keeps it current after).
+        self.call_after_refresh(self._sync_compact_class)
+
+    def on_resize(self) -> None:
+        """F-057: keep the compact-mode class in step with the grid's width."""
+        self._sync_compact_class()
+
+    def _sync_compact_class(self) -> None:
+        """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
+
+        The class drives the triad-rebalancing rules in DEFAULT_CSS (and
+        their _agentic_terminal.tcss mirror): narrower rail/inspector
+        shares so the canvas keeps its primary columns in-viewport. Width
+        0 (pre-layout) means "not compact" -- the full triad renders first
+        and the first real resize corrects it.
+        """
+        try:
+            grid = self.query_one("#mcp-hub-grid")
+        except Exception:
+            # Pre-compose (or a torn-down subtree during unmount) -- nothing
+            # to toggle yet; the post-mount call_after_refresh covers it.
+            return
+        width = self.size.width
+        grid.set_class(0 < width < _COMPACT_WIDTH, "mcp-compact")
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""

@@ -421,11 +421,14 @@ class MCPInspector(Vertical):
         min-height: 0;
     }
     /* F-054: let the empty-state/badge line WRAP at narrow widths instead
-    of clipping mid-word -- the shared `.ds-status-badge` rule
-    (_agentic_terminal.tcss) pins `height: 1`, which cut the teaching copy
-    off at 100x30. This ID selector beats the class rule on specificity;
-    every other `.ds-status-badge` consumer keeps the fixed height. */
+    of clipping mid-word -- the shared `.ds-status-badge` rule pins
+    `height: 1`. This override covers the bare test harnesses that never
+    load the app bundle; the REAL app gets the identical rule from
+    _agentic_terminal.tcss (app-tier CSS beats widget DEFAULT_CSS on ties
+    in this Textual version, so the bundle carries its own copy -- the
+    established lockstep pattern documented there). */
     #mcp-inspector-state {
+        width: 1fr;
         height: auto;
         min-height: 1;
     }

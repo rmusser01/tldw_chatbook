@@ -52,6 +52,54 @@ _TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
 # rather than growing the callout list without bound.
 _CALLOUT_CAP = 4
 
+# F-057: column drop order when the overview table is too narrow for its
+# full column set -- lowest priority first. Name/Status are never dropped
+# (identity + readiness are the table's primary content); the dropped
+# columns' facts remain one click away in the detail pane.
+_COLUMN_DROP_PRIORITY = ("Auth", "Connection")
+
+
+def _fit_columns(
+    snapshots: list[ReadinessSnapshot], *, show_scope: bool, available: int
+) -> list[str]:
+    """Choose the overview table's column set for its rendered width (F-057).
+
+    Estimates each column's rendered width as its longest content string
+    (header or cell, the same plain strings the cells are built from) plus
+    DataTable's per-cell padding, and drops columns in
+    `_COLUMN_DROP_PRIORITY` order until the set fits `available`. Name and
+    Status are always kept. An unknown width (`available <= 0`, e.g. before
+    the first layout) keeps the full per-source set.
+    """
+    columns = list(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE)
+    if available <= 0:
+        return columns
+
+    cell_text: dict[str, Any] = {
+        "Name": lambda s: s.label,
+        "Connection": lambda s: s.transport,
+        "Status": lambda s: s.badge_text(),
+        "Tools": lambda s: "—" if s.tool_count is None else str(s.tool_count),
+        "Auth": lambda s: s.auth_display,
+        "Scope": lambda s: s.scope_display,
+    }
+
+    def fits(candidate: list[str]) -> bool:
+        total = 0
+        for column in candidate:
+            longest = max(
+                [len(column)] + [len(cell_text[column](snap)) for snap in snapshots]
+            )
+            total += longest + 2  # DataTable per-cell padding
+        return total <= available
+
+    while not fits(columns) and len(columns) > 2:
+        droppable = next((c for c in _COLUMN_DROP_PRIORITY if c in columns), None)
+        if droppable is None:
+            break
+        columns.remove(droppable)
+    return columns
+
 # `_named_items_text()`'s "show at most this many names, then '+N more'"
 # cap -- pulled out to a named constant (was three inline `8` literals) so
 # the truncation point and the "how many are left" arithmetic can't drift
@@ -177,8 +225,17 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
     #mcp-overview-summary-glyph {
         width: 2;
     }
+    /* F-057: let the aggregate sentence WRAP at narrow widths instead of
+    clipping mid-sentence -- the shared `.ds-status-badge` rule pins
+    `height: 1`. This override covers the bare test harnesses that never
+    load the app bundle; the REAL app gets the identical rule from
+    _agentic_terminal.tcss (app-tier CSS beats widget DEFAULT_CSS on ties
+    in this Textual version, so the bundle carries its own copy -- the
+    established lockstep pattern documented there). */
     #mcp-overview-summary {
         width: 1fr;
+        height: auto;
+        min-height: 1;
     }
     """
 
@@ -270,6 +327,29 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # `on_button_pressed` translate a callout click back to the
         # server_key to select.
         self._callout_keys: list[str] = []
+        # F-057: the table width the current column set was fitted to
+        # (0 = never fitted) -- `on_resize` refits only on real changes.
+        self._table_width: int = 0
+
+    def on_resize(self) -> None:
+        """F-057: refit the overview's column set when the table's rendered
+        width changes (terminal resize, compact-mode rebalance). The first
+        fit at mount ran pre-layout (width 0 = full set); this is what
+        corrects it once the real width is known."""
+        table = self.query_one("#mcp-servers-table", DataTable)
+        width = table.region.width
+        if width > 0 and width != self._table_width:
+            self._table_width = width
+            self.run_worker(
+                self.update_overview(
+                    self._snapshots,
+                    source=self._source,
+                    mutations_available=self._mutations_available,
+                    mutation_target_label=self._mutation_target_label,
+                ),
+                group="mcp-overview-refit",
+                exclusive=True,
+            )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -524,6 +604,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         glyph.add_class(STATE_CSS_CLASSES[worst])
         glyph.update(STATE_GLYPHS[worst])
         table = self.query_one("#mcp-servers-table", DataTable)
+        # F-057: remember the width this call fitted its columns to, so
+        # `on_resize` only refits when the rendered width actually changed.
+        self._table_width = table.region.width
+        # Task 11: per-source columns -- Local (built-in + local profiles)
+        # has no meaningful Scope (stdio-only / always "Personal"), so the
+        # column is omitted there rather than rendering a column of dashes.
+        # Columns are rebuilt from scratch every call (not just when the
+        # set actually changes) -- simpler than tracking the previously
+        # rendered column set, and this only runs on an actual overview
+        # resync, not per keystroke.
         # Task 11: per-source columns -- Local (built-in + local profiles)
         # has no meaningful Scope (stdio-only / always "Personal"), so the
         # column is omitted there rather than rendering a column of dashes.
@@ -532,12 +622,23 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # rendered column set, and this only runs on an actual overview
         # resync, not per keystroke.
         show_scope = source != "local"
+        # F-057: at narrow widths the full column set overflows the
+        # viewport and the right-most columns silently vanish behind the
+        # DataTable's horizontal scroll. Drop the lowest-priority columns
+        # (Auth, then Connection) until the estimated content fits the
+        # table's current rendered width -- Name/Status always stay, and
+        # the dropped facts remain one click away in the detail pane
+        # (env/credential lines, `Connection · ...`). Unknown width (0,
+        # pre-layout) keeps the full set, matching pre-F-057 behavior.
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
         self.repopulating_table()
         table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE))
+        columns = _fit_columns(
+            self._snapshots, show_scope=show_scope, available=table.region.width
+        )
+        table.add_columns(*columns)
         seen_keys: set[str] = set()
         self._row_key_to_server_key = {}
         for snap in self._snapshots:
@@ -571,16 +672,17 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # cell (glyph + word together, one string), mirroring
             # `mcp_rail.py`'s row Buttons, which already color both the
             # same way via `STATE_CSS_CLASSES`.
-            row_cells: list[Any] = [
-                Text(snap.label),
-                snap.transport,
-                state_text(snap.badge_text(), _readiness_kind(snap.state)),
-                "—" if snap.tool_count is None else str(snap.tool_count),
-                Text(snap.auth_display),
-            ]
-            if show_scope:
-                row_cells.append(Text(snap.scope_display))
-            table.add_row(*row_cells, key=row_key)
+            row_cells_by_name: dict[str, Any] = {
+                "Name": Text(snap.label),
+                "Connection": snap.transport,
+                "Status": state_text(snap.badge_text(), _readiness_kind(snap.state)),
+                "Tools": "—" if snap.tool_count is None else str(snap.tool_count),
+                "Auth": Text(snap.auth_display),
+                "Scope": Text(snap.scope_display),
+            }
+            table.add_row(
+                *(row_cells_by_name[column] for column in columns), key=row_key
+            )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
         callout_widgets: list[Widget] = []
