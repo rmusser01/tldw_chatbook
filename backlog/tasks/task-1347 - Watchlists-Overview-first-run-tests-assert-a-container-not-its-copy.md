@@ -1,7 +1,7 @@
 ---
 id: TASK-1347
 title: Watchlists Overview first-run tests assert a container, not its copy
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
