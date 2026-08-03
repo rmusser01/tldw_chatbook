@@ -1,5 +1,5 @@
 """Console status-pill strip (provider/model/assistant/RAG/source/tool/approval)
-plus the retrieval-scope chip.
+plus the retrieval-scope and cost chips.
 
 Extracted from ConsoleControlBar so the pills can render in their own strip
 directly above the composer. The widget owns the chip classes, the chip
@@ -19,6 +19,7 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
@@ -195,6 +196,30 @@ class ConsoleTemporaryChip(ConsoleChip):
         self.post_message(self.SaveRequested())
 
 
+class ConsoleCostChip(ConsoleChip):
+    """Cost chip that opens the cost breakdown modal when activated (task-4).
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. The chip is the running-total ticker AND the entry
+    point into the per-message breakdown, so a user who wants to know why
+    the total looks the way it does never has to hunt for it elsewhere.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_cost_breakdown", "Open cost breakdown", show=False),
+        Binding("space", "open_cost_breakdown", "Open cost breakdown", show=False),
+    ]
+
+    class ConsoleCostChipPressed(Message):
+        """Posted when the cost chip is activated from keyboard or mouse."""
+
+    def action_open_cost_breakdown(self) -> None:
+        self.post_message(self.ConsoleCostChipPressed())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.ConsoleCostChipPressed())
+
+
 class ConsoleStatusChips(Horizontal):
     """Full-width strip of Console readiness pills (provider/model/assistant/
     RAG/source/tool/approval plus the retrieval-scope chip).
@@ -209,6 +234,7 @@ class ConsoleStatusChips(Horizontal):
         *,
         scope_state: ConsoleRetrievalScopeState | None = None,
         ephemeral: bool = False,
+        cost_state: ConsoleCostState | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the strip.
@@ -230,6 +256,12 @@ class ConsoleStatusChips(Horizontal):
                 ``ChatScreen._sync_console_temporary_chip()`` after mount
                 as a second line of defense for session switches that
                 happen post-construction.
+            cost_state: Display-state snapshot for the cost chip (task-4,
+                PR3 cost ticker) -- mirrors the F1 precedent above: passed
+                in at construction so the chip renders correctly on the
+                very first frame rather than waiting for a post-mount
+                ``sync_cost_state`` call. ``None`` renders hidden (non-
+                Console-native contexts have no cost to show).
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -241,6 +273,7 @@ class ConsoleStatusChips(Horizontal):
         self.state = state
         self.scope_state = scope_state
         self.ephemeral = ephemeral
+        self._cost_state = cost_state
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -309,6 +342,9 @@ class ConsoleStatusChips(Horizontal):
         # hidden entirely when unscoped rather than showing a
         # "Scope: everything" default (see ``_scope_chip_render``).
         yield self._scope_chip()
+        # task-4 (PR3 cost ticker): last in the strip, hidden entirely
+        # when there is no cost state (see ``_cost_chip_render``).
+        yield self._cost_chip()
 
     def _temporary_chip(self) -> ConsoleTemporaryChip:
         label, tooltip, hidden = self._temporary_chip_render(self.ephemeral)
@@ -447,6 +483,90 @@ class ConsoleStatusChips(Horizontal):
         chip.tooltip = tooltip
         chip.display = not hidden
         chip.set_class(alert, "console-chip-alert")
+
+    def _cost_chip(self) -> ConsoleCostChip:
+        label, tooltip, hidden, alert, cold = self._cost_chip_render(self._cost_state)
+        # ``_chip``'s emphasis only knows dim/alert -- cold is a third,
+        # non-alarming state added on top (see the class-toggle table in
+        # ``sync_cost_state``). Neutral (``None``) suppresses both so the
+        # cold class is the only one applied.
+        emphasis: bool | None
+        if alert:
+            emphasis = True
+        elif cold:
+            emphasis = None
+        else:
+            emphasis = False
+        chip = self._chip(
+            label,
+            id="console-cost-chip",
+            emphasis=emphasis,
+            chip_class=ConsoleCostChip,
+        )
+        chip.tooltip = Content(tooltip)
+        chip.display = not hidden
+        if cold:
+            chip.add_class("console-chip-cold")
+        return chip
+
+    @staticmethod
+    def _cost_chip_render(
+        state: ConsoleCostState | None,
+    ) -> tuple[str, str, bool, bool, bool]:
+        """Pure ``(label, tooltip, hidden, alert, cold)`` render for the cost chip.
+
+        Args:
+            state: Display-state snapshot, or ``None`` (hides the chip --
+                non-Console-native contexts have no cost to show).
+
+        Returns:
+            ``label``: chip text (the full ``state.label``; the strip
+            hasn't been laid out yet at compose time, so the width-aware
+            compact form only applies from ``sync_cost_state``).
+            ``tooltip``: hover/focus text. ``hidden``: ``True`` when
+            ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
+            ``state.cold``.
+        """
+        if state is None:
+            return "", "", True, False, False
+        return state.label, state.tooltip, False, state.alert, state.cold
+
+    def sync_cost_state(self, state: ConsoleCostState | None) -> None:
+        """Refresh the cost chip from a new cost-state snapshot (task-4).
+
+        Deliberately NOT folded into ``sync_state`` below, for the same
+        reason ``sync_scope_chip`` isn't: cost state is computed and
+        pushed on its own cadence (the general control-bar sync tick, but
+        independently of whether ``ConsoleControlState`` itself changed),
+        so it owns its own equality guard.
+
+        Args:
+            state: Updated cost-chip snapshot, or ``None`` to hide the
+                chip.
+        """
+        if state == self._cost_state:
+            return
+        self._cost_state = state
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        if state is None:
+            chip.display = False
+            return
+        # Narrow strips fall back to the delta-free compact label; pre-
+        # layout (``size.width`` still zero) falls back to the full label.
+        label = (
+            state.compact_label
+            if self.size.width and self.size.width < 120
+            else state.label
+        )
+        chip.update(label)
+        chip.tooltip = Content(state.tooltip)
+        chip.display = True
+        chip.set_class(state.alert, "console-chip-alert")
+        chip.set_class(state.cold, "console-chip-cold")
+        chip.set_class(not state.alert and not state.cold, "console-chip-dim")
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh pill labels and counter emphasis from a new snapshot."""
