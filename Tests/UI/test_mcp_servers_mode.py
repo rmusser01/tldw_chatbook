@@ -12,6 +12,7 @@ import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -115,6 +116,26 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert len(callouts) == 1  # one problem row -> one callout
         assert "web" in str(callouts[0].label)
         assert "Missing environment variables" in str(callouts[0].label)
+
+
+@pytest.mark.asyncio
+async def test_overview_shows_readiness_glyph_legend():
+    """F-058: the Servers overview carries a one-line legend for its six
+    readiness glyphs AND the ⌂ built-in marker -- status reads as
+    recognition, not recall (mirrors Permissions mode's `#mcp-perm-legend`
+    precedent). The line is derived from STATE_GLYPHS/STATE_LABELS so a
+    future glyph/label change can't drift from it."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([_snap("local:docs", "docs")])
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-servers-legend", Static).renderable)
+        for state, glyph in STATE_GLYPHS.items():
+            assert glyph in legend
+            assert STATE_LABELS[state].lower() in legend.lower()
+        assert "⌂" in legend
+        assert "built-in" in legend
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from textual.widgets import Button, Checkbox, DataTable, Static
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -57,6 +58,16 @@ _CALLOUT_CAP = 4
 # (identity + readiness are the table's primary content); the dropped
 # columns' facts remain one click away in the detail pane.
 _COLUMN_DROP_PRIORITY = ("Auth", "Connection")
+
+# F-058: readiness-glyph legend for the Servers overview -- one quiet dim
+# line, derived from STATE_GLYPHS/STATE_LABELS so the legend can never
+# drift from the statuses the table/rail/inspector actually render, plus
+# the ⌂ built-in marker (mcp_rail.py's row prefix), which had no
+# explanation anywhere. Mirrors Permissions mode's `#mcp-perm-legend`
+# (mcp_permissions_mode.py) in placement (after the content) and styling.
+_SERVERS_LEGEND_TEXT = " · ".join(
+    f"{glyph} {STATE_LABELS[state].lower()}" for state, glyph in STATE_GLYPHS.items()
+) + " · ⌂ built-in"
 
 
 def _fit_columns(
@@ -237,6 +248,15 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         height: auto;
         min-height: 1;
     }
+    /* F-058: the legend is a single dimmed hint line under the overview
+    content -- mirrors `#mcp-perm-legend` (mcp_permissions_mode.py), same
+    raw `$text-muted` token rationale: this widget's unit tests mount it
+    without the app bundle where the `$ds-*` aliases are defined. */
+    #mcp-servers-legend {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+    }
     """
 
     class ServerRowSelected(Message, namespace="mcp_servers_mode"):
@@ -383,6 +403,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             table.cursor_type = "row"
             yield table
             yield Vertical(id="mcp-overview-callouts")
+            # F-058: quiet glyph legend under the overview content (mirrors
+            # Permissions mode's legend placement).
+            yield Static(_SERVERS_LEGEND_TEXT, id="mcp-servers-legend", markup=False)
         with Vertical(id="mcp-servers-detail"):
             with Horizontal(id="mcp-detail-header", classes="ds-toolbar"):
                 yield Button(
