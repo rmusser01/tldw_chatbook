@@ -120,12 +120,29 @@ def short_ingest_error(error: str) -> str:
         The error up to (excluding) the supported-types marker, right-
         stripped; the whole error when the marker is absent.
     """
+    return unwrap_ingest_error(error).split(
+        _SUPPORTED_TYPES_ERROR_MARKER
+    )[0].rstrip()
+
+
+def unwrap_ingest_error(error: str) -> str:
+    """Collapse nested ``Failed to <verb> <type> file:`` wrapper chains.
+
+    Shared by ``short_ingest_error`` (queue row) and the expanded
+    detail lines (task-2043), so neither surface ever shows
+    "Failed to ingest pdf file: Failed to process pdf file: …".
+
+    Args:
+        error: The raw error text.
+
+    Returns:
+        The text with at most one leading ``Failed to … file:`` prefix.
+    """
     while True:
         unwrapped = _NESTED_FAILURE_PREFIX_RE.sub("", error, count=1)
         if unwrapped == error:
-            break
+            return error
         error = unwrapped
-    return error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
 
 
 def _retry_suffix(job: LibraryIngestJob) -> str:
@@ -390,6 +407,10 @@ class IngestQueueRow:
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
+    #: (task-2043) Inline error-detail expansion (replaces the old details
+    #: toast): whether this row's details are open, and the lines to show.
+    details_expanded: bool = False
+    detail_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -487,6 +508,10 @@ class LibraryIngestCanvasState:
     show_clear_path: bool
     type_breakdown_line: str
     estimate_line: str
+    #: (task-2043) Pre-flight duplicate forecast: "N file(s) appear to
+    #: already be in your Library…", empty when none were detected (or the
+    #: staged types can't be checked pre-parse).
+    duplicate_line: str
     warning_lines: list[str]
     preflight_checking: bool
     expanded_type_groups: set[str]
@@ -721,11 +746,15 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     counts = {state.value: 0 for state in IngestJobState}
     for job in jobs:
         counts[job.state.value] += 1
-    return " · ".join(
+    joined = " · ".join(
         f"{counts[state.value]} {state.value}"
         for state in _COUNTS_LINE_ORDER
         if counts[state.value]
     )
+    # (task-2043) The registry restores prior sessions from the jobs DB, so
+    # these totals span ALL ingests -- say so, or a fresh batch's outcome
+    # blurs into history.
+    return f"{joined} — all ingests" if joined else ""
 
 
 
@@ -743,7 +772,9 @@ _TERMINAL_ROW_STATES = (
 )
 
 
-def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
+def _build_queue_row(
+    job: LibraryIngestJob, *, now: float, details_expanded: bool = False
+) -> IngestQueueRow:
     """Build a queue row, then stamp where the job runs.
 
     The per-state builder returns from one of several branches; annotating the
@@ -761,14 +792,37 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """
     row = _build_queue_row_for_state(job, now=now)
     if job.origin == "local":
-        return replace(row, origin=job.origin, can_cancel=False)
-    can_cancel = bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
-    return replace(
-        row,
-        origin=job.origin,
-        can_cancel=can_cancel,
-        line=f"{row.line}{_SERVER_ROW_SUFFIX}",
-    )
+        row = replace(row, origin=job.origin, can_cancel=False)
+    else:
+        can_cancel = (
+            bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
+        )
+        row = replace(
+            row,
+            origin=job.origin,
+            can_cancel=can_cancel,
+            line=f"{row.line}{_SERVER_ROW_SUFFIX}",
+        )
+    if details_expanded and job.error_detail:
+        # (task-2043) Inline expansion replaces the old auto-expiring
+        # details toast: category + the full (single-prefix) message, plus
+        # an honest retry hint when Retry is on offer -- corrupt-file
+        # extraction failures stay retryable, but the copy now says what a
+        # retry could actually fix.
+        lines: list[str] = []
+        category = str(job.error_detail.get("category") or "").strip()
+        if category:
+            lines.append(f"Category: {category.replace('_', ' ')}")
+        message = str(job.error_detail.get("message") or job.error or "")
+        if message:
+            lines.append(f"Details: {unwrap_ingest_error(message)}")
+        if row.can_retry:
+            lines.append(
+                "A retry can succeed if the failure was transient or after "
+                "installing missing tooling."
+            )
+        row = replace(row, details_expanded=True, detail_lines=tuple(lines))
+    return row
 
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
@@ -784,6 +838,7 @@ def build_library_ingest_state(
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
     clear_finished_armed: bool = False,
+    expanded_details: frozenset[str] | set[str] = frozenset(),
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -852,7 +907,14 @@ def build_library_ingest_state(
         unavailable_line = MEDIA_DB_UNAVAILABLE_COPY
     else:
         unavailable_line = ""
-    queue_rows = tuple(_build_queue_row(job, now=resolved_now) for job in jobs)
+    queue_rows = tuple(
+        _build_queue_row(
+            job,
+            now=resolved_now,
+            details_expanded=job.job_id in expanded_details,
+        )
+        for job in jobs
+    )
     queue_show_clear_finished = any(
         job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
     )
@@ -888,6 +950,21 @@ def build_library_ingest_state(
                 active_preflight.truncated,
             )
         warning_lines = build_warning_lines(active_preflight.warnings)
+        already = getattr(active_preflight, "already_in_library", 0) or 0
+        if already and not errors:
+            noun = "file" if already == 1 else "files"
+            verb = "appears" if already == 1 else "appear"
+            outcome = (
+                "it will be matched, not re-imported."
+                if already == 1
+                else "they'll be matched, not re-imported."
+            )
+            duplicate_line = (
+                f"{already} {noun} {verb} to already be in your Library — "
+                f"{outcome}"
+            )
+        else:
+            duplicate_line = ""
         errors_are_path_problem = bool(
             errors and getattr(active_preflight, "path_invalid", False)
         )
@@ -899,6 +976,7 @@ def build_library_ingest_state(
         errors_are_path_problem = False
         type_breakdown_line = ""
         estimate_line = ""
+        duplicate_line = ""
         warning_lines = []
         type_groups_list = []
 
@@ -972,6 +1050,7 @@ def build_library_ingest_state(
         show_clear_path=bool(form.path.strip()),
         type_breakdown_line=type_breakdown_line,
         estimate_line=estimate_line,
+        duplicate_line=duplicate_line,
         warning_lines=warning_lines,
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),

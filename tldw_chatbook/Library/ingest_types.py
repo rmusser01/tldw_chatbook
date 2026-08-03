@@ -40,3 +40,7 @@ class PreflightResult:
     truncated: bool
     total_files: int
     path_invalid: bool = False
+    #: (task-2043) How many staged files appear to already exist in the
+    #: Library (content-hash match, generic/text group only -- the DB hashes
+    #: PARSED content, so only read≈parse types can be checked pre-parse).
+    already_in_library: int = 0
