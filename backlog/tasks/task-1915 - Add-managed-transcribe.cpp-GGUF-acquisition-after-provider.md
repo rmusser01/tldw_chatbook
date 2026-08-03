@@ -4,6 +4,7 @@ title: Add managed transcribe.cpp GGUF acquisition after provider
 status: To Do
 assignee: []
 created_date: '2026-08-02 14:54'
+updated_date: '2026-08-03 21:37'
 labels:
   - stt
   - gguf
@@ -34,3 +35,9 @@ Add curated downloads and managed local-file import only after direct-path trans
 - [ ] #5 Managed artifacts receive precise curated, integrity-verified, or local-integrity provenance and never enter semantic default routing.
 - [ ] #6 Focused tests cover download/import failure cleanup, disk preflight, immutable promotion, activation, recovery, and all supported wheel platforms.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cross-link 2026-08-03: TASK-2062 (model browser Phase 3, in progress on feat/task-2062-model-browser-phase-3) is building the generic copy-into-store import engine as Model_Artifacts/local_import.py — stream-copy+hash into marker-owned staging temps, install(consume_source=True) verification, content-addressed revisions, with consumer/runtime/format parameterizable (LLM defaults). When 1915 activates, review REUSING that engine plus the live gguf_admission parser rather than activating _deferred_gguf_managed_import.py wholesale; the deferred prototype's descriptor constants may still be the right transcribe.cpp values, but the copy/verify/promote path should be shared. Also note: descriptor file:// source_url and unknown-license accommodation landed via 2062 Task 1 (cross-field-gated in service.py), which 1915's local-copy AC #2 will need.
+<!-- SECTION:NOTES:END -->
