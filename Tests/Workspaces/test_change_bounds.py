@@ -384,12 +384,13 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
     """v3->v4: a change_snapshots table created before untracked_oversize
     existed picks the column up via the idempotent-ALTER-on-open mechanism."""
     import sqlite3
+    from contextlib import closing
 
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db_file = tmp_path / "old.db"
-    conn = sqlite3.connect(db_file)
-    conn.executescript(
+    with closing(sqlite3.connect(db_file)) as conn:
+        conn.executescript(
         """
         CREATE TABLE change_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -408,9 +409,8 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
             (run_id, root, baseline_sha, end_sha, created_at)
         VALUES ('r', '/tmp/x', 'a', 'b', '2026-01-01T00:00:00.000000Z');
         """
-    )
-    conn.commit()
-    conn.close()
+        )
+        conn.commit()
 
     db = AgentRunsDB(db_file, client_id="t")
     db.record_change_snapshot(
@@ -424,3 +424,98 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
     assert rows[0]["untracked_oversize"] == 3
     old_rows = db.change_snapshots_for_run("r")
     assert old_rows[0]["untracked_oversize"] == 0
+
+
+class TestReviewRoundHardening:
+    """PR #1251 Qodo round: newline injection, git path, sweep locking."""
+
+    def test_newline_named_oversize_file_neither_committed_nor_injected(
+        self, tracked
+    ):
+        tracker, service, root = tracked
+        evil = "evil\nsecond-line.bin"
+        (root / evil).write_bytes(b"x" * 500)
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.untracked_oversize == 1
+        repo = service.repo_for_root(root)
+        assert repo.file_bytes(rec.end_sha, evil) is None, (
+            "an unexcludable oversized file must still never be committed"
+        )
+        exclude = (repo.git_dir / "info" / "exclude").read_text()
+        assert "second-line.bin" not in exclude, (
+            "a newline in a filename injected an exclude pattern"
+        )
+
+    def test_retention_uses_the_services_git_not_PATH(
+        self, tracked, tmp_path, monkeypatch
+    ):
+        import shutil as _shutil
+
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.Workspaces.change_retention import (
+            prune_change_history,
+        )
+        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+
+        real_git = _shutil.which("git")
+        tracker, service, root = tracked
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        run = db.create_run(conversation_id="c", agent_kind="primary")
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        rec = tracker.end_turn(handle)[0]
+        db.record_change_snapshot(
+            run_id=run,
+            root=rec.root,
+            baseline_sha=rec.baseline_sha,
+            end_sha=rec.end_sha,
+        )
+        # A service configured with an explicit git path, on a machine
+        # where PATH has no git: the sweep must still classify the repo
+        # as live (a PATH-only spawn would fail -> misclassified orphan).
+        pathless = ShadowRepoService(
+            data_dir=service._data_dir, git_executable=real_git
+        )
+        monkeypatch.setenv("PATH", str(tmp_path / "no-binaries-here"))
+        # Backdate the repo: a misclassified "orphan" would be aged out --
+        # the strengthened assertion a fresh repo cannot make.
+        import os as _os
+        import time as _time
+
+        repo = service.repo_for_root(root)
+        old_ts = _time.time() - 90 * 86400
+        _os.utime(repo.git_dir, (old_ts, old_ts))
+
+        report = prune_change_history(db, pathless)
+
+        assert report.orphans_removed == 0
+        assert report.repos_reset == 0
+        assert service.repo_for_root(root).git_dir.exists()
+
+    def test_sweep_skips_a_container_another_process_holds(self, tracked, tmp_path):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.Workspaces.change_retention import (
+            prune_change_history,
+        )
+
+        tracker, service, root = tracked
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        repo = service.repo_for_root(root)
+        repo.snapshot("registration")
+        # No rows -> the sweep would RESET this container; a held lock
+        # (concurrent snapshot in another process) must make it skip.
+        repo.lock_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            report = prune_change_history(db, service)
+        finally:
+            repo.lock_dir.rmdir()
+
+        assert report.repos_reset == 0
+        assert repo.git_dir.exists(), "the sweep deleted a LOCKED repo"

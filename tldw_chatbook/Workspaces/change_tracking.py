@@ -437,13 +437,30 @@ class ShadowRepo:
                 max_total_bytes=_sys.maxsize,
             )
             self.last_oversize_excluded = scan.oversized
-            if scan.oversized:
+            # info/exclude is line-oriented and has NO newline escaping --
+            # a filename carrying \n would INJECT extra patterns (Qodo
+            # #1251 finding 5). Such paths are unexcludable; they are
+            # unstaged after add instead (argv is newline-safe).
+            excludable = [
+                rel
+                for rel in scan.oversized
+                if "\n" not in rel and "\r" not in rel
+            ]
+            unexcludable = [
+                rel for rel in scan.oversized if rel not in excludable
+            ]
+            if excludable:
                 exclude = self.git_dir / "info" / "exclude"
                 with exclude.open("a", encoding="utf-8") as fh:
                     fh.write("# oversize (TASK-1975), rewritten per snapshot\n")
-                    for rel in scan.oversized:
+                    for rel in excludable:
                         fh.write(_exclude_pattern(rel) + "\n")
             self._run("add", "-A", "--", ".")
+            for rel in unexcludable:
+                self._run(
+                    "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
+                    check=False,
+                )
             had_tip = self.tip() is not None
             if had_tip:
                 staged = self._run("diff", "--cached", "--quiet", check=False)

@@ -52,11 +52,11 @@ class PruneReport:
     orphans_removed: int = 0
 
 
-def _repo_root(git_dir: Path) -> str | None:
+def _repo_root(git_dir: Path, git_exe: str = "git") -> str | None:
     """Read a shadow repo's bound root from its pinned ``core.worktree``."""
     try:
         proc = subprocess.run(
-            ["git", "--git-dir", str(git_dir), "config", "core.worktree"],
+            [git_exe, "--git-dir", str(git_dir), "config", "core.worktree"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -124,12 +124,25 @@ def prune_change_history(
     # Layout: <data_dir>/<root-hash>/git (plus hooks/ and the lockdir) --
     # each CONTAINER dir is one root's shadow state; removal takes the
     # whole container so hooks and stale locks go with it.
+    git_exe = getattr(service, "_git", None) or "git"
     for container in sorted(Path(data_dir).iterdir()):
         git_dir = container / "git"
         if not container.is_dir() or not (git_dir / "HEAD").exists():
             continue
+        # Qodo #1251 finding 4: destructive sweep moves must not race an
+        # active snapshot. Take the SAME cross-process lockdir the repo
+        # protocol uses; a held lock skips the container this pass.
+        lock_dir = container / "lock.d"
         try:
-            root = _repo_root(git_dir)
+            lock_dir.parent.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir()
+        except OSError:
+            logger.debug(
+                f"change_review: retention skipping locked container {container}"
+            )
+            continue
+        try:
+            root = _repo_root(git_dir, git_exe)
             if root is None or not Path(root).is_dir():
                 # Orphan: the bound root vanished. Old orphans are dead
                 # weight; fresh ones may still be re-bound.
@@ -147,18 +160,25 @@ def prune_change_history(
                 repos_reset += 1
                 continue
             repo = service.repo_for_root(root)
-            with repo._locked():  # noqa: SLF001 -- retention is a peer op
-                repo._run(  # noqa: SLF001
-                    "reflog", "expire", "--expire=now", "--all", check=False
-                )
-                repo._run(  # noqa: SLF001
-                    "gc", "--prune=now", "--quiet", check=False
-                )
+            # The sweep already holds this container's cross-process
+            # lockdir (above) -- taking repo._locked() here would deadlock
+            # on the very same lock.d.
+            repo._run(  # noqa: SLF001 -- retention is a peer op
+                "reflog", "expire", "--expire=now", "--all", check=False
+            )
+            repo._run(  # noqa: SLF001
+                "gc", "--prune=now", "--quiet", check=False
+            )
             repos_gcd += 1
         except Exception:  # noqa: BLE001 -- one bad repo must not stop the sweep
             logger.opt(exception=True).warning(
                 f"change_review: retention sweep failed for {git_dir}"
             )
+        finally:
+            try:
+                lock_dir.rmdir()
+            except OSError:
+                pass  # removed with the container, or never released cleanly
     report = PruneReport(
         rows_pruned=rows_pruned,
         repos_reset=repos_reset,
