@@ -544,8 +544,10 @@ class TestNestedRepoDetection:
         scan = scan_root(scanroot)
         assert scan.nested_repos == ()
 
-    def test_nested_edit_is_invisible_and_disclosed(self, tracked):
-        """AC#2: the hole exists (git gitlink semantics) and is DISCLOSED."""
+    def test_nested_edit_never_pollutes_the_parents_diff(self, tracked):
+        """1976 AC#2's surviving core under TASK-1977: the PARENT's diff
+        never carries nested content — the edit is tracked via the child's
+        own sub-root instead of being disclosed as a hole."""
         import subprocess as _sp
 
         tracker, service, root = tracked
@@ -561,15 +563,19 @@ class TestNestedRepoDetection:
         (root / "small.txt").write_text("edited\n")
         records = tracker.end_turn(handle)
 
-        assert len(records) == 1
-        rec = records[0]
-        assert rec.nested_repos == ("childrepo",)
+        by_root = {r.root: r for r in records}
+        parent = by_root[str(root.resolve())]
+        assert parent.nested_repos == (), "tracked sub-root wrongly disclosed"
         repo = service.repo_for_root(root)
-        changed = {c.path for c in repo.changed_files(rec.baseline_sha, rec.end_sha)}
+        changed = {
+            c.path
+            for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
+        }
         assert "small.txt" in changed
         assert not any("inner.txt" in p for p in changed), (
-            "the nested edit must NOT appear as a diff row (the disclosed hole)"
+            "nested content leaked into the PARENT's diff"
         )
+        assert str(child.resolve()) in by_root, "the hole did not close"
 
     def test_new_nested_repo_mid_turn_emits_disclosure_record(self, tracked):
         tracker, service, root = tracked
@@ -632,15 +638,184 @@ class TestNestedRepoBudgetIsolation:
         handle = tracker.begin_turn([root])
         handle.await_baseline()
         (root / "small.txt").write_text("edited\n")
+        (evil / "inner.txt").write_text("EDITED\n")
         records = tracker.end_turn(handle)
 
-        assert len(records) == 1
-        rec = records[0]
-        assert rec.tracking_error == "", (
+        by_root = {r.root: r for r in records}
+        parent = by_root[str(root.resolve())]
+        assert parent.tracking_error == "", (
             "an unexcludable commitless child killed tracking for the root"
         )
-        assert "evil\nrepo" in rec.nested_repos
         repo = service.repo_for_root(root)
-        changed = {c.path for c in repo.changed_files(rec.baseline_sha, rec.end_sha)}
+        changed = {
+            c.path
+            for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
+        }
         assert "small.txt" in changed
         assert not any("inner.txt" in p for p in changed)
+        # Under TASK-1977 the child is auto-registered (tracked), so it is
+        # neither disclosed as a hole nor able to hurt the parent.
+        assert str((root / "evil\nrepo").resolve()) in by_root
+
+
+# -- auto sub-roots (TASK-1977) ----------------------------------------------
+
+
+def _real_child(root, name: str):
+    """A real nested git repo with one committed file."""
+    import subprocess as _sp
+
+    child = root / name
+    child.mkdir()
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    (child / "inner.txt").write_text("original\n")
+    _sp.run(
+        ["git", "-C", str(child), "-c", "user.email=t@t", "-c", "user.name=t",
+         "add", "-A"],
+        check=True, capture_output=True,
+    )
+    _sp.run(
+        ["git", "-C", str(child), "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "--quiet", "-m", "init"],
+        check=True, capture_output=True,
+    )
+    return child
+
+
+class TestAutoSubRoots:
+    def test_nested_edit_appears_attributed_to_the_sub_root(self, tracked):
+        """AC#1: the 1976 hole closes — the child's edit is reviewable."""
+        tracker, service, root = tracked
+        child = _real_child(root, "childrepo")
+
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (child / "inner.txt").write_text("EDITED\n")
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+
+        by_root = {r.root: r for r in records}
+        child_key = str(child.resolve())
+        assert child_key in by_root, f"no sub-root record: {list(by_root)}"
+        child_rec = by_root[child_key]
+        assert child_rec.files_changed == 1
+        repo = service.repo_for_root(child)
+        changed = {
+            c.path
+            for c in repo.changed_files(
+                child_rec.baseline_sha, child_rec.end_sha
+            )
+        }
+        assert changed == {"inner.txt"}
+
+    def test_registered_child_leaves_the_disclosure_banner(self, tracked):
+        tracker, service, root = tracked
+        _real_child(root, "childrepo")
+
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+
+        parent = next(r for r in records if r.root == str(root.resolve()))
+        assert parent.nested_repos == (), (
+            "a TRACKED sub-root must not be disclosed as an untracked hole"
+        )
+
+    def test_sub_root_count_bound_truncates_with_disclosure(
+        self, tracked, monkeypatch
+    ):
+        """AC#3: beyond max_sub_roots, children stay DISCLOSED untracked."""
+        monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_SUB_ROOTS", "1")
+        tracker, service, root = tracked
+        _real_child(root, "alpha")
+        _real_child(root, "beta")
+
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        (root / "alpha" / "inner.txt").write_text("EDITED\n")
+        (root / "beta" / "inner.txt").write_text("EDITED\n")
+        records = tracker.end_turn(handle)
+
+        parent = next(r for r in records if r.root == str(root.resolve()))
+        registered = {
+            Path(r.root).name
+            for r in records
+            if r.root != str(root.resolve())
+        }
+        assert len(registered) == 1, (
+            "exactly one child is within the bound; only ITS edit is "
+            f"reviewable — got {registered}"
+        )
+        disclosed = set(parent.nested_repos)
+        assert len(disclosed) == 1, "the beyond-bound child must stay disclosed"
+        assert registered | disclosed == {"alpha", "beta"}
+        assert registered.isdisjoint(disclosed), (
+            "a child is both registered and disclosed"
+        )
+
+    def test_deleted_child_unregisters_via_orphan_gc(self, tracked, tmp_path):
+        """AC#4: the existing orphan GC covers sub-root shadow repos."""
+        import os as _os
+        import shutil as _shutil
+        import time as _time
+
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.Workspaces.change_retention import (
+            prune_change_history,
+        )
+
+        tracker, service, root = tracked
+        child = _real_child(root, "childrepo")
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (child / "inner.txt").write_text("EDITED\n")
+        tracker.end_turn(handle)
+        child_repo = service.repo_for_root(child)
+        container = child_repo.git_dir.parent
+        assert child_repo.git_dir.exists()
+
+        _shutil.rmtree(child)
+        old = _time.time() - 90 * 86400
+        _os.utime(container, (old, old))
+        _os.utime(child_repo.git_dir, (old, old))
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+
+        report = prune_change_history(db, service)
+
+        assert report.orphans_removed >= 1
+        assert not child_repo.git_dir.exists()
+
+
+def test_end_turn_survives_a_still_running_discovery_thread(tracked):
+    """Qodo #1256: a timed-out baseline thread may still be appending
+    sub-roots while end_turn runs — iteration must be over a snapshot,
+    yielding one record per root, never churn-driven duplicates."""
+    import threading
+    import time
+
+    tracker, service, root = tracked
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    (root / "small.txt").write_text("edited\n")
+
+    stop = threading.Event()
+
+    def churn() -> None:
+        while not stop.is_set():
+            handle.roots.append(root)
+            time.sleep(0.0005)
+
+    thread = threading.Thread(target=churn, daemon=True)
+    thread.start()
+    try:
+        records = tracker.end_turn(handle)
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+    mine = [r for r in records if r.root == str(root.resolve())]
+    assert len(mine) == 1, (
+        f"churned roots produced {len(mine)} records for one root"
+    )

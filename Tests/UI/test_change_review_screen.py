@@ -500,10 +500,13 @@ async def test_pruned_snapshots_render_pruned_by_retention(review_fixture, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_nested_repo_banner_names_the_holes(tmp_path):
-    """TASK-1976 AC#1: nested repos are named in the Review banner."""
+async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
+    """TASK-1976 AC#1: UNREGISTERED nested repos are named in the Review
+    banner. Under TASK-1977 children are auto-registered as sub-roots, so
+    the disclosure path is pinned with the sub-root bound at zero."""
     import subprocess as _sp
 
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_SUB_ROOTS", "0")
     root = tmp_path / "root"
     root.mkdir()
     (root / "small.txt").write_text("hello\n")
