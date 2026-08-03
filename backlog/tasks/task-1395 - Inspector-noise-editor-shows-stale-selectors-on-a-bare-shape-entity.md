@@ -1,7 +1,7 @@
 ---
 id: TASK-1395
 title: Inspector noise editor shows stale selectors on a bare-shape entity
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 05:20'
 labels:
