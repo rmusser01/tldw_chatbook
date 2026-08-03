@@ -1,7 +1,7 @@
 # Library Prompt Enhancement Series Design
 
 **Date:** 2026-08-02  
-**Status:** Approved in conversation; review findings addressed, re-review pending
+**Status:** Approved in conversation and specification review
 **Scope:** `tldw_chatbook` TASK-202, TASK-196, TASK-198, TASK-199,
 TASK-197, and TASK-203 as six sequential, merge-gated pull requests
 
@@ -340,7 +340,8 @@ or page creates a new browse-scope fingerprint.
 Collection create and rename use a compact in-canvas management state. Names
 are non-empty. Every successful create or rename through
 `PromptScopeService` is checked case-insensitively against other active local
-collections inside the same write transaction; rename excludes its own ID.
+collections inside the same serialized write transaction; rename excludes its
+own ID.
 This is a service-level user-facing validation contract, not a storage
 migration or claim that the existing case-sensitive `UNIQUE` constraint has
 changed. Pre-existing case-fold collisions are not silently renamed or
