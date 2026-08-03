@@ -389,6 +389,24 @@ class ChangeReviewScreen(Screen):
             if error:
                 banners.append(f"⚠ tracking failed for {row['root']}: {error}")
                 continue
+            nested_raw = row.get("nested_repos") or "[]"
+            try:
+                import json as _json
+
+                nested = [str(p) for p in _json.loads(nested_raw)]
+            except (ValueError, TypeError):
+                nested = []
+            if nested:
+                # TASK-1976: name the holes — changes inside these repos
+                # are not tracked at all.
+                shown = ", ".join(nested[:5]) + (
+                    f" (+{len(nested) - 5} more)" if len(nested) > 5 else ""
+                )
+                plural = "ies" if len(nested) != 1 else "y"
+                banners.append(
+                    f"⚠ {len(nested)} nested repositor{plural} inside "
+                    f"{row['root']} not tracked: {shown}"
+                )
             oversize = int(row.get("untracked_oversize") or 0)
             if oversize:
                 # TASK-1975 AC#2: cost bounds are honest, not silent.

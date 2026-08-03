@@ -12,7 +12,7 @@ import uuid
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Sequence, Iterator, Union
 
 from loguru import logger
 
@@ -149,6 +149,7 @@ class AgentRunsDB(BaseDB):
                     reverted TEXT NOT NULL DEFAULT '',
                     tracking_error TEXT NOT NULL DEFAULT '',
                     untracked_oversize INTEGER NOT NULL DEFAULT 0,
+                    nested_repos TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
@@ -181,6 +182,11 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_snapshots ADD COLUMN "
                     "untracked_oversize INTEGER NOT NULL DEFAULT 0"
                 )
+            if "nested_repos" not in snapshot_columns:
+                conn.execute(
+                    "ALTER TABLE change_snapshots ADD COLUMN "
+                    "nested_repos TEXT NOT NULL DEFAULT '[]'"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -201,6 +207,7 @@ class AgentRunsDB(BaseDB):
         dels: int = 0,
         tracking_error: str = "",
         untracked_oversize: int = 0,
+        nested_repos: "Sequence[str]" = (),
     ) -> None:
         """Record one root's turn snapshot pair (TASK-1971).
 
@@ -215,6 +222,8 @@ class AgentRunsDB(BaseDB):
             tracking_error: Non-empty when tracking failed for this root.
             untracked_oversize: Files over the size cap left untracked at
                 the turn's end (TASK-1975 disclosure).
+            nested_repos: Root-relative nested repos excluded from tracking
+                (TASK-1976 disclosure).
         """
         with self.transaction() as conn:
             conn.execute(
@@ -222,8 +231,8 @@ class AgentRunsDB(BaseDB):
                 INSERT INTO change_snapshots
                     (run_id, root, baseline_sha, end_sha, files_changed,
                      adds, dels, tracking_error, untracked_oversize,
-                     created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     nested_repos, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -235,6 +244,7 @@ class AgentRunsDB(BaseDB):
                     dels,
                     tracking_error,
                     untracked_oversize,
+                    json.dumps(list(nested_repos)),
                     _now_iso(),
                 ),
             )

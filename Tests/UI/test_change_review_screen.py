@@ -47,6 +47,7 @@ def _record_turn(db, tracker, root, run_id: str, mutate) -> None:
             dels=rec.dels,
             tracking_error=rec.tracking_error,
             untracked_oversize=rec.untracked_oversize,
+            nested_repos=rec.nested_repos,
         )
 
 
@@ -495,4 +496,49 @@ async def test_pruned_snapshots_render_pruned_by_retention(review_fixture, tmp_p
             lambda: "pruned by retention"
             in str(screen.query_one("#change-review-banner", Static).renderable),
             "pruned banner",
+        )
+
+
+@pytest.mark.asyncio
+async def test_nested_repo_banner_names_the_holes(tmp_path):
+    """TASK-1976 AC#1: nested repos are named in the Review banner."""
+    import subprocess as _sp
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "small.txt").write_text("hello\n")
+    child = root / "childrepo"
+    child.mkdir()
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "small.txt").write_text("edited\n")
+        (child / "inner.txt").write_text("invisible\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: "childrepo"
+            in str(screen.query_one("#change-review-banner", Static).renderable),
+            "nested banner",
+        )
+        text = str(screen.query_one("#change-review-banner", Static).renderable)
+        assert "1 nested repository" in text
+        labels = _tree_labels(screen.query_one("#change-review-tree", Tree))
+        assert not any("inner.txt" in l for l in labels), (
+            "the nested edit leaked into the tree"
         )

@@ -519,3 +519,74 @@ class TestReviewRoundHardening:
 
         assert report.repos_reset == 0
         assert repo.git_dir.exists(), "the sweep deleted a LOCKED repo"
+
+
+# -- nested repos (TASK-1976) ------------------------------------------------
+
+
+class TestNestedRepoDetection:
+    def test_scan_lists_nested_repos_root_relative(self, scanroot):
+        (scanroot / "projects" / "childrepo" / ".git").mkdir(parents=True)
+        (scanroot / "projects" / "childrepo" / "code.py").write_text("x\n")
+        (scanroot / "worktree-child").mkdir()
+        (scanroot / "worktree-child" / ".git").write_text("gitdir: /elsewhere\n")
+        (scanroot / "plain").mkdir()
+        (scanroot / "plain" / "note.md").write_text("x\n")
+        scan = scan_root(scanroot)
+        assert sorted(scan.nested_repos) == [
+            "projects/childrepo",
+            "worktree-child",
+        ]
+
+    def test_roots_own_git_is_not_nested(self, scanroot):
+        (scanroot / ".git").mkdir()
+        (scanroot / "a.txt").write_text("x\n")
+        scan = scan_root(scanroot)
+        assert scan.nested_repos == ()
+
+    def test_nested_edit_is_invisible_and_disclosed(self, tracked):
+        """AC#2: the hole exists (git gitlink semantics) and is DISCLOSED."""
+        import subprocess as _sp
+
+        tracker, service, root = tracked
+        child = root / "childrepo"
+        child.mkdir()
+        _sp.run(["git", "init", "--quiet", str(child)], check=True)
+        (child / "inner.txt").write_text("original\n")
+        service.repo_for_root(root).snapshot("registration")
+
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (child / "inner.txt").write_text("EDITED INSIDE CHILD\n")
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.nested_repos == ("childrepo",)
+        repo = service.repo_for_root(root)
+        changed = {c.path for c in repo.changed_files(rec.baseline_sha, rec.end_sha)}
+        assert "small.txt" in changed
+        assert not any("inner.txt" in p for p in changed), (
+            "the nested edit must NOT appear as a diff row (the disclosed hole)"
+        )
+
+    def test_new_nested_repo_mid_turn_emits_disclosure_record(self, tracked):
+        tracker, service, root = tracked
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        child = root / "cloned-mid-turn"
+        (child / ".git").mkdir(parents=True)
+        (child / "inner.txt").write_text("x\n")
+        records = tracker.end_turn(handle)
+        assert len(records) == 1
+        assert records[0].nested_repos == ("cloned-mid-turn",)
+
+    def test_repo_root_with_no_children_stays_bannerless(self, tracked):
+        """AC#3: tracking a root normally — nested_repos stays empty."""
+        tracker, service, root = tracked
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "small.txt").write_text("edited\n")
+        records = tracker.end_turn(handle)
+        assert records[0].nested_repos == ()
