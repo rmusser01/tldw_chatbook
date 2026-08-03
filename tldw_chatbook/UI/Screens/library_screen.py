@@ -221,6 +221,8 @@ from ...Widgets.Library import (
     LibraryConversationsCanvas,
     LibraryExportCanvas,
     LibraryIngestCanvas,
+    LibraryIngestPreflightSummary,
+    LibraryIngestQueuePanel,
     LibraryMediaCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
@@ -2179,7 +2181,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted and not self._file_notes_active():
-            if (
+            if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA or (
                 self._library_selected_row_id
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 and self._library_prompts_view == "editor"
@@ -2188,6 +2190,11 @@ class LibraryScreen(BaseAppScreen):
                 # created Prompt remains open. Recompose only the rail so the
                 # shared block editor keeps its TextAreas, cursor, selection,
                 # scroll position, and native undo history.
+                # (task-2042) Same protection for the Ingest canvas: this
+                # snapshot lands right after every completed job, and a full
+                # recompose here remounted the form mid-click (the queue
+                # renders from the job registry, not this snapshot -- only
+                # the rail needs the fresh counts).
                 try:
                     rail = self.query_one("#library-rail", LibraryRail)
                 except (NoMatches, QueryError):
@@ -5715,7 +5722,7 @@ class LibraryScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
-            self._refresh_library_ingest_canvas_preserving_context()
+            self._update_library_ingest_dynamic_regions()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
@@ -5860,6 +5867,72 @@ class LibraryScreen(BaseAppScreen):
         widget.focus(scroll_visible=False)
         if cursor is not None and isinstance(widget, Input):
             widget.cursor_position = min(cursor, len(widget.value))
+
+    def _update_library_ingest_gate(
+        self, new_state: LibraryIngestCanvasState
+    ) -> None:
+        """Sync the Start button + gate line in place (never a recompose)."""
+        try:
+            start_button = self.query_one("#library-ingest-start", Button)
+        except (NoMatches, QueryError):
+            return
+        start_button.disabled = not new_state.start_enabled
+        try:
+            quiet_line = self.query_one(
+                "#library-ingest-start-quiet-line", Static
+            )
+        except (NoMatches, QueryError):
+            return
+        quiet_line.update(new_state.start_quiet_line)
+
+    def _update_library_ingest_dynamic_regions(self) -> None:
+        """Refresh ONLY the pre-flight summary + queue children (task-2042).
+
+        Recomposing the whole canvas on every pre-flight result / job tick
+        remounted the form widgets: a click in flight against Start/Browse
+        was swallowed (mouse-down on the old Button instance, mouse-up on
+        the new one) and the canvas scroll snapped. The two dynamic blocks
+        are their own render-from-state widgets, so only they recompose;
+        the form region keeps widget identity, focus, and scroll for free.
+        Structural changes -- the type-group set (options panels) or the
+        runtime header lines -- still take the context-preserving full
+        recompose, as does any unexpected canvas shape.
+        """
+        new_state = self._build_library_ingest_state()
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+            summary = canvas.query_one(LibraryIngestPreflightSummary)
+            queue = canvas.query_one(LibraryIngestQueuePanel)
+        except (NoMatches, QueryError):
+            self._refresh_library_ingest_canvas_preserving_context()
+            return
+        old_state = canvas.state
+        structural = (
+            list(new_state.type_groups) != list(old_state.type_groups)
+            or new_state.server_quiet_line != old_state.server_quiet_line
+            or new_state.show_backend_switch != old_state.show_backend_switch
+            or new_state.unavailable_line != old_state.unavailable_line
+        )
+        canvas.state = new_state
+        if structural:
+            self._refresh_library_ingest_canvas_preserving_context()
+            return
+        summary.state = new_state
+        queue.state = new_state
+        summary.refresh(recompose=True)
+        queue.refresh(recompose=True)
+        # Display-managed canvas-level bits + the gate.
+        for intro in canvas.query(".library-ingest-intro"):
+            intro.display = bool(new_state.intro_lines)
+        try:
+            clear_button = canvas.query_one(
+                "#library-ingest-clear-path", Button
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            clear_button.display = new_state.show_clear_path
+        self._update_library_ingest_gate(new_state)
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
         """Build the ingest canvas's full display state from the live registry + form.
@@ -12728,7 +12801,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._invalidate_library_ingest_preflight()
             if had_preflight:
-                self._refresh_library_ingest_canvas_preserving_context()
+                self._update_library_ingest_dynamic_regions()
         # (task-2016) The state model drops intro lines once a path exists,
         # but this handler avoids recomposing while typing -- hide/show them
         # in place so they track the field's content live.
@@ -12738,17 +12811,16 @@ class LibraryScreen(BaseAppScreen):
         )
         for intro in self.query(".library-ingest-intro"):
             intro.display = show_intros
+        # (task-2042) The Clear button is always mounted; only its
+        # visibility tracks the field, so typing never changes the canvas's
+        # widget structure.
         try:
-            start_button = self.query_one("#library-ingest-start", Button)
+            clear_button = self.query_one("#library-ingest-clear-path", Button)
         except (NoMatches, QueryError):
-            return
-        new_state = self._build_library_ingest_state()
-        start_button.disabled = not new_state.start_enabled
-        try:
-            quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
-        except (NoMatches, QueryError):
-            return
-        quiet_line.update(new_state.start_quiet_line)
+            pass
+        else:
+            clear_button.display = bool(event.value.strip())
+        self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(Input.Blurred, "#library-ingest-path")
     def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
@@ -13212,10 +13284,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_preflight_generation += 1
         generation = self._library_ingest_preflight_generation
         self._library_ingest_form.preflight_checking = True
-        # (task-2015) Context-preserving: the while-typing debounce means
-        # this can now run while the user is mid-word in the path field --
-        # a plain recompose would steal their focus (the task-2010 class).
-        self._refresh_library_ingest_canvas_preserving_context()
+        # (task-2042) In-place: only the summary child re-renders, so a
+        # trigger landing mid-word can neither steal focus nor swallow a
+        # click in flight.
+        self._update_library_ingest_dynamic_regions()
         self._library_ingest_preflight_worker = self._run_library_ingest_preflight(
             path, generation
         )
@@ -13261,9 +13333,9 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
-        # Context-preserving for the same reason as the trigger (task-2015):
-        # the result can land while the user is still typing.
-        self._refresh_library_ingest_canvas_preserving_context()
+        # (task-2042) In-place for the same reason as the trigger: the
+        # result can land while the user is typing or mid-click.
+        self._update_library_ingest_dynamic_regions()
 
     def _trigger_preflight(self, path: str) -> None:
         """Alias for ``_trigger_library_ingest_preflight``.
@@ -13781,7 +13853,7 @@ class LibraryScreen(BaseAppScreen):
         # ``_handle_library_ingest_registry_changed``).
         if not self._library_ingest_clear_finished_armed:
             self._library_ingest_clear_finished_armed = True
-            self._refresh_library_ingest_canvas_preserving_context()
+            self._update_library_ingest_dynamic_regions()
             return
         self._library_ingest_clear_finished_armed = False
         registry = self._library_ingest_registry()

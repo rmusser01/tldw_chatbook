@@ -2,7 +2,7 @@
 id: TASK-2042
 title: >-
   Library ingest first click swallowed by canvas recompose (scope recomposes to dynamic regions)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-03 02:00'
 labels:
@@ -38,13 +38,36 @@ set changes, canvas switches).
 
 ## Acceptance Criteria (the what)
 
-- [ ] A pre-flight apply for an unchanged type-group set does not remount
+- [x] A pre-flight apply for an unchanged type-group set does not remount
       the Start/Browse buttons or the path/metadata inputs (widget
       identity preserved, pinned by test).
-- [ ] A registry job tick does not remount the form widgets; queue rows
+- [x] A registry job tick does not remount the form widgets; queue rows
       still update live.
-- [ ] Canvas scroll position genuinely holds across job transitions and
+- [x] Canvas scroll position genuinely holds across job transitions and
       batch completion (no viewport jump).
-- [ ] A type-group set change (e.g. a PDF newly staged) still rebuilds the
+- [x] A type-group set change (e.g. a PDF newly staged) still rebuilds the
       options panels.
-- [ ] Existing ingest UI suites stay green.
+- [x] Existing ingest UI suites stay green.
+
+## Implementation Notes
+
+The two dynamic regions are now render-from-state child widgets
+(`LibraryIngestPreflightSummary`, `LibraryIngestQueuePanel` in
+`library_ingest_canvas.py`); `_update_library_ingest_dynamic_regions`
+recomposes ONLY them for pre-flight triggers/results, registry job
+ticks, path-clear, and clear-finished arming, with the context-preserving
+full recompose kept for structural changes (type-group set, runtime
+header lines) and as fallback. To keep the hot paths non-structural: the
+Clear button and intro Statics are always mounted and display-managed,
+and options panels stay mounted during a re-analysis (three canvas tests
+updated to pin the display-based contract). Also extended the
+prompts-editor rail-only `sync_state` protection in
+`_apply_local_source_snapshot` to the ingest canvas -- that snapshot
+lands after every completed job and was the remaining full-recompose
+source (found by the widget-identity test, not by reading).
+Verified: three new identity tests (apply preserves Start/path identity;
+job tick preserves identity + updates queue; group-set change still
+rebuilds panels); 228/228 canvas+state+runner, 83/83 shell ingest
+subset, full-tree collect-only clean (29,068). Live: ONE click on Start
+fires after typing (was two), focused labels readable, dedup toast
+honest, zero first-submit noise.

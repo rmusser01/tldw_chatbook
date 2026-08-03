@@ -2,7 +2,7 @@
 id: TASK-2041
 title: >-
   Library ingest round-2 critique regressions batch (focus labels, toast counts, worker logging, Clear resurrection)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-03 02:00'
 labels:
@@ -37,13 +37,34 @@ and one new defect, all small and well-understood:
 
 ## Acceptance Criteria (the what)
 
-- [ ] A focused compact button on the ingest canvas shows its label,
+- [x] A focused compact button on the ingest canvas shows its label,
       readably, with a monochrome-visible focus indicator (incl. the armed
       "Press again to clear N finished" label).
-- [ ] The settle toast distinguishes imported from already-in-Library
+- [x] The settle toast distinguishes imported from already-in-Library
       matches (a dedup-only batch never says "imported").
-- [ ] A fresh process's first submit paints no stdlib-logging output over
+- [x] A fresh process's first submit paints no stdlib-logging output over
       the TUI (root logger silenced in spawn workers alongside loguru and
       warnings).
-- [ ] After pressing Clear, the path field stays empty through focus
+- [x] After pressing Clear, the path field stays empty through focus
       clicks and recomposes.
+
+## Implementation Notes
+
+- Focus: `LibraryIngestCanvas Button:focus` is now `text-style: bold
+  reverse` (no outline) -- live-verified: a focused Browse… keeps its
+  readable label (was an empty heavy-border box).
+- Toast: the writer marks dedup outcomes with a shared
+  `INGEST_DUPLICATE_PROGRESS_PREFIX` constant; the settle logic counts
+  matched done-jobs separately and reports "N already in Library"
+  (live: `Ingest finished — 1 already in Library` beside the dedup row).
+  Baseline is now a (done, failed, matched) triple with the same
+  shrink re-anchoring.
+- Worker logging: the `__mp_main__` guard and the pool initializer add a
+  root-logger NullHandler (kills the auto-basicConfig
+  `WARNING:root:…` channel); live: zero noise across a fresh process's
+  first submit. Silence test extended with a bare `logging.warning`.
+- Clear resurrection: NOT reproducible in harness (regression pin
+  `test_clear_path_button_empties_the_widget_for_real` added and green);
+  the live capture's "resurrected" text contained content typed into
+  other fields, so reclassified as a probable tmux input-delivery
+  artifact. Reopen with a clean capture if seen again.
