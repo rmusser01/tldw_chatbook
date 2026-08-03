@@ -2,6 +2,7 @@
 
 from .console_control_bar import ConsoleControlBar
 from .console_composer_bar import ConsoleComposerBar
+from .console_command_popup import ConsoleCommandPopup
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
 from .console_edit_message_modal import ConsoleEditMessageModal
 from .console_rail_handle import ConsoleRailHandle
@@ -21,6 +22,7 @@ from .console_workspace_switcher_modal import ConsoleWorkspaceSwitcherModal
 __all__ = [
     "build_console_workbench_state",
     "ConsoleComposerBar",
+    "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
     "ConsoleControlBar",
     "ConsoleEditMessageModal",
