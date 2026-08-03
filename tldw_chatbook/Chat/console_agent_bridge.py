@@ -1958,6 +1958,7 @@ class ConsoleAgentBridge:
                                 dels=_rec.dels,
                                 tracking_error=_rec.tracking_error,
                                 untracked_oversize=_rec.untracked_oversize,
+                                nested_repos=_rec.nested_repos,
                             )
                         self._append_change_markers(
                             session_id, run_id, _records

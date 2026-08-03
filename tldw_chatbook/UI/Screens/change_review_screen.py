@@ -43,6 +43,10 @@ from tldw_chatbook.Workspaces.change_tracking import (
 #: but the flat section name is the spec's (dotted sections drop defaults).
 DEFAULT_DIFF_DISPLAY_MAX_LINES = 2000
 
+#: How many nested-repo paths the disclosure banner names before "+N more"
+#: (TASK-1976; Qodo #1254 asked for the limit to be discoverable).
+NESTED_BANNER_NAMED_LIMIT = 5
+
 #: Group headings in display order. "Other" carries the rare git letters
 #: (T typechange, C copy) that pass through verbatim rather than being
 #: coerced — see ``ChangedFile.status``.
@@ -389,6 +393,27 @@ class ChangeReviewScreen(Screen):
             if error:
                 banners.append(f"⚠ tracking failed for {row['root']}: {error}")
                 continue
+            nested_raw = row.get("nested_repos") or "[]"
+            try:
+                import json as _json
+
+                nested = [str(p) for p in _json.loads(nested_raw)]
+            except (ValueError, TypeError):
+                nested = []
+            if nested:
+                # TASK-1976: name the holes — changes inside these repos
+                # are not tracked at all.
+                limit = NESTED_BANNER_NAMED_LIMIT
+                shown = ", ".join(nested[:limit]) + (
+                    f" (+{len(nested) - limit} more)"
+                    if len(nested) > limit
+                    else ""
+                )
+                plural = "ies" if len(nested) != 1 else "y"
+                banners.append(
+                    f"⚠ {len(nested)} nested repositor{plural} inside "
+                    f"{row['root']} not tracked: {shown}"
+                )
             oversize = int(row.get("untracked_oversize") or 0)
             if oversize:
                 # TASK-1975 AC#2: cost bounds are honest, not silent.

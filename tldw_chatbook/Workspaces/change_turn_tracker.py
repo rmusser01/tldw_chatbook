@@ -87,6 +87,7 @@ class TurnChangeRecord:
     dels: int = 0
     tracking_error: str = ""
     untracked_oversize: int = 0
+    nested_repos: tuple[str, ...] = ()
 
 
 class TurnHandle:
@@ -99,6 +100,9 @@ class TurnHandle:
         #: TASK-1975: each root's oversize-excluded set at B, so end_turn
         #: can tell NEW oversize (disclose even changeless) from stable.
         self.baseline_oversize: dict[str, tuple[str, ...]] = {}
+        #: TASK-1976: each root's nested-repo set at B, from the SAME walk
+        #: the budget gate already runs — new holes disclose even cardless.
+        self.baseline_nested: dict[str, tuple[str, ...]] = {}
         self._thread: threading.Thread | None = None
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
@@ -178,6 +182,7 @@ class ChangeTurnTracker:
                             "tracking disabled for this turn"
                         )
                         continue
+                    handle.baseline_nested[key] = scan.nested_repos
                     repo = self.service.repo_for_root(root)
                     handle.baselines[key] = repo.snapshot("turn baseline")
                     handle.baseline_oversize[key] = repo.last_oversize_excluded
@@ -249,6 +254,7 @@ class ChangeTurnTracker:
                     repo.force_add(in_root)
                 end = repo.snapshot("turn end")
                 oversize = repo.last_oversize_excluded
+                nested = repo.last_nested_repos
                 if end == baseline:
                     # TASK-1975 (AC#6): an oversized file CREATED during
                     # the turn is the turn's only event -- disclose it with
@@ -257,13 +263,19 @@ class ChangeTurnTracker:
                     new_oversize = set(oversize) - set(
                         handle.baseline_oversize.get(key, ())
                     )
-                    if new_oversize:
+                    # TASK-1976: a repo cloned mid-turn is a NEW hole —
+                    # same disclosure rule as new oversize.
+                    new_nested = set(nested) - set(
+                        handle.baseline_nested.get(key, ())
+                    )
+                    if new_oversize or new_nested:
                         records.append(
                             TurnChangeRecord(
                                 root=key,
                                 baseline_sha=baseline,
                                 end_sha=end,
                                 untracked_oversize=len(oversize),
+                                nested_repos=nested,
                             )
                         )
                     continue
@@ -277,6 +289,7 @@ class ChangeTurnTracker:
                         adds=sum(c.adds for c in changed),
                         dels=sum(c.dels for c in changed),
                         untracked_oversize=len(oversize),
+                        nested_repos=nested,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 -- disclosed, never raised

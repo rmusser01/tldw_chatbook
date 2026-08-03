@@ -96,12 +96,18 @@ class RootScan:
             already knows is too big).
         oversized: Root-relative paths of files over ``max_file_bytes``,
             in walk order.
+        nested_repos: Root-relative paths of NESTED git repos (a child
+            directory carrying ``.git`` as dir or file — TASK-1976: git
+            records these as gitlinks, so changes inside are invisible to
+            snapshots; the hole must be disclosed). The root's own
+            ``.git`` is not nested.
     """
 
     files: int
     total_bytes: int
     over_budget: bool
     oversized: tuple[str, ...] = ()
+    nested_repos: tuple[str, ...] = ()
 
 
 def scan_root(
@@ -138,7 +144,22 @@ def scan_root(
     files = 0
     total = 0
     oversized: list[str] = []
+    nested: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Nested-repo detection (TASK-1976) BEFORE pruning: a child dir
+        # carrying `.git` (dir or worktree FILE) is a disclosed hole. The
+        # root's own `.git` is the root being a repo, not a nested one.
+        if Path(dirpath) != root and (".git" in dirnames or ".git" in filenames):
+            try:
+                nested.append(Path(dirpath).relative_to(root).as_posix())
+            except ValueError:  # pragma: no cover -- walk stays inside
+                pass
+            # Qodo #1254 finding 4: nothing under a nested repo is ever
+            # trackable, so none of it may count against the root's budget
+            # or pollute the oversize disclosure -- do not descend, do not
+            # count its files.
+            dirnames[:] = []
+            continue
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR_NAMES]
         for name in filenames:
             path = Path(dirpath) / name
@@ -161,10 +182,12 @@ def scan_root(
                     total_bytes=total,
                     over_budget=True,
                     oversized=tuple(oversized),
+                    nested_repos=tuple(nested),
                 )
     return RootScan(
         files=files,
         total_bytes=total,
         over_budget=False,
         oversized=tuple(oversized),
+        nested_repos=tuple(nested),
     )

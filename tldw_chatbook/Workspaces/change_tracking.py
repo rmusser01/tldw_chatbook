@@ -239,6 +239,8 @@ class ShadowRepo:
         #: Root-relative paths excluded as oversized by the LAST snapshot
         #: on this instance (TASK-1975 disclosure).
         self.last_oversize_excluded: tuple[str, ...] = ()
+        #: Nested repos seen by the LAST snapshot's scan (TASK-1976).
+        self.last_nested_repos: tuple[str, ...] = ()
 
     # -- plumbing ----------------------------------------------------------
 
@@ -437,6 +439,7 @@ class ShadowRepo:
                 max_total_bytes=_sys.maxsize,
             )
             self.last_oversize_excluded = scan.oversized
+            self.last_nested_repos = scan.nested_repos
             # info/exclude is line-oriented and has NO newline escaping --
             # a filename carrying \n would INJECT extra patterns (Qodo
             # #1251 finding 5). Such paths are unexcludable; they are
@@ -449,13 +452,41 @@ class ShadowRepo:
             unexcludable = [
                 rel for rel in scan.oversized if rel not in excludable
             ]
-            if excludable:
+            # TASK-1976: nested repos are excluded from tracking entirely.
+            # This is not merely hygiene -- `git add -A` HARD-FAILS (128,
+            # "does not have a commit checked out") on a commitless child
+            # repo, which would kill tracking for the whole root; and a
+            # committed child would land as a gitlink whose inner changes
+            # are invisible anyway. Excluded + disclosed is the honest,
+            # uniform behavior (test: nested-edit-invisible).
+            nested_excludable = [
+                rel
+                for rel in scan.nested_repos
+                if "\n" not in rel and "\r" not in rel
+            ]
+            # Qodo #1254 finding 5: a newline-named nested repo cannot go
+            # into info/exclude, and a commitless child makes `add -A`
+            # FATAL -- exclude it at add time via pathspec magic instead
+            # (argv is newline-safe; `literal` disables glob semantics).
+            nested_unexcludable = [
+                rel for rel in scan.nested_repos if rel not in nested_excludable
+            ]
+            if excludable or nested_excludable:
                 exclude = self.git_dir / "info" / "exclude"
                 with exclude.open("a", encoding="utf-8") as fh:
-                    fh.write("# oversize (TASK-1975), rewritten per snapshot\n")
+                    fh.write(
+                        "# oversize + nested (TASK-1975/1976), "
+                        "rewritten per snapshot\n"
+                    )
                     for rel in excludable:
                         fh.write(_exclude_pattern(rel) + "\n")
-            self._run("add", "-A", "--", ".")
+                    for rel in nested_excludable:
+                        fh.write(_exclude_pattern(rel) + "/\n")
+            add_args = ["add", "-A", "--", "."]
+            add_args.extend(
+                f":(literal,exclude){rel}" for rel in nested_unexcludable
+            )
+            self._run(*add_args)
             for rel in unexcludable:
                 self._run(
                     "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
