@@ -212,6 +212,7 @@ from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from ...Widgets.Console.console_control_bar import ConsoleSystemPromptChip
 from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
@@ -3090,7 +3091,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
-        provider, model, _settings = self._active_console_provider_model_display()
+        provider, model, settings = self._active_console_provider_model_display()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -3100,6 +3101,7 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=1 if pending_launch else 0,
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
+            system_prompt_set=bool(settings.system_prompt),
         )
 
     def _build_console_staged_context_state(
@@ -9493,6 +9495,15 @@ class ChatScreen(BaseAppScreen):
             )
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+
+    @on(ConsoleSystemPromptChip.EditRequested)
+    def on_console_system_prompt_chip_edit_requested(
+        self, event: ConsoleSystemPromptChip.EditRequested
+    ) -> None:
+        """Open the system prompt editor from the control-bar chip."""
+        event.stop()
+        self.action_open_console_system_prompt_editor()
 
     async def _open_console_system_prompt_editor(self) -> None:
         """Open the system prompt editor modal for the active Console session."""

@@ -293,6 +293,7 @@ class ConsoleControlState:
     sources_label: str
     tools_label: str
     approvals_label: str
+    system_prompt_label: str = "System Prompt"
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
@@ -308,6 +309,7 @@ class ConsoleControlState:
         staged_source_count: int = 0,
         tool_count: int = 0,
         approval_count: int = 0,
+        system_prompt_set: bool = False,
     ) -> "ConsoleControlState":
         persona_text = _clean(persona, "")
         persona_label = (
@@ -321,6 +323,9 @@ class ConsoleControlState:
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=f"Tools: {tool_count} ready",
             approvals_label=f"Approvals: {approval_count} pending",
+            system_prompt_label=(
+                "System Prompt: set" if system_prompt_set else "System Prompt"
+            ),
             sources_active=staged_source_count > 0,
             tools_active=tool_count > 0,
             approvals_active=approval_count > 0,

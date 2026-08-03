@@ -111,6 +111,28 @@ class ConsoleApprovalsChip(ConsoleChip):
         self.post_message(self.ReviewRequested())
 
 
+class ConsoleSystemPromptChip(ConsoleChip):
+    """System-prompt chip that doubles as a system-prompt-editor action.
+
+    Activating it (Enter/Space while focused, or click) asks the screen to
+    open the system-prompt editor modal for the active Console session.
+    """
+
+    BINDINGS = [
+        Binding("enter", "edit_system_prompt", "Edit system prompt", show=False),
+        Binding("space", "edit_system_prompt", "Edit system prompt", show=False),
+    ]
+
+    class EditRequested(Message):
+        """Posted when the system-prompt chip is activated from keyboard or mouse."""
+
+    def action_edit_system_prompt(self) -> None:
+        self.post_message(self.EditRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.EditRequested())
+
+
 class ConsoleControlBar(Vertical):
     """Visible Console control strip outside the transcript region.
 
@@ -195,6 +217,7 @@ class ConsoleControlBar(Vertical):
             "#console-approvals-label": state.approvals_label,
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
+            "#console-system-prompt-chip": state.system_prompt_label,
             "#console-persona-chip": state.persona_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,
@@ -318,6 +341,11 @@ class ConsoleControlBar(Vertical):
         ):
             yield self._chip(self.state.provider_label, id="console-provider-chip")
             yield self._chip(self.state.model_label, id="console-model-chip")
+            yield self._chip(
+                self.state.system_prompt_label,
+                id="console-system-prompt-chip",
+                chip_class=ConsoleSystemPromptChip,
+            )
             yield self._chip(self.state.persona_label, id="console-persona-chip")
             yield self._chip(self.state.rag_label, id="console-rag-chip")
             yield self._chip(

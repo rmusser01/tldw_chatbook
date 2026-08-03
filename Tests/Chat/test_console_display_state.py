@@ -61,6 +61,18 @@ def test_console_control_state_counter_activity_flags():
     )
 
 
+def test_console_control_state_system_prompt_label_defaults_to_unset():
+    state = ConsoleControlState.from_values()
+
+    assert state.system_prompt_label == "System Prompt"
+
+
+def test_console_control_state_system_prompt_label_reflects_set_prompt():
+    state = ConsoleControlState.from_values(system_prompt_set=True)
+
+    assert state.system_prompt_label == "System Prompt: set"
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
