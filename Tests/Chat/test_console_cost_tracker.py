@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_cost_tracker import (
     build_cost_snapshot,
     build_cost_state,
 )
+from tldw_chatbook.Chat.console_session_settings import _estimate_tokens_locally
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
@@ -117,3 +118,89 @@ def test_estimated_entries_marked_in_tooltip_and_label():
     )
     assert state.label.startswith("~$0.10")
     assert "estimated" in state.tooltip.lower()
+
+
+# --- Fix round 1: reviewer findings -----------------------------------------
+
+
+def test_estimated_row_pricing_depends_on_role():
+    """F1: an estimated assistant row (usage=None is real, see
+    console_chat_models.py:439) must price at output_per_mtok, not
+    input_per_mtok -- output rates run 4-5x input, so collapsing both onto
+    the input rate badly understates an all-assistant-estimated transcript.
+    """
+    content = "x" * 400  # identical length for both rows
+
+    user_snap = build_cost_snapshot(
+        [_msg(content=content, usage=None, role="user")],
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    assistant_snap = build_cost_snapshot(
+        [_msg(content=content, usage=None, role="assistant")],
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    assert user_snap.pricing_known is True
+    assert assistant_snap.pricing_known is True
+    # Same content length -> comparable token counts, but the assistant row
+    # must cost strictly more since it is priced at the output rate (15.00)
+    # instead of the input rate (3.00).
+    assert assistant_snap.total_usd > user_snap.total_usd
+
+    # Exact expected total for a transcript containing both rows together.
+    user_tokens = _estimate_tokens_locally(
+        [{"role": "user", "content": content}], "claude-sonnet-4-6", "anthropic"
+    )
+    assistant_tokens = _estimate_tokens_locally(
+        [{"role": "assistant", "content": content}], "claude-sonnet-4-6", "anthropic"
+    )
+    expected_total = round(
+        user_tokens * 3.00 / 1_000_000 + assistant_tokens * 15.00 / 1_000_000, 6
+    )
+    combined_snap = build_cost_snapshot(
+        [
+            _msg(content=content, usage=None, role="user"),
+            _msg(content=content, usage=None, role="assistant"),
+        ],
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    assert combined_snap.total_usd == expected_total
+
+
+def test_estimate_provider_is_normalized_before_ratio_lookup():
+    """F2: provider must go through provider_config_key before it reaches
+    the estimator's char-ratio table (console_session_settings.py:742
+    convention) -- a raw display-cased "Google" must resolve the same
+    ratio entry as its normalized "google" spelling.
+    """
+    content = "some context content for token estimation " * 5
+
+    snap_lower = build_cost_snapshot(
+        [_msg(content=content, usage=None, role="user")],
+        provider="google", model="gemini-2.5-flash",
+    )
+    snap_mixed = build_cost_snapshot(
+        [_msg(content=content, usage=None, role="user")],
+        provider="Google", model="gemini-2.5-flash",
+    )
+    assert snap_mixed.total_tokens == snap_lower.total_tokens
+    assert snap_mixed.total_usd == snap_lower.total_usd
+
+
+def test_tokens_only_tooltip_narrates_cache_state():
+    """F3: an unpriced model's tooltip must still explain a warm/alerting
+    cache -- the cache-state line renders between the token line and the
+    [pricing] hint, not just for priced snapshots.
+    """
+    snap = ConsoleCostSnapshot(None, 12_345, False, False, 2)
+    state = build_cost_state(
+        snap, cache_state=ConsoleCacheState.WARM, break_reason="system prompt changed",
+        projected_delta_usd=0.13, ttl_remaining_s=90.0, pricing_as_of=None,
+    )
+    assert state.alert is True
+    assert "system prompt changed" in state.tooltip
+    assert "[pricing]" in state.tooltip
+
+    tokens_idx = state.tooltip.index("Tokens:")
+    cache_idx = state.tooltip.index("system prompt changed")
+    pricing_idx = state.tooltip.index("[pricing]")
+    assert tokens_idx < cache_idx < pricing_idx

@@ -31,6 +31,7 @@ from typing import Any, Optional, Sequence
 from loguru import logger
 
 from tldw_chatbook.Chat.console_session_settings import _estimate_tokens_locally
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 
@@ -174,6 +175,48 @@ def _format_ttl(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+def _cache_state_line(
+    cache_state: "ConsoleCacheState",
+    *,
+    cold: bool,
+    ttl_remaining_s: Optional[float],
+    break_reason: Optional[str],
+    projected_delta_usd: Optional[float],
+) -> str:
+    """Build the tooltip's single cache-state narration line.
+
+    Shared by both the priced and tokens-only branches of
+    :func:`build_cost_state` so a session on an unpriced model still
+    explains WHY its chip is warm/expired/alerting in the tooltip, rather
+    than a bare token count leaving an alert-colored chip unexplained.
+
+    Args:
+        cache_state: Current prompt-cache state.
+        cold: Whether the cache has expired (``cache_state is EXPIRED``).
+        ttl_remaining_s: Seconds remaining before the cache expires, or
+            ``None`` when not applicable.
+        break_reason: Human-readable reason the cache is about to break,
+            or ``None``.
+        projected_delta_usd: Estimated extra dollar cost if the cache
+            breaks, or ``None`` when not applicable/unknown.
+
+    Returns:
+        One line of tooltip text, e.g. ``"Cache: warm (4:00 remaining)"``.
+    """
+    if cold:
+        return "Cache: expired"
+    if cache_state == ConsoleCacheState.WARM:
+        cache_line = "Cache: warm"
+        if ttl_remaining_s is not None:
+            cache_line += f" ({_format_ttl(ttl_remaining_s)} remaining)"
+        if break_reason:
+            cache_line += f" — {break_reason}"
+            if projected_delta_usd is not None:
+                cache_line += f" (~+${_format_amount(abs(projected_delta_usd))})"
+        return cache_line
+    return "Cache: none"
+
+
 #
 #######################################################################################################################
 #
@@ -200,11 +243,24 @@ def build_cost_snapshot(
     reported so the UI can fall back to a tokens-only chip rather than
     losing the row entirely.
 
+    Estimated rows are priced role-aware: an ``assistant`` row (a real,
+    documented case -- ``ConsoleChatMessage.usage`` is ``None`` for legacy
+    rows and providers that reported nothing, not just for user rows) is
+    priced at the model's ``output_per_mtok`` rate, since it stands in for
+    a completion; every other role is priced at ``input_per_mtok``. Output
+    rates commonly run 4-5x input rates, so collapsing both onto the input
+    rate would understate an all-assistant-estimated transcript badly.
+
     Args:
         messages: Transcript rows (duck-typed: each is read via
             ``.content``, ``.usage``, and ``.role``; rows lacking all three
             attributes are treated as having no contribution).
         provider: Current session provider, used to price estimated rows.
+            Normalized once through ``provider_config_key`` (the same
+            mapping the rest of the app uses) before being handed to the
+            estimator or the catalog, so a display-cased spelling
+            ("Google") resolves the same char-ratio/pricing entry as its
+            normalized form ("google").
         model: Current session model, used to price estimated rows. May be
             ``None`` when no model is selected yet.
 
@@ -214,6 +270,7 @@ def build_cost_snapshot(
     """
     try:
         catalog = get_pricing_catalog()
+        provider_key = provider_config_key(provider)
         total_usd_accum = 0.0
         usd_known = True
         has_estimated = False
@@ -239,17 +296,24 @@ def build_cost_snapshot(
             role = getattr(message, "role", "") or ""
 
             estimated_tokens = _estimate_tokens_locally(
-                [{"role": role, "content": content}], model or "", provider
+                [{"role": role, "content": content}], model or "", provider_key
             )
             total_tokens += estimated_tokens
             row_count += 1
             has_estimated = True
 
-            pricing = catalog.get_pricing(provider, model or "")
+            pricing = catalog.get_pricing(provider_key, model or "")
             if pricing is None:
                 usd_known = False
             else:
-                total_usd_accum += estimated_tokens * pricing.input_per_mtok / 1_000_000
+                # role is a plain string or ConsoleMessageRole (a str Enum),
+                # both of which compare equal to "assistant" by value.
+                rate = (
+                    pricing.output_per_mtok
+                    if role == "assistant"
+                    else pricing.input_per_mtok
+                )
+                total_usd_accum += estimated_tokens * rate / 1_000_000
 
         pricing_known = usd_known and row_count > 0
         total_usd = round(total_usd_accum, 6) if pricing_known else None
@@ -339,6 +403,18 @@ def build_cost_state(
             tooltip_lines = [f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
             if snapshot.has_estimated_entries:
                 tooltip_lines.append("Includes estimated (unsent) rows.")
+            # F3: narrate cache state even without a dollar total, so a
+            # warm/expired/alerting chip's tooltip explains itself instead
+            # of showing only a token count.
+            tooltip_lines.append(
+                _cache_state_line(
+                    cache_state,
+                    cold=cold,
+                    ttl_remaining_s=ttl_remaining_s,
+                    break_reason=break_reason,
+                    projected_delta_usd=projected_delta_usd,
+                )
+            )
             tooltip_lines.append(
                 "Pricing unknown for this model -- add a [pricing] override "
                 "in config to see a dollar total."
@@ -363,20 +439,15 @@ def build_cost_state(
         if snapshot.has_estimated_entries:
             total_line += " (includes estimated rows)"
         tooltip_lines = [total_line, f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
-
-        if cold:
-            tooltip_lines.append("Cache: expired")
-        elif cache_state == ConsoleCacheState.WARM:
-            cache_line = "Cache: warm"
-            if ttl_remaining_s is not None:
-                cache_line += f" ({_format_ttl(ttl_remaining_s)} remaining)"
-            if break_reason:
-                cache_line += f" — {break_reason}"
-                if projected_delta_usd is not None:
-                    cache_line += f" (~+${_format_amount(abs(projected_delta_usd))})"
-            tooltip_lines.append(cache_line)
-        else:
-            tooltip_lines.append("Cache: none")
+        tooltip_lines.append(
+            _cache_state_line(
+                cache_state,
+                cold=cold,
+                ttl_remaining_s=ttl_remaining_s,
+                break_reason=break_reason,
+                projected_delta_usd=projected_delta_usd,
+            )
+        )
 
         if pricing_as_of:
             tooltip_lines.append(f"Prices as of {pricing_as_of}")
