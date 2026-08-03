@@ -195,13 +195,13 @@ def _auth_missing_local_snap() -> ReadinessSnapshot:
 
 
 def _not_configured_builtin_snap() -> ReadinessSnapshot:
-    """The built-in server disabled in config -- NOT_CONFIGURED's only
+    """The built-in server turned off -- NOT_CONFIGURED's only
     allowed action is ADD_SERVER, which is never wired for any source."""
     return ReadinessSnapshot(
         server_key="builtin:tldw_chatbook", label="tldw_chatbook (built-in)",
         source="builtin", state=ReadinessState.NEEDS_SETUP,
         reasons=(ReasonCode.NOT_CONFIGURED,),
-        message="Disabled in config ([mcp].enabled = false).",
+        message="Turned off — open to enable.",
     )
 
 

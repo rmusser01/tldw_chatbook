@@ -548,7 +548,13 @@ def builtin_readiness(
         message = "Served over stdio when an MCP client launches chatbook."
     else:
         reasons = (ReasonCode.NOT_CONFIGURED,)
-        message = "Disabled in config ([mcp].enabled = false)."
+        # F-050: the one-line message is short, plain copy -- the
+        # Servers-mode callout renders "{glyph} {label}: {message}" on a
+        # single compact-Button row, so config-file syntax here both
+        # clipped mid-sentence and read as jargon. The technical detail
+        # stays available under detail["technical_detail"] for the
+        # callout's tooltip.
+        message = "Turned off — open to enable."
     return ReadinessSnapshot(
         server_key=BUILTIN_SERVER_KEY,
         label="tldw_chatbook (built-in)",
@@ -573,6 +579,11 @@ def builtin_readiness(
             "expose_resources": expose_resources,
             "expose_prompts": expose_prompts,
             "client_snippet": BUILTIN_CLIENT_SNIPPET,
+            # F-050: config-syntax detail behind the plain-language
+            # `message` above -- the callout tooltip surfaces it.
+            "technical_detail": None
+            if enabled
+            else "Disabled in config ([mcp].enabled = false).",
         },
     )
 

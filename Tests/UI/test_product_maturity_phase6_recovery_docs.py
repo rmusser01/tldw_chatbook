@@ -252,9 +252,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             assert builtin_setup.disabled is False
             assert builtin_setup.region.width > 0
             assert builtin_setup.region.height > 0
-            assert "Disabled in config ([mcp].enabled = false)." in str(
-                builtin_setup.label
-            )
+            assert "Turned off — open to enable." in str(builtin_setup.label)
 
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(

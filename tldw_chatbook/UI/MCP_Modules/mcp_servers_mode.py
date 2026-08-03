@@ -67,6 +67,15 @@ def _readiness_kind(state: ReadinessState) -> str:
     return STATE_CSS_CLASSES[state].removeprefix("mcp-status-")
 
 
+def _callout_tooltip(snap: ReadinessSnapshot) -> str:
+    """"Open {label}." for a callout, prefixed by any technical detail the
+    snapshot carries (F-050 -- e.g. the disabled built-in's config syntax,
+    which no longer appears in the one-line callout label itself)."""
+    technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+    open_line = f"Open {snap.label}."
+    return escape_markup(f"{technical} {open_line}" if technical else open_line)
+
+
 def _count_display(value: int | None) -> str:
     """"—" for an unreported count, else the plain integer as a string.
 
@@ -586,7 +595,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
-                tooltip=f"Open {escape_markup(snap.label)}.",
+                tooltip=_callout_tooltip(snap),
             )
             for index, snap in enumerate(visible)
         ]

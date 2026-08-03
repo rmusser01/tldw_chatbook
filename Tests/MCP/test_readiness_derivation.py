@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tldw_chatbook.MCP.readiness import (
     BUILTIN_SERVER_KEY,
+    STATE_GLYPHS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -248,6 +249,21 @@ def test_builtin_readiness():
     off = builtin_readiness(enabled=False)
     assert off.state is ReadinessState.NEEDS_SETUP
     assert off.primary_reason is ReasonCode.NOT_CONFIGURED
+
+
+def test_builtin_disabled_message_is_plain_and_keeps_technical_detail():
+    """F-050: the disabled built-in's one-line message is short, plain
+    language -- no config-file syntax -- so the Servers-mode callout
+    ("{glyph} {label}: {message}") renders fully at 100 cols. The
+    config-syntax detail stays available under `detail["technical_detail"]`
+    for the callout's tooltip."""
+    off = builtin_readiness(enabled=False)
+    assert "[mcp]" not in off.message
+    assert "=" not in off.message
+    assert off.message == "Turned off — open to enable."
+    callout_line = f"{STATE_GLYPHS[off.state]} {off.label}: {off.message}"
+    assert len(callout_line) <= 98
+    assert "[mcp].enabled = false" in str(off.detail.get("technical_detail"))
 
 
 def test_runtime_error_drives_needs_attention_with_stored_message():

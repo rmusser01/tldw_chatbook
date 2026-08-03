@@ -1066,6 +1066,28 @@ async def test_callout_click_posts_server_row_selected_with_its_key():
 
 
 @pytest.mark.asyncio
+async def test_builtin_callout_label_is_plain_and_tooltip_keeps_technical_detail():
+    """F-050: the disabled built-in's callout is short, plain copy that
+    renders fully at 100 cols (no config-file syntax in the one-line label);
+    the technical detail moves to the tooltip."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([builtin_readiness(enabled=False)])
+        await pilot.pause()
+        callout = app.query_one("#mcp-callout-0", Button)
+        label = str(callout.label)
+        assert "Turned off" in label
+        assert "[mcp]" not in label
+        assert len(label) <= 98
+        assert "[mcp].enabled = false" in (callout.tooltip or "")
+        # The click-through destination is unchanged: still opens the row.
+        callout.press()
+        await pilot.pause()
+        assert app.events and app.events[-1].server_key == "builtin:tldw_chatbook"
+
+
+@pytest.mark.asyncio
 async def test_callouts_cap_at_four_with_overflow_static():
     app = CanvasApp()
     async with app.run_test() as pilot:
