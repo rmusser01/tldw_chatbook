@@ -226,6 +226,91 @@ def test_disabled_egress_log_redacts_url_credentials(monkeypatch):
         assert sensitive_value not in messages[0]
 
 
+# ---------------------------------------------------------------------------
+# _log_origin: credential-free URL label for transport logs (TASK-1722)
+# ---------------------------------------------------------------------------
+
+def test_log_origin_strips_userinfo_query_and_fragment():
+    """_log_origin renders scheme://host[:port] only -- no userinfo/path/query/fragment."""
+    label = egress._log_origin(
+        "https://user:SECRET-TOKEN-MARKER@example.test:8443"
+        "/path?token=SECRET-TOKEN-MARKER#frag"
+    )
+    assert label == "https://example.test:8443"
+    assert "SECRET-TOKEN-MARKER" not in label
+
+
+def test_log_origin_omits_port_when_absent():
+    assert egress._log_origin("https://example.test/path?x=1") == "https://example.test"
+
+
+def test_log_origin_ipv6_host_is_bracketed():
+    assert (
+        egress._log_origin("https://[2001:db8::1]:9443/x?y=SECRET-TOKEN-MARKER")
+        == "https://[2001:db8::1]:9443"
+    )
+    assert egress._log_origin("http://[::1]/") == "http://[::1]"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://example.test/file?token=SECRET-TOKEN-MARKER",
+        "file:///etc/passwd",
+        "mailto:user@example.test",
+        "data:text/html,hi",
+        "https:///nohost",
+        "",
+        "not a url at all",
+        "http://[::1/x",  # malformed IPv6 -- urlparse.hostname raises ValueError
+        "http://",
+        "://bad",
+    ],
+)
+def test_log_origin_never_raises_for_non_http_or_unparseable_input(url):
+    """Non-http(s) scheme, hostless, and unparseable input all redact to a fixed
+    sentinel and never raise -- a logging helper that can throw would turn a
+    blocked request into a crash."""
+    assert egress._log_origin(url) == "<invalid-url>"
+
+
+def test_egress_block_log_omits_injected_query_marker(monkeypatch):
+    """AC2: a blocked fetch of a URL with a token in the query string must not
+    leak that token into the log line -- assert the marker's ABSENCE, not
+    merely the presence of a redacted form."""
+    marker = "SECRET-TOKEN-MARKER"
+    messages = []
+    monkeypatch.setattr(egress.logger, "warning", messages.append)
+    monkeypatch.setattr(egress, "_resolve", lambda host: ["10.0.0.1"])
+
+    decision = evaluate_url_policy(f"https://example.test/download?sig={marker}")
+
+    assert decision.allowed is False
+    assert len(messages) == 1
+    assert marker not in messages[0]
+    assert "https://example.test" in messages[0]  # host stays visible to operators
+
+
+def test_disabled_egress_log_omits_injected_query_marker(monkeypatch):
+    """Same as above for the disabled-check DEBUG log site (AC3: every site,
+    not just the block path)."""
+    marker = "SECRET-TOKEN-MARKER"
+    messages = []
+    monkeypatch.setattr(egress.logger, "debug", messages.append)
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False if key == "enabled" else default,
+    )
+
+    decision = evaluate_url_policy(f"https://example.test/download?sig={marker}")
+
+    assert decision.allowed is True
+    assert len(messages) == 1
+    assert marker not in messages[0]
+    assert "https://example.test" in messages[0]
+
+
 def test_check_url_or_raise_raises_with_remedy(monkeypatch):
     _resolve_to(monkeypatch, ["127.0.0.1"])
     with pytest.raises(EgressBlockedError) as exc:
