@@ -4,7 +4,14 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_command_suggestions import CommandSuggestion
+from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_command_popup import ConsoleCommandPopup
 
 SUGGESTIONS = [
@@ -43,15 +50,6 @@ async def test_popup_show_highlight_accept_hide():
         await pilot.pause()
         assert not popup.is_open
         assert popup.accept_selected() is None
-
-
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
-)
-from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 def _popup_labels(popup) -> list[str]:
@@ -114,7 +112,9 @@ async def test_down_up_navigates_and_tab_accepts():
 
         await pilot.press("/")
         await pilot.pause()
-        await pilot.press("down")  # highlight "/system"
+        await pilot.press("down")  # -> "/system"
+        await pilot.press("down")  # -> "/skills"
+        await pilot.press("up")  # back to "/system"
         await pilot.press("tab")
         await pilot.pause()
         assert composer.draft_text() == "/system "
@@ -155,6 +155,7 @@ async def test_skill_entries_and_skills_arg_mode():
         # Test-level snapshot injection — production refreshes candidates via
         # _refresh_console_skill_candidates; setting the tuple directly is
         # deliberate here, not the production path.
+        await pilot.app.workers.wait_for_complete()
         console._console_skill_candidates = (
             SkillCommandCandidate(name="web-search", description="Search the web"),
         )
