@@ -6,19 +6,14 @@ import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Model_Artifacts.acquisition import (
-    ArtifactAcquisitionService,
-    EnvConfigCredentialResolver,
-    TransferError,
-)
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
     RemoteDiscoveryError,
@@ -34,21 +29,110 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
-from tldw_chatbook.Widgets.ModelArtifacts import (
-    InstallProgressed,
-    InstallStatusChanged,
-    ModelInstallModal,
-    ModelInstallProgress,
-    make_progress_callback,
-)
+from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Model_Artifacts.acquisition import CredentialResolver
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionProgress,
+        CredentialResolver,
+    )
+
+
+def _default_credential_resolver() -> "CredentialResolver":
+    """Lazily construct the production env/config credential resolver.
+
+    A plain function, not ``EnvConfigCredentialResolver`` itself, as the
+    ``credential_resolver_factory`` constructor default: evaluating a
+    default parameter value happens once, at class-definition (i.e.
+    module-import) time, so binding the class itself there would import
+    ``Model_Artifacts.acquisition`` at module scope. This function defers
+    that import to its own body, run only when a ``RemoteView`` is actually
+    constructed (or a test calls the factory directly) -- the same
+    module-scope boundary this module's own docstring, and
+    ``model_curated_view.py`` before it, both hold to.
+
+    Returns:
+        A fresh ``EnvConfigCredentialResolver``.
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import EnvConfigCredentialResolver
+
+    return EnvConfigCredentialResolver()
 
 
 class RemoteView(Widget):
-    """Search and explicitly install pinned remote GGUF artifacts."""
+    """Search remote GGUF repositories and request their installation.
+
+    Metadata discovery -- ``Search``/repository inspection, driven by
+    :meth:`_search_remote`/:meth:`_resolve_remote` -- stays owned by this
+    view (TASK-1914): it is a read-only listing concern, exactly like
+    ``CuratedView._load_curated`` and ``InstalledView``'s own inventory
+    load, neither of which TASK-1803 moved either. Only acquisition --
+    preflight, provision, and the consent modal in between -- crosses the
+    browser's screen-owns-worker boundary: reviewing a candidate posts
+    :class:`InstallRequested` and waits to be told what happened via
+    :meth:`apply_progress`, :meth:`cancel_pending_install`, or
+    :meth:`finish_install`. ``LLMScreen`` owns the actual preflight/
+    provision workers (mirroring ``LibraryScreen``'s Parakeet v2 flow and
+    ``CuratedView``'s own TASK-1803 fix) precisely so a several-hundred-
+    megabyte download survives both the consent modal being dismissed and
+    a screen-level recompose that tears down and rebuilds this exact view
+    mid-install.
+
+    Before this change, this view owned that worker directly (added by
+    PR #1190, TASK-596.1) and had no compensating delivery logic at all: a
+    screen-level recompose mid-install orphaned the worker, whose own
+    ``post_message`` became a silent no-op once this instance was torn
+    down, so progress stopped reaching the UI with nothing to catch it.
+    Moving the worker to ``LLMScreen`` -- which already survives that same
+    recompose for the equivalent curated install -- removes the need for
+    any durable-delivery fallback here: ``LLMScreen`` is never the thing
+    being torn down, so there is no orphaned poster left to compensate for.
+
+    This module deliberately never imports ``ArtifactAcquisitionService``
+    nor calls ``preflight()``/``provision()`` itself; ``Model_Artifacts.
+    acquisition``/``fetch`` are only ever imported inside ``LLMScreen``'s
+    own worker methods (and, lazily, inside :func:`_default_credential_
+    resolver`, for the resolver this view's metadata search still performs
+    itself).
+    """
+
+    class InstallRequested(Message):
+        """Posted when a reviewed remote GGUF candidate is selected for install."""
+
+        def __init__(
+            self,
+            catalog: ResolvedRemoteCatalog,
+            candidate: RemoteGGUFCandidate,
+            *,
+            service: ModelArtifactService,
+            credential_resolver: "CredentialResolver",
+        ) -> None:
+            """Carry everything the host screen needs to preflight/provision.
+
+            Args:
+                catalog: The one-item remote catalog this view already
+                    froze via ``build_remote_catalog`` -- a pure, local
+                    computation, not itself an acquisition call -- naming
+                    the exact selected candidate as its root artifact.
+                candidate: The exact GGUF candidate the catalog was built
+                    from, carried alongside it so the host screen can
+                    describe the selected files (size/digest/source URL)
+                    on the shared consent modal without re-deriving them.
+                service: The managed-store service resolved by this view's
+                    own (possibly test-injected) ``service_factory`` --
+                    captured here so ``LLMScreen``'s worker uses the exact
+                    same instance a test constructed this view with.
+                credential_resolver: The credential resolver resolved the
+                    same way, via ``credential_resolver_factory`` -- the
+                    same seam this view's own metadata search already uses,
+                    so a gated repository's preflight/provision requests
+                    carry the same credential its search did.
+            """
+            super().__init__()
+            self.catalog = catalog
+            self.candidate = candidate
+            self.service = service
+            self.credential_resolver = credential_resolver
 
     DEFAULT_CSS = """
     RemoteView {
@@ -91,8 +175,8 @@ class RemoteView(Widget):
             HuggingFaceRemoteAdapter
         ),
         service_factory: Callable[[], ModelArtifactService] = managed_service,
-        credential_resolver_factory: Callable[[], CredentialResolver] = (
-            EnvConfigCredentialResolver
+        credential_resolver_factory: Callable[[], "CredentialResolver"] = (
+            _default_credential_resolver
         ),
         id: str | None = None,
     ) -> None:
@@ -111,9 +195,8 @@ class RemoteView(Widget):
         self._resolve_generation = 0
         self._results: tuple[RemoteModelSummary, ...] = ()
         self._resolved: ResolvedRemoteModel | None = None
-        self._selected_catalog: ResolvedRemoteCatalog | None = None
-        self._pending_report = None
         self._operation_reference: ArtifactRef | None = None
+        self._progress: "AcquisitionProgress | None" = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -131,8 +214,11 @@ class RemoteView(Widget):
                 variant="primary",
                 disabled=disabled,
             )
-        progress = ModelInstallProgress(None, id="remote-model-install-progress")
-        progress.display = False
+        progress = ModelInstallProgress(
+            self._progress,
+            id="remote-model-install-progress",
+        )
+        progress.display = self._progress is not None
         yield progress
         yield Static(self._default_status(), id="remote-model-status", markup=False)
 
@@ -250,7 +336,6 @@ class RemoteView(Widget):
         self._resolve_generation += 1
         self._results = ()
         self._resolved = None
-        self._selected_catalog = None
         self._set_metadata_controls_disabled(True)
         if is_exact_repository(query):
             self._set_status("Inspecting repository…")
@@ -269,7 +354,6 @@ class RemoteView(Widget):
             return
         self._resolve_generation += 1
         self._resolved = None
-        self._selected_catalog = None
         self._set_metadata_controls_disabled(True)
         self._set_status("Inspecting repository…")
         relevant_input = self.query_one("#remote-model-query", Input).value.strip()
@@ -277,7 +361,7 @@ class RemoteView(Widget):
 
     @on(Button.Pressed, ".remote-candidate")
     def _candidate_pressed(self, event: Button.Pressed) -> None:
-        """Freeze one resolved candidate and begin managed preflight."""
+        """Post an install intent for one reviewed candidate; never preflight/provision here."""
         event.stop()
         candidate = getattr(event.button, "candidate", None)
         if (
@@ -295,11 +379,17 @@ class RemoteView(Widget):
                 severity="error",
             )
             return
-        self._selected_catalog = catalog
         self._operation_reference = catalog.artifact.reference
         self._set_metadata_controls_disabled(True)
         self._set_status("Preparing the managed install plan…")
-        self._preflight_model(catalog, candidate)
+        self.post_message(
+            self.InstallRequested(
+                catalog,
+                candidate,
+                service=self._service_factory(),
+                credential_resolver=self._credential_resolver_factory(),
+            )
+        )
 
     @work(thread=True, group="remote_model_search", exit_on_error=False)
     def _search_remote(self, query: str, generation: int) -> None:
@@ -413,7 +503,6 @@ class RemoteView(Widget):
         ):
             self._results = ()
             self._resolved = None
-            self._selected_catalog = None
             self._set_metadata_controls_disabled(False)
             self._refresh_with_status(
                 "Repository selection changed. Press Search to inspect the current ID."
@@ -433,194 +522,71 @@ class RemoteView(Widget):
             "Select one GGUF candidate."
         )
 
-    async def _preflight(self, catalog: ResolvedRemoteCatalog):
-        """Resolve the selected catalog's managed plan on a worker event loop."""
-        resolver = self._credential_resolver_factory()
-        acquisition = ArtifactAcquisitionService(
-            self._service_factory(),
-            credential_resolver=resolver,
-        )
-        return await acquisition.preflight(
-            catalog.artifact.reference,
-            catalog,
-            sources=catalog.sources,
-        )
+    def apply_progress(self, progress: "AcquisitionProgress") -> None:
+        """Render one acquisition progress event, retaining it for later.
 
-    @work(
-        thread=True, group="remote_model_install", exclusive=True, exit_on_error=False
-    )
-    def _preflight_model(
-        self,
-        catalog: ResolvedRemoteCatalog,
-        candidate: RemoteGGUFCandidate,
-    ) -> None:
-        """Resolve the frozen candidate plan off the Textual event loop."""
+        Called ONLY by the host screen (``LLMScreen``) -- via its own
+        ``InstallProgressed`` handler for a live tick, and to re-apply the
+        last known progress to a freshly (re)mounted instance after a
+        screen-level recompose. This view has no ``@on(InstallProgressed)``
+        handler of its own and never posts that message itself (TASK-1914
+        moved the worker that used to post it to ``LLMScreen``); ``LLMScreen``
+        is the sole caller, giving exactly one render per tick.
+
+        ``self._progress`` is retained before either branch below runs, so
+        a fallback ``refresh(recompose=True)`` still picks up the correct
+        value on this view's next (complete) compose pass -- mirroring
+        ``CuratedView.apply_progress``'s own tolerance for the same
+        momentary mid-recompose gap.
+
+        Args:
+            progress: The acquisition progress event to render.
+        """
+        self._progress = progress
         try:
-            report = asyncio.run(self._preflight(catalog))
-        except Exception as exc:
-            logger.error(
-                "Remote model preflight failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                catalog.artifact.reference.artifact_id,
-                type(exc).__name__,
-                isinstance(exc, TransferError) and exc.retryable,
-            )
-            self.app.call_from_thread(
-                self._apply_preflight_result,
-                None,
-                install_failure_message(
-                    exc,
-                    model_label=catalog.artifact.model_id,
-                ),
-                candidate,
-            )
-            return
-        self.app.call_from_thread(
-            self._apply_preflight_result,
-            report,
-            None,
-            candidate,
-        )
-
-    def _apply_preflight_result(
-        self,
-        report,
-        error: str | None,
-        candidate: RemoteGGUFCandidate | None = None,
-    ) -> None:
-        """Show the shared consent modal or release the frozen selection."""
-        catalog = self._selected_catalog
-        if (
-            error is not None
-            or report is None
-            or catalog is None
-            or report.root != catalog.artifact.reference
-        ):
-            self._pending_report = None
-            self._operation_reference = None
-            self._selected_catalog = None
-            self._set_metadata_controls_disabled(False)
-            message = error or "The install plan changed. Search and review it again."
-            self._set_status(message)
-            self.notify(message, severity="error")
-            return
-        self._pending_report = report
-        acknowledgment = (
-            "No license was declared. I reviewed the source and want to continue."
-            if catalog.artifact.license_id == "NOASSERTION"
-            else None
-        )
-        selected_file_details: tuple[tuple[str, int, str, str], ...] = ()
-        if candidate is not None:
-            remote_files = tuple(
-                sorted(candidate.files, key=lambda item: item.upstream_path)
-            )
-            selected_file_details = tuple(
-                (
-                    remote_file.upstream_path,
-                    remote_file.size_bytes,
-                    remote_file.sha256,
-                    catalog.sources[catalog.artifact.reference][artifact_file.path],
-                )
-                for remote_file, artifact_file in zip(
-                    remote_files,
-                    catalog.artifact.files,
-                    strict=True,
-                )
-            )
-        self.app.push_screen(
-            ModelInstallModal(
-                report,
-                model_label=catalog.artifact.model_id,
-                required_acknowledgment=acknowledgment,
-                selected_file_details=selected_file_details,
-            ),
-            self._confirm_install,
-        )
-
-    def _confirm_install(self, confirmed: bool) -> None:
-        """Provision only after consent while preserving the frozen catalog."""
-        if not confirmed:
-            self._pending_report = None
-            self._operation_reference = None
-            self._selected_catalog = None
-            self._set_metadata_controls_disabled(False)
-            self._set_status(self._default_status())
-            return
-        if self._operation_reference is not None:
-            self.post_message(
-                InstallStatusChanged(self._operation_reference, active=True)
-            )
-        self._provision_model()
-
-    async def _provision(self, report, catalog: ResolvedRemoteCatalog):
-        """Install the reviewed catalog without activating it."""
-        resolver = self._credential_resolver_factory()
-        acquisition = ArtifactAcquisitionService(
-            self._service_factory(),
-            credential_resolver=resolver,
-        )
-        return await acquisition.provision(
-            report.root,
-            report.grant(),
-            catalog,
-            sources=catalog.sources,
-            progress=make_progress_callback(self.post_message),
-            activate=False,
-        )
-
-    @work(
-        thread=True, group="remote_model_install", exclusive=True, exit_on_error=False
-    )
-    def _provision_model(self) -> None:
-        """Provision the frozen plan and catalog off the Textual event loop."""
-        report = self._pending_report
-        catalog = self._selected_catalog
-        if report is None or catalog is None:
-            self.app.call_from_thread(
-                self._apply_provision_result,
-                "No install plan is available; search and review the model again.",
-            )
-            return
-        try:
-            asyncio.run(self._provision(report, catalog))
-        except Exception as exc:
-            logger.error(
-                "Remote model installation failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                report.root.artifact_id,
-                type(exc).__name__,
-                isinstance(exc, TransferError) and exc.retryable,
-            )
-            self.app.call_from_thread(
-                self._apply_provision_result,
-                install_failure_message(
-                    exc,
-                    model_label=catalog.artifact.model_id,
-                ),
-            )
-            return
-        self.app.call_from_thread(self._apply_provision_result, None)
-
-    @on(InstallProgressed)
-    def _install_progressed(self, event: InstallProgressed) -> None:
-        """Render shared acquisition progress in the Remote view."""
-        try:
-            progress = self.query_one(
+            widget = self.query_one(
                 "#remote-model-install-progress",
                 ModelInstallProgress,
             )
+            widget.display = True
+            widget.update_progress(progress)
         except NoMatches:
-            return
-        progress.display = True
-        progress.update_progress(event.progress)
+            self.refresh(recompose=True)
 
-    def _apply_provision_result(self, error: str | None) -> None:
-        """Finish install-only provisioning and publish inventory refresh state."""
-        reference = self._operation_reference
-        self._pending_report = None
+    def cancel_pending_install(self, message: str | None = None) -> None:
+        """Clear the in-flight indicator without disturbing search/resolve state.
+
+        Called by the host screen (``LLMScreen``) when a request this view
+        posted did not lead to an install actually starting: a preflight
+        failure, an explicit decline at the consent modal, or a request
+        refused outright because a different install (curated or remote --
+        both now share one screen-level lock, see ``LLMScreen``) is already
+        running -- in which case this is the freshly (re)mounted view that
+        just clicked install, not the instance whose install is still in
+        flight.
+
+        Args:
+            message: Status copy to show in place of the in-flight
+                indicator, e.g. a sanitized preflight failure. ``None``
+                (an explicit decline) restores the default status derived
+                from current search/resolve state.
+        """
         self._operation_reference = None
-        self._selected_catalog = None
+        self._set_metadata_controls_disabled(False)
+        self._set_status(message or self._default_status())
+
+    def finish_install(self, message: str | None = None) -> None:
+        """Clear the in-flight indicator and hide progress after a completed install.
+
+        Called by the host screen (``LLMScreen``) once provisioning
+        finishes, successfully or not.
+
+        Args:
+            message: The outcome copy to show (success or sanitized
+                failure); ``None`` restores the default status.
+        """
+        self._operation_reference = None
+        self._progress = None
         try:
             progress = self.query_one(
                 "#remote-model-install-progress",
@@ -631,24 +597,7 @@ class RemoteView(Widget):
         if progress is not None:
             progress.display = False
         self._set_metadata_controls_disabled(False)
-        if error is not None:
-            self._set_status(error)
-            self.notify(error, severity="error")
-        else:
-            message = (
-                "Model downloaded and managed. Runtime compatibility has not "
-                "been verified."
-            )
-            self._set_status(message)
-            self.notify(message, severity="information")
-        if reference is not None:
-            self.post_message(
-                InstallStatusChanged(
-                    reference,
-                    active=False,
-                    succeeded=error is None,
-                )
-            )
+        self._set_status(message or self._default_status())
 
 
 def _discovery_error_message(error: BaseException) -> str:
