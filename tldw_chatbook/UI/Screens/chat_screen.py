@@ -148,6 +148,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
+from ...Chat.console_command_suggestions import suggestions_for_draft
 from ...Chat.console_image_view import (
     IMAGE_CACHE_MAX_ENTRIES,
     ConsoleImageRenderCache,
@@ -230,6 +231,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
@@ -625,6 +627,8 @@ class ChatScreen(BaseAppScreen):
         """Expand the hidden Console composer and return keyboard focus to it."""
         if self._console_setup_modal_blocking():
             return
+        if self._dismiss_console_command_popup():
+            return
         self._set_console_composer_collapsed(False)
 
     def action_focus_next(self) -> None:
@@ -634,6 +638,8 @@ class ChatScreen(BaseAppScreen):
         focus cycling within the modal's own focusables instead of letting
         Tab tunnel into rail/transcript/composer controls hidden beneath it.
         """
+        if self._accept_console_command_popup():
+            return
         if self._focus_console_setup_modal_if_blocking():
             return
         self.focus_next()
@@ -1204,6 +1210,8 @@ class ChatScreen(BaseAppScreen):
         only fires once nothing closer to focus has claimed Escape.
         """
         if self._console_setup_modal_blocking():
+            return
+        if self._dismiss_console_command_popup():
             return
         self._focus_console_composer_if_needed(force=True)
 
@@ -3084,6 +3092,7 @@ class ChatScreen(BaseAppScreen):
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
             composer.clear_draft()
+        self._sync_console_command_popup()
         self._console_visible_draft_session_id = active_session_id
 
     def _build_console_control_state(
@@ -7597,6 +7606,7 @@ class ChatScreen(BaseAppScreen):
                 except KeyError:
                     pass
             yield self._frame_console_region(composer)
+            yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
             # transcript, tabs, composer) is covered/inert while setup is
@@ -8562,6 +8572,7 @@ class ChatScreen(BaseAppScreen):
             else:
                 if not composer.draft_text().strip():
                     composer.load_draft(suggested_prompt)
+                    self._sync_console_command_popup()
 
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
@@ -8898,6 +8909,7 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
+            self._sync_console_command_popup()
         if (
             result.accepted
             and controller.run_state.status is ConsoleRunStatus.COMPLETED
@@ -8943,6 +8955,7 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if composer is not None:
             composer.clear_draft()
+            self._sync_console_command_popup()
         pending_skill_name = self._console_pending_skill_marker_name
         if pending_skill_name is not None:
             self._console_pending_skill_marker_name = None
@@ -9316,6 +9329,7 @@ class ChatScreen(BaseAppScreen):
             composer.move_cursor_end()
             composer.insert_text("\n")
         composer.insert_text_as_paste(text)
+        self._sync_console_command_popup()
         return True
 
     async def _consume_pending_console_prompt_insert(self) -> None:
@@ -9432,6 +9446,7 @@ class ChatScreen(BaseAppScreen):
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.clear_draft()
+            self._sync_console_command_popup()
 
     async def _open_console_prompt_picker_for_apply_system(
         self, initial_query: str
@@ -11144,6 +11159,65 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_workbench_state(
             self._build_console_control_state(self._pending_console_launch_context)
         )
+        self._sync_console_command_popup()
+
+    def _console_command_popup_or_none(self) -> ConsoleCommandPopup | None:
+        try:
+            return self.query_one("#console-command-popup", ConsoleCommandPopup)
+        except QueryError:
+            return None
+
+    def _sync_console_command_popup(self) -> None:
+        """Show/hide the slash-command popup from the current composer draft."""
+        popup = self._console_command_popup_or_none()
+        if popup is None:
+            return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        if composer.has_paste_segments():
+            popup.hide()
+            return
+        suggestions = suggestions_for_draft(
+            composer.draft_text(),
+            self._console_command_registry,
+            self._console_skill_candidates,
+        )
+        if not suggestions:
+            popup.hide()
+            return
+        popup.show_suggestions(suggestions)
+
+    def _dismiss_console_command_popup(self) -> bool:
+        """Hide the popup if open. Returns True when it was open."""
+        popup = self._console_command_popup_or_none()
+        if popup is None or not popup.is_open:
+            return False
+        popup.hide()
+        return True
+
+    def _accept_console_command_popup(self) -> bool:
+        """Insert the highlighted suggestion into the draft. True when accepted."""
+        popup = self._console_command_popup_or_none()
+        if popup is None or not popup.is_open:
+            return False
+        suggestion = popup.accept_selected()
+        if suggestion is None:
+            return False
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return False
+        composer.load_draft(suggestion.insert_text)
+        self._sync_console_workbench_actions_from_draft()
+        return True
+
+    def on_resize(self) -> None:
+        """Keep an open command popup anchored above the composer."""
+        popup = self._console_command_popup_or_none()
+        if popup is not None and popup.is_open:
+            popup.reposition()
 
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""
@@ -11316,6 +11390,23 @@ class ChatScreen(BaseAppScreen):
             return
         if not self._should_capture_console_input(composer):
             return
+        popup = self._console_command_popup_or_none()
+        if popup is not None and popup.is_open:
+            if event.key == "up":
+                popup.move_highlight(-1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "down":
+                popup.move_highlight(1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                self._accept_console_command_popup()
+                event.stop()
+                event.prevent_default()
+                return
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             composer.select_all_draft()
             event.stop()
@@ -11654,6 +11745,7 @@ class ChatScreen(BaseAppScreen):
                 draft = session.get_chat_input().text if session is not None else ""
                 if not composer.draft_text():
                     composer.load_draft(draft)
+                    self._sync_console_command_popup()
                 self._focus_console_composer_if_needed()
             except QueryError:
                 pass
@@ -11673,6 +11765,7 @@ class ChatScreen(BaseAppScreen):
                 composer.sync_session_data(session_data)
                 if not composer.draft_text():
                     composer.load_draft(draft)
+                    self._sync_console_command_popup()
                 self._focus_console_composer_if_needed()
             except (QueryError, NoMatches):
                 pass
