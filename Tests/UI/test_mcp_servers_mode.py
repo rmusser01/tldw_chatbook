@@ -805,6 +805,38 @@ async def test_delete_requires_arm_then_confirm():
 
 
 @pytest.mark.asyncio
+async def test_delete_confirm_focuses_keep_and_escape_disarms():
+    """F-056: arming the delete confirmation moves keyboard focus onto the
+    safe option ("Keep"), and Escape disarms exactly like pressing it --
+    no mouse needed to back out of a destructive confirm."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap(
+            "local:docs",
+            "docs",
+            detail={
+                "command": "npx",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": None,
+            },
+        )
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete-confirm"))
+        assert app.focused is app.query_one("#mcp-detail-delete-cancel", Button)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not list(app.query("#mcp-detail-delete-confirm"))
+        assert list(app.query("#mcp-detail-delete"))  # disarmed
+        assert not app.events  # nothing destructive posted
+
+
+@pytest.mark.asyncio
 async def test_builtin_detail_has_no_delete_toolbar():
     app = CanvasApp()
     async with app.run_test() as pilot:

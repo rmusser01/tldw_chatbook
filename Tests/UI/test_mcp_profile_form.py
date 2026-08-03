@@ -68,6 +68,37 @@ async def test_form_labels_use_plain_language():
 
 
 @pytest.mark.asyncio
+async def test_escape_posts_cancelled_and_initial_focus_is_first_input():
+    """F-056: Escape mirrors the Cancel button, and opening the (add-mode)
+    form lands keyboard focus in its first input -- no Tab required."""
+    app = FormApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is app.query_one("#mcp-form-id", Input)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.events
+        assert isinstance(app.events[-1], MCPProfileForm.Cancelled)
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_initial_focus_is_command_since_id_is_locked():
+    """F-056: in edit mode the id Input is disabled, so the first reachable
+    input (Command) takes the opening focus instead."""
+    profile = {
+        "profile_id": "docs",
+        "command": "npx",
+        "args": ["-y"],
+        "env_placeholders": {},
+        "env_literals": {},
+    }
+    app = FormApp(profile=profile)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is app.query_one("#mcp-form-command", Input)
+
+
+@pytest.mark.asyncio
 async def test_malformed_env_line_raises_with_line_number():
     app = FormApp()
     async with app.run_test():
@@ -495,5 +526,18 @@ async def test_cancel_button_posts_cancelled():
     app = ImportApp()
     async with app.run_test() as pilot:
         await pilot.click("#mcp-import-cancel")
+        await pilot.pause()
+        assert app.events and isinstance(app.events[-1], MCPImportPanel.Cancelled)
+
+
+@pytest.mark.asyncio
+async def test_import_escape_posts_cancelled_and_initial_focus_is_text_area():
+    """F-056: Escape mirrors the import panel's Cancel button, and opening
+    the panel lands keyboard focus in the paste TextArea."""
+    app = ImportApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is app.query_one("#mcp-import-text", TextArea)
+        await pilot.press("escape")
         await pilot.pause()
         assert app.events and isinstance(app.events[-1], MCPImportPanel.Cancelled)

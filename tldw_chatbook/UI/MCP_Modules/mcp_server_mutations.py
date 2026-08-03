@@ -18,6 +18,7 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -80,6 +81,22 @@ class MCPServerMutationsPanel(Vertical):
     @property
     def is_edit(self) -> bool:
         return self._record is not None
+
+    # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
+    # `mcp-srv-cancel` press posts -- one path, no drift).
+    BINDINGS = [Binding("escape", "cancel_panel", "Cancel", show=False)]
+
+    def on_mount(self) -> None:
+        # F-056: opening the panel moves keyboard focus into its first
+        # reachable input (the server-id Input is disabled in edit mode, so
+        # the Name input takes it there) -- `call_after_refresh` so this
+        # lands after Textual's own mount-time focus settling.
+        first_input = "#mcp-srv-name" if self.is_edit else "#mcp-srv-id"
+        self.call_after_refresh(self.query_one(first_input, Input).focus)
+
+    def action_cancel_panel(self) -> None:
+        """F-056: Escape -- same path as the Cancel button."""
+        self.post_message(self.Cancelled())
 
     # -- compose ---------------------------------------------------------
 

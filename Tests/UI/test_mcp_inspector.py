@@ -1713,6 +1713,31 @@ async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
         assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
 
 
+@pytest.mark.asyncio
+async def test_test_panel_open_moves_focus_inside_and_escape_closes():
+    """F-056: opening the Test Tool panel moves keyboard focus into it
+    (the schema form's first control), and Escape closes the panel exactly
+    like its Close button."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        assert list(app.query("#mcp-inspector-test-panel"))
+        focused = app.focused
+        assert focused is not None
+        assert any(
+            ancestor.id == "mcp-inspector-test-panel"
+            for ancestor in focused.ancestors
+        ), f"focus did not land inside the test panel: {focused!r}"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
+
+
 # -- Task 5: gate-aware Test Tool -- arm-then-confirm mechanics --------------
 #
 # `require_confirm()`/`disarm_test_run()`/`test_run_armed` are the inspector-

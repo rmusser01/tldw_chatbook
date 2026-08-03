@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static, TextArea
@@ -25,6 +26,10 @@ _PLACEHOLDER_VALUE_RE = re.compile(
 
 class MCPProfileForm(Vertical):
     """State-driven inline form; validation errors surface in one Static."""
+
+    # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
+    # `mcp-form-cancel` press posts -- one path, no drift).
+    BINDINGS = [Binding("escape", "cancel_form", "Cancel", show=False)]
 
     DEFAULT_CSS = """
     MCPProfileForm { height: auto; min-height: 0; }
@@ -159,6 +164,17 @@ class MCPProfileForm(Vertical):
             init=False,
         )
         self._refresh_save_enabled()
+        # F-056: opening the form moves keyboard focus into its first
+        # reachable input (the id Input is disabled in edit mode, so the
+        # Command input takes it there) -- no Tab required to start typing.
+        # `call_after_refresh` so this lands after Textual's own mount-time
+        # focus settling instead of racing it.
+        first_input = "#mcp-form-command" if self.is_edit else "#mcp-form-id"
+        self.call_after_refresh(self.query_one(first_input, Input).focus)
+
+    def action_cancel_form(self) -> None:
+        """F-056: Escape -- same path as the Cancel button."""
+        self.post_message(self.Cancelled())
 
     def _on_required_field_changed(self, old_value: str, new_value: str) -> None:
         self._refresh_save_enabled()
@@ -340,6 +356,20 @@ class MCPImportPanel(Vertical):
         super().__init__(**kwargs)
         self._existing_ids = set(existing_ids or ())
         self._candidates: list[ImportCandidate] = []
+
+    # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
+    # `mcp-import-cancel` press posts -- one path, no drift).
+    BINDINGS = [Binding("escape", "cancel_import", "Cancel", show=False)]
+
+    def on_mount(self) -> None:
+        # F-056: opening the panel moves keyboard focus into the paste
+        # TextArea -- `call_after_refresh` so this lands after Textual's own
+        # mount-time focus settling instead of racing it.
+        self.call_after_refresh(self.query_one("#mcp-import-text", TextArea).focus)
+
+    def action_cancel_import(self) -> None:
+        """F-056: Escape -- same path as the Cancel button."""
+        self.post_message(self.Cancelled())
 
     def compose(self) -> ComposeResult:
         yield Static(

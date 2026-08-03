@@ -8,6 +8,7 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
@@ -129,6 +130,11 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 
 class MCPServersMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Servers mode."""
+
+    # F-056: Escape disarms a pending delete confirmation (same path as the
+    # arm-then-confirm pair's "Keep" button) -- a destructive confirm must
+    # never require the mouse to back out of. No-op when unarmed.
+    BINDINGS = [Binding("escape", "disarm_delete", "Cancel delete", show=False)]
 
     DEFAULT_CSS = """
     MCPServersMode {
@@ -786,6 +792,11 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         self._delete_armed = False
         await self._rebuild_detail_toolbar()
 
+    async def action_disarm_delete(self) -> None:
+        """F-056: Escape -- disarm exactly like the "Keep" button (no-op
+        when nothing is armed)."""
+        await self.disarm_delete()
+
     async def _rebuild_detail_toolbar(self) -> None:
         """Rebuild `#mcp-detail-toolbar` from `_detail_toolbar_widgets()`.
 
@@ -804,6 +815,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         toolbar.display = bool(widgets)
         if widgets:
             await toolbar.mount_all(widgets)
+            if self._delete_armed:
+                # F-056: arming the delete confirmation moves keyboard focus
+                # onto the SAFE option ("Keep") -- a keyboard user can back
+                # out with Enter or Escape immediately, and an accidental
+                # Enter never confirms the delete. Only the arm pair gets
+                # this (the plain Edit/Disconnect/Delete toolbar never
+                # steals focus).
+                self.call_after_refresh(
+                    self.query_one("#mcp-detail-delete-cancel", Button).focus
+                )
 
     def _builtin_toggle_widgets(self) -> list[Widget]:
         """Build the built-in detail's enable/expose Checkbox rows + note.

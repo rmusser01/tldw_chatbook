@@ -11,6 +11,7 @@ from typing import Any
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -407,6 +408,10 @@ def _render_section_payload(section: str, payload: Any) -> str:
 
 class MCPInspector(Vertical):
     """Right-pane inspector: what is selected, why, what can I do."""
+
+    # F-056: Escape closes the Test Tool panel when it's open (same path as
+    # its Close button); no-op otherwise.
+    BINDINGS = [Binding("escape", "close_test_panel", "Close test panel", show=False)]
 
     DEFAULT_CSS = """
     MCPInspector {
@@ -1545,6 +1550,21 @@ class MCPInspector(Vertical):
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
+        # F-056: opening the panel moves keyboard focus into it -- the
+        # schema form's first control when there is one (a raw-JSON
+        # TextArea, an enum Select, or a scalar Input), the Close button
+        # otherwise. `call_after_refresh` so this lands after Textual's own
+        # mount-time focus settling instead of racing it.
+        first_control = panel.query("Input, Select, TextArea").first()
+        if first_control is None:
+            first_control = panel.query_one("#mcp-inspector-test-close", Button)
+        self.call_after_refresh(first_control.focus)
+
+    async def action_close_test_panel(self) -> None:
+        """F-056: Escape -- close the Test Tool panel exactly like its
+        Close button; no-op when no panel is open."""
+        if self.query("#mcp-inspector-test-panel"):
+            await self._close_test_tool_panel()
 
     @staticmethod
     def _build_test_goto_permission_button() -> Button:
