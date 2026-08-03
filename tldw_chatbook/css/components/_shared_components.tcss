@@ -90,3 +90,16 @@
     background: $primary;
     color: $text;
 }
+
+/* Relocated from features/_search-rag.tcss (RAG UX v2 PR-2 Task 2) when that
+   sheet was retired: both rules are unscoped and were the ONLY bundled
+   definitions of their class, while CodeRepoCopyPasteWindow (.action-spacer)
+   and MediaViewerPanel (.param-group) still mount them. Deleting the sheet
+   without moving these would have silently unstyled both live widgets. */
+.action-spacer {
+    width: 1fr;
+}
+
+.param-group {
+    width: 1fr;
+}

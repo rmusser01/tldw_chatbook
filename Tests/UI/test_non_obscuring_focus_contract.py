@@ -24,7 +24,6 @@ LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
-SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
@@ -691,6 +690,17 @@ def test_library_mode_chip_selector_is_retired_from_focus_contracts():
         selectors = css_selectors(text)
         assert not css_selectors_contain_class(selectors, ".library-mode-chip")
         assert not css_selectors_contain_class(selectors, ".notes-mode-chip")
+
+
+def test_search_rag_selectors_are_retired_from_bundled_css():
+    """features/_search-rag.tcss was deleted (RAG UX v2 PR-2 Task 2); its
+    selectors must not resurface in any bundled css module."""
+    for module_path in bundled_css_module_paths():
+        selectors = css_selectors(module_path.read_text(encoding="utf-8"))
+        assert not css_selectors_contain_class(
+            selectors, ".search-query-input-enhanced"
+        )
+        assert not css_selectors_contain_class(selectors, ".results-list-enhanced")
 
 
 def test_css_class_selector_matching_uses_token_boundaries():
