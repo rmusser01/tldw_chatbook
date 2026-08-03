@@ -786,3 +786,36 @@ class TestAutoSubRoots:
 
         assert report.orphans_removed >= 1
         assert not child_repo.git_dir.exists()
+
+
+def test_end_turn_survives_a_still_running_discovery_thread(tracked):
+    """Qodo #1256: a timed-out baseline thread may still be appending
+    sub-roots while end_turn runs — iteration must be over a snapshot,
+    yielding one record per root, never churn-driven duplicates."""
+    import threading
+    import time
+
+    tracker, service, root = tracked
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    (root / "small.txt").write_text("edited\n")
+
+    stop = threading.Event()
+
+    def churn() -> None:
+        while not stop.is_set():
+            handle.roots.append(root)
+            time.sleep(0.0005)
+
+    thread = threading.Thread(target=churn, daemon=True)
+    thread.start()
+    try:
+        records = tracker.end_turn(handle)
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+    mine = [r for r in records if r.root == str(root.resolve())]
+    assert len(mine) == 1, (
+        f"churned roots produced {len(mine)} records for one root"
+    )

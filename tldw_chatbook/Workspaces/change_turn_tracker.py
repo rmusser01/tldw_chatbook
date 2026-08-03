@@ -120,7 +120,9 @@ class TurnHandle:
             return
         thread.join(timeout=timeout)
         if thread.is_alive():
-            for root in self.roots:
+            # Qodo #1256: the discovery thread may still be APPENDING
+            # sub-roots — iterate a snapshot, never the live list.
+            for root in tuple(self.roots):
                 key = str(root)
                 if key not in self.baselines and key not in self.errors:
                     self.errors[key] = (
@@ -256,8 +258,16 @@ class ChangeTurnTracker:
         """
         handle.await_baseline()
         records: list[TurnChangeRecord] = []
-        for root in handle.roots:
+        # Snapshot + dedupe: a timed-out baseline thread may still be
+        # appending discovered sub-roots (Qodo #1256) — a live-list
+        # iteration could loop on churn, and a duplicate entry would yield
+        # duplicate records for one root.
+        seen_roots: set[str] = set()
+        for root in tuple(handle.roots):
             key = str(root)
+            if key in seen_roots:
+                continue
+            seen_roots.add(key)
             if key in handle.errors:
                 records.append(
                     TurnChangeRecord(root=key, tracking_error=handle.errors[key])
