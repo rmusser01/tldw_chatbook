@@ -407,9 +407,11 @@ new owner files and nine changed existing owner entries; sink topology is
 unchanged. Semantic call review confirms that the LLM changes replace unsafe
 payload/error diagnostics with the accepted metadata-safe helpers, prompt
 improvement emits request/provider/model/count metadata without prompt text,
-change-revert adds two constant warnings, the prompts DB adds its v2-to-v3
-migration diagnostics, and the remaining digest changes are caused by moved or
-reformatted calls.
+change-revert adds two constant-message warnings with exception context that
+remain outside persistent admission, the prompts DB adds its v2-to-v3 migration
+diagnostics, and the remaining digest changes are caused by moved or reformatted
+calls. Persistent-sink topology is unchanged, and the existing admission tests
+remain the proof that ordinary diagnostic records do not reach disk.
 
 Implementation first patches only those reviewed pre-existing owner and
 summary entries and commits that reconciliation separately, without running

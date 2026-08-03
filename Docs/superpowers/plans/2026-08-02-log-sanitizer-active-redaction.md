@@ -134,9 +134,12 @@ At that pinned commit the exact generated owner values are:
 Review the semantic diagnostic-call delta, not only digests. The accepted delta
 must still be: metadata-safe LLM helpers instead of payload/error previews;
 prompt-improvement request/provider/model/count metadata without prompt text;
-two constant change-revert warnings; the Prompts DB v2-to-v3 migration pair;
-and otherwise only line movement/formatting. If latest `dev` differs, stop and
-reconcile the new delta before patching anything.
+two constant-message change-revert warnings with exception context that remain
+ordinary, non-admitted records; the Prompts DB v2-to-v3 migration pair; and
+otherwise only line movement/formatting. Persistent-sink topology is unchanged,
+and the existing admission tests remain the proof that ordinary records do not
+reach disk. If latest `dev` differs, stop and reconcile the new delta before
+patching anything.
 
 Use `apply_patch` to change exactly the reviewed summary and owner entries.
 Then run:
@@ -678,20 +681,34 @@ non-portable Transformers filename case is skipped.
 In Ollama:
 
 ```python
-from tldw_chatbook.Utils.input_validation import (
-    sanitize_string as sanitize_input_string,
-)
-from tldw_chatbook.Utils.log_sanitizer import sanitize_dict
+from tldw_chatbook.Utils import input_validation as input_safety, log_sanitizer
+
+# In _format_ollama_success_payload():
+log_sanitizer.sanitize_dict(data)
+
+# In _safe_ollama_model_names():
+safe_name = " ".join(input_safety.sanitize_string(name, max_length=256).split())
 ```
 
-In both model-name paths, replace log sanitization and manual newline slicing with:
+In Transformers use one line for the import and one for the replacement:
 
 ```python
-validated_name = sanitize_input_string(display_name, max_length=256)
-safe_name = " ".join(validated_name.split())
+from tldw_chatbook.Utils.input_validation import sanitize_string as sanitize_input
+
+display_name = " ".join(sanitize_input(display_name, max_length=256).split())
 ```
 
-Use `name` in the Ollama helper and `display_name` in Transformers. Preserve the current invalid/empty checks and result caps. Do not route displayed names back through `log_sanitizer`.
+These line-count-neutral edits are deliberate: the inventory digest includes
+diagnostic line numbers, and both modules contain logger calls after the edited
+helpers. Preserve the existing logger line numbers so a presentation-only
+change cannot manufacture unrelated owner-digest drift. Preserve the current
+invalid/empty checks and result caps. Do not route displayed names back through
+`log_sanitizer`.
+
+Before changing `monitoring_engine.py`, re-run the fingerprint command from
+Task 1, Step 4. Expected: both the non-monitoring SHA-256 and the monitoring
+entry still exactly match the reconciled baseline. If they do not, fix the
+line-count/scope error before proceeding.
 
 - [ ] **Step 5: Omit the subscription URL at the producer boundary**
 
@@ -712,9 +729,9 @@ Do not import `_log_origin()` from `Utils.egress`; the origin is unnecessary for
 
 Run the exact command from Step 3.
 
-Expected: 4 tests pass using production helpers and the real snapshot producer
-(three on Windows because the non-portable filename case is explicitly
-skipped).
+Expected: four selected tests pass using production helpers and the real
+snapshot producer on POSIX. Windows reports three passed and the one explicitly
+non-portable filename case skipped.
 
 - [ ] **Step 7: Prove TASK-856 changes only the monitoring inventory entry after reconciliation**
 
@@ -734,7 +751,7 @@ TASK-856's inventory delta.
 Inspect:
 
 ```bash
-git diff <reconciliation-commit>...HEAD -- \
+git diff <reconciliation-commit> -- \
   Docs/security/production-diagnostic-inventory.json
 ```
 
