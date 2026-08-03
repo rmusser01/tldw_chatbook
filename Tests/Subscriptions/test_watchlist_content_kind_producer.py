@@ -869,6 +869,128 @@ def test_the_rule_match_text_is_not_persisted_as_a_column():
     assert RULE_MATCH_TEXT_KEY not in columns
 
 
+# --- TASK-1363: appeared/disappeared scope, the producer half --------------
+
+
+def test_added_and_removed_text_helper_isolates_each_side_of_a_change():
+    """`added_and_removed_text`, the module helper `check_url` calls, in
+    isolation. Sharp assertions: each side must carry what changed on its own
+    side and nothing from the other, which is exactly what a scope-narrowed
+    rule relies on.
+    """
+    from tldw_chatbook.Subscriptions.monitoring_engine import added_and_removed_text
+
+    added, removed = added_and_removed_text(
+        "Alpha stays. Opus 4.1 is available. Gamma end.",
+        "Alpha stays. Opus 4.5 is available. Delta arrives. Gamma end.",
+    )
+
+    assert "Opus 4.5 is available" in added
+    assert "Delta arrives" in added
+    assert "Opus 4.1" not in added, "the added side must not carry the old text"
+
+    assert "Opus 4.1 is available" in removed
+    assert "Opus 4.5" not in removed, "the removed side must not carry the new text"
+    assert "Delta arrives" not in removed
+
+    # Nothing removed / nothing added are legitimate, common shapes (a pure
+    # addition, a pure deletion) -- both sides must be the empty string, not
+    # None or a KeyError-prone shape.
+    added_only, removed_none = added_and_removed_text("", "brand new page")
+    assert added_only.strip() == "brand new page"
+    assert removed_none == ""
+
+    added_none, removed_only = added_and_removed_text("old page gone", "")
+    assert added_none == ""
+    assert removed_only.strip() == "old page gone"
+
+
+async def _direct_check(db: SubscriptionsDB, source_id: int) -> tuple[dict | None, dict]:
+    """Call the real `check_url` directly, bypassing persistence.
+
+    `_check`/`_stored_items` only ever see what survives `persist_subscription_item`,
+    which drops any key outside its fixed column set -- exactly the thing
+    `RULE_MATCH_ADDED_TEXT_KEY`/`RULE_MATCH_REMOVED_TEXT_KEY` rely on staying
+    matching-only. This is the only way to see them on the raw change_info dict.
+    """
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.monitoring_engine import URLMonitor
+
+    config = LocalWatchlistsService._subscription_execution_config(
+        db.get_subscription(source_id)
+    )
+    return await URLMonitor(db).check_url(config)
+
+
+@pytest.mark.asyncio
+async def test_check_url_attaches_added_and_removed_text_to_a_real_change(monkeypatch):
+    """The producer wiring, end to end: a real site change's `change_info`
+    carries both new keys, with content matching the real before/after pages
+    -- not merely present, but correctly split.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_rule_matching import (
+        RULE_MATCH_ADDED_TEXT_KEY,
+        RULE_MATCH_REMOVED_TEXT_KEY,
+    )
+
+    db, service, source_id = await _site_source(
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER], change_threshold=0.0
+    )
+    await _check(service, source_id)  # baseline; check_url's own return is unused
+
+    item, disposition = await _direct_check(db, source_id)
+    assert disposition["kind"] == "changed", disposition
+    assert item is not None
+
+    added = item[RULE_MATCH_ADDED_TEXT_KEY]
+    removed = item[RULE_MATCH_REMOVED_TEXT_KEY]
+
+    assert "Opus 4.5 is available" in added
+    assert "Scheduled maintenance on Friday" in added
+    assert "Opus 4.1" not in added, "the added text must not carry the old version"
+
+    assert "Opus 4.1 is available" in removed
+    assert "Opus 4.5" not in removed
+    assert "Scheduled maintenance" not in removed, (
+        "the removed text must not carry a line the change only added"
+    )
+
+
+def test_feed_and_api_items_carry_neither_key_so_scope_falls_back_safely():
+    """AC#1: a feed/API item was never diffed against a previous version, so
+    it has neither `RULE_MATCH_ADDED_TEXT_KEY` nor `RULE_MATCH_REMOVED_TEXT_KEY`
+    -- only site changes go through `check_url`'s diff. `build_rule_haystack`
+    must handle their absence deliberately: "appeared" falls back to the whole
+    (wholly new) item rather than matching nothing, and "disappeared" matches
+    nothing at all, since nothing is known to have disappeared from an item
+    that was never compared against anything.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_rule_matching import (
+        RULE_MATCH_ADDED_TEXT_KEY,
+        RULE_MATCH_REMOVED_TEXT_KEY,
+        build_rule_haystack,
+    )
+
+    feed_item = {
+        "title": "Opus 4.5",
+        "content": "The model is available in the API today.",
+    }
+    assert RULE_MATCH_ADDED_TEXT_KEY not in feed_item
+    assert RULE_MATCH_REMOVED_TEXT_KEY not in feed_item
+
+    assert "the model is available" in build_rule_haystack(feed_item, scope="appeared"), (
+        "a wholly new item has no diff to narrow against -- it all just appeared"
+    )
+    assert build_rule_haystack(feed_item, scope="disappeared") == "", (
+        "nothing is known to have disappeared from an item with no previous "
+        "version to compare against"
+    )
+    # And "anywhere" is exactly as before: unaffected by either new key.
+    assert "the model is available" in build_rule_haystack(feed_item)
+
+
 # --- no path may emit an invalid pairing -----------------------------------
 
 

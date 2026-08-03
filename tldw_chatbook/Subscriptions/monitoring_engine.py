@@ -51,7 +51,11 @@ from .item_persist import (
     CONTENT_KIND_CHANGE,
 )
 from .noise_defaults import extraction_fingerprint, selector_parse_errors
-from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
+from .watchlist_rule_matching import (
+    RULE_MATCH_ADDED_TEXT_KEY,
+    RULE_MATCH_REMOVED_TEXT_KEY,
+    RULE_MATCH_TEXT_KEY,
+)
 from ..Utils.egress import (
     EgressBlockedError,
     EgressFetchError,
@@ -467,6 +471,43 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         )
         summary += _DIFF_TRUNCATION_SUMMARY_SUFFIX
     return "\n".join(kept), summary
+
+
+def added_and_removed_text(previous_text: str, current_text: str) -> tuple[str, str]:
+    """Split a site change into its added and removed text (TASK-1363).
+
+    Feeds a content-alert rule scoped to "appeared" or "disappeared" (see
+    ``watchlist_rule_matching.build_rule_haystack``) rather than the diff
+    body ``build_change_diff`` renders for the reader -- the two exist for
+    different consumers, but reuse the same ``_segment_for_diff``
+    segmentation so "added"/"removed" line up with what the reader's diff
+    pane shows, rather than a raw character-level diff that could slice a
+    matched phrase mid-word.
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+
+    Returns:
+        ``(added, removed)``: the new-side segments of every ``insert`` and
+        ``replace`` opcode, and the old-side segments of every ``delete`` and
+        ``replace`` opcode, each joined by a single space (matching the
+        joining `build_rule_haystack` already uses). Either half is the empty
+        string when nothing was added, or nothing was removed, respectively.
+    """
+    old_segments = _segment_for_diff(previous_text)
+    new_segments = _segment_for_diff(current_text)
+    matcher = SequenceMatcher(None, old_segments, new_segments)
+
+    added: List[str] = []
+    removed: List[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            added.extend(new_segments[j1:j2])
+        if tag in ("delete", "replace"):
+            removed.extend(old_segments[i1:i2])
+
+    return " ".join(added), " ".join(removed)
 
 
 def classify_change_type(previous_text: str, current_text: str) -> str:
@@ -1275,6 +1316,9 @@ class URLMonitor:
             diff_body, diff_summary = build_change_diff(
                 previous_text, current_content["text"]
             )
+            added_text, removed_text = added_and_removed_text(
+                previous_text, current_content["text"]
+            )
             change_info = {
                 "type": "url_change",
                 "url": url,
@@ -1310,6 +1354,12 @@ class URLMonitor:
                 # for matching only; it is not a persisted column (see
                 # `watchlist_rule_matching`).
                 RULE_MATCH_TEXT_KEY: current_content["text"],
+                # A per-rule opt-in (TASK-1363): a rule scoped to "appeared" or
+                # "disappeared" matches against just one of these instead of
+                # the whole page above. Matching-only, like
+                # `RULE_MATCH_TEXT_KEY` -- see `watchlist_rule_matching`.
+                RULE_MATCH_ADDED_TEXT_KEY: added_text,
+                RULE_MATCH_REMOVED_TEXT_KEY: removed_text,
             }
 
             # Store new snapshot

@@ -15,16 +15,19 @@ class WatchlistContentAlertService:
         rules: list[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         matched: list[dict[str, Any]] = []
-        # Shared with `WatchlistFilterService` so the two cannot drift, and
-        # page-scoped rather than diff-scoped for a site change -- see
-        # `watchlist_rule_matching`.
-        haystack = build_rule_haystack(item)
         for rule in rules:
             conditions = dict(rule.get("conditions") or {})
             pattern = str(conditions.get("pattern") or "")
             if not pattern:
                 continue
             rule_type = str(conditions.get("type") or "keyword").lower()
+            # Shared with `WatchlistFilterService` so the two cannot drift.
+            # Page-scoped ("anywhere") by default for a site change -- see
+            # `watchlist_rule_matching` -- with a per-rule opt-in (TASK-1363)
+            # to narrow to just the text a change added or removed.
+            haystack = build_rule_haystack(
+                item, scope=str(conditions.get("scope") or "anywhere").lower()
+            )
             is_match = False
             if rule_type == "keyword":
                 is_match = pattern.lower() in haystack
