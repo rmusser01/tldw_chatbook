@@ -186,6 +186,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: be re-homed by hand.
     _pending_create_focus: str | None = None
 
+    #: Ceiling on `_confirm_create_focus`'s self-reschedule (Qodo, TASK-1345
+    #: follow-up). See that method's docstring for why a bound is safe here.
+    _CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS = 20
+
     _TYPE_OPTIONS = [
         ("All", "all"),
         ("RSS", "rss"),
@@ -624,6 +628,26 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         from the first form field. That is what the 2026-07-28 UAT reported
         as "the create-source form cannot be filled in".
 
+        TASK-1345: `.focus()` below only *schedules* the actual focus change
+        (`Widget.focus` posts to `app.call_later`) -- it has not landed by
+        the time this method returns. The previous version read and cleared
+        `_pending_create_focus` *before* that schedule fired, so a SECOND
+        `recompose=True` assignment landing in that gap (`sources` reloading
+        from `_load_sources`, a filter changing) remounted the form's fields
+        out from under the still-pending callback: it then fired on a
+        **detached** widget and was silently dropped, and because the intent
+        was already `None`, the interleaving recompose had nothing to
+        re-apply either (`_focused_create_field_id()` also reports `None` --
+        focus never actually landed). The armed intent was lost to the
+        interleave.
+
+        The fix keeps `_pending_create_focus` STICKY -- armed across this
+        method -- and only clears it once `_confirm_create_focus` (scheduled
+        below) observes that focus has actually landed on the target.
+        Whichever recompose in a burst runs LAST therefore wins: each one
+        re-applies `.focus()` against whatever is currently mounted, and the
+        intent survives until one of them is actually confirmed.
+
         Two cases are handled, and only these two — focus is never taken
         from anywhere outside this pane's own create form:
 
@@ -634,11 +658,35 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
            something *else* rebuilt this pane underneath it — a `sources`
            reload, a region collapse. The draft text already survives that
            (`CreateFormDraftChanged`); this puts the caret back with it.
+           `_focused_create_field_id()` reports the user's real, CURRENT
+           in-form focus and is checked *first* (Qodo, TASK-1345 follow-up)
+           precisely so this case wins even while a stale
+           `_pending_create_focus` from case 1 is still armed — a user who
+           Tabs away during the confirm window is not yanked back to field 0
+           by a later, unrelated rebuild.
         """
-        restore = self._pending_create_focus
-        self._pending_create_focus = None
-        if restore is None:
-            restore = self._focused_create_field_id()
+        # Order matters (Qodo, TASK-1345 follow-up): the user's CURRENT
+        # in-form focus wins over the sticky intent, not the other way
+        # round. Three cases, all covered by `_focused_create_field_id`'s
+        # own guard (it returns `None` unless `screen.focused` is one of
+        # this form's fields):
+        #   * Mid-burst (case 1, between `.focus()` scheduling and it
+        #     landing): `screen.focused` is still `None` (or the widget
+        #     that held focus before the form opened), so
+        #     `_focused_create_field_id()` reports `None` and the sticky
+        #     `_pending_create_focus` correctly wins, carrying the intent
+        #     through the drop.
+        #   * The user has since Tabbed to another in-form field while the
+        #     confirm callback is still armed for a different target: that
+        #     field now wins over the stale intent, so an unrelated
+        #     recompose landing in that window cannot yank them back to it.
+        #   * First open, before the burst's own `.focus()` has run:
+        #     `screen.focused` is still the `New Source` button, which is
+        #     not one of `_CREATE_FORM_FIELD_IDS`, so
+        #     `_focused_create_field_id()` is `None` and
+        #     `_pending_create_focus` (armed to field 0 by
+        #     `watch_show_create_form`) still supplies the target.
+        restore = self._focused_create_field_id() or self._pending_create_focus
         await super().recompose()
         # Guard explicitly after the await: the pane can be torn down while
         # `super().recompose()` is in flight (a section switch, a region
@@ -646,7 +694,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # post-recompose work.
         if not self.is_mounted or not self.is_running:
             return
-        if not restore or not self.show_create_form:
+        if not self.show_create_form:
+            # The form closed (Cancel/Create) while this recompose was in
+            # flight. Any focus intent still armed is for a form that no
+            # longer exists -- drop it so it cannot resurface later and
+            # steal focus for an unrelated rebuild (TASK-1345).
+            self._pending_create_focus = None
+            return
+        if not restore:
             return
         try:
             self.query_one(f"#{restore}").focus()
@@ -658,6 +713,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 f"SourcesPane: #{restore} was gone after recompose; "
                 "nothing to focus."
             )
+            return
         except Exception:
             # Anything else is a real fault in the focus path, and this pane
             # exists in its current form *because* focus silently going
@@ -670,6 +726,90 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 f"SourcesPane: unexpected failure focusing #{restore} after "
                 "recompose; the create form may open with nothing focused."
             )
+            return
+        # Keep the intent armed (TASK-1345) and confirm once it has actually
+        # landed -- see `_confirm_create_focus` and the docstring above.
+        self._pending_create_focus = restore
+        self.call_after_refresh(self._confirm_create_focus, restore)
+
+    def _confirm_create_focus(self, target: str, attempts: int = 0) -> None:
+        """Clear the sticky create-focus intent once landed -- or once the
+        form is usable some other way.
+
+        TASK-1345. See `recompose`: `.focus()` only *schedules* the focus
+        change, so this is the seam that turns "we asked for focus" into
+        "focus actually arrived". Scheduled via `call_after_refresh`, which
+        runs after the next screen refresh -- if `.focus()`'s own scheduled
+        callback has not fired yet by then, this defers to the refresh after
+        THAT one, and so on, until it either confirms, is superseded, or the
+        form is usable some other way (below).
+
+        Two outcomes once focus is observed (Qodo, TASK-1345 follow-up -- the
+        previous version cleared the intent ONLY when focus was the exact
+        `target`, so it either never cleared or rescheduled forever whenever
+        focus landed anywhere else):
+
+        1. `screen.focused` is any real widget -- an in-form field (the
+           original `target` OR a sibling the user Tabbed to), or something
+           outside the form (they clicked away). Either way the mid-burst
+           drop is over and the intent's job is done, so it clears without
+           re-pulling focus. Clearing on ANY landed focus, not only `target`,
+           is what lets `recompose`'s focused-first ordering keep the user
+           where they are instead of a stale intent yanking them back.
+        2. `screen.focused` is still `None` -- the genuine mid-burst drop
+           this whole mechanism exists for. Reschedule, up to
+           `_CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS` (20) refreshes. That ceiling
+           is safe: every real interleave this pane has to tolerate resolves
+           within a handful of refreshes (Textual's own internal
+           `call_later`/`call_after_refresh` scheduling, not user-paced
+           input), so 20 sits nowhere near a burst any production interleave
+           produces. It only ever fires when focus is genuinely never going
+           to land -- at which point the form remains fully usable via click
+           or Tab, and an unbounded reschedule would just be silent,
+           permanent per-refresh work with the intent stuck armed forever.
+
+        Guarded on identity (`self._pending_create_focus != target`): if a
+        later recompose has since armed a *different* target, that
+        recompose's own confirmation owns clearing the intent, and this
+        stale one must not clear a newer arm out from under it.
+        """
+        if self._pending_create_focus != target:
+            return
+        if not self.is_mounted or not self.is_running or not self.show_create_form:
+            # Torn down or closed while this confirmation was pending --
+            # the intent is stale either way.
+            self._pending_create_focus = None
+            return
+        try:
+            focused = self.screen.focused
+        except Exception:
+            focused = None
+        if focused is not None:
+            # Focus reached something real -- an in-form field (the original
+            # `target`, OR a sibling the user Tabbed to while this was still
+            # pending) OR a widget outside the form (they clicked away).
+            # Either way the mid-burst drop this mechanism exists for is over
+            # and the intent's job is done: clear it so `recompose`'s
+            # focused-first ordering keeps the user wherever they actually
+            # are, and never re-pull focus back. (Qodo, TASK-1345 follow-up:
+            # the previous version cleared ONLY on the exact `target`, so a
+            # stale intent could either reschedule forever or, via the old
+            # `pending`-first `recompose` ordering, yank the user off a field
+            # they had moved to.)
+            self._pending_create_focus = None
+            return
+        if attempts >= self._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS:
+            # Outcome 3, bound reached: give up rather than reschedule
+            # forever with the intent stuck armed. Type-only: no field
+            # values, just the target control id and the attempt count.
+            logger.debug(
+                f"SourcesPane: focus for #{target} never confirmed after "
+                f"{attempts} refreshes; giving up -- the form is still "
+                "usable via click or Tab."
+            )
+            self._pending_create_focus = None
+            return
+        self.call_after_refresh(self._confirm_create_focus, target, attempts + 1)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":

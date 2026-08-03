@@ -127,6 +127,291 @@ async def test_create_form_focuses_its_first_field_when_it_opens(size):
         )
 
 
+@pytest.mark.asyncio
+async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
+    """TASK-1345: force the exact interleave the recompose/focus race needs.
+
+    `watch_show_create_form` arms `_pending_create_focus` when the form
+    opens, and `recompose()` calls `.focus()` on the first field -- but
+    `Widget.focus()` only *schedules* the actual focus change (it posts to
+    `app.call_later`), so it has not landed by the time `recompose()`
+    returns. If a SECOND `recompose=True` assignment on the same pane
+    (here: `sources` reloading, exactly what `_load_sources` does in
+    production) lands in that gap, it remounts the create form's fields
+    out from under the still-pending focus callback: the callback then
+    fires on a **detached** widget and is silently dropped. Before
+    TASK-1345's sticky-until-confirmed fix, the intent was already cleared
+    to `None` before the interleave landed, so the second recompose had
+    nothing to reapply either -- focus landed nowhere. See
+    `SourcesPane.recompose`.
+
+    Forces the interleave deterministically -- no sleep, no retry count.
+    `_check_recompose` is the exact internal seam Textual's own
+    `call_next`-driven scheduling uses to invoke `recompose()` (see
+    `Widget.refresh(recompose=True)`); calling it directly, twice, back to
+    back with no intervening `pilot.pause()`, reproduces the ordering the
+    race depends on without guessing at asyncio scheduling: the second
+    recompose starts -- and reads whatever focus-restoration state is
+    current -- strictly BEFORE the first recompose's own scheduled
+    `.focus()` has had any chance to land (nothing has yielded control
+    back to the app's own message queue yet), exactly as `_load_sources`
+    racing the form opening does with two independent asyncio tasks in
+    production.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await _wait_for_selector(
+            screen, pilot, "#watchlists-sources-pane", timeout=5.0
+        )
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+
+        # Open the form: arms `_pending_create_focus` and queues a
+        # recompose. Force that recompose to run NOW (rather than waiting
+        # for Textual's own `call_next` scheduling) so the next statement
+        # lands exactly in the gap this race depends on.
+        pane.show_create_form = True
+        await pane._check_recompose()
+        assert pane.query("#sources-create-form"), "the create form should be open"
+        assert pane._recompose_required is False, (
+            "setup invariant: the recompose triggered by opening the form "
+            "must already be consumed before the interleave below"
+        )
+
+        # The forced interleave itself: a second `recompose=True` reactive
+        # assignment on the SAME pane -- exactly what `_load_sources` does
+        # in production -- forced to run immediately, before the first
+        # recompose's own scheduled `.focus()` has landed (nothing above
+        # has awaited anything that would let the app's message queue run
+        # that scheduled callback).
+        pane.sources = [
+            {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True},
+        ]
+        await pane._check_recompose()
+
+        # NOW let everything settle: both recomposes' scheduled `.focus()`
+        # calls get a chance to land, whichever is last wins.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.query("#sources-create-form"), "the create form should still be open"
+        assert screen.focused is not None and screen.focused.id == "sources-create-name", (
+            "a `sources` reload interleaving the create form's own opening "
+            "lost the focus intent: expected 'sources-create-name', got "
+            f"{screen.focused.id if screen.focused else None!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field():
+    """TASK-1345 regression guard for case 2 in `SourcesPane.recompose`.
+
+    The sticky-until-confirmed fix must not regress the OTHER case
+    `recompose` handles: once the form-opening focus has CONFIRMED landed
+    (`_confirm_create_focus` has cleared `_pending_create_focus`), the user
+    is free to Tab/click to a different field. A LATER, unrelated rebuild
+    of this pane -- `sources` reloading, a filter changing -- must restore
+    wherever the user actually is, not yank them back to field 0. This is
+    exactly what the confirm-clear exists for: once it fires,
+    `_pending_create_focus` is `None` again, so later recomposes fall
+    through to `_focused_create_field_id()`, which reports the user's
+    CURRENT focus rather than the stale opening intent.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+        # `_open_sources_create_form` already waits for the opening focus
+        # to land; give the confirm callback a moment too before asserting
+        # the setup invariant below.
+        for _ in range(10):
+            if pane._pending_create_focus is None:
+                break
+            await pilot.pause(0.02)
+        assert pane._pending_create_focus is None, (
+            "setup invariant: the opening intent must already be confirmed "
+            "and cleared before the external rebuild below, or this test "
+            "cannot tell case 2 apart from case 1"
+        )
+
+        # Move to a different field, as a user would.
+        pane.query_one("#sources-create-url", Input).focus()
+        await pilot.pause()
+        assert screen.focused is not None and screen.focused.id == "sources-create-url"
+
+        # An unrelated external rebuild: `sources` reloading, exactly like
+        # `_load_sources` after a background refresh -- nothing to do with
+        # the create form itself.
+        pane.sources = [
+            {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True},
+        ]
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.query("#sources-create-form"), "the create form should still be open"
+        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+            "an unrelated `sources` reload yanked focus back to the first "
+            "field instead of leaving it on the user's field: got "
+            f"{screen.focused.id if screen.focused else None!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target():
+    """TASK-1345 Qodo follow-up: FIX A's `recompose` ordering.
+
+    Before this fix, `recompose` computed
+    `restore = self._pending_create_focus or self._focused_create_field_id()`
+    -- the sticky intent WON over the user's actual current focus. That is
+    correct while the intent is still mid-burst (`screen.focused` is `None`,
+    see `test_a_sources_reload_interleaving_the_open_does_not_lose_focus`),
+    but wrong the moment the user has Tabbed to a real in-form field WHILE
+    a stale intent from an earlier open is still armed and has not yet been
+    observed as confirmed: a later, unrelated rebuild would restore the
+    stale target and yank the user off the field they moved to.
+
+    This forces exactly that: arm `_pending_create_focus` back to field 0
+    by hand (simulating a confirm callback that has not caught up yet),
+    move real focus to field 1, then force an external rebuild
+    (`pane._check_recompose()`, the same seam
+    `test_a_sources_reload_interleaving_the_open_does_not_lose_focus` uses)
+    and confirm focus stays on field 1 -- NOT yanked back to field 0.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+
+        # Move to a different field, as a user would.
+        pane.query_one("#sources-create-url", Input).focus()
+        await pilot.pause()
+        assert screen.focused is not None and screen.focused.id == "sources-create-url"
+
+        # Arm the sticky intent back to field 0 directly -- simulating a
+        # confirm callback for an earlier open that has not yet observed
+        # focus landing (the exact state a stale `_pending_create_focus`
+        # would be in if it survived past the user's own Tab).
+        pane._pending_create_focus = "sources-create-name"
+
+        # An external rebuild -- `sources` reloading, exactly like
+        # `_load_sources` after a background refresh -- forced to run NOW
+        # via the same internal seam the interleaving test above uses, so
+        # this does not depend on asyncio scheduling order.
+        pane.sources = [
+            {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True},
+        ]
+        await pane._check_recompose()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pane.query("#sources-create-form"), "the create form should still be open"
+        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+            "a stale pending focus intent yanked the user back to field 0 "
+            "instead of leaving them on the field they had Tabbed to: got "
+            f"{screen.focused.id if screen.focused else None!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_create_focus_gives_up_after_max_attempts():
+    """TASK-1345 Qodo follow-up: FIX B's bound on `_confirm_create_focus`.
+
+    Before this fix, `_confirm_create_focus` only ever cleared
+    `_pending_create_focus` when `screen.focused.id == target` EXACTLY, and
+    otherwise rescheduled itself via `call_after_refresh` unconditionally --
+    forever, if focus never becomes that exact target (the form stays open,
+    focus parked somewhere that is never the target). This drives the
+    method at the bound directly -- with `screen.focused` still `None`, the
+    one case that must reschedule below the bound -- and asserts it gives
+    up instead: the intent clears and no further reschedule is queued.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+        # Let the form's own opening confirmation land first, so the
+        # manual arm below is not racing it.
+        for _ in range(10):
+            if pane._pending_create_focus is None:
+                break
+            await pilot.pause(0.02)
+        assert pane._pending_create_focus is None
+
+        screen.set_focus(None)
+        await pilot.pause()
+        assert screen.focused is None, "setup invariant: focus must be genuinely absent"
+
+        target = "sources-create-name"
+        pane._pending_create_focus = target
+
+        calls: list[tuple] = []
+        original_call_after_refresh = pane.call_after_refresh
+
+        def _spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original_call_after_refresh(*args, **kwargs)
+
+        pane.call_after_refresh = _spy
+
+        pane._confirm_create_focus(target, attempts=pane._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS)
+
+        assert pane._pending_create_focus is None, (
+            "the intent must clear once the reschedule bound is reached, "
+            "or it stays armed forever with focus never confirmed"
+        )
+        assert calls == [], (
+            "_confirm_create_focus rescheduled itself past its own bound: "
+            f"{calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_create_focus_clears_on_any_in_form_field_not_only_target():
+    """TASK-1345 Qodo follow-up: FIX B's any-in-form clear.
+
+    The bound above only fires while `screen.focused` stays `None`. The
+    OTHER half of FIX B is that landing on any in-form field -- not only
+    the original `target` -- also clears the intent and does not
+    reschedule, which is what lets FIX A's ordering
+    (`test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target`)
+    actually stick: if this still cleared on `== target` only, the stale
+    intent would keep re-arming.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+        for _ in range(10):
+            if pane._pending_create_focus is None:
+                break
+            await pilot.pause(0.02)
+        assert pane._pending_create_focus is None
+
+        pane.query_one("#sources-create-url", Input).focus()
+        await pilot.pause()
+        assert screen.focused is not None and screen.focused.id == "sources-create-url"
+
+        target = "sources-create-name"
+        pane._pending_create_focus = target
+
+        calls: list[tuple] = []
+        original_call_after_refresh = pane.call_after_refresh
+
+        def _spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original_call_after_refresh(*args, **kwargs)
+
+        pane.call_after_refresh = _spy
+
+        pane._confirm_create_focus(target)
+
+        assert pane._pending_create_focus is None, (
+            "landing on a sibling in-form field (not the original target) "
+            "must still clear the pending intent"
+        )
+        assert calls == [], (
+            "_confirm_create_focus rescheduled instead of recognising the "
+            f"user is already on an in-form field: {calls}"
+        )
+
+
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_typing_straight_after_opening_the_form_lands_in_name(size):
