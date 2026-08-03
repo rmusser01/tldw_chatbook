@@ -174,6 +174,73 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+#: The `_DISPOSITION_COUNTERS` entries that mean "this URL's check_url call
+#: actually succeeded" -- every counter except `"error"`. Named as a tuple
+#: comprehension over `_DISPOSITION_COUNTERS` rather than re-spelled here so
+#: the all-error detection below cannot silently drift from the counters it
+#: is reading (same rationale as `_disposition_count_keys`'s docstring).
+_SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
+    counter for counter in _DISPOSITION_COUNTERS if counter != "error"
+)
+
+
+def _all_error_check_message(
+    dispositions_counts: Mapping[str, Any] | None, item_count: int
+) -> str | None:
+    """A type-only synthetic error for a `url_list`/`sitemap` run where every URL failed.
+
+    Fix wave for the task-1394 whole-branch review (Finding #1, MAJOR): the
+    per-URL isolation in `_check_url_isolated` correctly turns one dead URL
+    among many into a single `"error"` disposition rather than failing the
+    whole run -- but `execute_run`'s success path always called
+    `db.record_check_result(source_id, items=None, stats=stats)` with
+    `error=None`, which hits that method's success branch
+    (`DB/Subscriptions_DB.py:1504-1517`) and unconditionally RESETS the
+    subscription's auto-pause circuit breaker
+    (`consecutive_failures`/`error_count` -> 0), even when every single URL in
+    the run errored and nothing was found. A permanently-broken `url_list`/
+    `sitemap` source could then never reach `auto_pause_threshold`: its
+    failure streak was wiped every run instead of accumulating, exactly the
+    behaviour `record_check_error` (the pre-fix path, reached via
+    `record_run_failure`) used to provide.
+
+    This distinguishes that "every URL errored" case from the ordinary
+    partial-failure case the isolation was written for (some URLs succeed,
+    one or two do not): a partial run made genuine progress on a reachable
+    source and should keep resetting the breaker, exactly as a clean run
+    would. Only when there is not one single successful check in the whole
+    run does the source's own health tracking need to see a failure.
+
+    Args:
+        dispositions_counts: The run's `_disposition_counts()` output (the
+            `stats["dispositions"]` dict), or `None` for source types that
+            carry no dispositions at all (the feed and API arms) -- those are
+            deliberately unaffected and always return `None` here.
+        item_count: How many items the run produced overall (pre-filter), so
+            a run that somehow reported all-error dispositions yet still
+            surfaced an item is never treated as a total failure.
+
+    Returns:
+        A message counting only URLs, e.g. ``"all 2 checked URL(s) failed"``
+        -- no URL, no exception message, matching `_check_url_isolated`'s own
+        type-only logging -- when every disposition in the run was an error
+        and zero items were produced. `None` otherwise (nothing to record, or
+        this is a feed/api run with no dispositions to judge by).
+    """
+    if not isinstance(dispositions_counts, Mapping):
+        return None
+    error_count = int(dispositions_counts.get("error", 0) or 0)
+    if error_count == 0 or item_count:
+        return None
+    successful_count = sum(
+        int(dispositions_counts.get(counter, 0) or 0)
+        for counter in _SUCCESS_DISPOSITION_COUNTERS
+    )
+    if successful_count:
+        return None
+    return f"all {error_count} checked URL(s) failed"
+
+
 def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None:
     """The largest change any check in this run held back, display-scaled.
 
@@ -464,12 +531,31 @@ class LocalWatchlistsService:
             stats["new_items_found"] = len(kept_items)
 
             self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
-            db.record_check_result(source_id, items=None, stats=stats)
+            # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`
+            # run where every URL errored still needs its own failure to
+            # reach the subscription's auto-pause breaker, or a permanently
+            # dead source can never auto-pause. A partial run (>=1 success)
+            # is unaffected -- see `_all_error_check_message`'s docstring.
+            all_error_message = _all_error_check_message(
+                stats.get("dispositions"), len(raw_items)
+            )
+            db.record_check_result(
+                source_id, items=None, stats=stats, error=all_error_message
+            )
+
+            status = str(result.get("status") or "completed")
+            if all_error_message and status == "completed":
+                # More honest than "completed" with zero items: every URL
+                # this run checked failed, so the run itself failed, even
+                # though it did not raise (that is exactly the point of the
+                # per-URL isolation this run status is not undoing).
+                status = "failed"
+
             return await self.record_run_result(
                 run_id,
-                status=str(result.get("status") or "completed"),
+                status=status,
                 stats=stats,
-                error_msg=result.get("error_msg"),
+                error_msg=result.get("error_msg") or all_error_message,
                 log_text=result.get("log_text"),
             )
         except Exception as exc:

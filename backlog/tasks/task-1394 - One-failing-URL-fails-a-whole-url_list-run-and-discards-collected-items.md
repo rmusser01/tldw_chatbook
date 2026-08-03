@@ -130,4 +130,68 @@ Modified files: `tldw_chatbook/Subscriptions/local_watchlists_service.py`,
 `tldw_chatbook/Subscriptions/monitoring_engine.py`, `tldw_chatbook/UI/Watchlists_Modules/
 runs_pane.py`, `Tests/Subscriptions/test_local_watchlists_service.py`, `Tests/Subscriptions/
 test_watchlist_noise_not_volume.py`, `Tests/Watchlists/test_watchlists_runs_pane.py`.
+
+### Fix wave (whole-branch review, Finding #1 -- MAJOR)
+
+The review caught a real regression the "whole-run posture" paragraph above missed: it reasoned
+about run-level visibility only, not the subscription's own health tracking. `execute_run`'s
+success path called `db.record_check_result(source_id, items=None, stats=stats)` with `error=None`
+UNCONDITIONALLY -- including for a run where every single URL errored. That call's success branch
+(`DB/Subscriptions_DB.py:1504-1517`) resets `consecutive_failures`/`error_count` to 0 and clears
+`last_error` on every run, so a permanently dead `url_list`/`sitemap` source (every URL down) could
+never accumulate toward `auto_pause_threshold` and auto-pause -- pre-task-1394 it would have raised
+and reached `record_run_failure` -> `record_check_error`, advancing the breaker normally. The
+isolation fix silently defeated the circuit breaker for exactly the "everything is dead" case it
+should matter most for.
+
+Fix: added `_all_error_check_message(dispositions_counts, item_count)` in
+`local_watchlists_service.py`, called from `execute_run` right before `db.record_check_result`. It
+reads the SAME `stats["dispositions"]` counters the run already produced -- returns a type-only
+synthetic message (`"all {n} checked URL(s) failed"`, counts only, no URL/exception text, matching
+`_check_url_isolated`'s own type-only logging) when `error` count > 0 AND every one of the five
+success counters (`changed`/`unchanged`/`withheld`/`baseline`/`rebaselined`) is 0 AND zero items
+were produced; `None` otherwise. Passing that message as `record_check_result`'s `error=` argument
+routes the run through the DB's error branch instead of its success branch, so the breaker
+ADVANCES and auto-pause fires at threshold exactly as pre-task-1394. The circuit-breaker semantics
+this settles on: **an all-error run advances the breaker (and can auto-pause); a partial run
+(>=1 successful check) resets it, same as a fully clean run** -- a source that made ANY real
+progress is healthy, only a source that produced nothing but errors is not. Feed/API-arm runs
+carry no `dispositions` key at all (`stats.get("dispositions")` is `None`), so they are structurally
+unaffected and keep resetting the breaker on every non-raising run, unchanged.
+
+Run status wiring: chose to compute this in `execute_run` (not inside `_default_run_executor`)
+because `execute_run` is the one place that already has `raw_items`, `stats`, and `source_id`
+together, and doing it there makes the behaviour apply to ANY executor (including a test's custom
+`run_executor=`) that produces a `dispositions` stats shape matching the pattern, not only the
+built-in `url_list`/`sitemap` arms. When `_all_error_check_message` returns non-`None` and the
+executor's own status would otherwise default to `"completed"`, `execute_run` overrides it to
+`"failed"` -- more honest than "completed" with zero items -- and folds the synthetic message into
+`error_msg` too (only when the executor didn't already supply one). A partial run's status and
+`error_msg` are untouched. The dispositions/stats payload is identical either way; only `status`,
+`error_msg`, and the DB breaker call change.
+
+Tests added (`Tests/Subscriptions/test_local_watchlists_service.py`):
+- `test_local_watchlists_service_url_list_all_error_advances_breaker_and_pauses` -- pre-sets
+  `consecutive_failures = auto_pause_threshold - 1` on a `url_list` source, both URLs raise;
+  asserts `status == "failed"`, `dispositions == {..., "error": 2}`, `consecutive_failures`
+  advanced to the threshold, `is_paused == 1`, and `last_error` set. Mutation-verified: reverted
+  `_all_error_check_message` to always `return None` and re-ran -- RED
+  (`assert 'completed' == 'failed'`, breaker would have reset instead of advancing); restored the
+  fix and confirmed green again, `git status --short` clean throughout.
+- `test_local_watchlists_service_url_list_partial_error_still_resets_breaker` -- one URL succeeds
+  (item persists), one errors, `consecutive_failures` pre-set to 5; asserts the item persisted,
+  `dispositions["error"] == 1`, `status == "completed"`, and `consecutive_failures`/`error_count`
+  reset to 0 with `last_error is None` -- pins that the fix does not over-correct into failing
+  partial runs. Stayed green under the same mutation (confirming it discriminates the two cases
+  rather than accidentally passing regardless).
+
+Verified: both new tests plus all 17 pre-existing `test_local_watchlists_service.py` tests (19
+passed); `Tests/Watchlists/test_watchlists_runs_pane.py` (16 passed, unaffected);
+`Tests/Scheduling/test_scheduled_watchlist_runs.py` (13 passed, unaffected -- its auto-pause tests
+use `type="url"`, which this fix wave does not touch); `Tests/Subscriptions/ -k "disposition or
+url_list or pause or breaker or failure"` (27 passed); `--collect-only Tests/Subscriptions
+Tests/Watchlists Tests/Scheduling` (1257 collected, no errors).
+
+Modified files (fix wave): `tldw_chatbook/Subscriptions/local_watchlists_service.py`,
+`Tests/Subscriptions/test_local_watchlists_service.py`.
 <!-- SECTION:NOTES:END -->
