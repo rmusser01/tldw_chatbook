@@ -8,7 +8,11 @@ import pytest
 from textual import on
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
+    ConsoleControlState,
+)
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleStatusChips,
     ConsoleSystemPromptChip,
@@ -16,6 +20,8 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 
 
 class StatusChipsHarness(App):
+    """Minimal app harness mounting only the ConsoleStatusChips strip."""
+
     # Mirror the app stylesheet's chip sizing (tldw_cli_modular.tcss) so the
     # whole chip strip fits on screen without the full app chrome.
     CSS = """
@@ -82,9 +88,9 @@ async def test_sync_state_updates_system_prompt_chip_label():
     async with app.run_test():
         strip = app.query_one(ConsoleStatusChips)
         chip = app.query_one("#console-system-prompt-chip")
-        assert str(chip.renderable) == "System Prompt"
+        assert str(chip.renderable) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
         strip.sync_state(ConsoleControlState.from_values(system_prompt_set=True))
 
-        assert str(chip.renderable) == "System Prompt: set"
-        assert str(chip.tooltip) == "System Prompt: set"
+        assert str(chip.renderable) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
+        assert str(chip.tooltip) == CONSOLE_SYSTEM_PROMPT_LABEL_SET

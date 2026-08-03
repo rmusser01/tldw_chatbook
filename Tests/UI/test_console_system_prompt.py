@@ -28,6 +28,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
+)
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
@@ -204,15 +208,15 @@ async def test_console_system_prompt_chip_label_reflects_applied_prompt():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
-        assert _system_prompt_chip_text(console) == "System Prompt"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
         console._apply_console_session_system_prompt("Be concise.")
         await pilot.pause(0.2)
-        assert _system_prompt_chip_text(console) == "System Prompt: set"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
 
         console._apply_console_session_system_prompt(None)
         await pilot.pause(0.2)
-        assert _system_prompt_chip_text(console) == "System Prompt"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,8 @@ from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
@@ -66,13 +68,13 @@ def test_console_control_state_counter_activity_flags():
 def test_console_control_state_system_prompt_label_defaults_to_unset():
     state = ConsoleControlState.from_values()
 
-    assert state.system_prompt_label == "System Prompt"
+    assert state.system_prompt_label == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
 
 def test_console_control_state_system_prompt_label_reflects_set_prompt():
     state = ConsoleControlState.from_values(system_prompt_set=True)
 
-    assert state.system_prompt_label == "System Prompt: set"
+    assert state.system_prompt_label == CONSOLE_SYSTEM_PROMPT_LABEL_SET
 
 
 def test_console_control_state_tools_chip_includes_mcp_tools():

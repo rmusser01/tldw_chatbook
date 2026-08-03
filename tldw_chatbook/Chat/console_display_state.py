@@ -343,6 +343,10 @@ class ConsoleInspectorAction:
         return "" if self.enabled else self.disabled_reason
 
 
+CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt"
+CONSOLE_SYSTEM_PROMPT_LABEL_SET = "System Prompt: set"
+
+
 @dataclass(frozen=True)
 class ConsoleControlState:
     """Header/control labels for the Console-native workbench chrome."""
@@ -354,7 +358,7 @@ class ConsoleControlState:
     sources_label: str
     tools_label: str
     approvals_label: str
-    system_prompt_label: str = "System Prompt"
+    system_prompt_label: str = CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
@@ -392,6 +396,8 @@ class ConsoleControlState:
             mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
                 seam is wired (chip then reflects built-in tools only).
             approval_count: Pending MCP approvals.
+            system_prompt_set: Whether the active session has a system prompt;
+                the chip then reads ``System Prompt: set``.
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
@@ -435,7 +441,9 @@ class ConsoleControlState:
             tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
             system_prompt_label=(
-                "System Prompt: set" if system_prompt_set else "System Prompt"
+                CONSOLE_SYSTEM_PROMPT_LABEL_SET
+                if system_prompt_set
+                else CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
             ),
             sources_active=staged_source_count > 0,
             tools_active=effective_tool_count > 0,

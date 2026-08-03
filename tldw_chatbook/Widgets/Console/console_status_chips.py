@@ -132,6 +132,7 @@ class ConsoleSystemPromptChip(ConsoleChip):
         """Posted when the system-prompt chip is activated."""
 
     def action_edit_system_prompt(self) -> None:
+        """Post ``OpenRequested`` when the chip is activated from the keyboard."""
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:

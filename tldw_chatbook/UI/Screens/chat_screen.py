@@ -7080,7 +7080,7 @@ class ChatScreen(BaseAppScreen):
             tool_count=self._console_tool_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
-            system_prompt_set=bool(settings.system_prompt),
+            system_prompt_set=bool(getattr(settings, "system_prompt", None)),
         )
 
     def _build_console_cost_state(self) -> ConsoleCostState | None:
