@@ -43,3 +43,134 @@ async def test_popup_show_highlight_accept_hide():
         await pilot.pause()
         assert not popup.is_open
         assert popup.accept_selected() is None
+
+
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+
+def _popup_labels(popup) -> list[str]:
+    return [s.label for s in popup._suggestions]
+
+
+@pytest.mark.asyncio
+async def test_slash_opens_popup_and_typing_filters():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        assert not popup.is_open
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert popup.is_open
+        assert _popup_labels(popup) == ["/prompt", "/system", "/skills"]
+
+        await pilot.press("s", "y", "s")
+        await pilot.pause()
+        assert _popup_labels(popup) == ["/system"]
+
+
+@pytest.mark.asyncio
+async def test_enter_accepts_and_inserts_without_sending():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/", "s", "k")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert composer.draft_text() == "/skills "
+        # No skill candidates configured -> arg-mode list is empty -> hidden.
+        assert not popup.is_open
+
+
+@pytest.mark.asyncio
+async def test_down_up_navigates_and_tab_accepts():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.press("down")  # highlight "/system"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert composer.draft_text() == "/system "
+
+
+@pytest.mark.asyncio
+async def test_escape_closes_popup_and_keeps_draft():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert popup.is_open
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not popup.is_open
+        assert composer.draft_text() == "/"
+
+
+@pytest.mark.asyncio
+async def test_skill_entries_and_skills_arg_mode():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        # Test-level snapshot injection — production refreshes candidates via
+        # _refresh_console_skill_candidates; setting the tuple directly is
+        # deliberate here, not the production path.
+        console._console_skill_candidates = (
+            SkillCommandCandidate(name="web-search", description="Search the web"),
+        )
+
+        await pilot.press("/", "w")
+        await pilot.pause()
+        assert _popup_labels(popup) == ["/web-search"]
+        await pilot.press("enter")
+        await pilot.pause()
+        assert composer.draft_text() == "/web-search "
+
+        composer.load_draft("/skills w")
+        console._sync_console_command_popup()
+        await pilot.pause()
+        assert popup.is_open
+        assert _popup_labels(popup) == ["web-search"]
+        await pilot.press("enter")
+        await pilot.pause()
+        assert composer.draft_text() == "/skills web-search "
