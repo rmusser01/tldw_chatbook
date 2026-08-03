@@ -45,12 +45,105 @@ covered as its own test.
 
 from __future__ import annotations
 
+import json
+import re
+
+import pytest
+
 from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
     render_prompt_markdown,
 )
 from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     parse_markdown_prompts_from_content,
 )
+
+
+def _structured_detail(*, artifact_type: str = "prompt") -> dict[str, object]:
+    """Build a valid v2 artifact whose content exercises Markdown boundaries."""
+    kind = "block_prompt" if artifact_type == "prompt" else "block_recipe"
+    definition = {
+        "kind": kind,
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "freeform",
+                        "content": "You are precise.",
+                        "mapping_hint": "Keep the system role.",
+                    },
+                    {
+                        "id": "constraints",
+                        "title": "Constraints",
+                        "syntax": "xml",
+                        "xml_tag": "constraints",
+                        "content": "Keep IDs stable.",
+                    },
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "request",
+                        "title": "Request",
+                        "syntax": "markdown",
+                        "content": "Include all details.",
+                        "mapping_hint": "The user's goal.",
+                    },
+                    {
+                        "id": "context",
+                        "title": "Context",
+                        "syntax": "freeform",
+                        "content": "Section-like text: ### SYSTEM ###\nUnicode: Δ",
+                    },
+                ],
+            },
+        ],
+    }
+    return {
+        "name": f"{artifact_type.title()} artifact",
+        "author": "Compatibility tester",
+        "details": "Preserve the complete artifact definition.",
+        "system_prompt": "You are precise.\n\n<constraints>Keep IDs stable.</constraints>",
+        "user_prompt": "# Request\n\nInclude all details.\n\nSection-like text: ### SYSTEM ###\nUnicode: Δ",
+        "keywords": ["structured", artifact_type],
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": definition,
+    }
+
+
+def _legacy_reader_sections(content: str) -> dict[str, str]:
+    """Characterize the prior reader: it knows only the classic sections."""
+    values: dict[str, str] = {}
+    for section in ("TITLE", "SYSTEM", "USER", "KEYWORDS"):
+        match = re.search(
+            rf"^[ \t]*###[ \t]*{section}[ \t]*###[ \t]*\r?\n"
+            r"(.*?)(?=\r?\n[ \t]*###[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*###[ \t]*(?:\r?\n|\Z)|\Z)",
+            content,
+            re.MULTILINE | re.DOTALL,
+        )
+        if match:
+            values[section] = match.group(1).strip()
+    return values
+
+
+def _markdown_with_structure(
+    structure: str, *, artifact_type: str = "prompt", name: str = "Foreign artifact"
+) -> str:
+    """Build a classic Markdown artifact with a deliberately supplied structure."""
+    return (
+        f"### TITLE ###\n{name}\n### AUTHOR ###\nImporter\n"
+        "### SYSTEM ###\ncompiled system\n### USER ###\ncompiled user\n"
+        "### KEYWORDS ###\ncompatibility\n"
+        f"### ARTIFACT_TYPE ###\n{artifact_type}\n"
+        f"### STRUCTURE ###\n```json\n{structure}\n```\n"
+    )
 
 
 def test_prompt_markdown_export_roundtrips():
@@ -226,3 +319,113 @@ def test_prompt_markdown_export_roundtrips_body_line_containing_hash_markers():
         == "Some system text with ### markers mid-line\nand a second line"
     )
     assert p["user_prompt"] == "A line with ### inline\nUser line two"
+
+
+def test_prompt_markdown_export_keeps_legacy_output_byte_compatible():
+    """Unstructured records retain the original human-readable bytes exactly."""
+    detail = {
+        "name": "Legacy export",
+        "author": "Author",
+        "details": "Details",
+        "system_prompt": "System",
+        "user_prompt": "User",
+        "keywords": ["one", "two"],
+    }
+
+    assert render_prompt_markdown(detail) == (
+        "### TITLE ###\nLegacy export\nDetails\n### AUTHOR ###\nAuthor\n"
+        "### SYSTEM ###\nSystem\n### USER ###\nUser\n"
+        "### KEYWORDS ###\none, two\n"
+    )
+
+
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+def test_block_markdown_round_trip_preserves_definition(artifact_type: str):
+    """Known Console v2 artifacts restore every canonical definition field."""
+    detail = _structured_detail(artifact_type=artifact_type)
+
+    markdown = render_prompt_markdown(detail)
+    [imported] = parse_markdown_prompts_from_content(markdown)
+
+    expected_structure = json.dumps(
+        detail["prompt_definition"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert markdown.endswith(
+        f"\n### ARTIFACT_TYPE ###\n{artifact_type}\n"
+        f"\n### STRUCTURE ###\n```json\n{expected_structure}\n```\n"
+    )
+    assert imported["artifact_type"] == artifact_type
+    assert imported["prompt_format"] == "structured"
+    assert imported["prompt_schema_version"] == 2
+    assert imported["prompt_definition"] == detail["prompt_definition"]
+
+
+def test_structured_markdown_keeps_section_like_json_text_inside_structure():
+    """The next-section terminator does not split escaped JSON string content."""
+    detail = _structured_detail()
+
+    [imported] = parse_markdown_prompts_from_content(render_prompt_markdown(detail))
+
+    context_block = imported["prompt_definition"]["lanes"][1]["blocks"][1]
+    assert context_block["content"] == "Section-like text: ### SYSTEM ###\nUnicode: Δ"
+
+
+def test_structured_export_remains_readable_to_the_prior_section_reader():
+    """Older readers ignore appended sections while retaining classic fields."""
+    detail = _structured_detail()
+
+    sections = _legacy_reader_sections(render_prompt_markdown(detail))
+
+    assert sections == {
+        "TITLE": "Prompt artifact\nPreserve the complete artifact definition.",
+        "SYSTEM": detail["system_prompt"],
+        "USER": detail["user_prompt"],
+        "KEYWORDS": "structured, prompt",
+    }
+
+
+@pytest.mark.parametrize(
+    ("artifact_type", "structure"),
+    [
+        ("prompt", '{"kind":'),
+        (
+            "prompt",
+            json.dumps(
+                {
+                    "kind": "block_recipe",
+                    "schema_version": 2,
+                    "lanes": [
+                        {"id": "system", "blocks": []},
+                        {"id": "user", "blocks": []},
+                    ],
+                }
+            ),
+        ),
+        ("recipe", json.dumps({"schema_version": 1, "messages": []})),
+        (
+            "recipe",
+            json.dumps(
+                {"definition_kind": "single_text_recipe", "schema_version": 2}
+            ),
+        ),
+        ("prompt", json.dumps({"kind": "future_prompt", "schema_version": 3})),
+    ],
+    ids=["malformed-json", "discriminator-mismatch", "foreign-v1", "single-text-recipe", "future-version"],
+)
+def test_non_console_structure_falls_back_to_a_legacy_prompt(
+    artifact_type: str, structure: str
+):
+    """Foreign or invalid structure never leaks through a legacy import."""
+    [imported] = parse_markdown_prompts_from_content(
+        _markdown_with_structure(structure, artifact_type=artifact_type)
+    )
+
+    assert imported["artifact_type"] == "prompt"
+    assert imported["prompt_format"] == "legacy"
+    assert imported["prompt_schema_version"] is None
+    assert imported["prompt_definition"] is None
+    assert imported["system_prompt"] == "compiled system"
+    assert imported["user_prompt"] == "compiled user"

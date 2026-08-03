@@ -1,15 +1,36 @@
-"""Focused behavior tests for lazy managed Remote model discovery."""
+"""Focused behavior tests for lazy managed Remote model discovery (TASK-1914).
+
+``RemoteView`` also has a discovery-flow-only concern set: metadata search
+and repository resolution (``_search_remote``/``_resolve_remote``) stay
+owned by this view -- a read-only listing concern, mirroring
+``CuratedView._load_curated``, which TASK-1803 also left in place. Most of
+this file's coverage of that half is unchanged by TASK-1914.
+
+TASK-1914 moved this view's preflight/provision workers to ``LLMScreen``,
+mirroring TASK-1803's move of the equivalent ``CuratedView`` workers.
+Tests that used to drive this view's own ``_preflight_model``/
+``_confirm_install``/``_apply_preflight_result``/``_provision_model``/
+``_apply_provision_result`` directly (the plan-resolution, consent-modal-
+push, activation, and failure-logging coverage) moved to
+``test_llm_screen_lab_adoption.py``, against ``LLMScreen``, which now owns
+that logic; what belongs here instead is ``RemoteView``'s own render-only
+contract: reviewing a candidate posts ``InstallRequested`` and, once told
+the outcome, calls ``cancel_pending_install()``/``finish_install()``/
+``apply_progress()``.
+"""
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
-from pathlib import Path
 from threading import Event
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
@@ -21,17 +42,125 @@ from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     ResolvedRemoteModel,
     build_remote_catalog,
 )
-from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionProgress,
-    ArtifactPreflightEntry,
-    PreflightReport,
-    TransferError,
-)
-from tldw_chatbook.Model_Artifacts.service import ProvenanceClass
 
 
 _COMMIT = "a" * 40
 _DIGEST = "b" * 64
+
+
+# ---------------------------------------------------------------------------
+# Shared AST-based module-scope import check (TASK-1914 fix round 1).
+#
+# The original version of this check (see git history) scanned for three
+# literal substrings in the module's source text. That missed the
+# package-then-attribute bypass -- `from tldw_chatbook.Model_Artifacts
+# import acquisition` is a real, eager, module-scope import of the
+# acquisition runtime, but contains none of the three forbidden substrings
+# (no ".acquisition import", no "from .acquisition import", no "import
+# tldw_chatbook.Model_Artifacts.acquisition"). This is the exact class of
+# gap this workstream's own Task 2 no-subclass test caught and fixed with
+# an MRO check instead of a substring scan; the fix here is the same shape
+# of fix, applied to imports instead of subclassing.
+#
+# ``test_model_curated_view.py`` imports this helper rather than
+# duplicating it -- both modules are held to the identical rule, and one
+# AST walker gets to be the single implementation both tests exercise.
+# ---------------------------------------------------------------------------
+
+
+def _is_type_checking_test(test: ast.expr) -> bool:
+    """True for an ``if`` test that is (or ends in) ``TYPE_CHECKING``.
+
+    Covers both ``if TYPE_CHECKING:`` (a bare ``Name``) and
+    ``if typing.TYPE_CHECKING:`` (an ``Attribute``) -- this codebase only
+    ever uses the former, but the check is cheap to make either way.
+    """
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _module_dotted_suffix_is(module: str | None, suffix: str) -> bool:
+    """True if ``module`` (an import's dotted path, absolute or relative)
+    ends in ``suffix`` as its own final component -- e.g. both
+    ``"tldw_chatbook.Model_Artifacts.acquisition"`` and
+    ``"Model_Artifacts.acquisition"`` (a relative import's ``module``,
+    which never includes the leading dots ``ast`` strips into ``level``)
+    end in ``"acquisition"``, but ``"acquisition_helpers"`` does not.
+    """
+    if not module:
+        return False
+    return module.rsplit(".", 1)[-1] == suffix
+
+
+def module_scope_forbidden_acquisition_imports(source: str) -> list[str]:
+    """Find real, module-scope imports of ``Model_Artifacts.acquisition``/``.fetch``.
+
+    "Module scope" here means reachable by simply importing the module --
+    NOT nested inside any function/method body (those run lazily, on
+    demand, which is exactly what the "acquisition/fetch only inside
+    functions" rule requires) and NOT inside an ``if TYPE_CHECKING:``
+    guard (``False`` at runtime, so that branch never executes).
+
+    Catches both import forms a violation could take:
+
+    - ``from tldw_chatbook.Model_Artifacts.acquisition import X`` (or the
+      relative ``from ...Model_Artifacts.acquisition import X``) -- the
+      import's own ``module`` ends in ``"acquisition"``/``"fetch"``.
+    - ``from tldw_chatbook.Model_Artifacts import acquisition`` -- the
+      package-then-attribute bypass a plain substring scan on import text
+      misses entirely: ``module`` ends in ``"Model_Artifacts"``, but one
+      of the imported *names* is ``"acquisition"``/``"fetch"``.
+
+    Args:
+        source: The module's full source text (e.g. from
+            ``inspect.getsource``).
+
+    Returns:
+        Human-readable descriptions of every forbidden import found, one
+        per finding; empty when the module is clean.
+    """
+    tree = ast.parse(source)
+    findings: list[str] = []
+
+    def visit(node: ast.AST, in_function: bool, in_type_checking: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            child_in_function = in_function or isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            child_in_type_checking = in_type_checking or (
+                isinstance(child, ast.If) and _is_type_checking_test(child.test)
+            )
+            if (
+                isinstance(child, (ast.Import, ast.ImportFrom))
+                and not in_function
+                and not in_type_checking
+            ):
+                if isinstance(child, ast.Import):
+                    for alias in child.names:
+                        if _module_dotted_suffix_is(
+                            alias.name, "acquisition"
+                        ) or _module_dotted_suffix_is(alias.name, "fetch"):
+                            findings.append(f"line {child.lineno}: import {alias.name}")
+                else:
+                    module = child.module
+                    if _module_dotted_suffix_is(
+                        module, "acquisition"
+                    ) or _module_dotted_suffix_is(module, "fetch"):
+                        findings.append(
+                            f"line {child.lineno}: from {module!r} import ..."
+                        )
+                    elif _module_dotted_suffix_is(module, "Model_Artifacts"):
+                        for alias in child.names:
+                            if alias.name in {"acquisition", "fetch"}:
+                                findings.append(
+                                    f"line {child.lineno}: from {module!r} "
+                                    f"import {alias.name}"
+                                )
+            visit(child, child_in_function, child_in_type_checking)
+
+    visit(tree, False, False)
+    return findings
 
 
 class _Resolver:
@@ -118,64 +247,30 @@ def _catalog(*, license_id: str = "apache-2.0"):
     return build_remote_catalog(resolved, resolved.candidates[0])
 
 
-def _report_for(catalog, destination: Path) -> PreflightReport:
-    descriptor = catalog.artifact
-    return PreflightReport(
-        root=descriptor.reference,
-        closure_fingerprint="f" * 64,
-        entries=(
-            ArtifactPreflightEntry(
-                ref=descriptor.reference,
-                source_url=descriptor.source_url,
-                repository=descriptor.upstream_repository,
-                revision=descriptor.upstream_revision,
-                license_id=descriptor.license_id,
-                license_url=descriptor.license_url,
-                precision=descriptor.precision,
-                total_bytes=descriptor.expected_installed_bytes,
-                file_count=len(descriptor.files),
-                already_installed=False,
-                provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
-            ),
-        ),
-        download_bytes=descriptor.expected_installed_bytes,
-        already_staged_bytes=0,
-        staging_overhead_bytes=128,
-        retained_bytes=0,
-        destination=destination,
-        free_bytes=4096,
-        required_bytes=descriptor.expected_installed_bytes + 128,
-        sufficient_space=True,
-        gating_errors=(),
-    )
-
-
 class _RemoteApp(App):
     def __init__(self, view) -> None:
         self.view = view
-        self.install_statuses: list[object] = []
         super().__init__()
 
     def compose(self) -> ComposeResult:
         yield self.view
 
-    def on_install_status_changed(self, event) -> None:
-        self.install_statuses.append(event)
-
 
 def _view(
     *,
     adapter_factory: Callable[[], object],
-    resolver_factory: Callable[[], object],
+    resolver_factory: Callable[[], object] | None = None,
     service_factory: Callable[[], object] = MagicMock,
 ):
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
-    return RemoteView(
-        adapter_factory=adapter_factory,
-        credential_resolver_factory=resolver_factory,
-        service_factory=service_factory,
-    )
+    kwargs: dict[str, object] = {
+        "adapter_factory": adapter_factory,
+        "service_factory": service_factory,
+    }
+    if resolver_factory is not None:
+        kwargs["credential_resolver_factory"] = resolver_factory
+    return RemoteView(**kwargs)
 
 
 async def _submit(app: _RemoteApp, pilot, query: str) -> None:
@@ -229,6 +324,23 @@ async def test_exact_repository_submission_resolves_without_searching() -> None:
     assert adapter.resolve_calls == [("owner/repository", "configured-token")]
     assert resolver_calls == ["owner/repository"]
     assert "owner/repository · model-q4.gguf" in rendered
+
+
+@pytest.mark.asyncio
+async def test_no_user_visible_string_contains_artifact() -> None:
+    """No rendered Static text says "artifact" -- the UI says "model" throughout."""
+    adapter = _Adapter(resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+
+    assert "artifact" not in rendered.lower()
 
 
 @pytest.mark.asyncio
@@ -323,7 +435,7 @@ async def test_same_generation_resolve_rejects_a_different_repository_response()
 
     assert "other/repository · model-q4.gguf" not in rendered
     assert candidate_buttons == []
-    assert view._selected_catalog is None
+    assert view._operation_reference is None
     assert search_disabled is False
 
 
@@ -372,7 +484,7 @@ async def test_same_generation_resolve_rejects_when_repository_input_changes() -
 
     assert "owner/repository · model-q4.gguf" not in rendered
     assert candidate_buttons == []
-    assert view._selected_catalog is None
+    assert view._operation_reference is None
     assert search_disabled is False
 
 
@@ -421,7 +533,6 @@ async def test_resolution_mismatch_removes_stale_rendered_candidate_controls() -
         query_disabled = query.disabled
 
     assert stale_controls == []
-    assert view._selected_catalog is None
     assert view._operation_reference is None
     assert "Inspecting repository" not in status
     assert "Press Search" in status
@@ -600,46 +711,109 @@ async def test_candidate_cap_discloses_deterministic_first_hundred() -> None:
     assert "First 100 of 137, sorted by upstream path" in rendered
 
 
+# ---------------------------------------------------------------------------
+# Install-request flow: this view posts the intent and stops (TASK-1914).
+# ---------------------------------------------------------------------------
+
+
+def _capturing_app(view) -> App:
+    """Build an App that captures ``RemoteView.InstallRequested`` events."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    class _App(App):
+        def __init__(self) -> None:
+            self.view = view
+            self.requests: list = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield self.view
+
+        @on(RemoteView.InstallRequested)
+        def _capture(self, event: RemoteView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    return _App()
+
+
 @pytest.mark.asyncio
-async def test_candidate_selection_freezes_catalog_and_disables_all_replacement_controls() -> (
+async def test_candidate_press_posts_install_requested_with_the_resolved_service_and_resolver() -> (
     None
 ):
-    """A pending plan must remain bound to the selected candidate."""
+    """A real candidate click -- not a direct call to an internal method --
+    posts ``RemoteView.InstallRequested`` carrying the exact catalog,
+    candidate, service, and credential resolver the host screen needs to
+    resolve a plan itself (TASK-1914: this view no longer performs that
+    resolution; ``LLMScreen`` does). See
+    ``test_llm_screen_lab_adoption.py``'s remote-install tests for the
+    end-to-end coverage of what happens once ``LLMScreen`` receives this
+    message.
+    """
     resolved = _resolved()
-    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
-    app = _RemoteApp(view)
-    view._preflight_model = MagicMock()
+    service = object()
+    # A working `.resolve()` stand-in, not a bare `object()`: this same
+    # factory also backs the metadata search/resolve this test drives
+    # through `_submit` first, so it must behave like a real resolver, not
+    # just be identity-comparable.
+    resolver = _Resolver([])
+    adapter = _Adapter(resolved=resolved)
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: resolver,
+        service_factory=lambda: service,
+    )
+    app = _capturing_app(view)
 
     async with app.run_test() as pilot:
-        view.query_one("#remote-model-query", Input).value = "owner/repository"
-        view._resolve_generation = 1
-        view._apply_resolve_result(
-            1,
-            "owner/repository",
-            "owner/repository",
-            resolved,
-            None,
-        )
+        await _submit(app, pilot, "owner/repository")
+
+        button = view.query_one(".remote-candidate", Button)
+        await pilot.click(button)
         await pilot.pause()
+
+        assert len(app.requests) == 1
+        event = app.requests[0]
+        expected_catalog = build_remote_catalog(resolved, resolved.candidates[0])
+        assert event.catalog == expected_catalog
+        assert event.candidate == resolved.candidates[0]
+        assert event.service is service
+        assert event.credential_resolver is resolver
+
+        # The clicked candidate's own row re-disables immediately (the
+        # long-standing "cannot double-click install" contract, unrelated
+        # to whether LLMScreen has even received the message yet).
+        assert view.query_one(".remote-candidate", Button).disabled is True
+        assert view.query_one("#remote-model-search", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_default_credential_resolver_factory_builds_env_config_resolver_for_the_posted_intent() -> (
+    None
+):
+    """The production path must not silently fall back to no credential resolver at all."""
+    from tldw_chatbook.Model_Artifacts.acquisition import EnvConfigCredentialResolver
+
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, service_factory=lambda: object())
+    app = _capturing_app(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
         await pilot.click(".remote-candidate")
         await pilot.pause()
 
-        expected = build_remote_catalog(resolved, resolved.candidates[0])
-        assert view._selected_catalog == expected
-        assert view._operation_reference == expected.artifact.reference
-        assert view.query_one("#remote-model-query", Input).disabled is True
-        assert view.query_one("#remote-model-search", Button).disabled is True
-        assert view.query_one(".remote-candidate", Button).disabled is True
+    assert len(app.requests) == 1
+    assert isinstance(app.requests[0].credential_resolver, EnvConfigCredentialResolver)
 
 
 @pytest.mark.asyncio
 async def test_stale_candidate_press_is_rejected_at_the_ui_boundary() -> None:
-    """A queued button event from an old resolution must not start preflight."""
+    """A queued button event from an old resolution must not post an intent."""
     old_resolved = _resolved("old/repository")
     current_resolved = _resolved("current/repository")
     view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
-    view._preflight_model = MagicMock()
-    app = _RemoteApp(view)
+    app = _capturing_app(view)
 
     async with app.run_test() as pilot:
         view._resolved = old_resolved
@@ -653,326 +827,246 @@ async def test_stale_candidate_press_is_rejected_at_the_ui_boundary() -> None:
         view._candidate_pressed(Button.Pressed(stale_button))
         await pilot.pause()
 
-    view._preflight_model.assert_not_called()
-    assert view._selected_catalog is None
+    assert app.requests == []
     assert view._operation_reference is None
 
 
 @pytest.mark.asyncio
-async def test_preflight_receives_exact_catalog_sources_and_fresh_resolver(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Changing the catalog, source map, or credential seam must fail this boundary."""
-    from tldw_chatbook.UI.Screens import model_remote_view as module
-
-    catalog = _catalog()
-    report = _report_for(catalog, tmp_path / "managed")
-    core = object()
-    resolver = object()
-    captured: dict[str, object] = {}
-
-    class _Acquisition:
-        def __init__(self, received_core, *, credential_resolver) -> None:
-            captured["core"] = received_core
-            captured["resolver"] = credential_resolver
-
-        async def preflight(self, root, received_catalog, *, sources):
-            captured["preflight"] = (root, received_catalog, sources)
-            return report
-
-    monkeypatch.setattr(module, "ArtifactAcquisitionService", _Acquisition)
-    resolver_factory = MagicMock(return_value=resolver)
-    view = _view(
-        adapter_factory=MagicMock(),
-        resolver_factory=resolver_factory,
-        service_factory=lambda: core,
-    )
-
-    actual = await view._preflight(catalog)
-
-    assert actual is report
-    assert captured == {
-        "core": core,
-        "resolver": resolver,
-        "preflight": (
-            catalog.artifact.reference,
-            catalog,
-            catalog.sources,
-        ),
-    }
-    resolver_factory.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_default_preflight_uses_env_config_credential_resolver(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """The production path must not silently fall back to anonymous acquisition."""
-    from tldw_chatbook.Model_Artifacts.acquisition import EnvConfigCredentialResolver
-    from tldw_chatbook.UI.Screens import model_remote_view as module
-
-    catalog = _catalog()
-    report = _report_for(catalog, tmp_path / "managed")
-    captured: list[object] = []
-
-    class _Acquisition:
-        def __init__(self, _core, *, credential_resolver) -> None:
-            captured.append(credential_resolver)
-
-        async def preflight(self, _root, _catalog, *, sources):
-            return report
-
-    monkeypatch.setattr(module, "ArtifactAcquisitionService", _Acquisition)
-    view = module.RemoteView(service_factory=lambda: object())
-
-    await view._preflight(catalog)
-
-    assert len(captured) == 1
-    assert isinstance(captured[0], EnvConfigCredentialResolver)
-
-
-@pytest.mark.parametrize(
-    ("license_id", "expected_acknowledgment"),
-    (
-        (
-            "NOASSERTION",
-            "No license was declared. I reviewed the source and want to continue.",
-        ),
-        ("apache-2.0", None),
-    ),
-)
-def test_preflight_modal_requires_acknowledgment_only_for_unknown_license(
-    license_id: str,
-    expected_acknowledgment: str | None,
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Known licenses must not be gated and unknown licenses must be explicit."""
-    from tldw_chatbook.UI.Screens import model_remote_view as module
-    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
-
-    resolved = _resolved(license_id=license_id)
-    candidate = resolved.candidates[0]
-    catalog = build_remote_catalog(resolved, candidate)
-    report = _report_for(catalog, tmp_path / "managed")
-    fake_app = MagicMock()
-    monkeypatch.setattr(module.RemoteView, "app", property(lambda self: fake_app))
-    view = module.RemoteView()
-    view._selected_catalog = catalog
-    view._operation_reference = report.root
-
-    view._apply_preflight_result(report, None, candidate)
-
-    modal, callback = fake_app.push_screen.call_args.args
-    assert isinstance(modal, ModelInstallModal)
-    assert modal.required_acknowledgment == expected_acknowledgment
-    assert modal.selected_file_details == (
-        (
-            "model-q4.gguf",
-            1024,
-            _DIGEST,
-            f"https://huggingface.co/owner/repository/resolve/{_COMMIT}/model-q4.gguf",
-        ),
-    )
-    assert callback == view._confirm_install
-
-
-@pytest.mark.asyncio
-async def test_provision_reuses_exact_preflight_values_without_activation(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Any catalog/source substitution or activation would violate reviewed consent."""
-    from tldw_chatbook.UI.Screens import model_remote_view as module
-
-    catalog = _catalog()
-    report = _report_for(catalog, tmp_path / "managed")
-    core = object()
-    resolver = object()
-    captured: dict[str, object] = {}
-
-    class _Acquisition:
-        def __init__(self, received_core, *, credential_resolver) -> None:
-            captured["core"] = received_core
-            captured["resolver"] = credential_resolver
-
-        async def provision(
-            self,
-            root,
-            consent,
-            received_catalog,
-            *,
-            sources,
-            progress,
-            activate,
-        ):
-            captured["provision"] = (
-                root,
-                consent,
-                received_catalog,
-                sources,
-                progress,
-                activate,
-            )
-
-    monkeypatch.setattr(module, "ArtifactAcquisitionService", _Acquisition)
-    resolver_factory = MagicMock(return_value=resolver)
-    view = _view(
-        adapter_factory=MagicMock(),
-        resolver_factory=resolver_factory,
-        service_factory=lambda: core,
-    )
-    view.post_message = MagicMock()
-
-    await view._provision(report, catalog)
-
-    root, consent, actual_catalog, sources, progress, activate = captured["provision"]
-    assert captured["core"] is core
-    assert captured["resolver"] is resolver
-    assert root == report.root
-    assert consent == report.grant()
-    assert actual_catalog is catalog
-    assert sources is catalog.sources
-    assert callable(progress)
-    assert activate is False
-    resolver_factory.assert_called_once_with()
-
-
-@pytest.mark.parametrize("operation", ("preflight", "installation"))
-def test_install_failures_log_safe_classification_without_exception_details(
-    operation: str,
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Worker diagnostics classify failures without logging exception details."""
-    from tldw_chatbook.UI.Screens import model_remote_view as module
-
-    marker = "PRIVATE-REMOTE-INSTALL-DETAIL"
+async def test_candidate_press_notifies_and_does_not_post_when_the_catalog_cannot_be_built() -> (
+    None
+):
+    """A candidate that fails ``build_remote_catalog`` must never reach the host screen."""
     resolved = _resolved()
-    candidate = resolved.candidates[0]
-    catalog = build_remote_catalog(resolved, candidate)
-    report = _report_for(catalog, tmp_path / "managed")
-    fake_app = MagicMock()
-    fake_logger = MagicMock()
-    monkeypatch.setattr(module.RemoteView, "app", property(lambda self: fake_app))
-    monkeypatch.setattr(module, "logger", fake_logger)
-    view = module.RemoteView()
-
-    if operation == "preflight":
-
-        async def fail_preflight(_catalog):
-            raise TransferError(marker, retryable=True)
-
-        view._preflight = fail_preflight
-        module.RemoteView._preflight_model.__wrapped__(
-            view,
-            catalog,
-            candidate,
-        )
-    else:
-        view._pending_report = report
-        view._selected_catalog = catalog
-
-        async def fail_provision(_report, _catalog):
-            raise TransferError(marker, retryable=True)
-
-        view._provision = fail_provision
-        module.RemoteView._provision_model.__wrapped__(view)
-
-    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
-    assert "TransferError" in logged
-    assert "retryable" in logged.casefold()
-    assert "True" in logged
-    assert marker not in logged
-    assert marker not in str(fake_app.call_from_thread.call_args)
-
-
-@pytest.mark.asyncio
-async def test_controls_stay_disabled_through_consent_and_reenable_after_failure(
-    tmp_path: Path,
-) -> None:
-    """Consent must not create a window where Search can replace the plan."""
-    catalog = _catalog()
-    report = _report_for(catalog, tmp_path / "managed")
-    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
-    app = _RemoteApp(view)
-    view._preflight_model = MagicMock()
-    view._provision_model = MagicMock()
-
-    async with app.run_test() as pilot:
-        view._resolved = _resolved()
-        view._refresh_with_status("Select one GGUF candidate.")
-        await pilot.pause()
-        await pilot.click(".remote-candidate")
-        await pilot.pause()
-        view._apply_preflight_result(report, None)
-        await pilot.pause()
-
-        assert view.query_one("#remote-model-search", Button).disabled is True
-        assert view.query_one(".remote-candidate", Button).disabled is True
-
-        await pilot.click("#model-install-confirm")
-        await pilot.pause()
-        assert view.query_one("#remote-model-search", Button).disabled is True
-        assert view.query_one(".remote-candidate", Button).disabled is True
-
-        view._apply_provision_result("Managed download failed. Retry.")
-        await pilot.pause()
-
-        assert view.query_one("#remote-model-search", Button).disabled is False
-        assert view.query_one(".remote-candidate", Button).disabled is False
-
-
-@pytest.mark.asyncio
-async def test_progress_and_completion_publish_shared_lifecycle_and_success_copy(
-    tmp_path: Path,
-) -> None:
-    """Removing progress/completion messages must desynchronize Installed and Lab."""
-    from tldw_chatbook.Widgets.ModelArtifacts import (
-        InstallProgressed,
-        InstallStatusChanged,
+    bad_candidate = RemoteGGUFCandidate(label="bad", files=(), total_bytes=0)
+    tampered = ResolvedRemoteModel(
+        repository=resolved.repository,
+        commit=resolved.commit,
+        license_id=resolved.license_id,
+        review_url=resolved.review_url,
+        candidates=(bad_candidate,),
+        total_candidate_count=1,
+        warnings=(),
     )
-
-    catalog = _catalog()
-    report = _report_for(catalog, tmp_path / "managed")
     view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
-    app = _RemoteApp(view)
+    app = _capturing_app(view)
     notifications: list[tuple[str, str]] = []
-    view._selected_catalog = catalog
-    view._pending_report = report
-    view._operation_reference = report.root
-    view._provision_model = MagicMock()
 
     async with app.run_test() as pilot:
         view.notify = lambda message, *, severity: notifications.append(
             (message, severity)
         )
-        view._confirm_install(True)
-        progress = AcquisitionProgress("fetch", report.root, "model.gguf", 1, 2)
-        view._install_progressed(InstallProgressed(progress))
+        view._resolved = tampered
+        view._refresh_with_status("Select one GGUF candidate.")
         await pilot.pause()
-        assert "Downloading" in _text(view)
-
-        view._apply_provision_result(None)
+        await pilot.click(".remote-candidate")
         await pilot.pause()
 
-    statuses = [
-        message
-        for message in app.install_statuses
-        if isinstance(message, InstallStatusChanged)
-    ]
-    assert [(item.active, item.succeeded) for item in statuses] == [
-        (True, None),
-        (False, True),
-    ]
-    assert notifications == [
-        (
-            "Model downloaded and managed. Runtime compatibility has not been verified.",
-            "information",
-        )
-    ]
-    assert view._pending_report is None
+    assert app.requests == []
     assert view._operation_reference is None
-    assert view._selected_catalog is None
+    assert notifications and notifications[0][1] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Render-only outcomes: apply_progress() / cancel_pending_install() /
+# finish_install().
+#
+# TASK-1914: the host screen (LLMScreen) is the only caller of any of
+# these -- apply_progress for a live tick, cancel_pending_install after a
+# preflight failure or an explicit consent-modal decline, finish_install
+# once provisioning completes, successfully or not.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_progress_renders_and_retains_the_tick() -> None:
+    """A live tick updates the progress widget and is retained for hydration."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+        ModelInstallProgress,
+    )
+
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    progress = AcquisitionProgress("fetch", reference, "model-q4.gguf", 512, 1024)
+
+    async with app.run_test() as pilot:
+        view.apply_progress(progress)
+        await pilot.pause()
+
+        widget = view.query_one(
+            "#remote-model-install-progress", ModelInstallProgress
+        )
+        assert widget.display is True
+        assert view._progress == progress
+
+
+def test_apply_progress_tolerates_a_recompose_gap() -> None:
+    """A progress event is retained while its widget is temporarily absent."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    view = RemoteView(adapter_factory=MagicMock(), service_factory=MagicMock())
+    view.query_one = MagicMock(side_effect=NoMatches)
+    view.refresh = MagicMock()
+    progress = object()
+
+    view.apply_progress(progress)
+
+    assert view._progress is progress
+    view.refresh.assert_called_once_with(recompose=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_install_clears_the_indicator_and_reenables_controls() -> (
+    None
+):
+    """A preflight failure or a decline releases the indicator without reloading."""
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+        assert view._operation_reference is not None
+        assert view.query_one("#remote-model-search", Button).disabled is True
+
+        view.cancel_pending_install("Sanitized failure.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view.query_one("#remote-model-search", Button).disabled is False
+        assert view.query_one(".remote-candidate", Button).disabled is False
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Sanitized failure."
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_install_with_no_message_restores_the_default_status() -> (
+    None
+):
+    """An explicit consent-modal decline restores ordinary status copy."""
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+
+        view.cancel_pending_install()
+        await pilot.pause()
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert "Select one GGUF candidate." in status
+
+
+@pytest.mark.asyncio
+async def test_finish_install_clears_the_indicator_progress_and_shows_the_given_message() -> (
+    None
+):
+    """``finish_install`` always hides progress, even mid-recompose."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+        ModelInstallProgress,
+    )
+
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+        view.apply_progress(
+            AcquisitionProgress("fetch", reference, "model-q4.gguf", 512, 1024)
+        )
+        await pilot.pause()
+
+        view.finish_install("Model downloaded and managed.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view._progress is None
+        progress_widget = view.query_one(
+            "#remote-model-install-progress", ModelInstallProgress
+        )
+        assert progress_widget.display is False
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Model downloaded and managed."
+
+
+@pytest.mark.asyncio
+async def test_finish_install_tolerates_a_missing_progress_widget() -> None:
+    """Missing progress markup mid-recompose must not skip indicator cleanup
+    or the status update -- only the progress widget lookup is tolerated
+    (mirroring ``apply_progress``'s own tolerance for the same underlying
+    reason: ``ModelInstallProgress`` may not have finished composing its
+    own children yet), not every widget on the view.
+    """
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view._operation_reference = ArtifactRef("model-a", "a" * 40, "q4_k_m")
+        view._progress = object()
+        original_query_one = view.query_one
+
+        def _flaky_query_one(selector, *args, **kwargs):
+            if selector == "#remote-model-install-progress":
+                raise NoMatches("missing widget")
+            return original_query_one(selector, *args, **kwargs)
+
+        view.query_one = _flaky_query_one
+
+        view.finish_install("Model downloaded and managed.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view._progress is None
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Model downloaded and managed."
+
+
+# ---------------------------------------------------------------------------
+# Module-scope import boundary (TASK-1914, AC #3).
+# ---------------------------------------------------------------------------
+
+
+def test_remote_view_does_not_import_acquisition_at_module_scope() -> None:
+    """``RemoteView`` posts intents; only ``LLMScreen``'s worker methods
+    (and this module's own lazily-invoked ``_default_credential_resolver``)
+    import ``Model_Artifacts.acquisition``.
+
+    Uses the AST-based :func:`module_scope_forbidden_acquisition_imports`
+    (TASK-1914 fix round 1) rather than a text/substring scan: a substring
+    scan for ``"from tldw_chatbook.Model_Artifacts.acquisition import"``
+    (etc.) passes right over ``from tldw_chatbook.Model_Artifacts import
+    acquisition`` -- a real, eager, module-scope import of the acquisition
+    runtime via the package-then-attribute form -- because that exact
+    substring never appears in it.
+    """
+    import inspect
+
+    from tldw_chatbook.UI.Screens import model_remote_view as module
+
+    source = inspect.getsource(module)
+    assert "class RemoteView(Widget):" in source
+    findings = module_scope_forbidden_acquisition_imports(source)
+    assert findings == [], (
+        f"model_remote_view.py imports acquisition/fetch at module scope: {findings}"
+    )

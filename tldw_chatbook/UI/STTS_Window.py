@@ -5,9 +5,8 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Optional, Dict, Any, List, Literal
+from typing import Optional, Dict, Any, List
 from pathlib import Path
-from urllib.parse import urlsplit
 from uuid import uuid4
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
@@ -32,10 +31,9 @@ from loguru import logger
 from rich.text import Text
 
 # Local imports
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
-    STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
 from tldw_chatbook.TTS import (
@@ -47,6 +45,12 @@ from tldw_chatbook.TTS import (
     TTSProfileService,
     get_tts_service,
 )
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSLoadResult,
+    StudioTTSLoadState,
+    StudioTTSPreferenceStore,
+    StudioTTSPreferencesSnapshot,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProviderCatalog,
@@ -54,7 +58,6 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
     TTSVoiceDiscoveryResult,
 )
-from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
     LEGACY_DEFAULT_VOICES,
@@ -64,7 +67,6 @@ from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
-    FIRST_AVAILABLE_MODEL_ID,
     LOADING_SELECT_VALUE,
     PlaygroundControls,
     SERVER_DEFAULT_VOICE_ID,
@@ -79,8 +81,29 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     voice_id_for_request,
 )
 from tldw_chatbook.UI.Speech.speech_effects_pane import SpeechEffectsPane
-from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
-from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+from tldw_chatbook.UI.Speech.speech_playground_pane import (
+    OpenStudioPreferencesRequested,
+    SpeechPlaygroundPane,
+)
+from tldw_chatbook.UI.Speech.speech_profile_mixin import (
+    AdoptStudioPreferencesRequested,
+)
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    speech_tts_runtime_status_store,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConfigurationState,
+    SpeechTTSNavigationTarget,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    global_speech_tts_provider_configuration_state,
+    load_global_speech_tts_state,
+)
+from tldw_chatbook.UI.Speech.speech_settings_pane import (
+    SpeechSettingsPane,
+    StudioPreferencesSaved,
+)
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
     PROFILE_STORE_UNAVAILABLE_COPY,
@@ -90,7 +113,6 @@ from tldw_chatbook.UI.stts_profile_library import (
     profile_action_error_copy,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
-from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
     EnhancedFileSave as FileSave,
@@ -127,10 +149,6 @@ STTS_VIEW_KEYS = frozenset(
         "dictation",
     }
 )
-
-
-
-
 
 
 class AudioBookGenerationWidget(Widget):
@@ -195,7 +213,6 @@ class AudioBookGenerationWidget(Widget):
             )
 
         with ScrollableContainer(classes="audiobook-container"):
-
             # Import section
             with Collapsible(title="Import Content", classes="settings-section"):
                 with Horizontal(classes="form-row"):
@@ -2026,14 +2043,8 @@ class TTSPlaygroundWidget(Widget):
                 self._clear_profile_voice_validation(request_token)
                 return
             observation: TTSVoiceDiscoveryResult | None = None
-            preset = self._profile_preset
             observe_voices = getattr(service, "observe_voices", None)
-            if (
-                preset is not None
-                and preset.provider_id == provider_id
-                and provider_id == AUDIO_CPP_PROVIDER_ID
-                and callable(observe_voices)
-            ):
+            if provider_id == AUDIO_CPP_PROVIDER_ID and callable(observe_voices):
                 observation = await observe_voices(
                     provider_id,
                     model_id,
@@ -2107,11 +2118,13 @@ class TTSPlaygroundWidget(Widget):
                 "TTS voice discovery failed ({})",
                 type(error).__name__,
             )
-            self._discovered_voices[(provider_id, model_id)] = ()
-            self._pending_voice_selections.pop(provider_id, None)
-            self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
-                SERVER_DEFAULT_VOICE_ID
-            )
+            failed_snapshot = self._control_snapshot_for(provider_id)
+            failed_voice = failed_snapshot.get("voice_id")
+            self._discovered_voices.pop((provider_id, model_id), None)
+            if isinstance(failed_voice, str):
+                self._pending_voice_selections[provider_id] = failed_voice
+            else:
+                self._pending_voice_selections.pop(provider_id, None)
             catalog = self._catalogs.get(provider_id)
             preset = self._profile_preset
             if (
@@ -2130,14 +2143,24 @@ class TTSPlaygroundWidget(Widget):
                     )
             else:
                 self._set_provider_status(
-                    "Voices are unavailable; the provider default remains available"
+                    "Voices are unavailable; the exact selection remains unverified"
+                    if isinstance(failed_voice, str)
+                    else (
+                        "Voices are unavailable; the provider default remains available"
+                    )
                 )
             return
 
         if not self._voice_token_is_current(request_token):
             self._clear_profile_voice_validation(request_token)
             return
-        self._discovered_voices[(provider_id, model_id)] = tuple(voices)
+        voice_unverified = bool(
+            observation is not None and observation.state != "complete"
+        )
+        if voice_unverified:
+            self._discovered_voices.pop((provider_id, model_id), None)
+        else:
+            self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
         preset = self._profile_preset
         if preset is not None and preset.provider_id == provider_id:
@@ -2162,6 +2185,13 @@ class TTSPlaygroundWidget(Widget):
                 )
         if catalog is not None:
             self._apply_catalog(provider_id, catalog)
+        if voice_unverified and preset is None:
+            selected_voice = self._current_select_value("#tts-voice-select")
+            self._set_provider_status(
+                "Voices are unavailable; the exact selection remains unverified"
+                if isinstance(selected_voice, str)
+                else "Voices are unavailable; the provider default remains available"
+            )
         self._clear_profile_voice_validation(request_token)
 
     def _clear_profile_voice_validation(
@@ -2539,11 +2569,19 @@ class TTSPlaygroundWidget(Widget):
         if not options:
             select.set_options([(empty_label, UNAVAILABLE_SELECT_VALUE)])
             select.value = UNAVAILABLE_SELECT_VALUE
+            # ``set_options`` may keep the same value, in which case Textual
+            # does not rerun Select's watcher and its closed prompt keeps the
+            # previous label. Force that repaint without emitting a synthetic
+            # user selection event.
+            with select.prevent(Select.Changed):
+                select.mutate_reactive(Select.value)
             select.disabled = True
             return
         select.set_options(self._safe_select_options(options))
         select.disabled = False
         select.value = selected or options[0][1]
+        with select.prevent(Select.Changed):
+            select.mutate_reactive(Select.value)
 
     def _control_snapshot_for(self, provider_id: str) -> dict[str, Any]:
         if getattr(self, "_displayed_provider_id", None) == provider_id:
@@ -4266,7 +4304,10 @@ class TTSPlaygroundWidget(Widget):
         return f"{minutes}:{secs:02d}"
 
 
-def _seed_axis_defaults() -> dict[str, str]:
+def _seed_axis_defaults(
+    studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+    global_preferences: TTSPreferencesSnapshot | None = None,
+) -> dict[str, str]:
     """Seed `SpeechPlaygroundPane.axis_defaults` from GENUINELY persisted preferences.
 
     `SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
@@ -4337,6 +4378,45 @@ def _seed_axis_defaults() -> dict[str, str]:
         if voice_mode == "exact" and isinstance(voice_id, str) and voice_id:
             defaults["tts-voice-select"] = voice_id
 
+        if global_preferences is not None:
+            defaults = {
+                "tts-provider-select": global_preferences.provider_id,
+                "tts-format-select": global_preferences.response_format,
+                "tts-speed-input": str(global_preferences.speed),
+            }
+            if global_preferences.model_mode == "exact":
+                assert global_preferences.model_id is not None
+                defaults["tts-model-select"] = global_preferences.model_id
+            if global_preferences.voice_mode == "exact":
+                assert global_preferences.voice_id is not None
+                defaults["tts-voice-select"] = global_preferences.voice_id
+
+        if studio_preferences is not None:
+            selection = studio_preferences.selection
+            if selection.provider_id is not None:
+                if (
+                    global_preferences is not None
+                    and selection.provider_id != global_preferences.provider_id
+                ):
+                    # Global model/voice/format/speed defaults are scoped to
+                    # the global provider. A Studio provider override inherits
+                    # that provider's fallback for absent axes, not OpenAI
+                    # values mislabeled as Chatterbox/audio.cpp defaults.
+                    defaults = {}
+                defaults["tts-provider-select"] = selection.provider_id
+            if selection.model_mode == "exact" and selection.model_id is not None:
+                defaults["tts-model-select"] = selection.model_id
+            elif selection.model_mode == "first_available":
+                defaults.pop("tts-model-select", None)
+            if selection.voice_mode == "exact" and selection.voice_id is not None:
+                defaults["tts-voice-select"] = selection.voice_id
+            elif selection.voice_mode == "server_default":
+                defaults.pop("tts-voice-select", None)
+            if selection.response_format is not None:
+                defaults["tts-format-select"] = selection.response_format
+            if selection.speed is not None:
+                defaults["tts-speed-input"] = str(selection.speed)
+
         return defaults
     except Exception:  # noqa: BLE001 - compose() must never raise
         logger.debug("Could not seed Playground axis defaults from preferences")
@@ -4376,48 +4456,67 @@ class STTSWindow(Container):
 
     current_view = reactive("playground")
 
-    def __init__(self, app_instance, **kwargs):
+    def __init__(
+        self,
+        app_instance,
+        *,
+        playground_axis_values: Mapping[str, str] | None = None,
+        **kwargs,
+    ):
         """Initialize the S/TT/S window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
+        self._pending_playground_navigation: SpeechTTSNavigationTarget | None = None
+        self._pending_adopted_preset: TTSPlaygroundSelectionPreset | None = None
+        # Bounded, process-local Playground axes survive only internal Lab
+        # view switches. They are never written to global or Studio settings.
+        self._playground_axis_values: dict[str, str] = dict(
+            playground_axis_values or {}
+        )
+        self._studio_store = StudioTTSPreferenceStore()
+        self._global_preferences = SpeechSettingsPane._read_global_preferences()
+        self._studio_load_result: StudioTTSLoadResult | None = None
 
     def compose(self) -> ComposeResult:
-        """Compose the S/TT/S window: content only.
+        """Compose a non-interactive shell until Studio preferences are loaded."""
 
-        The sidebar that used to lead this method -- six view buttons and the
-        capability status line -- moved into the Lab frame's rail and status
-        chip (``UI/Screens/stts_screen.py``), so that Speech has the same
-        chrome as Models and Evals instead of a second, differently-styled
-        navigation column inside the body.
-
-        The window keeps ownership of ``current_view`` and of mounting the
-        matching content widget; the screen only points it at a view.
-        """
         with Container(classes="stts-content"):
-            # Show playground by default. The rebuilt pane, not the legacy
-            # widget -- see the takeover ruling above the module-level
-            # `_seed_axis_defaults` helper.
-            yield SpeechPlaygroundPane(
-                id="speech-playground-pane",
-                axis_defaults=_seed_axis_defaults(),
+            yield Static(
+                "Loading Studio TTS preferences…",
+                id="speech-studio-loading",
+                classes="speech-status-line",
+                markup=False,
             )
-        self._mounted_view = "playground"
+        self._mounted_view: str | None = None
 
     def on_mount(self) -> None:
-        """Apply any view request that arrived before child composition."""
+        """Load and migrate Studio preferences away from the UI message pump."""
 
-        self.call_after_refresh(self._apply_initial_view_request)
-
-    def _apply_initial_view_request(self) -> None:
-        """Reconcile retained navigation after the default child has mounted."""
-
-        force = (
-            self.current_view == "playground"
-            and self._pending_playground_preset is not None
+        self.run_worker(
+            self._load_studio_preferences(),
+            group="speech-studio-preferences-load",
+            exclusive=True,
+            exit_on_error=False,
         )
-        if force or self.current_view != getattr(self, "_mounted_view", None):
-            self._mount_view(self.current_view, force=force)
+
+    async def _load_studio_preferences(self) -> None:
+        """Publish one exact Studio snapshot before mounting an editable view."""
+
+        try:
+            result = await asyncio.to_thread(self._studio_store.load)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Studio TTS preferences could not be loaded for Speech Lab")
+            result = StudioTTSLoadResult(
+                StudioTTSPreferencesSnapshot(),
+                StudioTTSLoadState.CORRUPT,
+                ("speech_studio",),
+            )
+        self._studio_load_result = result
+        if self.is_mounted:
+            self._mount_view(self.current_view, force=True)
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
@@ -4475,6 +4574,7 @@ class STTSWindow(Container):
         view: str,
         *,
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        navigation_target: SpeechTTSNavigationTarget | None = None,
     ) -> None:
         """Select an existing view and apply an exact one-shot preset."""
 
@@ -4485,20 +4585,83 @@ class STTSWindow(Container):
             or type(profile_preset) is not TTSPlaygroundSelectionPreset
         ):
             raise ValueError("invalid Speech profile preset")
+        if navigation_target is not None and (
+            view != "playground"
+            or type(navigation_target) is not SpeechTTSNavigationTarget
+        ):
+            raise ValueError("invalid Speech navigation target")
         if view == "playground":
             self._pending_playground_preset = profile_preset
+            self._pending_playground_navigation = navigation_target
         else:
             self._pending_playground_preset = None
+            self._pending_playground_navigation = None
         if self.current_view != view:
             self.current_view = view
             return
         if profile_preset is not None:
             self._mount_view(view, force=True)
+            return
+        if navigation_target is not None:
+            self.call_after_refresh(self._apply_pending_playground_navigation)
+
+    async def request_view(
+        self,
+        view: str,
+        *,
+        profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        navigation_target: SpeechTTSNavigationTarget | None = None,
+    ) -> bool:
+        """Select a view after resolving any dirty Studio preference draft."""
+
+        if view != "settings" and not await self.confirm_studio_preferences_leave():
+            return False
+        self.select_view(
+            view,
+            profile_preset=profile_preset,
+            navigation_target=navigation_target,
+        )
+        return True
+
+    async def confirm_studio_preferences_leave(self) -> bool:
+        """Delegate leave protection to the mounted Studio editor, if any."""
+
+        if self.current_view != "settings":
+            return True
+        try:
+            pane = self.query_one(SpeechSettingsPane)
+        except QueryError:
+            return True
+        return await pane.confirm_leave()
+
+    @staticmethod
+    def _global_provider_configuration_states() -> dict[
+        str, SpeechTTSConfigurationState
+    ]:
+        """Return safe provider setup states without contacting a provider."""
+
+        try:
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+        except (OSError, TypeError, ValueError):
+            state = load_global_speech_tts_state({})
+        return {
+            provider_id: global_speech_tts_provider_configuration_state(
+                state,
+                provider_id=provider_id,
+            )
+            for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+        }
 
     def _mount_view(self, new_view: str, *, force: bool = False) -> None:
         """Replace the mounted content when a view change requires it."""
 
         if type(new_view) is not str or new_view not in STTS_VIEW_KEYS:
+            return
+        load_result = self._studio_load_result
+        if load_result is None:
             return
         if not force and new_view == getattr(self, "_mounted_view", None):
             return
@@ -4510,12 +4673,18 @@ class STTSWindow(Container):
                 f"change to '{new_view}' until compose completes."
             )
             return
-        if force and new_view == "playground":
-            self._apply_pending_playground_preset()
+        if (
+            force
+            and new_view == "playground"
+            and getattr(self, "_mounted_view", None) == "playground"
+        ):
+            self.call_after_refresh(self._apply_pending_playground_preset)
             return
 
         # Give widgets a chance to clean up before removal
         for child in content_container.children:
+            if isinstance(child, SpeechPlaygroundPane):
+                self._playground_axis_values = dict(child.axis_values)
             if hasattr(child, "cleanup") and callable(child.cleanup):
                 try:
                     child.cleanup()
@@ -4529,19 +4698,46 @@ class STTSWindow(Container):
         self._mounted_view = new_view
         if new_view == "playground":
             preset = self._pending_playground_preset
+            navigation_target = self._pending_playground_navigation
             content_container.mount(
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
                     profile_preset=preset,
-                    axis_defaults=_seed_axis_defaults(),
+                    axis_values=self._playground_axis_values,
+                    axis_defaults=_seed_axis_defaults(
+                        load_result.snapshot,
+                        self._global_preferences,
+                    ),
+                    studio_preferences=load_result.snapshot,
+                    global_preferences=self._global_preferences,
+                    navigation_target=navigation_target,
+                    provider_configuration_states=(
+                        self._global_provider_configuration_states()
+                    ),
+                    runtime_status_store=speech_tts_runtime_status_store(
+                        self.app_instance
+                    ),
                 )
             )
             if self._pending_playground_preset is preset:
                 self._pending_playground_preset = None
+            if self._pending_playground_navigation is navigation_target:
+                self._pending_playground_navigation = None
         elif new_view == "profiles":
             content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
-            content_container.mount(SpeechSettingsPane(id="speech-settings-pane"))
+            adopted = self._pending_adopted_preset
+            content_container.mount(
+                SpeechSettingsPane(
+                    id="speech-settings-pane",
+                    store=self._studio_store,
+                    global_preferences=self._global_preferences,
+                    load_result=load_result,
+                    adopted_preset=adopted,
+                )
+            )
+            if self._pending_adopted_preset is adopted:
+                self._pending_adopted_preset = None
         elif new_view == "voice-cloning":
             from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
 
@@ -4559,6 +4755,17 @@ class STTSWindow(Container):
         # NoMatches on the first view change. The screen watches
         # `current_view` and applies `is-active` itself.
 
+    def playground_axis_snapshot(self) -> dict[str, str]:
+        """Return detached process-local axes for a fresh Speech screen."""
+
+        try:
+            pane = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            pass
+        else:
+            self._playground_axis_values = dict(pane.axis_values)
+        return dict(self._playground_axis_values)
+
     def _apply_pending_playground_preset(
         self,
         retries_remaining: int = 3,
@@ -4569,6 +4776,9 @@ class STTSWindow(Container):
             return
         try:
             playground = self.query_one(SpeechPlaygroundPane)
+            playground.query_one("#tts-provider-select", Select).query_one(
+                "SelectOverlay"
+            )
         except QueryError:
             if retries_remaining > 0:
                 self.call_after_refresh(
@@ -4583,6 +4793,22 @@ class STTSWindow(Container):
         if self._pending_playground_preset is preset:
             self._pending_playground_preset = None
 
+    def _apply_pending_playground_navigation(self) -> None:
+        """Apply a same-view provider/intent target without invoking it."""
+
+        if not self.is_mounted or self.current_view != "playground":
+            return
+        target = self._pending_playground_navigation
+        if target is None:
+            return
+        try:
+            playground = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            return
+        playground.apply_navigation_target(target)
+        if self._pending_playground_navigation is target:
+            self._pending_playground_navigation = None
+
     @on(ProfilePreviewRequested)
     def on_profile_preview_requested(
         self,
@@ -4593,24 +4819,60 @@ class STTSWindow(Container):
             return
         self.select_view("playground", profile_preset=message.preset)
 
+    @on(AdoptStudioPreferencesRequested)
+    def on_adopt_studio_preferences_requested(
+        self,
+        message: AdoptStudioPreferencesRequested,
+    ) -> None:
+        """Open the Studio editor with one explicit, still-unsaved adoption."""
+
+        if type(message.preset) is not TTSPlaygroundSelectionPreset:
+            return
+        self._pending_adopted_preset = message.preset
+        self.select_view("settings")
+
+    @on(OpenStudioPreferencesRequested)
+    def on_open_studio_preferences_requested(
+        self,
+        message: OpenStudioPreferencesRequested,
+    ) -> None:
+        """Open the Studio-only editor from the Playground action strip."""
+
+        message.stop()
+        self.select_view("settings")
+
+    @on(StudioPreferencesSaved)
+    def on_studio_preferences_saved(self, message: StudioPreferencesSaved) -> None:
+        """Publish a Studio-only save to later Playground mounts."""
+
+        self._studio_load_result = StudioTTSLoadResult(
+            message.snapshot,
+            StudioTTSLoadState.LOADED,
+        )
+        if message.reset_to_global:
+            # Reset removes the Studio preference layer, so an exact axis that
+            # was merely seeded from that layer must not survive as a bounded
+            # Playground draft and continue outranking the inherited global.
+            self._playground_axis_values.clear()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""
         # Handle sidebar buttons
         if event.button.id == "view-playground-btn":
-            self.current_view = "playground"
+            self.run_worker(self.request_view("playground"), exclusive=True)
         elif event.button.id == "view-profiles-btn":
-            self.current_view = "profiles"
+            self.run_worker(self.request_view("profiles"), exclusive=True)
         elif event.button.id == "view-settings-btn":
-            self.current_view = "settings"
+            self.run_worker(self.request_view("settings"), exclusive=True)
         elif event.button.id == "view-audiobook-btn":
-            self.current_view = "audiobook"
+            self.run_worker(self.request_view("audiobook"), exclusive=True)
         elif event.button.id == "view-voice-cloning-btn":
             # Import and push the Voice Cloning window
             from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
 
             self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
-            self.current_view = "dictation"
+            self.run_worker(self.request_view("dictation"), exclusive=True)
         elif event.button.id == "view-effects-btn":
             self.app.notify("Audio Effects coming soon!", severity="information")
         else:

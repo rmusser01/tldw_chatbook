@@ -88,6 +88,18 @@ def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
     )
 
 
+def test_small_ordinary_paste_keeps_explicit_paste_origin_when_not_collapsed():
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+
+    composer.insert_pasted_text("small paste")
+
+    snapshot = composer.capture_draft_snapshot()
+    assert [
+        (segment.origin, segment.collapse_state) for segment in snapshot.segments
+    ] == [("paste", "literal")]
+    assert composer.has_paste_segments() is True
+
+
 def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
     """Assert the mounted button renders its complete label inside its chrome."""
     rendered_line = button.render_line(0)

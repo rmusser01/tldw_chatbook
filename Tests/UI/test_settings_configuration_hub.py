@@ -128,12 +128,21 @@ def test_theme_and_splash_appear_in_settings_sidebar():
 
 
 def test_self_contained_editor_categories_not_in_guided_mutation():
-    assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
-    assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    assert (
+        SettingsCategoryId.THEME
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
+    assert (
+        SettingsCategoryId.SPLASH_SCREEN
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
     # Internal Prompts is a third self-contained editor (mirrors Theme): it owns
     # its own persistence via the InternalPromptsPanel Save/Reset buttons and
     # must never be added to the guided-mutation set.
-    assert SettingsCategoryId.INTERNAL_PROMPTS not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    assert (
+        SettingsCategoryId.INTERNAL_PROMPTS
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
 
 
 def test_internal_prompts_appears_in_settings_sidebar_expert_group():
@@ -152,14 +161,15 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
 
     Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
     (Settings > Image Gen task 4) brought it to 21; adding Workspaces
-    (settings-workspaces-folder-roots task 8) brought it to 22. This pins
+    (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
+    (TASK-1984) brought it to 23. This pins
     the literal count so the next addition must touch this assertion
     deliberately, and cross-checks that summaries neither miss nor duplicate
     an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 22
+    assert len(summaries) == len(list(SettingsCategoryId)) == 23
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -842,9 +852,7 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         record = records[category]
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
-            assert "active RAG profile" in " ".join(
-                record.owns_config_sections
-            )
+            assert "active RAG profile" in " ".join(record.owns_config_sections)
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
@@ -905,9 +913,7 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
         # substring-in-rendered-text) so this can't false-pass on the word
         # "Search" appearing somewhere else in the pane.
         assert (
-            screen.query_one(
-                "#settings-library-rag-search-group", Collapsible
-            ).title
+            screen.query_one("#settings-library-rag-search-group", Collapsible).title
             == "Search"
         )
         assert "Citation and snippets" in text
@@ -2017,10 +2023,7 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
         assert "Local/server authority: server; Settings is read-only" in text
         assert "Collections: dry-run only" in text
         assert "Workspaces: dry-run only" in text
-        assert (
-            "Research (research); authority local-only; sync not-configured"
-            in text
-        )
+        assert "Research (research); authority local-only; sync not-configured" in text
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
         assert (
             "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
@@ -2878,9 +2881,7 @@ def _assert_field_guide_row_painted(host, widget) -> None:
     try:
         hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
     except Exception as exc:  # textual.errors.NoWidget
-        pytest.fail(
-            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
-        )
+        pytest.fail(f"nothing is painted at {widget!r}'s own region {region!r}: {exc}")
     assert hit_widget is widget, (
         f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
         "itself -- it is not actually visible on screen"
@@ -3587,9 +3588,7 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        field = screen.query_one(
-            "#settings-console-tool-result-display-chars", Input
-        )
+        field = screen.query_one("#settings-console-tool-result-display-chars", Input)
 
         assert field.restrict == r"^[0-9]*$"
         assert field.value == "160"  # DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
@@ -3601,9 +3600,8 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
         )
         await pilot.click("#settings-save-category")
         await pilot.pause(0.5)
-        assert (
-            "Tool result display cap must be between 20 and 2000."
-            in _visible_text(screen)
+        assert "Tool result display cap must be between 20 and 2000." in _visible_text(
+            screen
         )
         assert saved == []
         assert "tool_result_display_chars" not in app.app_config.get("console", {})
@@ -3617,9 +3615,8 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
         )
         await pilot.click("#settings-save-category")
         await pilot.pause(0.5)
-        assert (
-            "Tool result display cap must be a whole number."
-            in _visible_text(screen)
+        assert "Tool result display cap must be a whole number." in _visible_text(
+            screen
         )
         assert saved == []
         assert "tool_result_display_chars" not in app.app_config.get("console", {})
@@ -3631,9 +3628,8 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
         )
         await pilot.click("#settings-save-category")
         await pilot.pause(0.5)
-        assert (
-            "Tool result display cap must be a whole number."
-            in _visible_text(screen)
+        assert "Tool result display cap must be a whole number." in _visible_text(
+            screen
         )
         assert saved == []
         assert "tool_result_display_chars" not in app.app_config.get("console", {})
@@ -6597,10 +6593,7 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Data boundary" in text
         assert "Config encryption: disabled" in text
         assert "Sensitive config fields: 2 present" in text
-        assert (
-            "Provider env vars: 1 of 2 referenced env vars are set (1 unset)"
-            in text
-        )
+        assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in text
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
         assert (
@@ -6964,9 +6957,7 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
     assert result[0] == "Privacy check: complete"
     assert "Config encryption: disabled" in result
     assert "Sensitive config fields: 2 present" in result
-    assert (
-        "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in result
-    )
+    assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in result
     assert "Redaction: active; raw secret values hidden" in result
     assert DUMMY_REDACTION_ENV_VALUE not in text
     assert DUMMY_REDACTION_CONFIG_VALUE not in text
@@ -7099,9 +7090,7 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
         text = _visible_text(screen)
 
-        assert (
-            "Provider env vars: 1 of 1 referenced env vars are set (0 unset)" in text
-        )
+        assert "Provider env vars: 1 of 1 referenced env vars are set (0 unset)" in text
         assert "Sensitive config fields: 1 present" in text
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
@@ -7169,9 +7158,7 @@ def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path
     screen = SettingsScreen(app)
 
     sentinel = tmp_path / "sentinel-config.toml"
-    monkeypatch.setattr(
-        settings_screen_module, "get_cli_config_path", lambda: sentinel
-    )
+    monkeypatch.setattr(settings_screen_module, "get_cli_config_path", lambda: sentinel)
 
     assert screen._config_path() == sentinel
 
@@ -7625,15 +7612,14 @@ def test_footer_entries_advertise_test_where_it_acts():
 def test_filter_matches_owned_config_keys():
     """The "/" filter indexes each category's owned TOML keys: searching a
     setting name surfaces the category that owns it (task-1564 -- the
-    Owns: data existed but was unsearchable, forcing a 22-category scan)."""
+    Owns: data existed but was unsearchable, forcing a 23-category scan)."""
     app = _build_test_app()
     screen = SettingsScreen(app)
 
     matches = screen._filtered_category_summaries("paste_collapse_threshold")
 
     assert any(
-        summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR
-        for summary in matches
+        summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR for summary in matches
     )
 
 
@@ -8011,9 +7997,7 @@ def test_compact_inputs_carry_rest_edge_and_focus_edge():
     the carrier) and a thick accent edge plus the distinct focus
     background when focused. Left borders cost a column, never a row, so
     the dense one-row forms keep their height."""
-    src = (
-        _CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss"
-    ).read_text()
+    src = (_CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss").read_text()
     rest = re.search(r"\.settings-compact-input \{[^}]*\}", src)
     focus = re.search(r"\.settings-compact-input:focus \{[^}]*\}", src)
     assert rest and focus
@@ -8110,9 +8094,7 @@ def test_fold_prefers_slash_boundaries_over_extension_dots():
     """'~/.config/tldw_cli/config.toml' folded as 'config.' / 'toml' --
     a mid-filename break at the extension dot (task-1623). Slash
     boundaries win; dots only split slash-free over-long chunks."""
-    folded = settings_screen_module._fold_long_tokens(
-        "~/.config/tldw_cli/config.toml"
-    )
+    folded = settings_screen_module._fold_long_tokens("~/.config/tldw_cli/config.toml")
     lines = [line.strip() for line in folded.splitlines()]
     assert lines[-1] == "config.toml"
     assert not any(line.endswith("config.") for line in lines)
@@ -8194,9 +8176,7 @@ def test_field_search_surfaces_category_and_names_the_field():
 
     matches = screen._filtered_category_summaries("threshold")
 
-    assert any(
-        s.category is SettingsCategoryId.CONSOLE_BEHAVIOR for s in matches
-    )
+    assert any(s.category is SettingsCategoryId.CONSOLE_BEHAVIOR for s in matches)
     status = screen._category_search_status_text("threshold")
     assert "Console Behavior › Threshold (chars)" in status
 
@@ -8269,11 +8249,16 @@ def test_toast_severity_variants_pin_the_left_edge():
     resurfaces (DESIGN.md Don'ts).
     """
     src = (
-        _CONVENTION_CSS_ROOT.parent / "css" / "core" / "_base.tcss"
-    ).read_text() if False else (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook" / "css" / "core" / "_base.tcss"
-    ).read_text()
+        (_CONVENTION_CSS_ROOT.parent / "css" / "core" / "_base.tcss").read_text()
+        if False
+        else (
+            Path(__file__).resolve().parents[2]
+            / "tldw_chatbook"
+            / "css"
+            / "core"
+            / "_base.tcss"
+        ).read_text()
+    )
     for sev in ("-information", "-warning", "-error", "-success"):
         block = src.split(f"Toast.{sev} {{", 1)[1].split("}", 1)[0]
         assert "border-left: round" in block, sev
@@ -8284,7 +8269,7 @@ async def test_reassurance_short_line_off_overview():
     """The long reassurance paragraph is Overview-only.
 
     task-1714: elsewhere a single line keeps the local-first promise
-    without eating pinned inspector rows on all 22 categories.
+    without eating pinned inspector rows on all 23 categories.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

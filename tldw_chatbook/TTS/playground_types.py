@@ -7,6 +7,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from tldw_chatbook.TTS.effective_settings import TTSStudioDraftSelection
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+
 AudioMetadataValue = str | int | float | bool | None
 
 
@@ -99,6 +102,8 @@ class STTSPlaygroundRequest:
     response_format: str
     speed: float = 1.0
     options: Mapping[str, Any] = field(default_factory=dict)
+    studio_draft: TTSStudioDraftSelection | None = None
+    studio_preferences: StudioTTSPreferencesSnapshot | None = None
 
     def __post_init__(self) -> None:
         for name in ("operation_id", "provider_id", "model_id", "response_format"):
@@ -108,6 +113,17 @@ class STTSPlaygroundRequest:
             "options",
             _freeze_option(self.options),
         )
+        if (self.studio_draft is None) is not (self.studio_preferences is None):
+            raise ValueError(
+                "Studio Playground requests require both draft and saved preferences"
+            )
+        if self.studio_draft is not None:
+            if type(self.studio_draft) is not TTSStudioDraftSelection:
+                raise TypeError("studio_draft must be an exact Studio draft")
+            if type(self.studio_preferences) is not StudioTTSPreferencesSnapshot:
+                raise TypeError("studio_preferences must be an exact Studio snapshot")
+            if self.studio_draft.base_revision != self.studio_preferences.revision:
+                raise ValueError("Studio Playground preference revisions must match")
 
 
 @dataclass(frozen=True, slots=True)

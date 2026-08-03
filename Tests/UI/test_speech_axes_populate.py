@@ -23,6 +23,7 @@ from Tests.UI.test_stts_playground_audio_cpp import (
     _resolved,
     _wait_until,
 )
+from tldw_chatbook.TTS.adapter_types import TTSVoiceDiscoveryResult
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 
 
@@ -67,3 +68,34 @@ async def test_the_provider_axis_offers_real_providers(faked_service):
         values = _option_values(select)
 
     assert "audio_cpp" in values, f"provider axis never populated: {values}"
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_voice_axis_rejects_a_different_catalog_revision(
+    faked_service,
+):
+    async def stale_observation(
+        provider_id: str,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
+        faked_service.voice_observation_calls.append((provider_id, model_id, refresh))
+        return TTSVoiceDiscoveryResult(
+            provider_id=provider_id,
+            model_id=model_id,
+            catalog_revision=faked_service.catalogs[provider_id].revision - 1,
+            voices=("stale-voice",),
+            state="complete",
+        )
+
+    faked_service.observe_voices = stale_observation
+    app = _Harness()
+    async with app.run_test(size=(160, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: bool(faked_service.voice_observation_calls),
+        )
+        await pilot.pause()
+        voices = _option_values(app.query_one("#tts-voice-select", Select))
+
+    assert "stale-voice" not in voices

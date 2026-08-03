@@ -435,6 +435,11 @@ class ConsoleChatMessage:
     #: that is not a tool marker, and for a marker whose result was short
     #: enough that ``content`` already shows all of it.
     tool_output_full: str | None = None
+    #: TASK-1972: set on a change-summary transcript row -- the agent run
+    #: whose diff the row reviews. Session-only, never persisted; resume
+    #: re-derives it from change_snapshots. The `v` action needs to know
+    #: WHICH turn it opens, not guess from row position.
+    change_review_run_id: str | None = None
     # Normalized token usage for THIS generation (None for user rows, legacy
     # rows, and providers that reported nothing). Persisted as usage_json.
     usage: "ProviderUsage | None" = None

@@ -700,6 +700,16 @@ async def test_openai_registry_distinguishes_shadowed_and_effective_raw_api_chan
     (
         (
             {
+                "api_settings": {
+                    "openai": {"api_key": "nested-canonical-key"},
+                },
+                "openai_api": {"api_key": "raw-legacy-key"},
+                "API": {"openai_api_key": "raw-api-key"},
+            },
+            "nested-canonical-key",
+        ),
+        (
+            {
                 "api_settings.openai": {"api_key": "raw-settings-key"},
                 "openai_api": {"api_key": "raw-legacy-key"},
                 "API": {"openai_api_key": "raw-api-key"},
@@ -745,6 +755,16 @@ def test_openai_projection_uses_raw_api_then_normalized_fallback(
 @pytest.mark.parametrize(
     ("raw_config", "expected_key"),
     (
+        (
+            {
+                "api_settings": {
+                    "elevenlabs": {"api_key": "nested-canonical-key"},
+                },
+                "API": {"elevenlabs_api_key": "raw-api-key"},
+                "elevenlabs_api": {"api_key": "raw-legacy-key"},
+            },
+            "nested-canonical-key",
+        ),
         (
             {
                 "API": {"elevenlabs_api_key": "raw-api-key"},

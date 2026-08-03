@@ -25,7 +25,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
-from textual.widgets import Button, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chatbooks.chatbook_models import ContentType
@@ -116,7 +116,9 @@ from ...Library.library_prompts_state import (
     build_prompt_editor_state,
     build_prompts_list_state,
     classify_prompt_save_error,
+    prepare_prompt_artifact_save,
     prompt_editor_meta_line,
+    require_artifact_save_supported,
 )
 from ...Library.library_skills_state import (
     SkillEditorState,
@@ -126,11 +128,21 @@ from ...Library.library_skills_state import (
     compose_skill_markdown,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from ...Prompt_Management.prompt_artifact_models import ArtifactType
+from ...Prompt_Management.prompt_source_capabilities import (
+    PromptSourceCapabilities,
+    local_prompt_capabilities,
+)
 from ...Prompt_Management.Prompts_Interop import (
     parse_json_prompts_from_content,
     parse_markdown_prompts_from_content,
     parse_txt_prompts_from_content,
     parse_yaml_prompts_from_content,
+)
+from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from ...Widgets.Prompts.prompt_block_editor_state import (
+    PromptBlockEditorState,
+    set_artifact_type,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -1140,6 +1152,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_dirty: bool = False
         self._library_prompt_status: str = ""
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
+        self._library_prompt_block_state: PromptBlockEditorState | None = None
+        self._library_prompt_capabilities: PromptSourceCapabilities = (
+            local_prompt_capabilities()
+        )
+        self._library_prompt_include_starter_content: bool = False
         # Task 8b Fix wave 1 (Minor): the exact name that triggered the
         # current "name-in-use" status, captured at the moment that status
         # is set -- NOT re-derived from the live Name field at "Open
@@ -2159,6 +2176,28 @@ class LibraryScreen(BaseAppScreen):
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted and not self._file_notes_active():
+            if (
+                self._library_selected_row_id
+                in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
+                and self._library_prompts_view == "editor"
+            ):
+                # A source refresh may update the Prompts count while a newly
+                # created Prompt remains open. Recompose only the rail so the
+                # shared block editor keeps its TextAreas, cursor, selection,
+                # scroll position, and native undo history.
+                try:
+                    rail = self.query_one("#library-rail", LibraryRail)
+                except (NoMatches, QueryError):
+                    return
+                rail.sync_state(
+                    build_library_shell_state(
+                        self._build_library_shell_input(),
+                        selected_row_id=self._library_selected_row_id,
+                    ),
+                    self._library_rail_preferences(),
+                    query=self._library_rag_query,
+                )
+                return
             self.refresh(recompose=True)
 
     def _apply_source_snapshot_timeout(self) -> None:
@@ -2456,24 +2495,27 @@ class LibraryScreen(BaseAppScreen):
         (composite ``"local:prompt:<id>"`` string ids and a separate integer
         ``local_id``, per ``normalize_prompt_record``) rather than the raw
         ``PromptsDatabase.list_prompts`` row shape
-        ``build_prompts_list_state`` expects -- each item is remapped back
-        to a raw-shaped record (``local_id`` -> ``id``) here so the pure
-        state builder can consume it unchanged.
+        ``build_prompts_list_state`` expects. Each item is remapped to keep
+        the integer display ``id`` while preserving the normalized identity,
+        backend, artifact type, version, and lane-presence metadata used by
+        the row UI. Backward-compatible defaults tolerate older raw-shaped
+        service doubles without hiding Recipe or lane information when the
+        normalized fields are present.
 
-        Note: the raw local ``list_prompts`` DB query selects
-        ``id, name, uuid, author, details, last_modified`` -- it does not
-        join keywords, so every remapped record's ``keywords`` here is the
-        (always empty) list the normalizer defaults to. Bulk-enriching a
-        page of prompts with keywords would need either a new batched-join
-        DB seam or N per-row ``fetch_keywords_for_prompt`` calls; the notes
-        list canvas sets the precedent for skipping this (its own bulk
-        ``list_notes`` fetch has never carried keywords either -- only the
-        single-note editor enriches, via ``_fetch_library_note_keywords``),
-        so this deliberately matches that precedent rather than fetching
-        keywords per row here. ``details``, unlike keywords, IS cheap to
-        carry (a single extra column on the same query, Task 8b D2) --
-        ``build_prompts_list_state``'s filter/secondary-line now use it
-        instead of the never-populated ``keywords``.
+        Note: the raw local ``list_prompts`` DB query selects identity,
+        display fields, version, artifact type, and lane-presence flags, but
+        it does not join keywords. Every remapped record's ``keywords`` here
+        is therefore the (always empty) list the normalizer defaults to.
+        Bulk-enriching a page of prompts with keywords would need either a new
+        batched-join DB seam or N per-row ``fetch_keywords_for_prompt`` calls;
+        the notes list canvas sets the precedent for skipping this (its own
+        bulk ``list_notes`` fetch has never carried keywords either -- only
+        the single-note editor enriches, via
+        ``_fetch_library_note_keywords``), so this deliberately matches that
+        precedent rather than fetching keywords per row here. ``details``,
+        unlike keywords, IS cheap to carry (a single extra column on the same
+        query, Task 8b D2) -- ``build_prompts_list_state``'s filter/secondary-
+        line now use it instead of the never-populated ``keywords``.
 
         Args:
             list_prompts: The bound ``list_prompts`` callable to invoke.
@@ -2481,10 +2523,10 @@ class LibraryScreen(BaseAppScreen):
                 ``per_page``).
 
         Returns:
-            The fetched page's records, raw-shaped for
-            ``build_prompts_list_state`` (``id``, ``name``, ``author``,
-            ``details``, ``keywords``, ``last_modified``, ``version``), or
-            ``()`` on failure or an unrecognized response shape.
+            The fetched page's records, display-shaped for
+            ``build_prompts_list_state`` with normalized identity and
+            artifact metadata preserved, or ``()`` on failure or an
+            unrecognized response shape.
         """
         try:
             response = await self._run_library_service_call(
@@ -2502,15 +2544,53 @@ class LibraryScreen(BaseAppScreen):
         for item in items:
             if not isinstance(item, Mapping):
                 continue
+            raw_id = item.get("id")
+            local_id = item.get("local_id")
+            if local_id is None and isinstance(raw_id, int):
+                local_id = raw_id
+            backend = str(item.get("backend") or "local")
+            source_id = item.get("source_id") or item.get("uuid")
+            if source_id in (None, ""):
+                source_id = item.get("server_id") or local_id or raw_id
+            has_system_prompt = item.get("has_system_prompt")
+            if not isinstance(has_system_prompt, bool):
+                has_system_prompt = bool(
+                    str(
+                        item.get("system_prompt")
+                        or item.get("compiled_system_prompt")
+                        or ""
+                    ).strip()
+                )
+            has_user_prompt = item.get("has_user_prompt")
+            if not isinstance(has_user_prompt, bool):
+                has_user_prompt = bool(
+                    str(
+                        item.get("user_prompt")
+                        or item.get("compiled_user_prompt")
+                        or ""
+                    ).strip()
+                )
             records.append(
                 {
-                    "id": item.get("local_id"),
+                    "id": local_id,
+                    "source_id": (
+                        str(source_id) if source_id not in (None, "") else None
+                    ),
+                    "local_id": local_id,
+                    "server_id": item.get("server_id"),
+                    "uuid": item.get("uuid"),
+                    "backend": backend,
                     "name": item.get("name"),
                     "author": item.get("author"),
                     "details": item.get("details"),
                     "keywords": item.get("keywords"),
                     "last_modified": item.get("last_modified"),
                     "version": item.get("version"),
+                    "artifact_type": (
+                        "recipe" if item.get("artifact_type") == "recipe" else "prompt"
+                    ),
+                    "has_system_prompt": has_system_prompt,
+                    "has_user_prompt": has_user_prompt,
                 }
             )
         return tuple(records)
@@ -3769,11 +3849,7 @@ class LibraryScreen(BaseAppScreen):
             with Horizontal(id="library-notes-source-strip"):
                 database_selected = self._library_notes_source == "database"
                 database_source = Button(
-                    (
-                        "Database (selected)"
-                        if database_selected
-                        else "Database"
-                    ),
+                    ("Database (selected)" if database_selected else "Database"),
                     id="library-notes-source-database",
                     compact=True,
                 )
@@ -3968,12 +4044,18 @@ class LibraryScreen(BaseAppScreen):
                         # A save just lost the app-level staleness check (see
                         # `_save_library_prompt`): recompose from the user's
                         # own kept text (never the stale `_library_prompt_detail`)
-                        # with the Overwrite/Reload actions surfaced.
+                        # with the Save-as-new/Reload actions surfaced.
                         yield LibraryPromptsListCanvas(
                             mode="editor",
-                            editor_state=self._library_prompt_conflict_snapshot,
+                            editor_state=self._current_library_prompt_editor_state(
+                                self._library_prompt_conflict_snapshot
+                            ),
                             conflict=True,
                             dirty=self._library_prompt_dirty,
+                            can_update_original=False,
+                            include_starter_content=(
+                                self._library_prompt_include_starter_content
+                            ),
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -3986,9 +4068,7 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryPromptsListCanvas(
                             mode="editor",
-                            editor_state=build_prompt_editor_state(
-                                self._library_prompt_detail
-                            ),
+                            editor_state=self._current_library_prompt_editor_state(),
                             status=self._library_prompt_status,
                             # Task 8b D3: only the name-in-use status backs
                             # a real "Open existing" affordance -- reusing
@@ -4000,6 +4080,12 @@ class LibraryScreen(BaseAppScreen):
                                 == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
                             ),
                             dirty=self._library_prompt_dirty,
+                            can_update_original=(
+                                self._library_prompt_can_update_original()
+                            ),
+                            include_starter_content=(
+                                self._library_prompt_include_starter_content
+                            ),
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -5773,9 +5859,7 @@ class LibraryScreen(BaseAppScreen):
         generic_options["chunk"] = form.chunk
         generic_options["chunk_size"] = form.chunk_size
         form.type_options["generic"] = generic_options
-        resolve_backend = getattr(
-            self.app_instance, "_resolve_ingest_backend", None
-        )
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         ingest_backend = resolve_backend() if callable(resolve_backend) else "local"
         # "A server is available" means the seam exists AND can actually submit;
         # a half-wired service would otherwise advertise a switch that fails.
@@ -6925,7 +7009,8 @@ class LibraryScreen(BaseAppScreen):
         try:
             body = self.query_one(f"#library-rail-section-body-{section_id}")
             header = self.query_one(
-                f"#library-rail-section-header-{section_id}", DestinationRailSectionHeader
+                f"#library-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
             )
         except Exception:
             return
@@ -10012,8 +10097,7 @@ class LibraryScreen(BaseAppScreen):
                 # honest outcome line, never hang or silently report
                 # "No supported prompt files found."
                 logger.warning(
-                    "Library prompt folder enumeration failed "
-                    "(category={}).",
+                    "Library prompt folder enumeration failed (category={}).",
                     type(exc).__name__,
                 )
                 self._apply_library_prompts_import_status("Could not read that folder.")
@@ -10054,8 +10138,7 @@ class LibraryScreen(BaseAppScreen):
                 parsed_prompts = parser(content)
             except Exception as exc:
                 logger.warning(
-                    "Library prompt import parse failed "
-                    "(file_type={}, category={}).",
+                    "Library prompt import parse failed (file_type={}, category={}).",
                     file_path.suffix.lower(),
                     type(exc).__name__,
                 )
@@ -10120,12 +10203,15 @@ class LibraryScreen(BaseAppScreen):
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         keywords=keywords,
+                        prompt_format=prompt_data.get("prompt_format"),
+                        prompt_schema_version=prompt_data.get("prompt_schema_version"),
+                        prompt_definition=prompt_data.get("prompt_definition"),
+                        artifact_type=prompt_data.get("artifact_type"),
                         isolate_in_worker=True,
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Library prompt save failed "
-                        "(file_type={}, category={}).",
+                        "Library prompt save failed (file_type={}, category={}).",
                         file_path.suffix.lower(),
                         type(exc).__name__,
                     )
@@ -10148,6 +10234,54 @@ class LibraryScreen(BaseAppScreen):
             status = f"{status} · {failed} failed"
         self._apply_library_prompts_import_status(status)
         self._refresh_local_source_snapshot()
+
+    def _current_library_prompt_editor_state(
+        self, base: PromptEditorState | None = None
+    ) -> PromptEditorState:
+        """Return metadata plus the screen-owned immutable block working copy."""
+        if base is None:
+            detail = (
+                self._library_prompt_detail
+                if isinstance(self._library_prompt_detail, Mapping)
+                else {}
+            )
+            base = build_prompt_editor_state(
+                detail, capabilities=self._library_prompt_capabilities
+            )
+        block_state = getattr(self, "_library_prompt_block_state", None)
+        if block_state is None:
+            return base
+        return dataclasses.replace(
+            base,
+            artifact_type=block_state.artifact_type,
+            block_editor_state=block_state,
+            compiled_system_preview=block_state.compiled_system,
+            compiled_user_preview=block_state.compiled_user,
+            system_prompt=block_state.compiled_system,
+            user_prompt=block_state.compiled_user,
+            capabilities=self._library_prompt_capabilities,
+        )
+
+    def _library_prompt_can_update_original(self) -> bool:
+        """Return whether the captured source can be conditionally replaced."""
+        state = self._library_prompt_block_state
+        if (
+            state is None
+            or self._selected_prompt_id is None
+            or type(self._library_prompt_version) is not int
+            or self._library_prompt_version < 1
+            or not self._library_prompt_capabilities.conditional_update
+        ):
+            return False
+        expected_kind = (
+            "block_prompt" if state.artifact_type == "prompt" else "block_recipe"
+        )
+        return (
+            state.definition.kind == expected_kind
+            and (state.definition.schema_version, state.definition.kind)
+            in self._library_prompt_capabilities.structured_kinds
+            and state.artifact_type in self._library_prompt_capabilities.artifact_types
+        )
 
     @on(Button.Pressed, ".library-prompt-row")
     async def handle_library_prompt_row(self, event: Button.Pressed) -> None:
@@ -10244,12 +10378,17 @@ class LibraryScreen(BaseAppScreen):
                 self.refresh(recompose=True)
             return
         self._library_prompt_detail = dict(detail)
-        editor_state = build_prompt_editor_state(self._library_prompt_detail)
+        editor_state = build_prompt_editor_state(
+            self._library_prompt_detail,
+            capabilities=self._library_prompt_capabilities,
+        )
+        self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_original_name = editor_state.name
         self._library_prompt_version = editor_state.version
         self._library_prompt_dirty = False
         self._library_prompt_status = ""
         self._library_prompt_conflict_snapshot = None
+        self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -10283,11 +10422,17 @@ class LibraryScreen(BaseAppScreen):
         self._selected_prompt_id = None
         self._library_prompts_view = "editor"
         self._library_prompt_detail = {}
+        editor_state = build_prompt_editor_state(
+            self._library_prompt_detail,
+            capabilities=self._library_prompt_capabilities,
+        )
+        self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_dirty = False
         self._library_prompt_status = ""
         self._library_prompt_conflict_snapshot = None
+        self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
 
     def _reset_library_prompt_editor_state(self) -> None:
@@ -10304,6 +10449,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_dirty = False
         self._library_prompt_status = ""
         self._library_prompt_conflict_snapshot = None
+        self._library_prompt_block_state = None
+        self._library_prompt_include_starter_content = False
         self._library_prompt_editor_armed = False
 
     def _mark_library_prompt_dirty(self) -> None:
@@ -10359,6 +10506,133 @@ class LibraryScreen(BaseAppScreen):
                 ``TextArea`` fields.
         """
         self._mark_library_prompt_dirty()
+
+    def _capture_library_prompt_block_state(
+        self, state: PromptBlockEditorState
+    ) -> None:
+        """Adopt one child-editor transition without recomposing its widgets."""
+        self._library_prompt_block_state = state
+        if isinstance(self._library_prompt_detail, Mapping):
+            detail = dict(self._library_prompt_detail)
+            detail["artifact_type"] = state.artifact_type
+            detail["system_prompt"] = state.compiled_system
+            detail["user_prompt"] = state.compiled_user
+            self._library_prompt_detail = detail
+        was_dirty = self._library_prompt_dirty
+        self._library_prompt_dirty = True
+        if not was_dirty:
+            self._update_library_prompt_meta_static()
+
+    def on_prompt_block_editor_block_field_changed(
+        self, event: PromptBlockEditor.BlockFieldChanged
+    ) -> None:
+        """Capture an incremental block edit after the canvas patches previews."""
+        self._capture_library_prompt_block_state(event.state)
+
+    def on_prompt_block_editor_block_action_requested(
+        self, event: PromptBlockEditor.BlockActionRequested
+    ) -> None:
+        """Capture an incremental add/move/duplicate/delete transition."""
+        self._capture_library_prompt_block_state(event.state)
+
+    @on(Checkbox.Changed, "#library-prompt-recipe-starter")
+    def handle_library_prompt_recipe_starter_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        """Persist the explicit Recipe starter-content choice for this draft."""
+        self._library_prompt_include_starter_content = bool(event.value)
+
+    @on(Button.Pressed, "#library-prompt-convert")
+    def handle_library_prompt_convert(self, event: Button.Pressed) -> None:
+        """Convert valid compatibility lanes into a detached Prompt draft."""
+        event.stop()
+        editor_state = self._current_library_prompt_editor_state()
+        if not editor_state.can_convert_as_new:
+            return
+        converted = build_prompt_editor_state(
+            {
+                "artifact_type": "prompt",
+                "system_prompt": editor_state.compiled_system_preview,
+                "user_prompt": editor_state.compiled_user_preview,
+            },
+            capabilities=self._library_prompt_capabilities,
+        ).block_editor_state
+        if converted is None:
+            return
+        self._library_prompt_block_state = converted
+        self._selected_prompt_id = None
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = True
+        self._library_prompt_status = (
+            "Compatibility text converted to an unsaved Prompt copy."
+        )
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def on_prompt_block_editor_save_as_prompt_requested(
+        self, event: PromptBlockEditor.SaveAsPromptRequested
+    ) -> None:
+        """Save the child working copy as a detached Prompt record."""
+        event.stop()
+        self._library_prompt_block_state = event.state
+        self.run_worker(
+            self._save_library_prompt(target_artifact_type="prompt", save_as_new=True),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    def on_prompt_block_editor_save_as_recipe_requested(
+        self, event: PromptBlockEditor.SaveAsRecipeRequested
+    ) -> None:
+        """Save the child working copy as a detached Recipe record."""
+        event.stop()
+        self._library_prompt_block_state = event.state
+        self.run_worker(
+            self._save_library_prompt(target_artifact_type="recipe", save_as_new=True),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    def on_prompt_block_editor_update_original_requested(
+        self, event: PromptBlockEditor.UpdateOriginalRequested
+    ) -> None:
+        """Conditionally update the captured Prompt/Recipe source version."""
+        event.stop()
+        self._library_prompt_block_state = event.state
+        self.run_worker(
+            self._save_library_prompt(
+                target_artifact_type=event.state.artifact_type,
+                save_as_new=False,
+            ),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    async def on_prompt_block_editor_back_requested(
+        self, event: PromptBlockEditor.BackRequested
+    ) -> None:
+        """Use the Library editor's existing dirty-aware back behavior."""
+        event.stop()
+        if not await self._flush_library_prompt_save():
+            return
+        self._reset_library_prompt_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    def on_prompt_block_editor_apply_requested(
+        self, event: PromptBlockEditor.ApplyRequested
+    ) -> None:
+        """Apply only executable Prompts; Recipes become unsaved Prompt copies."""
+        event.stop()
+        self._library_prompt_block_state = event.state
+        self._apply_library_prompt_working_copy(
+            state=event.state,
+            user_prompt=event.user_prompt if event.apply_user else None,
+        )
 
     def _read_library_prompt_editor_fields(
         self,
@@ -10502,6 +10776,34 @@ class LibraryScreen(BaseAppScreen):
             )
         )
 
+    def _sync_library_prompt_save_action_widgets(self) -> None:
+        """Patch save/update action truth after identity or version changes."""
+        can_update = self._library_prompt_can_update_original()
+        try:
+            block_editor = self.query_one(
+                "#library-prompt-block-editor", PromptBlockEditor
+            )
+        except (NoMatches, QueryError):
+            block_editor = None
+        if block_editor is not None:
+            block_editor.set_update_original_available(can_update)
+
+        try:
+            outer_save = self.query_one("#library-prompt-save", Button)
+        except (NoMatches, QueryError):
+            return
+        if self._selected_prompt_id is None:
+            artifact_type = (
+                self._library_prompt_block_state.artifact_type
+                if self._library_prompt_block_state is not None
+                else "prompt"
+            )
+            outer_save.label = f"Save {artifact_type.title()}"
+            outer_save.disabled = False
+            return
+        outer_save.label = "Update original"
+        outer_save.disabled = not can_update
+
     @on(Button.Pressed, "#library-prompt-save")
     def handle_library_prompt_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open prompt, bypassing no debounce (there is
@@ -10517,7 +10819,12 @@ class LibraryScreen(BaseAppScreen):
             group="library_prompt_save",
         )
 
-    async def _save_library_prompt(self) -> None:
+    async def _save_library_prompt(
+        self,
+        *,
+        target_artifact_type: ArtifactType | None = None,
+        save_as_new: bool = False,
+    ) -> None:
         """Save the open Library prompt's current editor text.
 
         The prompts DB's update seam (``update_prompt_by_id``, reached via
@@ -10555,7 +10862,8 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_prompts_view != "editor":
             return
-        prompt_id = self._selected_prompt_id
+        selected_prompt_id = self._selected_prompt_id
+        prompt_id = None if save_as_new else selected_prompt_id
         is_create = prompt_id is None
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
@@ -10569,13 +10877,57 @@ class LibraryScreen(BaseAppScreen):
         details = self._sanitize_note_content(
             raw_details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
         )
-        system_prompt = self._sanitize_note_content(
-            raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
-        )
-        user_prompt = self._sanitize_note_content(
-            raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
-        )
         keywords = self._library_note_keywords_from_input(raw_keywords_text)
+
+        block_state = getattr(self, "_library_prompt_block_state", None)
+        prepared_state: PromptBlockEditorState | None = None
+        if block_state is not None:
+            artifact_type = target_artifact_type or block_state.artifact_type
+            try:
+                draft, save_fields, prepared_state = prepare_prompt_artifact_save(
+                    block_state,
+                    artifact_type=artifact_type,
+                    include_recipe_starter_content=(
+                        self._library_prompt_include_starter_content
+                    ),
+                    request_fields={
+                        "name": name,
+                        "author": author,
+                        "details": details,
+                        "keywords": keywords,
+                        "expected_version": (
+                            self._library_prompt_version if not is_create else None
+                        ),
+                    },
+                )
+                require_artifact_save_supported(
+                    draft,
+                    self._library_prompt_capabilities,
+                    update_original=not is_create,
+                    expected_version=(
+                        self._library_prompt_version if not is_create else None
+                    ),
+                )
+            except ValueError as exc:
+                self._update_library_prompt_status_static(str(exc))
+                return
+            system_prompt = draft.system_prompt
+            user_prompt = draft.user_prompt
+        else:
+            save_fields = {
+                "name": name,
+                "author": author,
+                "details": details,
+                "system_prompt": self._sanitize_note_content(
+                    raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                ),
+                "user_prompt": self._sanitize_note_content(
+                    raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                ),
+                "keywords": keywords,
+            }
+            system_prompt = save_fields["system_prompt"]
+            user_prompt = save_fields["user_prompt"]
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
         get_prompt = getattr(service, "get_prompt", None)
@@ -10595,7 +10947,7 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 candidate = None
             if (
-                prompt_id != self._selected_prompt_id
+                selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -10631,7 +10983,7 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 fresh = None
             if (
-                prompt_id != self._selected_prompt_id
+                selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -10656,12 +11008,7 @@ class LibraryScreen(BaseAppScreen):
                 save_prompt,
                 mode="local",
                 prompt_identifier=prompt_id,
-                name=name,
-                author=author,
-                details=details,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                keywords=keywords,
+                **save_fields,
                 isolate_in_worker=True,
             )
         except Exception as exc:
@@ -10669,7 +11016,7 @@ class LibraryScreen(BaseAppScreen):
                 f"Library prompt save failed for {prompt_id!r}."
             )
             if (
-                prompt_id != self._selected_prompt_id
+                selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -10695,7 +11042,7 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if (
-            prompt_id != self._selected_prompt_id
+            selected_prompt_id != self._selected_prompt_id
             or self._library_prompts_view != "editor"
         ):
             return
@@ -10708,6 +11055,15 @@ class LibraryScreen(BaseAppScreen):
         outcome = classify_prompt_save_error(result_id, "", None)
         if outcome != "ok":
             await self._apply_library_prompt_save_outcome(outcome)
+            return
+
+        if save_as_new and artifact_type == "recipe":
+            # A Recipe save is an independent library artifact, never the
+            # update identity of the active Prompt working copy. Keep the
+            # source selection/version/block state and dirty semantics intact.
+            self._refresh_local_source_snapshot()
+            self._update_library_prompt_status_static("Recipe saved as a new artifact.")
+            await self._sync_library_prompt_open_existing_button(show=False)
             return
 
         new_id = result_id if is_create else prompt_id
@@ -10727,6 +11083,12 @@ class LibraryScreen(BaseAppScreen):
         patched_detail["system_prompt"] = system_prompt
         patched_detail["user_prompt"] = user_prompt
         patched_detail["version"] = self._library_prompt_version
+        if prepared_state is not None:
+            patched_detail["artifact_type"] = prepared_state.artifact_type
+            patched_detail["prompt_format"] = "structured"
+            patched_detail["prompt_schema_version"] = 2
+            patched_detail["prompt_definition"] = save_fields["prompt_definition"]
+            self._library_prompt_block_state = prepared_state
         if isinstance(result, Mapping):
             if "keywords" in result:
                 patched_detail["keywords"] = result["keywords"]
@@ -10743,6 +11105,7 @@ class LibraryScreen(BaseAppScreen):
             # `is_create`/staleness-pre-check-skip branches above only ever
             # apply once, to the create itself).
             self._selected_prompt_id = new_id
+            self._sync_library_prompt_save_action_widgets()
             # Unlike a plain in-place field update (which defers the
             # broader snapshot refresh to when the editor is actually left
             # -- see the comment below), a brand-new prompt changes the
@@ -10793,7 +11156,8 @@ class LibraryScreen(BaseAppScreen):
             user_prompt: The editor's live User prompt field value.
             keywords_text: The editor's live Keywords field value.
         """
-        self._library_prompt_conflict_snapshot = PromptEditorState(
+        self._library_prompt_conflict_snapshot = dataclasses.replace(
+            self._current_library_prompt_editor_state(),
             prompt_id=self._selected_prompt_id,
             name=name,
             author=author,
@@ -10835,6 +11199,60 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._library_prompt_dirty
 
+    def _apply_library_prompt_working_copy(
+        self,
+        *,
+        state: PromptBlockEditorState,
+        user_prompt: str | None,
+    ) -> None:
+        """Stage a Prompt, or detach a Recipe into an unsaved Prompt copy."""
+        notify = getattr(self.app_instance, "notify", None)
+        if state.artifact_type == "recipe":
+            prompt_state = set_artifact_type(state, "prompt")
+            self._library_prompt_block_state = prompt_state
+            self._selected_prompt_id = None
+            self._library_prompt_original_name = ""
+            self._library_prompt_version = None
+            self._library_prompt_conflict_snapshot = None
+            self._library_prompt_dirty = True
+            self._library_prompt_status = (
+                "Recipe opened as an unsaved Prompt copy — review and save it "
+                "before use."
+            )
+            if isinstance(self._library_prompt_detail, Mapping):
+                detail = dict(self._library_prompt_detail)
+                detail["artifact_type"] = "prompt"
+                detail["system_prompt"] = prompt_state.compiled_system
+                detail["user_prompt"] = prompt_state.compiled_user
+                detail.pop("id", None)
+                detail.pop("local_id", None)
+                detail.pop("uuid", None)
+                self._library_prompt_detail = detail
+            self._library_prompt_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_prompt_editor)
+            if callable(notify):
+                notify(
+                    "Recipe converted to an unsaved Prompt copy; nothing was applied.",
+                    severity="information",
+                )
+            return
+
+        if not user_prompt or not user_prompt.strip():
+            if callable(notify):
+                notify(
+                    "This prompt has no selected User text to insert.",
+                    severity="warning",
+                )
+            return
+        stage = getattr(self.app_instance, "stage_console_prompt_insert", None)
+        if not callable(stage):
+            if callable(notify):
+                notify("Console insert is unavailable.", severity="warning")
+            return
+        stage(user_prompt)
+
     @on(Button.Pressed, "#library-prompt-insert-console")
     def handle_library_prompt_insert_console(self, event: Button.Pressed) -> None:
         """Stage the open prompt's live User prompt text for Console and navigate there.
@@ -10862,6 +11280,33 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         notify = getattr(self.app_instance, "notify", None)
         if self._library_prompts_view != "editor":
+            return
+        editor_state = self._current_library_prompt_editor_state()
+        block_state = editor_state.block_editor_state
+        if (
+            editor_state.definition_state not in {"legacy", "supported_v2"}
+            or block_state is None
+        ):
+            if callable(notify):
+                notify(
+                    "This artifact cannot run directly. Use Convert and save as "
+                    "new Prompt first.",
+                    severity="warning",
+                )
+            return
+        if block_state.artifact_type == "recipe":
+            self._apply_library_prompt_working_copy(
+                state=block_state,
+                user_prompt=None,
+            )
+            return
+        if block_state.artifact_type != "prompt":
+            if callable(notify):
+                notify(
+                    "This artifact cannot run directly. Use Convert and save as "
+                    "new Prompt first.",
+                    severity="warning",
+                )
             return
         if self._library_prompt_dirty:
             if callable(notify):
@@ -10948,6 +11393,48 @@ class LibraryScreen(BaseAppScreen):
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         prompt_id = self._selected_prompt_id
+        artifact_fields: Mapping[str, Any] | None = None
+        block_state = self._library_prompt_block_state
+        if block_state is not None:
+            try:
+                _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
+                    block_state,
+                    artifact_type=block_state.artifact_type,
+                    include_recipe_starter_content=True,
+                    request_fields={},
+                )
+            except ValueError:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Fix block validation errors before exporting; "
+                        "the structured artifact was not downgraded.",
+                        severity="warning",
+                    )
+                return
+            artifact_fields = {
+                key: artifact_payload[key]
+                for key in (
+                    "artifact_type",
+                    "prompt_format",
+                    "prompt_schema_version",
+                    "prompt_definition",
+                    "system_prompt",
+                    "user_prompt",
+                )
+                if key in artifact_payload
+            }
+        elif isinstance(self._library_prompt_detail, Mapping):
+            artifact_fields = {
+                key: self._library_prompt_detail[key]
+                for key in (
+                    "artifact_type",
+                    "prompt_format",
+                    "prompt_schema_version",
+                    "prompt_definition",
+                )
+                if key in self._library_prompt_detail
+            }
         # Same inline sanitize-for-filename technique as
         # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
         # falling back to a generic name when that leaves nothing (e.g. a
@@ -10977,6 +11464,7 @@ class LibraryScreen(BaseAppScreen):
                 user_prompt,
                 keywords_text,
                 prompt_id,
+                artifact_fields,
             ),
         )
 
@@ -10990,6 +11478,7 @@ class LibraryScreen(BaseAppScreen):
         user_prompt: str,
         keywords_text: str,
         prompt_id: int,
+        artifact_fields: Mapping[str, Any] | None = None,
     ) -> None:
         """Write the exported prompt content to the path chosen via ``FileSave``.
 
@@ -11011,6 +11500,8 @@ class LibraryScreen(BaseAppScreen):
             keywords_text: The prompt's live keywords, as a
                 comma-separated string.
             prompt_id: The prompt's id (used only for logging).
+            artifact_fields: Optional structured Prompt/Recipe metadata
+                captured with the live block working copy.
         """
         notify = getattr(self.app_instance, "notify", None)
         if not selected_path:
@@ -11035,6 +11526,8 @@ class LibraryScreen(BaseAppScreen):
             "user_prompt": user_prompt,
             "keywords": keywords,
         }
+        if artifact_fields:
+            detail.update(artifact_fields)
         try:
             validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
         except Exception as exc:
@@ -11353,7 +11846,11 @@ class LibraryScreen(BaseAppScreen):
 
         if not overwrite:
             self._library_prompt_detail = dict(detail)
-            editor_state = build_prompt_editor_state(self._library_prompt_detail)
+            editor_state = build_prompt_editor_state(
+                self._library_prompt_detail,
+                capabilities=self._library_prompt_capabilities,
+            )
+            self._library_prompt_block_state = editor_state.block_editor_state
             self._library_prompt_original_name = editor_state.name
             self._library_prompt_version = editor_state.version
             self._library_prompt_conflict_snapshot = None
@@ -11626,19 +12123,53 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
 
-    @on(Button.Pressed, "#library-prompt-conflict-overwrite")
-    def handle_library_prompt_conflict_overwrite(self, event: Button.Pressed) -> None:
-        """Resolve a shown save conflict by re-saving the kept local edits.
+    @on(Button.Pressed, "#library-prompt-conflict-save-new")
+    def handle_library_prompt_conflict_save_new(self, event: Button.Pressed) -> None:
+        """Detach the kept conflict state and attempt a new-record save.
 
         Args:
             event: Button press event emitted by the conflict UI's
-                "Overwrite" action.
+                "Save as new" action.
         """
         event.stop()
-        self.run_worker(
-            self._resolve_library_prompt_conflict(overwrite=True),
-            exclusive=True,
-            group="library_prompt_save",
+        snapshot = self._library_prompt_conflict_snapshot
+        if snapshot is None:
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        block_state = self._library_prompt_block_state or snapshot.block_editor_state
+        artifact_type = block_state.artifact_type
+        self._library_prompt_detail = {
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "keywords": keywords_text,
+            "artifact_type": artifact_type,
+        }
+        self._library_prompt_block_state = block_state
+        self._selected_prompt_id = None
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_status = ""
+        self._library_prompt_dirty = True
+        self._library_prompt_editor_armed = False
+        if not self.is_mounted:
+            return
+        self.refresh(recompose=True)
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._save_library_prompt(
+                    target_artifact_type=artifact_type,
+                    save_as_new=True,
+                ),
+                exclusive=True,
+                group="library_prompt_save",
+            )
         )
 
     @on(Button.Pressed, "#library-prompt-conflict-reload")
@@ -12225,9 +12756,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the backend switch.
         """
         event.stop()
-        resolve_backend = getattr(
-            self.app_instance, "_resolve_ingest_backend", None
-        )
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         current = resolve_backend() if callable(resolve_backend) else "local"
         target = "local" if current == "server" else "server"
         save_setting_to_cli_config("library.ingest", "backend", target)
@@ -12308,15 +12837,11 @@ class LibraryScreen(BaseAppScreen):
         """Persist the directory a source was picked from, for next time."""
         try:
             directory = (
-                selected_path
-                if selected_path.is_dir()
-                else selected_path.parent
+                selected_path if selected_path.is_dir() else selected_path.parent
             )
         except OSError:
             return
-        save_setting_to_cli_config(
-            "library.ingest", "last_directory", str(directory)
-        )
+        save_setting_to_cli_config("library.ingest", "last_directory", str(directory))
 
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def sync_library_ingest_type_group_expanded(
@@ -12591,9 +13116,7 @@ class LibraryScreen(BaseAppScreen):
                 severity="error",
             )
             return
-        options = self._library_ingest_form.type_options.setdefault(
-            "audio_video", {}
-        )
+        options = self._library_ingest_form.type_options.setdefault("audio_video", {})
         options["transcription_provider"] = "parakeet-onnx"
         options["transcription_model_dir"] = str(installed)
         self.app_instance.notify(
@@ -13040,7 +13563,6 @@ class LibraryScreen(BaseAppScreen):
             return
         self._open_job_in_library(job)
 
-
     @on(Button.Pressed, ".library-ingest-view-server")
     def handle_library_ingest_view_on_server(self, event: Button.Pressed) -> None:
         """Open the item a finished SERVER ingest created, in the server view.
@@ -13146,9 +13668,7 @@ class LibraryScreen(BaseAppScreen):
         job = get_job(job_id) if callable(get_job) else None
         if job is None or not getattr(job, "batch_id", None):
             return
-        request_cancel = getattr(
-            self.app_instance, "cancel_remote_ingest_batch", None
-        )
+        request_cancel = getattr(self.app_instance, "cancel_remote_ingest_batch", None)
         if not callable(request_cancel):
             self._notify_library_ingest_warning(
                 "Cancelling a server ingest is unavailable in this runtime."

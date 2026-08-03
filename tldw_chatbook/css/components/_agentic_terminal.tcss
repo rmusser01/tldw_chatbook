@@ -4272,6 +4272,20 @@ RagProfileSwitchConfirmModal {
     background: $ds-surface-panel;
 }
 
+_CredentialEditorModal,
+_CredentialClearModal {
+    align: center middle;
+}
+
+.settings-speech-credential-modal {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
 .settings-focus-card {
     width: 100%;
     height: auto;
@@ -4384,6 +4398,90 @@ RagProfileSwitchConfirmModal {
 
 #settings-imagegen-editor {
     height: auto;
+}
+
+/* Settings > Speech & TTS: the Settings detail pane is the single scroll
+   owner. The panel must grow to its content instead of becoming a hidden-
+   overflow 1fr viewport that strands Save below the terminal. */
+#settings-speech-tts-panel {
+    height: auto;
+}
+
+.settings-speech-provider-form,
+.settings-speech-credential,
+.settings-speech-control-stack {
+    width: 100%;
+    height: auto;
+}
+
+/* Field errors live below their control. As a third child of a Horizontal,
+   the shared width:100% status row reduced otherwise usable controls to two
+   cells even while empty. */
+.settings-speech-input-row {
+    height: auto;
+    min-height: 1;
+    align: left top;
+}
+
+.settings-speech-input-row.settings-select-row {
+    min-height: 3;
+}
+
+.settings-speech-field-error {
+    display: none;
+    width: 100%;
+    min-height: 1;
+    margin: 0;
+    color: $ds-status-error;
+}
+
+.settings-speech-field-error-visible {
+    display: block;
+}
+
+.settings-speech-path-control {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+.settings-speech-path-control .settings-compact-input {
+    width: 1fr;
+}
+
+.settings-speech-path-picker {
+    width: auto;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 0 1;
+}
+
+.settings-speech-stacked .settings-speech-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.settings-speech-stacked .settings-speech-input-row .settings-input-label,
+.settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
+.settings-speech-stacked .settings-speech-input-row > Input,
+.settings-speech-stacked .settings-speech-input-row > Select,
+.settings-speech-stacked .settings-speech-input-row > Switch {
+    width: 100%;
+    min-width: 0;
+}
+
+.settings-speech-stacked #settings-speech-actions {
+    layout: vertical;
+    height: 4;
+}
+
+.settings-speech-stacked #settings-speech-actions Button {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
 }
 
 /* One row per backend inside the Backends block -- label, status badge,
@@ -5682,6 +5780,256 @@ ConsoleScopePickerModal {
     min-width: 0;
     content-align: left middle;
     color: $ds-text-muted;
+}
+
+/* TASK-1775: one Console Prompt Workbench shell, opened only from the
+   composer's existing overflow menu. It extends the Chat Context modal's
+   dense terminal grammar: a flat header, bounded work region, and stable
+   footer. Source, artifact kind, unavailable state, and recovery remain
+   text labels; accent color is reserved for focus and the primary Improve
+   action. */
+ConsolePromptsModal {
+    align: center middle;
+}
+
+#console-prompts-modal {
+    width: 90%;
+    max-width: 104;
+    height: 90%;
+    max-height: 44;
+    min-width: 40;
+    min-height: 18;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-prompts-header {
+    width: 100%;
+    height: auto;
+    min-height: 2;
+    border-bottom: solid $ds-grid-line;
+    margin: 0 0 1 0;
+}
+
+#console-prompts-title {
+    height: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#console-prompts-location,
+#console-prompts-model-status,
+#console-prompts-browse-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#console-prompts-body,
+#console-prompts-browse {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+/* The legacy app-wide Checkbox rule fixes every checkbox at width: 100% and
+   height: 2, leaving no content row inside Textual's tall border. Keep the
+   shared Prompt editor's lane choices intrinsic and paintable. */
+PromptBlockEditor #prompt-editor-lane-options Checkbox {
+    width: auto;
+    height: 3;
+    margin-bottom: 0;
+}
+
+.console-prompts-primary-action {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    border: none;
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-prompts-primary-action:focus,
+#console-prompts-modal Button:focus {
+    outline: heavy $ds-action-focus;
+}
+
+.console-prompts-primary-action:disabled,
+#console-prompts-modal Button:disabled {
+    background: $surface-darken-1;
+    color: $ds-text-disabled;
+}
+
+#console-prompts-browse-controls {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 1 0 0 0;
+}
+
+#console-prompts-source {
+    width: 18;
+    min-width: 14;
+    height: 3;
+    border: none;
+    border-left: solid $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-search {
+    width: 1fr;
+    min-width: 12;
+    height: 3;
+    border: none;
+    border-left: solid $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-source:focus,
+#console-prompts-search:focus {
+    border-left: thick $ds-action-focus;
+    background: $ds-focus-bg;
+    text-style: bold;
+}
+
+#console-prompts-retry {
+    width: auto;
+    min-width: 8;
+    height: 3;
+    border: none;
+    background: $ds-surface-raised;
+}
+
+#console-prompts-results {
+    width: 100%;
+    height: 1fr;
+    min-height: 4;
+    margin: 1 0 0 0;
+    border-top: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#console-prompts-result-list {
+    width: 100%;
+    height: auto;
+}
+
+.console-prompts-result {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    border: none;
+    border-bottom: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-align: left;
+    content-align: left middle;
+}
+
+.console-prompts-result:hover,
+.console-prompts-result:focus {
+    background: $ds-focus-bg;
+}
+
+#console-prompts-pagination,
+#console-prompts-footer {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    align: right middle;
+}
+
+#console-prompts-page {
+    width: 1fr;
+    min-width: 12;
+    height: 3;
+    content-align: center middle;
+    color: $ds-text-muted;
+}
+
+#console-prompts-pagination Button,
+#console-prompts-footer Button,
+#console-prompts-improve-mode Button,
+#console-prompts-convert {
+    width: auto;
+    min-width: 8;
+    height: 3;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-prompts-footer {
+    border-top: solid $ds-grid-line;
+}
+
+#console-prompts-dirty-guard {
+    display: none;
+    width: 100%;
+    height: auto;
+    padding: 1;
+    border: round $ds-status-warning;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+#console-prompts-dirty-guard.visible {
+    display: block;
+}
+
+#console-prompts-compatibility {
+    width: 100%;
+    height: auto;
+    min-height: 2;
+    color: $ds-status-warning;
+}
+
+#console-prompts-compat-system,
+#console-prompts-compat-user {
+    width: 100%;
+    height: 1fr;
+    min-height: 3;
+    border: round $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-improve-mode,
+#console-prompts-recipe-mode {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#console-prompts-improve-mode Button {
+    width: 100%;
+    margin: 1 0 0 0;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-modal {
+    width: 96%;
+    height: 96%;
+    padding: 0 1;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-browse-controls {
+    layout: vertical;
+    height: 6;
+    min-height: 6;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-source,
+ConsolePromptsModal.-narrow #console-prompts-search {
+    width: 100%;
 }
 
 /* Internal Prompts settings page */

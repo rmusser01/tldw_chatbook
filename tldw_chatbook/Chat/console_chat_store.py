@@ -1073,6 +1073,7 @@ class ConsoleChatStore:
         terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
         defer_terminal_persistence: bool = False,
         tool_output_full: str | None = None,
+        change_review_run_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple."""
         self._session_or_raise(session_id)
@@ -1124,6 +1125,7 @@ class ConsoleChatStore:
             content=content,
             status=self._initial_status(role=role, content=content),
             tool_output_full=tool_output_full,
+            change_review_run_id=change_review_run_id,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:

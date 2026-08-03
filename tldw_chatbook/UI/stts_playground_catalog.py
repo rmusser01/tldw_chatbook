@@ -160,20 +160,46 @@ def controls_from_catalog(
         (model.display_name or model.model_id, model.model_id)
         for model in catalog.models
     )
-    model = _selected_model(catalog.models, selected_model_id)
-    resolved_model_id = model.model_id if model is not None else None
-    selection_changed = (
-        selected_model_id is not None and selected_model_id != resolved_model_id
+    model_ids = {value for _label, value in model_options}
+    missing_audio_cpp_model = bool(
+        catalog.provider_id == AUDIO_CPP_PROVIDER_ID
+        and selected_model_id is not None
+        and selected_model_id not in model_ids
     )
+    if missing_audio_cpp_model:
+        assert selected_model_id is not None
+        model_options = (
+            *model_options,
+            _pinned_audio_cpp_option(
+                selected_model_id,
+                authoritative=_audio_cpp_catalog_is_authoritative(catalog),
+            ),
+        )
+        model = None
+        resolved_model_id = selected_model_id
+        selection_changed = False
+    else:
+        model = _selected_model(catalog.models, selected_model_id)
+        resolved_model_id = model.model_id if model is not None else None
+        selection_changed = (
+            selected_model_id is not None and selected_model_id != resolved_model_id
+        )
 
     voice_options: tuple[SelectOption, ...]
     resolved_voice_id: SelectValue | None
     format_options: tuple[str, ...]
     resolved_format: str | None
     if catalog.provider_id == AUDIO_CPP_PROVIDER_ID:
-        voice_options, resolved_voice_id, voice_changed = _audio_cpp_voices(
-            discovered_voices or (),
-            selected_voice_id,
+        voice_options, resolved_voice_id, voice_changed, voice_compatible = (
+            _audio_cpp_voices(
+                discovered_voices,
+                selected_voice_id,
+                authoritative=bool(
+                    model is not None
+                    and discovered_voices is not None
+                    and _audio_cpp_catalog_is_authoritative(catalog)
+                ),
+            )
         )
         format_options = ("wav",)
         resolved_format = "wav"
@@ -193,6 +219,7 @@ def controls_from_catalog(
         speed_locked = model is None or not model.supports_speed
         resolved_speed = 1.0 if speed_locked else speed
         format_compatible = resolved_format is not None
+        voice_compatible = True
 
     health = catalog.health
     generation_allowed = bool(
@@ -200,6 +227,7 @@ def controls_from_catalog(
         and health.state == "available"
         and health.fresh
         and format_compatible
+        and voice_compatible
     )
     return PlaygroundControls(
         provider_id=catalog.provider_id,
@@ -318,19 +346,48 @@ def _selected_model(
 
 
 def _audio_cpp_voices(
-    voices: tuple[str, ...],
+    voices: tuple[str, ...] | None,
     selected_voice_id: SelectValue | None,
-) -> tuple[tuple[SelectOption, ...], SelectValue, bool]:
+    *,
+    authoritative: bool,
+) -> tuple[tuple[SelectOption, ...], SelectValue, bool, bool]:
+    available_voices = voices or ()
     options: tuple[SelectOption, ...] = (
         (SERVER_DEFAULT_VOICE_LABEL, SERVER_DEFAULT_VOICE_ID),
-        *((voice, voice) for voice in voices),
+        *((voice, voice) for voice in available_voices),
     )
     valid_ids = {value for _, value in options}
     if selected_voice_id is None:
-        return options, SERVER_DEFAULT_VOICE_ID, False
+        return options, SERVER_DEFAULT_VOICE_ID, False, True
     if selected_voice_id in valid_ids:
-        return options, selected_voice_id, False
-    return options, SERVER_DEFAULT_VOICE_ID, True
+        return options, selected_voice_id, False, True
+    if isinstance(selected_voice_id, str):
+        options = (
+            *options,
+            _pinned_audio_cpp_option(
+                selected_voice_id,
+                authoritative=authoritative,
+            ),
+        )
+        return options, selected_voice_id, False, False
+    return options, SERVER_DEFAULT_VOICE_ID, True, True
+
+
+def _audio_cpp_catalog_is_authoritative(catalog: TTSProviderCatalog) -> bool:
+    return bool(
+        catalog.health.state == "available"
+        and catalog.health.fresh
+        and not catalog.approximate
+    )
+
+
+def _pinned_audio_cpp_option(
+    identifier: str,
+    *,
+    authoritative: bool,
+) -> SelectOption:
+    suffix = "Missing" if authoritative else "Unverified"
+    return (f"{identifier} ({suffix})", identifier)
 
 
 def _legacy_voices(

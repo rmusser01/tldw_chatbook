@@ -27,11 +27,20 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
+    ProviderHealth,
     TTSAudioResponse,
+    TTSModelInfo,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderSpec,
     TTSRequest,
+    TTSVoiceDiscoveryResult,
+)
+from tldw_chatbook.TTS.effective_settings import (
+    TTSCharacterProfileSelection,
+    TTSEffectiveSelectionRevisions,
+    TTSEffectiveSelectionSnapshot,
+    TTSSelectionSource,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
@@ -87,8 +96,12 @@ def _valid_wav_body(
     data_bytes = bytes((i * 7 + 3) % 256 for i in range(data_size))
     riff_payload = (
         b"WAVE"
-        + b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload
-        + b"data" + struct.pack("<I", data_size) + data_bytes
+        + b"fmt "
+        + struct.pack("<I", len(fmt_payload))
+        + fmt_payload
+        + b"data"
+        + struct.pack("<I", data_size)
+        + data_bytes
     )
     return b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
 
@@ -161,7 +174,23 @@ class _CapturingAdapter:
 
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
         del refresh
-        raise AssertionError("exact Console preferences must not require a catalog")
+        return TTSProviderCatalog(
+            provider_id="audio_cpp",
+            revision=1,
+            health=ProviderHealth(state="available", fresh=True),
+            models=(
+                TTSModelInfo(
+                    model_id="<Opaque:Model>",
+                    display_name="Opaque model",
+                    family="test",
+                    upstream_mode="offline",
+                    formats=("wav",),
+                    voices=("[Voice]",),
+                    supports_speed=False,
+                    omit_voice_uses_server_default=True,
+                ),
+            ),
+        )
 
     async def get_voices(
         self,
@@ -170,6 +199,20 @@ class _CapturingAdapter:
     ) -> tuple[str, ...]:
         del model_id, refresh
         return ()
+
+    async def observe_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
+        assert refresh is True
+        return TTSVoiceDiscoveryResult(
+            provider_id="audio_cpp",
+            model_id=model_id,
+            catalog_revision=1,
+            voices=("[Voice]",),
+            state="complete",
+        )
 
     async def synthesize(
         self,
@@ -321,6 +364,9 @@ class _DefaultService:
         )
         self.calls: list[tuple[str, str | None, object]] = []
         self.exact_calls: list[tuple[TTSRequest, object]] = []
+        self.effective_calls: list[
+            tuple[str, TTSCharacterProfileSelection, object]
+        ] = []
         self.exact_error: BaseException | None = None
 
     def preferences_snapshot(self) -> SimpleNamespace:
@@ -354,6 +400,54 @@ class _DefaultService:
                 speed=request.speed,
                 options=request.options,
                 configuration_revision=3,
+            ),
+        )
+
+    async def synthesize_effective(
+        self,
+        *,
+        text: str,
+        character_profile: TTSCharacterProfileSelection,
+        progress_sink: object = None,
+        **_kwargs: object,
+    ) -> tuple[_Response, TTSEffectiveSelectionSnapshot]:
+        self.effective_calls.append((text, character_profile, progress_sink))
+        if self.exact_error is not None:
+            raise self.exact_error
+        selection = character_profile.selection
+        sources = {
+            axis: TTSSelectionSource.CHARACTER_PROFILE
+            for axis in (
+                "provider_id",
+                "model_mode",
+                "model_id",
+                "voice_mode",
+                "voice_id",
+                "response_format",
+                "speed",
+                "provider_options",
+            )
+        }
+        return (
+            self.response,
+            TTSEffectiveSelectionSnapshot(
+                provider_id=selection.provider_id or "",
+                model_mode=selection.model_mode,  # type: ignore[arg-type]
+                model_id=selection.model_id or "",
+                voice_mode=selection.voice_mode,  # type: ignore[arg-type]
+                voice_id=selection.voice_id,
+                response_format=selection.response_format or "",
+                speed=selection.speed or 0.0,
+                provider_options=selection.provider_options or {},
+                sources=sources,
+                revisions=TTSEffectiveSelectionRevisions(
+                    global_preferences=0,
+                    studio_preferences=None,
+                    character_repository=character_profile.repository_generation,
+                    character_profile=character_profile.profile_revision,
+                    provider_configuration=3,
+                    provider_catalog=None,
+                ),
             ),
         )
 
@@ -674,17 +768,14 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
 
         assert completion.error is None
         assert service.calls == []
-        assert len(service.exact_calls) == 1
-        request, progress_sink = service.exact_calls[0]
-        assert request == TTSRequest(
-            provider_id="audio_cpp",
-            model_id="assigned-model",
-            text="Assigned character response",
-            voice="assigned-voice",
-            response_format="wav",
-            speed=1.0,
-            options={},
-        )
+        assert service.exact_calls == []
+        assert len(service.effective_calls) == 1
+        text, character_profile, progress_sink = service.effective_calls[0]
+        assert text == "Assigned character response"
+        assert character_profile.selection.model_id == "assigned-model"
+        assert character_profile.selection.voice_id == "assigned-voice"
+        assert character_profile.repository_generation == 3
+        assert character_profile.profile_revision == 5
         assert callable(progress_sink)
         assert profile_service.calls == [snapshot.character_ref]
         assert artifact is not None
@@ -762,7 +853,8 @@ async def test_assigned_exact_failure_never_calls_global_or_offers_fallback(
         assert completion.error
         assert "credential" not in completion.error
         assert completion.global_override_token is None
-        assert len(service.exact_calls) == 1
+        assert service.exact_calls == []
+        assert len(service.effective_calls) == 1
         assert service.calls == []
     finally:
         await handler.cleanup_tts_resources()

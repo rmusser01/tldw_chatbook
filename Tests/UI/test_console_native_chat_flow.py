@@ -13,7 +13,7 @@ import pytest
 from textual import on
 from textual.app import App
 from textual.content import Content
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -39,7 +40,11 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionResult,
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -58,10 +63,12 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
+    ConsolePromptsModal,
     ConsoleSetupModal,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
@@ -111,6 +118,16 @@ def test_console_store_uses_app_citation_repository_for_matching_database():
     assert store.persistence is not None
     assert store.persistence.citation_repository is repository
     assert store.persistence.db is repository.db
+
+
+def test_native_paste_entry_point_advances_edit_serial_for_stale_apply_guard():
+    composer = ConsoleComposerBar()
+    before = composer.edit_serial
+
+    composer.insert_pasted_text("ordinary paste")
+
+    assert composer.edit_serial == before + 1
+    assert composer.capture_draft_snapshot().segments[0].origin == "paste"
 
 
 def test_console_store_rejects_mismatched_citation_repository():
@@ -219,6 +236,967 @@ class _ReadyResolutionGateway:
             ready=True,
             visible_copy="",
         )
+
+
+class _PromptImprovementGateway:
+    """Return one strict rewrite using the request's protected projection."""
+
+    def __init__(self) -> None:
+        self.auxiliary_calls = 0
+        self.stream_calls = 0
+
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=selection.base_url or "http://127.0.0.1:9099",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "local-model",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        )
+
+    async def complete_auxiliary(self, request):
+        self.auxiliary_calls += 1
+        payload = json.loads(str(request.messages[-1]["content"]))
+        rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
+        return AuxiliaryCompletionResult(
+            provider=request.resolution.provider,
+            model=str(request.resolution.model),
+            text=json.dumps({"kind": "prompt_rewrite", "rewritten_prompt": rewritten}),
+        )
+
+    async def stream_chat(self, *_args, **_kwargs):
+        self.stream_calls += 1
+        raise AssertionError("Prompt improvement must not use normal Console send")
+
+
+class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete_auxiliary(self, request):
+        self.started.set()
+        await self.release.wait()
+        return await super().complete_auxiliary(request)
+
+
+class _MutableResolutionPromptGateway(_PromptImprovementGateway):
+    """Expose config-only endpoint drift without changing the selection."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.endpoint = "http://127.0.0.1:9099"
+        self.resolve_calls: list[ConsoleProviderResolution] = []
+
+    async def resolve_for_send(self, selection):
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=self.endpoint,
+            model=(
+                selection.explicit_model or selection.configured_model or "local-model"
+            ),
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        )
+        self.resolve_calls.append(resolution)
+        return resolution
+
+
+def _native_prompt_record(
+    *,
+    artifact_type: str,
+    identifier: str,
+    version: int = 4,
+    source_id: str | None = None,
+) -> dict[str, object]:
+    kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
+    record: dict[str, object] = {
+        "id": identifier,
+        "name": "Saved structured artifact",
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": 2,
+        "prompt_definition": {
+            "kind": kind,
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "freeform",
+                            "content": "Answer the question.",
+                        }
+                    ],
+                },
+            ],
+        },
+        "system_prompt": "# Role\n\nBe exact.",
+        "user_prompt": "Answer the question.",
+        "version": version,
+        "backend": "local",
+    }
+    if source_id is not None:
+        record["source_id"] = source_id
+    return record
+
+
+class _NativePromptScopeService:
+    def __init__(self, record: dict[str, object]) -> None:
+        self.record = record
+        self.detail_calls: list[tuple[str, str]] = []
+        self.usage_calls: list[tuple[str, str]] = []
+        self.usage_error: Exception | None = None
+
+    async def get_capabilities(self, *, mode: str):
+        return SimpleNamespace(
+            structured_kinds=frozenset({(2, "block_prompt"), (2, "block_recipe")}),
+            artifact_types=frozenset({"prompt", "recipe"}),
+            conditional_update=True,
+        )
+
+    async def list_prompts(self, *, mode: str, page: int, per_page: int):
+        return {
+            "items": [deepcopy(self.record)],
+            "page": page,
+            "per_page": per_page,
+            "total_items": 1,
+            "total_pages": 1,
+        }
+
+    async def search_prompts(self, *, mode: str, query: str, limit: int):
+        return [deepcopy(self.record)]
+
+    async def get_prompt(self, *, mode: str, prompt_identifier: str):
+        self.detail_calls.append((mode, prompt_identifier))
+        return deepcopy(self.record)
+
+    async def save_prompt(self, *, mode: str, **payload):
+        return payload
+
+    async def record_prompt_usage(self, *, mode: str, prompt_identifier: str):
+        self.usage_calls.append((mode, prompt_identifier))
+        if self.usage_error is not None:
+            raise self.usage_error
+        return deepcopy(self.record)
+
+
+class _CollidingRecipeSourceService:
+    """Expose one raw Recipe ID from both sources with a held Local detail."""
+
+    def __init__(self) -> None:
+        source_id = "shared-recipe"
+        local = _native_prompt_record(
+            artifact_type="recipe",
+            identifier=f"local:prompt:{source_id}",
+            source_id=source_id,
+            version=4,
+        )
+        server = _native_prompt_record(
+            artifact_type="recipe",
+            identifier=f"server:prompt:{source_id}",
+            source_id=source_id,
+            version=9,
+        )
+        server["backend"] = "server"
+        server["user_prompt"] = "Answer from the server Recipe."
+        definition = server["prompt_definition"]
+        assert isinstance(definition, dict)
+        lanes = definition["lanes"]
+        assert isinstance(lanes, list)
+        lanes[1]["blocks"][0]["content"] = "Answer from the server Recipe."
+        self.records = {"local": local, "server": server}
+        self.local_detail_started = asyncio.Event()
+        self.release_late_local_detail = asyncio.Event()
+        self.detail_calls: list[tuple[str, str]] = []
+
+    async def get_capabilities(self, *, mode: str):
+        return SimpleNamespace(
+            structured_kinds=frozenset({(2, "block_prompt"), (2, "block_recipe")}),
+            artifact_types=frozenset({"prompt", "recipe"}),
+            conditional_update=True,
+        )
+
+    async def list_prompts(self, *, mode: str, page: int, per_page: int):
+        return {
+            "items": [deepcopy(self.records[mode])],
+            "page": page,
+            "per_page": per_page,
+            "total_items": 1,
+            "total_pages": 1,
+        }
+
+    async def search_prompts(self, *, mode: str, query: str, limit: int):
+        return [deepcopy(self.records[mode])]
+
+    async def get_prompt(self, *, mode: str, prompt_identifier: str):
+        self.detail_calls.append((mode, prompt_identifier))
+        if mode == "local" and self.detail_calls.count((mode, prompt_identifier)) == 1:
+            self.local_detail_started.set()
+            await self.release_late_local_detail.wait()
+        return deepcopy(self.records[mode])
+
+    async def save_prompt(self, *, mode: str, **payload):
+        return payload
+
+
+@pytest.mark.asyncio
+async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact_draft():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft ")
+        composer.insert_file_segment("PRIVATE INLINE BYTES", "secret.txt · 20 B")
+        composer.insert_text(" answer")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        attachment = PendingAttachment(
+            file_path="/tmp/photo.png",
+            display_name="photo.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"\x89PNG-staged",
+            mime_type="image/png",
+            original_size=11,
+            processed_size=11,
+        )
+        attachment_state = vars(attachment).copy()
+        store.set_pending_attachment(store.active_session_id, attachment)
+        composer.set_pending_attachment_label(attachment.label)
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Improved PRIVATE INLINE BYTES answer"
+        assert composer.improvement_undo_available
+        assert gateway.auxiliary_calls == 1
+        assert gateway.stream_calls == 0
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
+        assert store.pending_attachment(store.active_session_id) is attachment
+        assert vars(attachment) == attachment_state
+        assert composer._pending_attachment_label == attachment.label
+
+        console._handle_console_composer_menu_choice("undo-prompt-improvement")
+        assert composer.capture_draft_snapshot().segments == before.segments
+        assert composer.draft_text() == "Draft PRIVATE INLINE BYTES answer"
+        assert not composer.improvement_undo_available
+        assert store.pending_attachment(store.active_session_id) is attachment
+        assert vars(attachment) == attachment_state
+        assert composer._pending_attachment_label == attachment.label
+
+
+@pytest.mark.asyncio
+async def test_prompt_library_projection_collision_keeps_manual_recipe_available() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft [[TLDW_PROTECTED:literal-collision]] ")
+        composer.insert_file_segment("PRIVATE INLINE BYTES", "secret.txt · 20 B")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        assert modal.state.mode == "browse"
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+
+        assert modal.query_one("#console-prompts-auto-improve", Button).disabled
+        assert modal.query_one("#console-prompts-review-improve", Button).disabled
+        assert not modal.query_one(
+            "#console-prompts-structured-recipe", Button
+        ).disabled
+        recovery = str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        ) or str(modal.query_one("#console-prompts-auto-improve", Button).tooltip)
+        assert "protected" in recovery.lower()
+        modal_text = _visible_text(modal)
+        assert "PRIVATE INLINE BYTES" not in modal_text
+        assert "secret.txt" not in modal_text
+
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-blank", Button).press()
+        await pilot.pause()
+        assert modal.query_one(PromptBlockEditor)
+        assert gateway.auxiliary_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["selection", "config_endpoint"])
+async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocked(
+    drift: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        summary = str(
+            modal.query_one("#console-prompts-provider-summary", Static).renderable
+        )
+        assert "llama_cpp" in summary
+        assert "local-model" in summary
+        assert "http://127.0.0.1:9099" in summary
+        assert len(gateway.resolve_calls) == 1
+
+        if drift == "selection":
+            settings = store.switch_session(session_id).settings
+            assert settings is not None
+            store.replace_session_settings(
+                session_id,
+                replace(settings, model="changed-model"),
+            )
+        else:
+            gateway.endpoint = "http://127.0.0.1:9191"
+
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert gateway.auxiliary_calls == 0
+        assert host.screen_stack[-1] is modal
+        assert (
+            "changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
+    artifact_type: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    identifier = f"{artifact_type}-1"
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type=artifact_type, identifier=identifier)
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        before = composer.capture_draft_snapshot()
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        if artifact_type == "recipe":
+            modal.query_one("#console-prompts-improve", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-structured-recipe", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-recipe-saved", Button).press()
+            await pilot.pause()
+        modal.query_one(f"#console-prompts-result-{identifier}", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(gateway.resolve_calls) == 1
+
+        gateway.endpoint = "http://127.0.0.1:9191"
+        modal.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert composer.capture_draft_snapshot() == before
+        assert gateway.auxiliary_calls == 0
+        assert len(gateway.resolve_calls) == 2
+        assert (
+            "endpoint changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
+        assert service.usage_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["session", "draft", "system", "provider"])
+async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_applies(
+    drift: str,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _HoldingPromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        original_session_id = store.active_session_id
+        transcript_before = tuple(store.messages_for_session(original_session_id))
+        original_settings = store.switch_session(original_session_id).settings
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await gateway.started.wait()
+
+        if drift == "session":
+            store.create_session(settings=original_settings)
+        elif drift == "draft":
+            composer.insert_text(" manual edit")
+        elif drift == "system":
+            store.set_session_system_prompt(original_session_id, "Changed system")
+        else:
+            assert original_settings is not None
+            store.replace_session_settings(
+                original_session_id,
+                replace(
+                    original_settings,
+                    model="changed-model",
+                    base_url="http://127.0.0.1:9191",
+                ),
+            )
+        expected_draft = composer.capture_draft_snapshot()
+        expected_system = store.switch_session(
+            original_session_id
+        ).settings.system_prompt
+        if drift == "session":
+            store.create_session(settings=original_settings)
+        gateway.release.set()
+        for _ in range(12):
+            await pilot.pause()
+            if modal.query("#console-prompts-review-user"):
+                break
+
+        assert host.screen_stack[-1] is modal
+        candidate = modal.query_one("#console-prompts-review-user", TextArea)
+        assert "Improved answer" in candidate.text
+        assert composer.capture_draft_snapshot() == expected_draft
+        assert (
+            store.switch_session(original_session_id).settings.system_prompt
+            == expected_system
+        )
+        assert (
+            tuple(store.messages_for_session(original_session_id)) == transcript_before
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["id", "version", "fingerprint"])
+async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift: str):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="recipe", identifier="recipe-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-result-recipe-1", Button).press()
+        await pilot.pause()
+
+        if drift == "id":
+            service.record["id"] = "recipe-replaced"
+        elif drift == "version":
+            service.record["version"] = 5
+        else:
+            definition = service.record["prompt_definition"]
+            assert isinstance(definition, dict)
+            lanes = definition["lanes"]
+            assert isinstance(lanes, list)
+            lanes[1]["blocks"][0]["content"] = "Changed recipe content."
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert composer.capture_draft_snapshot() == before
+        assert (
+            "changed"
+            in str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            ).lower()
+        )
+        assert service.usage_calls == []
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_usage():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="recipe", identifier="recipe-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        original_system = store.switch_session(
+            store.active_session_id
+        ).settings.system_prompt
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-result-recipe-1", Button).press()
+        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Answer the question."
+        assert (
+            store.switch_session(store.active_session_id).settings.system_prompt
+            == original_system
+        )
+        assert service.usage_calls == []
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usage_fails", [False, True])
+async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_failure(
+    usage_fails: bool,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="prompt", identifier="prompt-1")
+    )
+    if usage_fails:
+        service.usage_error = RuntimeError("usage endpoint unavailable")
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        store = console._ensure_console_chat_store()
+        transcript_before = tuple(store.messages_for_session(store.active_session_id))
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-result-prompt-1", Button).press()
+        await pilot.pause()
+        apply_button = modal.query_one("#prompt-editor-apply", Button)
+        assert apply_button.disabled is False
+        apply_button.press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Answer the question."
+        assert service.usage_calls == [("local", "prompt-1")]
+        assert (
+            tuple(store.messages_for_session(store.active_session_id))
+            == transcript_before
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
+    artifact_type: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    source_id = f"{artifact_type}-source"
+    service = _NativePromptScopeService(
+        _native_prompt_record(
+            artifact_type=artifact_type,
+            identifier=f"local:prompt:{source_id}",
+            source_id=source_id,
+        )
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        if artifact_type == "recipe":
+            modal.query_one("#console-prompts-improve", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-structured-recipe", Button).press()
+            await pilot.pause()
+            modal.query_one("#console-prompts-recipe-saved", Button).press()
+            await pilot.pause()
+        modal.query_one(".console-prompts-result", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "Answer the question."
+        assert service.detail_calls == [
+            ("local", source_id),
+            ("local", source_id),
+        ]
+        assert service.usage_calls == (
+            [("local", source_id)] if artifact_type == "prompt" else []
+        )
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _CollidingRecipeSourceService()
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptsModal)
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-saved", Button).press()
+        await pilot.pause()
+
+        late_local = asyncio.create_task(modal.open_artifact("shared-recipe"))
+        await service.local_detail_started.wait()
+        await modal.switch_source("server")
+        await modal.open_artifact("shared-recipe")
+        service.release_late_local_detail.set()
+        await late_local
+        await pilot.pause()
+
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "Answer from the server Recipe."
+        assert service.detail_calls == [
+            ("local", "shared-recipe"),
+            ("server", "shared-recipe"),
+            ("server", "shared-recipe"),
+        ]
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_edited_saved_prompt_applies_as_unsaved_copy_with_zero_usage():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    service = _NativePromptScopeService(
+        _native_prompt_record(artifact_type="prompt", identifier="prompt-1")
+    )
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-result-prompt-1", Button).press()
+        await pilot.pause()
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field("goal", "content", "Edited unsaved answer.")
+        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Edited unsaved answer."
+        assert service.usage_calls == []
+        assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 40), (100, 30), (80, 24)])
+async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_visible(
+    size: tuple[int, int],
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = _PromptImprovementGateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        store.set_session_system_prompt(store.active_session_id, "Be accurate.")
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        shell = modal.query_one("#console-prompts-modal")
+        footer = modal.query_one("#console-prompts-footer")
+        assert 0 <= shell.region.x
+        assert 0 <= shell.region.y
+        assert shell.region.x + shell.region.width <= size[0]
+        assert shell.region.y + shell.region.height <= size[1]
+        assert shell.region.contains_region(footer.region)
+        assert footer.region.height > 0
+        assert modal.query_one("#console-prompts-current-system", TextArea).read_only
+        assert modal.query_one("#console-prompts-current-user", TextArea).read_only
+        include_system = modal.query_one("#console-prompts-include-system", Checkbox)
+        assert str(include_system.label) == "Include system prompt as analysis context"
+        assert include_system.value is True
+        assert [
+            str(modal.query_one(selector, Button).label)
+            for selector in (
+                "#console-prompts-auto-improve",
+                "#console-prompts-review-improve",
+                "#console-prompts-structured-recipe",
+            )
+        ] == [
+            "Analyze and auto-improve",
+            "Analyze and user review",
+            "Create or follow a structured recipe",
+        ]
+        assert not console.query("#console-control-prompts")
+
+
+@pytest.mark.asyncio
+async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_saves():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = _PromptImprovementGateway
+    host = ConsoleHarness(app)
+
+    class _FailOncePersistence:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def update_conversation_system_prompt(self, **_kwargs) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("simulated persistence failure")
+
+    persistence = _FailOncePersistence()
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Keep this draft")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        session.persisted_conversation_id = "conversation-1"
+        store.persistence = persistence
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        modal.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+        await pilot.pause()
+        editor = modal.query_one(PromptBlockEditor)
+        await editor._change_field("role", "content", "Be precise.")
+        await pilot.pause()
+        editor.query_one("#prompt-editor-apply-system", Checkbox).value = True
+        await pilot.pause()
+        assert not editor.query_one("#prompt-editor-apply", Button).disabled
+        editor.query_one("#prompt-editor-apply", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is modal
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Applied to this session, but could not save to the conversation."
+        )
+        assert composer.capture_draft_snapshot() == before
+        applied_system = store.switch_session(
+            store.active_session_id
+        ).settings.system_prompt
+        assert "Be precise." in str(applied_system)
+        assert persistence.calls == 1
+
+        modal.query_one("#console-prompts-persistence-retry", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert persistence.calls == 2
+        assert (
+            store.switch_session(store.active_session_id).settings.system_prompt
+            == applied_system
+        )
+        assert composer.capture_draft_snapshot() == before
 
 
 class SelectionCapturingGateway(_ReadyResolutionGateway):
@@ -3018,9 +3996,14 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.
-        assert "not configured" in _static_plain_text(
-            console.query_one("#console-workspace-server-features-collapsed", Static)
-        ).lower()
+        assert (
+            "not configured"
+            in _static_plain_text(
+                console.query_one(
+                    "#console-workspace-server-features-collapsed", Static
+                )
+            ).lower()
+        )
 
 
 class _CharacterHandoffStore:
@@ -3079,9 +4062,7 @@ def _character_start_handoff(
             "selected_kind": selected_kind,
             "selected_record_id": character_id,
             "selected_name": "Elara",
-            "selected_target_id": (
-                f"{runtime_backend}:{selected_kind}:{character_id}"
-            ),
+            "selected_target_id": (f"{runtime_backend}:{selected_kind}:{character_id}"),
             "backend": runtime_backend,
         },
     )
@@ -3217,9 +4198,7 @@ def test_character_start_handoff_requires_exact_coherent_envelope(
     payload = _character_start_handoff()
     setattr(payload, field, value)
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3238,9 +4217,7 @@ def test_character_start_handoff_requires_exact_coherent_metadata(
     payload = _character_start_handoff()
     payload.metadata[metadata_key] = value
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3264,9 +4241,7 @@ def test_character_start_handoff_requires_canonical_positive_numeric_wire_id(
 ):
     payload = _character_start_handoff(character_id=character_id)
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -3285,9 +4260,7 @@ def test_character_start_handoff_requires_matching_record_and_target_ids(
     payload.metadata["selected_record_id"] = record_id
     payload.metadata["selected_target_id"] = target_id
 
-    assert (
-        chat_screen_module._character_session_identity_from_handoff(payload) is None
-    )
+    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.asyncio
@@ -3389,9 +4362,7 @@ async def test_character_handoff_requires_exact_returned_card_identity(
         card.pop("id")
     else:
         card["id"] = returned_character_id
-    active_server_id = (
-        "configured-target-7" if runtime_backend == "server" else None
-    )
+    active_server_id = "configured-target-7" if runtime_backend == "server" else None
     runtime = _character_handoff_runtime(
         active_server_id=active_server_id,
         card=card,
@@ -3474,13 +4445,11 @@ async def test_server_character_handoff_scopes_exact_target_without_local_projec
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is True
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     runtime.db.get_local_authority_id.assert_not_called()
     runtime.db.get_character_card_by_id.assert_not_called()
@@ -3515,13 +4484,11 @@ async def test_server_identity_failure_still_seeds_unscoped_character_session(
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is True
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     assert store.session is not None
     assert store.session.runtime_backend == "server"
@@ -3601,7 +4568,7 @@ async def test_server_target_mismatch_before_resolver_fetches_nothing(monkeypatc
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id="configured-target-7",
-        )
+        ),
     )
 
     assert started is False
@@ -3629,13 +4596,11 @@ async def test_server_target_switch_during_resolver_discards_authority(monkeypat
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is False
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_not_awaited()
     assert store.session is None
 
@@ -3659,13 +4624,11 @@ async def test_server_target_switch_during_card_fetch_discards_card(monkeypatch)
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
-        )
+        ),
     )
 
     assert started is False
-    runtime.resolver.assert_awaited_once_with(
-        expected_server_id=expected_server_id
-    )
+    runtime.resolver.assert_awaited_once_with(expected_server_id=expected_server_id)
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     assert store.session is None
 
@@ -3799,7 +4762,7 @@ async def test_persona_start_chat_does_not_create_character_session(monkeypatch)
             selected_kind="persona",
             active_server_profile_id="configured-target-7",
             character_id="p-7",
-        )
+        ),
     )
 
     assert started is False
@@ -4552,7 +5515,9 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
         destinations = screen._console_save_as_destinations(assistant)
 
     reasons = {d.label: d.reason for d in destinations}
-    assert all(reason == "Not available in a temporary chat." for reason in reasons.values())
+    assert all(
+        reason == "Not available in a temporary chat." for reason in reasons.values()
+    )
     assert all("None" not in reason for reason in reasons.values())
 
 
@@ -7287,9 +8252,14 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.
-        assert "not configured" in _static_plain_text(
-            console.query_one("#console-workspace-server-features-collapsed", Static)
-        ).lower()
+        assert (
+            "not configured"
+            in _static_plain_text(
+                console.query_one(
+                    "#console-workspace-server-features-collapsed", Static
+                )
+            ).lower()
+        )
         visible_text = _visible_text(console)
         assert (
             "Workspace conversation creation lands in a later slice" not in visible_text
@@ -8087,8 +9057,7 @@ async def test_console_workspace_conversation_resume_hydrates_generation_metadat
             # kept variant (seed 2) first, matching the DB's post-keep order.
             assert len(reloaded_generation_msg.generation_metadata) == 2
             assert [
-                variant.seed
-                for variant in reloaded_generation_msg.generation_metadata
+                variant.seed for variant in reloaded_generation_msg.generation_metadata
             ] == [2, 1]
             # Position-0/canonical bytes are still the kept variant's.
             assert reloaded_generation_msg.image_data == b"variant-b-bytes"
@@ -9665,9 +10634,9 @@ async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
                 if console.query(f"#console-image-{message.id}"):
                     break
                 await pilot.pause(0.05)
-            assert console.query(
-                f"#console-image-{message.id}"
-            ), "image row never appeared"
+            assert console.query(f"#console-image-{message.id}"), (
+                "image row never appeared"
+            )
             message_widget = console.query_one(f"#console-message-{message.id}")
             message_widget.scroll_visible(animate=False)
             await pilot.pause(0.2)
@@ -10551,14 +11520,20 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     assert screen._console_session_from_state(payload).ephemeral is True
 
     normal = ConsoleChatSession(title="Normal chat")
-    assert screen._console_session_from_state(
-        screen._console_session_to_state(normal)
-    ).ephemeral is False
+    assert (
+        screen._console_session_from_state(
+            screen._console_session_to_state(normal)
+        ).ephemeral
+        is False
+    )
 
     # Legacy payloads predate the key entirely.
-    assert screen._console_session_from_state(
-        {"id": normal.id, "title": normal.title}
-    ).ephemeral is False, "a payload with no key must default to saved"
+    assert (
+        screen._console_session_from_state(
+            {"id": normal.id, "title": normal.title}
+        ).ephemeral
+        is False
+    ), "a payload with no key must default to saved"
 
 
 def test_temporary_tab_marker_is_presentation_only():
@@ -10589,6 +11564,9 @@ def test_temporary_tab_marker_is_presentation_only():
 
     tooltip = _session_tab_tooltip(session, active=False)
     assert "not saved" in tooltip.lower()
-    assert "not saved" not in _session_tab_tooltip(
-        ConsoleChatSession(title="Normal"), active=False
-    ).lower()
+    assert (
+        "not saved"
+        not in _session_tab_tooltip(
+            ConsoleChatSession(title="Normal"), active=False
+        ).lower()
+    )

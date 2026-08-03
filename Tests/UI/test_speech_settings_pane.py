@@ -1,4 +1,4 @@
-"""The assembled Settings view: Save reachable, configured providers open."""
+"""Layout and action contracts for the Studio TTS Preferences pane."""
 
 from __future__ import annotations
 
@@ -6,13 +6,18 @@ import pathlib
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible
+from textual.widgets import Button, Select, Static, Switch
 
-from tldw_chatbook.UI.Speech.speech_settings_model import (
-    SETTINGS_ACTIONS,
-    SETTINGS_PROVIDER_ORDER,
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSLoadResult,
+    StudioTTSLoadState,
+    StudioTTSPreferencesSnapshot,
 )
-from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+from tldw_chatbook.UI.Speech.speech_settings_pane import (
+    STUDIO_ACTIONS,
+    SpeechSettingsPane,
+)
 
 _BUNDLE = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -25,80 +30,106 @@ _BUNDLE = (
 class _Harness(App[None]):
     CSS_PATH = _BUNDLE
 
-    def __init__(self, values=None):
+    def __init__(
+        self,
+        snapshot: StudioTTSPreferencesSnapshot | None = None,
+    ) -> None:
         super().__init__()
-        self._values = values or {}
+        self._snapshot = snapshot or StudioTTSPreferencesSnapshot()
 
     def compose(self) -> ComposeResult:
-        yield SpeechSettingsPane(values=self._values, id="speech-settings-pane")
+        yield SpeechSettingsPane(
+            global_preferences=TTSPreferencesSnapshot.from_settings({}),
+            load_result=StudioTTSLoadResult(
+                self._snapshot,
+                StudioTTSLoadState.LOADED,
+            ),
+            id="speech-settings-pane",
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(200, 60), (80, 24)])
-async def test_save_is_reachable_without_scrolling(size):
-    """The defect this phase exists to fix.
-
-    `save-settings-btn` measured at y=102 in a 26-row viewport -- the primary
-    action of a settings screen, four screens below where you land.
-    """
+async def test_primary_studio_action_is_reachable_without_scrolling(size) -> None:
     app = _Harness()
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
-        await pilot.pause()
         pane = app.query_one("#speech-settings-pane")
-        save = app.query_one("#save-settings-btn", Button)
+        save = app.query_one("#studio-tts-save-btn", Button)
         assert pane.region.contains_region(save.region), (
-            f"Save below the fold at {size}: y={save.region.y}"
+            f"Studio save below the fold at {size}: y={save.region.y}"
         )
 
 
 @pytest.mark.asyncio
-async def test_a_configured_provider_opens_and_an_untouched_one_does_not():
-    """The spec's rule: one block per provider, only the configured ones
-    expanded. Opening all eight is the legacy wall of forms again; opening
-    none makes the user hunt for the one they set up."""
-    app = _Harness({"openai-api-key-input": "sk-live"})
-    async with app.run_test(size=(200, 60)) as pilot:
-        await pilot.pause()
-        by_provider = {
-            group.provider: group for group in app.query(Collapsible).results()
-        }
-        assert by_provider["openai"].collapsed is False
-        assert by_provider["elevenlabs"].collapsed is True
-
-
-@pytest.mark.asyncio
-async def test_an_incomplete_provider_opens_too():
-    """Half-configured is the state that needs attention most, so it must
-    not be the one hidden behind a closed disclosure."""
-    app = _Harness({"elevenlabs-stability-input": "0.7"})
-    async with app.run_test(size=(200, 60)) as pilot:
-        await pilot.pause()
-        group = next(
-            g for g in app.query(Collapsible).results() if g.provider == "elevenlabs"
-        )
-        assert group.collapsed is False
-
-
-@pytest.mark.asyncio
-async def test_every_provider_gets_a_group():
+async def test_narrow_studio_actions_and_field_errors_remain_visible() -> None:
     app = _Harness()
-    async with app.run_test(size=(200, 60)) as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        providers = {g.provider for g in app.query(Collapsible).results()}
-        assert providers == set(SETTINGS_PROVIDER_ORDER)
+        pane = app.query_one(SpeechSettingsPane)
+        for action in STUDIO_ACTIONS:
+            button = app.query_one(f"#{action.id}", Button)
+            assert pane.region.contains_region(button.region), action.id
+
+        app.query_one("#studio-tts-model-mode", Select).value = "exact"
+        await pilot.pause()
+        assert not await pane.save_preferences()
+        error = app.query_one("#studio-tts-model-id-error")
+        error.scroll_visible()
+        await pilot.pause()
+        assert pane.region.contains_region(error.region)
+        assert error.region.width > 0
 
 
 @pytest.mark.asyncio
-async def test_the_actions_keep_their_own_ids():
-    """`CommandStrip` rewrites every action id it is given, so
-    `save-settings-btn` would mount as `workbench-action-save-settings-btn`
-    while the handler matches the bare id -- a button that renders and can
-    never fire."""
+async def test_only_selected_request_scoped_provider_tuning_is_shown() -> None:
     app = _Harness()
-    async with app.run_test(size=(200, 60)) as pilot:
+    async with app.run_test(size=(120, 48)) as pilot:
         await pilot.pause()
-        for action in SETTINGS_ACTIONS:
-            if action.startswith(("audio-cpp-", "chatterbox-", "higgs-", "kokoro-")):
-                continue  # provider-scoped, mounted inside their groups
-            assert app.query(f"#{action}"), f"{action} not mounted under its own id"
+        pane = app.query_one(SpeechSettingsPane)
+        chatterbox = app.query_one("#studio-tts-chatterbox-options")
+        assert chatterbox.has_class("hidden")
+
+        pane._apply_provider("chatterbox")
+        assert not chatterbox.has_class("hidden")
+        assert app.query_one("#chatterbox-exaggeration-input")
+        assert app.query_one("#chatterbox-cfg-weight-input")
+
+        pane._apply_provider("audio_cpp")
+        assert chatterbox.has_class("hidden")
+        assert app.query_one("#studio-tts-format", Select).disabled
+        assert app.query_one("#studio-tts-speed").disabled
+
+
+@pytest.mark.asyncio
+async def test_auto_play_is_an_explicit_studio_only_preference() -> None:
+    app = _Harness(StudioTTSPreferencesSnapshot(auto_play=True))
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechSettingsPane)
+        auto_play = app.query_one("#studio-tts-auto-play", Switch)
+        state = app.query_one("#studio-tts-auto-play-state", Static)
+
+        assert auto_play.value is True
+        assert "On" in str(state.renderable)
+        assert "only" in str(state.renderable).casefold()
+        assert pane.is_dirty is False
+
+        auto_play.value = False
+        await pilot.pause()
+
+        assert pane.is_dirty is True
+        assert "Off" in str(state.renderable)
+        candidate = pane._collect_candidate(show_errors=True)
+        assert candidate is not None
+        assert candidate.auto_play is False
+
+
+@pytest.mark.asyncio
+async def test_studio_actions_keep_their_declared_ids() -> None:
+    app = _Harness()
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        for action in STUDIO_ACTIONS:
+            assert app.query(f"#{action.id}"), f"{action.id} was renamed while mounting"

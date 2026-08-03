@@ -109,7 +109,7 @@ def test_audio_cpp_initial_controls_force_wav_speed_and_server_default() -> None
     assert controls.selection_changed is False
 
 
-def test_audio_cpp_retains_valid_explicit_voice_and_falls_back_when_removed() -> None:
+def test_audio_cpp_retains_valid_and_missing_explicit_voices() -> None:
     retained = controls_from_catalog(
         _catalog(),
         selected_model_id="model-a",
@@ -130,8 +130,10 @@ def test_audio_cpp_retains_valid_explicit_voice_and_falls_back_when_removed() ->
     assert retained.selected_voice_id == "voice-b"
     assert voice_id_for_request(retained.selected_voice_id) == "voice-b"
     assert retained.selection_changed is False
-    assert removed.selected_voice_id == SERVER_DEFAULT_VOICE_ID
-    assert removed.selection_changed is True
+    assert removed.selected_voice_id == "removed"
+    assert "removed" in {value for _label, value in removed.voice_options}
+    assert removed.generation_allowed is False
+    assert removed.selection_changed is False
 
 
 def test_audio_cpp_without_discovered_voices_keeps_only_server_default() -> None:
@@ -170,7 +172,9 @@ def test_audio_cpp_preserves_sentinel_shaped_remote_ids() -> None:
     assert voice_id_for_request(SERVER_DEFAULT_VOICE_ID) is None
 
 
-def test_removed_model_falls_back_and_stale_health_disables_generation() -> None:
+def test_audio_cpp_missing_exact_model_is_preserved_and_stale_health_disables_generation() -> (
+    None
+):
     catalog = _catalog(
         models=(
             _model(model_id="first", display_name="First"),
@@ -194,10 +198,11 @@ def test_removed_model_falls_back_and_stale_health_disables_generation() -> None
         speed=1.0,
     )
 
-    assert controls.model_options == (("First", "first"), ("Second", "second"))
-    assert controls.selected_model_id == "first"
-    assert controls.selection_changed is True
-    assert stale.model_options == controls.model_options
+    assert "removed" in {value for _label, value in controls.model_options}
+    assert controls.selected_model_id == "removed"
+    assert controls.selection_changed is False
+    assert controls.generation_allowed is False
+    assert stale.model_options == (("First", "first"), ("Second", "second"))
     assert stale.selected_model_id == "first"
     assert stale.generation_allowed is False
 

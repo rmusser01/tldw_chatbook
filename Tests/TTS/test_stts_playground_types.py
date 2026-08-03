@@ -12,6 +12,11 @@ from tldw_chatbook.TTS import (
     STTSPlaygroundRequest,
     TTSRequestedSelectionSnapshot,
 )
+from tldw_chatbook.TTS.effective_settings import (
+    TTSSelectionOverrides,
+    TTSStudioDraftSelection,
+)
+from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 
 def test_playground_request_is_an_immutable_defensive_snapshot() -> None:
@@ -42,6 +47,61 @@ def test_playground_request_is_an_immutable_defensive_snapshot() -> None:
         snapshot.options["language"] = "es"  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         snapshot.model_id = "replacement"  # type: ignore[misc]
+
+
+def test_studio_request_freezes_matching_draft_and_saved_revision() -> None:
+    preferences = StudioTTSPreferencesSnapshot(revision=4)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="supertonic",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=4,
+    )
+
+    snapshot = STTSPlaygroundRequest(
+        operation_id="studio-op",
+        provider_id="audio_cpp",
+        model_id="supertonic",
+        text="hello",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    assert snapshot.studio_draft is draft
+    assert snapshot.studio_preferences is preferences
+
+
+def test_studio_request_rejects_partial_or_revision_mismatched_state() -> None:
+    preferences = StudioTTSPreferencesSnapshot(revision=2)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(),
+        base_revision=1,
+    )
+    values = {
+        "operation_id": "studio-op",
+        "provider_id": "audio_cpp",
+        "model_id": "supertonic",
+        "text": "hello",
+        "voice_id": None,
+        "response_format": "wav",
+    }
+
+    with pytest.raises(ValueError, match="both draft and saved"):
+        STTSPlaygroundRequest(**values, studio_preferences=preferences)
+    with pytest.raises(ValueError, match="revisions must match"):
+        STTSPlaygroundRequest(
+            **values,
+            studio_draft=draft,
+            studio_preferences=preferences,
+        )
 
 
 def test_generated_audio_retains_provenance_and_actual_format_suffix(

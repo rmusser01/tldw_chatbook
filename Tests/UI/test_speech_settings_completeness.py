@@ -1,96 +1,91 @@
-"""Nothing TTS Settings offered may go missing in the rebuild.
-
-Provider-aware by necessity. Settings are scoped to their provider's group,
-so a flat "all 79 mounted" assertion cannot pass -- and unlike the
-Playground, every group is mounted at once here, so what varies is not
-existence but which are expanded. The union check still matters: a setting
-dropped from the model disappears from the screen with nothing to say so.
-"""
+"""The Studio editor exposes its complete, deliberately narrow inventory."""
 
 from __future__ import annotations
-
-import pathlib
 
 import pytest
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.UI.Speech.speech_settings_model import (
-    ALL_SETTINGS_CONTROLS,
-    NON_SETTING_IDS,
-    SETTINGS_CONTAINERS,
-    PROVIDER_SETTINGS,
-    SETTINGS_ACTIONS,
-    SETTINGS_STATUS,
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    STUDIO_TTS_PROVIDER_OPTION_KEYS,
+    StudioTTSLoadResult,
+    StudioTTSLoadState,
+    StudioTTSPreferencesSnapshot,
 )
-from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
-
-_BUNDLE = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID,
+    SpeechTTSOwnershipScope,
+)
+from tldw_chatbook.UI.Speech.speech_settings_pane import (
+    STUDIO_ACTIONS,
+    VOICE_PROFILE_ACTIONS,
+    SpeechSettingsPane,
 )
 
-#: Legacy ids the rebuild deliberately does not mount, each with its reason.
-#: Named rather than dropped from the inventory so removing one is a recorded
-#: decision and removing anything else still fails.
-NOT_REBUILT: dict[str, str] = {
-    "audio-cpp-mode-value": "static readout folded into the group header",
-    "audio-cpp-privacy-notice": "one-line notice, per the spec",
+STUDIO_SELECTION_CONTROLS = {
+    "studio-tts-provider",
+    "studio-tts-model-mode",
+    "studio-tts-model-id",
+    "studio-tts-voice-mode",
+    "studio-tts-voice-id",
+    "studio-tts-format",
+    "studio-tts-speed",
+}
+STUDIO_OPTION_CONTROLS = {
+    "chatterbox-exaggeration-input",
+    "chatterbox-cfg-weight-input",
 }
 
 
 class _Harness(App[None]):
-    CSS_PATH = _BUNDLE
-
     def compose(self) -> ComposeResult:
-        yield SpeechSettingsPane(id="speech-settings-pane")
+        yield SpeechSettingsPane(
+            global_preferences=TTSPreferencesSnapshot.from_settings({}),
+            load_result=StudioTTSLoadResult(
+                StudioTTSPreferencesSnapshot(),
+                StudioTTSLoadState.LOADED,
+            ),
+            id="speech-settings-pane",
+        )
 
 
 async def _mounted_ids() -> set[str]:
     app = _Harness()
-    async with app.run_test(size=(200, 80)) as pilot:
+    async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
-        await pilot.pause()
-        return {w.id for w in app.query("*") if w.id}
+        return {widget.id for widget in app.query("*") if widget.id}
 
 
 @pytest.mark.asyncio
-async def test_every_setting_survives_the_rebuild():
-    """The guard the phase rests on: 79 ids re-sited, none silently lost."""
+async def test_every_supported_studio_setting_and_action_is_mounted() -> None:
+    mounted = await _mounted_ids()
     required = (
-        {c for controls in PROVIDER_SETTINGS.values() for c in controls}
-        - set(NOT_REBUILT)
+        STUDIO_SELECTION_CONTROLS
+        | STUDIO_OPTION_CONTROLS
+        | {action.id for action in STUDIO_ACTIONS}
+        | {action.id for action in VOICE_PROFILE_ACTIONS}
     )
-    missing = required - await _mounted_ids()
-    assert not missing, f"lost in the rebuild: {sorted(missing)}"
+    assert not required - mounted
 
 
-@pytest.mark.asyncio
-async def test_the_shared_actions_are_mounted():
-    """Save and the blend commands are the view's own, not a provider's."""
-    shared = {
-        action
-        for action in SETTINGS_ACTIONS
-        if not action.startswith(
-            ("audio-cpp-", "chatterbox-", "higgs-", "kokoro-", "elevenlabs-")
-        )
+def test_control_inventory_matches_the_request_option_contract() -> None:
+    assert STUDIO_TTS_PROVIDER_OPTION_KEYS["chatterbox"] == {
+        "exaggeration",
+        "cfg_weight",
     }
-    missing = shared - await _mounted_ids()
-    assert not missing, f"missing actions: {sorted(missing)}"
+    assert all(
+        not options
+        for provider, options in STUDIO_TTS_PROVIDER_OPTION_KEYS.items()
+        if provider != "chatterbox"
+    )
 
 
 @pytest.mark.asyncio
-async def test_what_is_not_rebuilt_is_declared():
-    """Every legacy id is either mounted or named with a reason -- there is
-    no third category."""
-    accounted = (
-        await _mounted_ids()
-        | set(NOT_REBUILT)
-        | set(NON_SETTING_IDS)
-        | set(SETTINGS_CONTAINERS)
-        | set(SETTINGS_ACTIONS)
-        | set(SETTINGS_STATUS)
-    )
-    unaccounted = ALL_SETTINGS_CONTROLS - accounted
-    assert not unaccounted, (
-        f"neither mounted nor declared as dropped: {sorted(unaccounted)}"
-    )
+async def test_global_configuration_controls_are_not_secondarily_mounted() -> None:
+    mounted = await _mounted_ids()
+    global_owned = {
+        control_id
+        for control_id, ownership in SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID.items()
+        if ownership.scope is SpeechTTSOwnershipScope.GLOBAL_CONFIGURATION
+    }
+    assert global_owned.isdisjoint(mounted)
