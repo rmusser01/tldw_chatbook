@@ -12,11 +12,23 @@ def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
     is remote text that happens to be bracket-shaped. Rendering through a
     Console and reading both the painted characters and the style codes is
     what actually distinguishes "rendered as text" from "parsed as markup".
+
+    `file=io.StringIO()` keeps this rendering off real stdout -- without it,
+    `force_terminal=True` makes `console.print` write the rendered article to
+    the actual test-run stdout on every call (task-1347), which is cosmetic
+    noise but noise nonetheless. `record=True` still captures everything
+    printed to that buffer, so `export_text()` is unaffected.
     """
+    import io
+
     from rich.console import Console
 
     console = Console(
-        width=width, record=True, color_system="standard", force_terminal=True
+        width=width,
+        record=True,
+        color_system="standard",
+        force_terminal=True,
+        file=io.StringIO(),
     )
     console.print(renderable)
     return console.export_text(clear=False), console.export_text(styles=True)
