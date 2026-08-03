@@ -1,7 +1,7 @@
 ---
 id: TASK-1719
 title: 'Briefings audio: test-coverage residuals from phase 2b review'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-31 23:59'
 labels:
