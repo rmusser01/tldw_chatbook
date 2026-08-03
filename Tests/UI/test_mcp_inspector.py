@@ -2550,23 +2550,47 @@ async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
 
 
 @pytest.mark.asyncio
-async def test_no_selection_header_reads_select_an_item_to_inspect():
-    """Item 7: the header used to say "Select a server to see its
-    readiness." even for a Tools/Permissions-mode selection -- neutral
-    copy that matches the "No {noun} selected."/"Select {noun} to {verb}."
-    convention used elsewhere on this screen."""
+async def test_no_selection_header_teaches_what_inspection_offers():
+    """F-054: the empty state is contextual -- it says what picking a row
+    gets you (what's wrong, what you can do) rather than the bare 'Select
+    an item to inspect.', and stays that way after a selection is cleared
+    back to None."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
-        assert badge == "Select an item to inspect."
+        assert badge == (
+            "Pick a server, tool, or entry to see what's wrong and what you can do."
+        )
 
         await inspector.update_readiness(_stale_snap())
         await pilot.pause()
         await inspector.update_readiness(None)
         await pilot.pause()
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
-        assert badge == "Select an item to inspect."
+        assert badge == (
+            "Pick a server, tool, or entry to see what's wrong and what you can do."
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_state_copy_wraps_instead_of_clipping_at_narrow_width():
+    """F-054: at the inspector's narrowest real widths (its min-width is 28)
+    the empty-state line must WRAP to multiple rows -- `.ds-status-badge`'s
+    shared `height: 1` used to clip it mid-word. The local
+    `#mcp-inspector-state` override (height: auto) wins on ID specificity;
+    other `.ds-status-badge` consumers are untouched. (The bare harness's
+    `width: 3fr` triples a single-child screen's width instead of filling
+    it, so the narrow width is pinned with explicit test-app CSS.)"""
+
+    class NarrowInspectorApp(InspectorApp):
+        CSS = "MCPInspector { width: 30; }"
+
+    app = NarrowInspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert state.region.height > 1
 
 
 # -- Phase 4 UX batch item 8: tool identity above the permission block -------

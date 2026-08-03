@@ -145,6 +145,117 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         assert canvas.query_one("#mcp-servers-overview").display
 
 
+class ProblemRecordsService(FakeHubService):
+    """FakeHubService whose local catalog is a caller-supplied record list,
+    so a test can control exactly how many problem servers load (F-054)."""
+
+    def __init__(self, records: list[dict]) -> None:
+        super().__init__()
+        self._records = records
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local" and effective_section == "external_servers":
+            return list(self._records)
+        return await super().load_section(section)
+
+
+def _missing_env_record(profile_id: str) -> dict:
+    return {
+        "profile_id": profile_id,
+        "command": "python",
+        "args": [],
+        "env_placeholders": {"K": "$TLDW_TEST_DEFINITELY_MISSING_VAR"},
+        "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+        "is_connected": False,
+    }
+
+
+class ProblemRecordsApp(App):
+    def __init__(self, records: list[dict]) -> None:
+        super().__init__()
+        self.unified_mcp_service = ProblemRecordsService(records)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_single_problem_row_is_preselected_on_load(monkeypatch):
+    """F-054: when the first load surfaces exactly ONE problem server (the
+    off/opt-in built-in doesn't count -- see is_off_opt_in), the workbench
+    pre-selects it so the inspector opens on what's wrong and what you can
+    do instead of dead space."""
+    # Deterministic builtin state: the workbench's own get_cli_setting
+    # (separate import from the inspector's fixture-patched one) returns
+    # every key's default -- mcp.enabled=False, i.e. off/opt-in.
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "local:docs"
+        # Observable effect: the inspector is showing the problem server.
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert "docs" in str(state.renderable)
+
+
+@pytest.mark.asyncio
+async def test_no_preselection_with_zero_or_multiple_problems(monkeypatch):
+    """F-054: the heuristic only fires for EXACTLY one problem -- zero
+    problems (all ready / off-opt-in) or an ambiguous two-plus both leave
+    the selection alone."""
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    zero = ProblemRecordsApp([])
+    async with zero.run_test() as pilot:
+        await pilot.pause()
+        await zero.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = zero.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
+
+    multi = ProblemRecordsApp([_missing_env_record("docs"), _missing_env_record("web")])
+    async with multi.run_test() as pilot:
+        await pilot.pause()
+        await multi.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = multi.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
+
+
+@pytest.mark.asyncio
+async def test_cleared_selection_is_not_re_hijacked_by_later_resync(monkeypatch):
+    """F-054: the pre-selection is a one-shot load default, not a standing
+    policy -- once the user clears the selection ('All servers'), a later
+    resync must not force the problem row back into focus."""
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "local:docs"
+        await workbench._select_server_key(None)
+        await pilot.pause()
+        assert workbench._selected_server_key is None
+        # A further resync (e.g. a lifecycle completion) must not re-select.
+        await workbench._sync_children()
+        await pilot.pause()
+        assert workbench._selected_server_key is None
+
+
 @pytest.mark.asyncio
 async def test_server_source_add_button_gated_when_mutations_unavailable():
     """T9: `service.available_actions()` not offering `external_server.create`
@@ -1283,6 +1394,18 @@ def _capture_notifications(app: App) -> list[tuple[str, str]]:
     return notifications
 
 
+async def _clear_initial_preselection(app: App, pilot) -> None:
+    """F-054: the workbench pre-selects a lone problem row on first load
+    (`ProfileFormHubService`'s docs profile is AUTH_MISSING, so exactly one
+    problem exists) -- form-flow tests drive the OVERVIEW, so clear that
+    heuristic selection first, via the same path the rail's 'All servers'
+    row drives."""
+    workbench = app.query_one(MCPWorkbench)
+    if workbench._selected_server_key is not None:
+        await workbench._select_server_key(None)
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count():
     """VALIDATE dispatch through the real click path, and the
@@ -1434,6 +1557,7 @@ async def test_add_server_requested_shows_add_mode_form():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         form = app.query_one(MCPProfileForm)
@@ -1447,6 +1571,7 @@ async def test_submit_with_service_value_error_renders_store_copy_in_form():
     app = ProfileFormApp(fail_next=True)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         app.query_one("#mcp-form-id", Input).value = "leaky"
@@ -1474,6 +1599,7 @@ async def test_submit_success_hides_form_notifies_and_reloads_catalog():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1509,6 +1635,7 @@ async def test_submit_success_with_secret_shaped_arg_toasts_warning():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1540,6 +1667,7 @@ async def test_submit_success_with_clean_args_toasts_no_warning():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1564,6 +1692,7 @@ async def test_cancelled_hides_form_without_saving():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         for _ in range(200):
             cancel_buttons = list(app.query("#mcp-form-cancel"))
@@ -1595,6 +1724,7 @@ async def test_reload_while_add_form_open_does_not_stack_overview_and_form():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         app.query_one("#mcp-form-command", Input).value = "still-typing"
@@ -1722,6 +1852,7 @@ async def test_double_submit_dispatches_exactly_one_save():
     app.unified_mcp_service.save_gate = asyncio.Event()  # hold save in flight
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()

@@ -151,6 +151,15 @@ _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 # copy, so the two call sites can never drift.
 _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
 
+# F-054: the nothing-selected header copy, shared by compose() and
+# update_readiness(None) so the two can never drift. Contextual instead of
+# a bare "Select an item to inspect." -- it says what picking a row gets
+# you. Mode-agnostic on purpose: this pane serves Servers, Tools,
+# Permissions, and Audit selections alike.
+_EMPTY_STATE_COPY = (
+    "Pick a server, tool, or entry to see what's wrong and what you can do."
+)
+
 
 def _cascade_rungs(
     cascade: tuple[str | None, str | None, str],
@@ -405,6 +414,15 @@ class MCPInspector(Vertical):
         min-width: 28;
         height: 100%;
         min-height: 0;
+    }
+    /* F-054: let the empty-state/badge line WRAP at narrow widths instead
+    of clipping mid-word -- the shared `.ds-status-badge` rule
+    (_agentic_terminal.tcss) pins `height: 1`, which cut the teaching copy
+    off at 100x30. This ID selector beats the class rule on specificity;
+    every other `.ds-status-badge` consumer keeps the fixed height. */
+    #mcp-inspector-state {
+        height: auto;
+        min-height: 1;
     }
     #mcp-inspector-actions {
         /* Vertical defaults to height: 1fr, which would make this empty-by-
@@ -728,7 +746,7 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static("Select an item to inspect.", id="mcp-inspector-state",
+        yield Static(_EMPTY_STATE_COPY, id="mcp-inspector-state",
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
@@ -1026,7 +1044,7 @@ class MCPInspector(Vertical):
             for css_class in STATE_CSS_CLASSES.values():
                 state.remove_class(css_class)
             if snapshot is None:
-                state.update("Select an item to inspect.")
+                state.update(_EMPTY_STATE_COPY)
                 message.update("")
                 return
             state.add_class(STATE_CSS_CLASSES[snapshot.state])

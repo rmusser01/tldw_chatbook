@@ -43,6 +43,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
     as_checking,
     builtin_readiness,
+    is_off_opt_in,
     local_profile_readiness,
     server_external_record_readiness,
     server_target_readiness,
@@ -433,6 +434,10 @@ class MCPWorkbench(Container):
         self._active_mode = "servers"
         self._source = "local"
         self._selected_server_key: str | None = None
+        # F-054: one-shot gate for `_preselect_single_problem_on_load()` --
+        # True once the first load has had its chance to pre-select, so a
+        # later resync can never re-hijack a selection the user cleared.
+        self._did_initial_preselect: bool = False
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
@@ -793,6 +798,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(f"MCP workbench context load failed: {exc}")
             self._snapshots = await self._collect_snapshots()
+            self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
         finally:
@@ -802,6 +808,35 @@ class MCPWorkbench(Container):
         # flight (see `set_initial_view_state()`), so it is applied exactly
         # once and always after this reload's own `_sync_children()`.
         await self._consume_pending_view_state()
+
+    def _preselect_single_problem_on_load(self) -> None:
+        """Pre-select the one problem server on the workbench's first load (F-054).
+
+        When nothing is selected and exactly one server needs attention,
+        the inspector should open on what's wrong and what you can do
+        instead of dead space. Guarded to run at most once per mount
+        (`_did_initial_preselect`) so a later resync (lifecycle
+        completions, background refreshes) can never re-hijack a selection
+        the user deliberately cleared -- and a restored view state
+        (`_consume_pending_view_state()`, applied after this reload's sync)
+        still wins over the heuristic, since that is explicit user state.
+
+        "Problem" mirrors the Servers-mode recovery-callout definition:
+        any state other than READY/CHECKING, excluding the off/opt-in
+        built-in (`is_off_opt_in`, F-051) -- an off-by-choice server is not
+        a problem to land on.
+        """
+        if self._did_initial_preselect or self._selected_server_key is not None:
+            return
+        self._did_initial_preselect = True
+        problems = [
+            snap
+            for snap in self._snapshots
+            if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+            and not is_off_opt_in(snap)
+        ]
+        if len(problems) == 1:
+            self._selected_server_key = problems[0].server_key
 
     def _selected_target_id(self) -> str | None:
         """The server-target id implied by `_selected_server_key`.
