@@ -38,7 +38,54 @@ from loguru import logger
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from .sql_validation import validate_identifier
+from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
+
+
+#: Fallback `auto_pause_threshold` when the config value is missing or
+#: unusable (task-1410 AC#3) -- matches the schema column's own `CREATE
+#: TABLE ... DEFAULT 10` and the `[subscriptions]` config template's own
+#: `auto_pause_after_failures = 10`, so a broken/hand-edited config still
+#: produces the same default a fresh install would get.
+_DEFAULT_AUTO_PAUSE_THRESHOLD = 10
+
+
+def _default_auto_pause_threshold() -> int:
+    """The `auto_pause_threshold` column default for a NEW subscription.
+
+    task-1410 AC#3. `[subscriptions].auto_pause_after_failures` (the
+    user-facing knob documented in
+    `Docs/Features/SUBSCRIPTION_IMPLEMENTATION_PLAN.md`) was, until this
+    task, read by nothing: `auto_pause_threshold` is a separate
+    per-subscription column that only ever got the schema's hardcoded
+    `DEFAULT 10` for any row inserted without it. `add_subscription` calls
+    this to seed that column when the caller does not pass
+    `auto_pause_threshold` explicitly, reconciling the two:
+
+    Precedence: an explicit `auto_pause_threshold` kwarg to
+    `add_subscription` always wins -- this is consulted only when the
+    caller omits it. Existing subscriptions are never touched (this only
+    affects the INSERT default for a brand-new row); an update to the
+    config afterwards does not retroactively change any subscription's
+    stored column value.
+
+    Uses the traditional three-argument `get_cli_setting(section, key,
+    default)` form, never the two-argument dotted form -- TASK-1771: a
+    caller-supplied default in the dotted form's second positional slot is
+    walked as a path segment instead of honoured, and silently returns
+    `None` rather than either the configured value or this default.
+
+    Returns:
+        The configured `auto_pause_after_failures` as a positive `int`, or
+        `_DEFAULT_AUTO_PAUSE_THRESHOLD` if the config value is absent, not
+        parseable as an int, or not positive.
+    """
+    configured = get_cli_setting("subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD)
+    try:
+        threshold = int(configured)
+    except (TypeError, ValueError):
+        return _DEFAULT_AUTO_PAUSE_THRESHOLD
+    return threshold if threshold > 0 else _DEFAULT_AUTO_PAUSE_THRESHOLD
 
 
 # --- Custom Exceptions ---
@@ -1139,6 +1186,18 @@ class SubscriptionsDB(BaseDB):
                         value = json.dumps(value)
                     fields[field] = value
 
+            # task-1410 AC#3: a caller that does not pass an explicit
+            # `auto_pause_threshold` gets the configured
+            # `[subscriptions].auto_pause_after_failures` default instead of
+            # silently falling through to the schema's hardcoded `DEFAULT
+            # 10` -- see `_default_auto_pause_threshold`'s docstring for the
+            # full precedence. An explicit kwarg (including an explicit
+            # `None`, which the loop above would already have captured)
+            # always wins; this only fires when the field never made it
+            # into `fields` at all.
+            if "auto_pause_threshold" not in fields:
+                fields["auto_pause_threshold"] = _default_auto_pause_threshold()
+
             # Build insert query
             columns = ", ".join(fields.keys())
             placeholders = ", ".join(["?" for _ in fields])
@@ -1465,43 +1524,15 @@ class SubscriptionsDB(BaseDB):
             now = datetime.now(timezone.utc).isoformat()
 
             if error:
-                # Update error tracking
-                cursor.execute(
-                    """
-                    UPDATE subscriptions
-                    SET last_checked = ?,
-                        last_error = ?,
-                        error_count = error_count + 1,
-                        consecutive_failures = consecutive_failures + 1
-                    WHERE id = ?
-                """,
-                    (now, error, subscription_id),
+                # task-1410 AC#2: shared with `record_check_error` so the
+                # two failure-recording paths cannot diverge on the
+                # threshold check -- see `_advance_failure_and_maybe_pause`.
+                just_paused = self._advance_failure_and_maybe_pause(
+                    cursor, subscription_id, error, now
                 )
-
-                # Check if we should auto-pause
-                cursor.execute(
-                    """
-                    SELECT consecutive_failures, auto_pause_threshold
-                    FROM subscriptions WHERE id = ?
-                """,
-                    (subscription_id,),
-                )
-
-                row = cursor.fetchone()
-                if row and row["consecutive_failures"] >= row["auto_pause_threshold"]:
-                    cursor.execute(
-                        """
-                        UPDATE subscriptions
-                        SET is_paused = 1
-                        WHERE id = ?
-                    """,
-                        (subscription_id,),
-                    )
-                    logger.warning(
-                        f"Auto-paused subscription {subscription_id} after {row['consecutive_failures']} failures"
-                    )
 
             else:
+                just_paused = False
                 # Successful check
                 cursor.execute(
                     """
@@ -1510,7 +1541,8 @@ class SubscriptionsDB(BaseDB):
                         last_successful_check = ?,
                         last_error = NULL,
                         error_count = 0,
-                        consecutive_failures = 0
+                        consecutive_failures = 0,
+                        is_paused = 0
                     WHERE id = ?
                 """,
                     (now, now, subscription_id),
@@ -1544,32 +1576,170 @@ class SubscriptionsDB(BaseDB):
                     "operation": "record_check_result",
                     "status": "error" if error else "success",
                     "item_count": str(len(items)) if items else "0",
-                    "auto_paused": "true"
-                    if error and "Auto-paused" in str(error)
-                    else "false",
+                    # Fix wave for the task-1410 review (Finding #4): this used
+                    # to inspect `error` for the substring "Auto-paused",
+                    # which `_advance_failure_and_maybe_pause` never writes
+                    # there (it goes to `logger.warning`, not `last_error`),
+                    # so the label was always "false" even when this very
+                    # call paused the subscription. Wired to the helper's own
+                    # return value instead of a text-sniffing guess.
+                    "auto_paused": "true" if just_paused else "false",
                 },
             )
+
+    def _advance_failure_and_maybe_pause(
+        self,
+        cursor: sqlite3.Cursor,
+        subscription_id: int,
+        error: str,
+        now: str,
+        *,
+        force_pause: bool = False,
+    ) -> bool:
+        """Record one failed check and auto-pause once the streak meets threshold.
+
+        task-1410 AC#2. The single write path both `record_check_result`'s
+        error branch and `record_check_error` use for "a check just
+        failed": it bumps `error_count`/`consecutive_failures`, stamps
+        `last_checked`/`last_error`, then compares the POST-increment
+        `consecutive_failures` against the subscription's own
+        `auto_pause_threshold` column and pauses -- logging the same
+        warning -- if it has been reached.
+
+        Before this helper existed, `record_check_error` (the main
+        failure path: `LocalWatchlistsService.record_run_failure` ->
+        `record_check_error`) never consulted the threshold at all, so it
+        could climb `consecutive_failures` forever without ever pausing,
+        while `record_check_result`'s error branch (reachable only for
+        all-error `url_list`/`sitemap` runs, task-1394) did. Routing both
+        through this one method is what keeps them from diverging again.
+
+        AC#1: this never clears `is_paused` -- the only `UPDATE ... SET
+        is_paused = ...` below can set it to `1`, never `0`. A FAILURE never
+        un-pauses a source; only a SUCCESS does. That un-pausing happens in
+        `record_check_result`'s success branch (fix wave for the task-1410
+        review: an auto-paused source had no writer that ever cleared
+        `is_paused`, since this helper only runs on failures and
+        `reset_subscription_errors` has no callers). This gives a paused
+        source its only recourse: nothing re-checks a paused source on a
+        schedule, but a manual re-check still runs (`launch_run`/
+        `execute_run` have no paused guard), and a successful one resumes it.
+
+        Args:
+            cursor: An open cursor inside the caller's transaction.
+            subscription_id: The subscription that just failed a check.
+            error: The error message to record as `last_error`.
+            now: UTC ISO timestamp for `last_checked`.
+            force_pause: Pause on this failure regardless of the threshold
+                comparison. Folds `record_check_error`'s legacy
+                `should_pause` parameter into this single decision point
+                instead of a second, independent write path -- the one
+                that used to write `is_paused = 0` on every ordinary
+                failure and clear an existing pause (AC#1).
+
+        Returns:
+            True only when this call TRANSITIONED the subscription from
+            not-paused to paused, False otherwise (including a failure on an
+            already-paused source) -- so `record_check_result`'s `auto_paused`
+            metric and the warning count one pause per pause, not per failure
+            (Finding #4 of the task-1410 review, Qodo transition-semantics
+            follow-up) instead of text-sniffing `error`.
+        """
+        cursor.execute(
+            """
+            UPDATE subscriptions
+            SET last_checked = ?,
+                last_error = ?,
+                error_count = error_count + 1,
+                consecutive_failures = consecutive_failures + 1
+            WHERE id = ?
+            """,
+            (now, error, subscription_id),
+        )
+
+        cursor.execute(
+            """
+            SELECT consecutive_failures, auto_pause_threshold, is_paused
+            FROM subscriptions WHERE id = ?
+            """,
+            (subscription_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        already_paused = bool(row["is_paused"])
+        threshold = row["auto_pause_threshold"]
+        # A NULL/non-positive threshold means "auto-pause disabled for this
+        # source", not "pause on the very first failure" (0/negative) or a
+        # crash (`int >= None` raises TypeError). Production never seeds a
+        # value like this (the config default is 10 and the service strips
+        # `None`), but `update_subscription(auto_pause_threshold=...)`
+        # accepts one directly, so the helper itself must not trust it.
+        threshold_active = isinstance(threshold, (int, float)) and threshold > 0
+        should_pause = force_pause or (
+            threshold_active and row["consecutive_failures"] >= threshold
+        )
+        # Auto-pause is a state TRANSITION, not a per-failure event. A source
+        # that is already paused and gets a failing MANUAL re-check (the
+        # scheduler skips paused sources, so only a manual re-check reaches
+        # here) still meets the threshold, but re-logging "Auto-paused" and
+        # re-counting the metric on every such failure would over-count a
+        # single pause (task-1410 review, Qodo). Only the 0->1 transition
+        # logs and is reported.
+        newly_paused = should_pause and not already_paused
+        if should_pause and not already_paused:
+            cursor.execute(
+                "UPDATE subscriptions SET is_paused = 1 WHERE id = ?",
+                (subscription_id,),
+            )
+            logger.warning(
+                f"Auto-paused subscription {subscription_id} after "
+                f"{row['consecutive_failures']} failures"
+            )
+        return newly_paused
 
     def record_check_error(
         self, subscription_id: int, error: str, should_pause: bool = False
     ) -> None:
-        """Record an error with optional auto-pause."""
+        """Record a failed check, auto-pausing at `auto_pause_threshold`.
+
+        task-1410: this used to write `is_paused = 1 if should_pause else
+        0` unconditionally on every call. No production caller ever passed
+        `should_pause=True` (grep confirms), so every recorded failure
+        silently wrote `is_paused = 0` -- clearing any pause a *different*
+        call had set, and never itself consulting `auto_pause_threshold`.
+        That made this, the MAIN failure path
+        (`LocalWatchlistsService.record_run_failure` calls this on every
+        run failure), a live way to erase a pause and a dead way to create
+        one.
+
+        Both defects are fixed by routing through the shared
+        `_advance_failure_and_maybe_pause` (AC#2): `is_paused` is now only
+        ever set to `1`, never `0` (AC#1), and it pauses at the same
+        threshold `record_check_result`'s error branch uses so the two
+        cannot diverge (task-1394's all-error path already exercises that
+        branch).
+
+        `should_pause` is folded into that same decision rather than kept
+        as a second, independent switch: passing `True` forces a pause on
+        THIS failure regardless of the count -- for a caller that already
+        knows the failure is terminal -- but, like the threshold path, it
+        can still only ever set `is_paused = 1`, never clear it.
+
+        Args:
+            subscription_id: ID of the subscription.
+            error: Error message to record.
+            should_pause: Force a pause on this failure even if
+                `consecutive_failures` has not yet reached
+                `auto_pause_threshold`. No production caller sets this
+                today; kept for callers that already know the failure is
+                terminal.
+        """
         with self.transaction() as conn:
             cursor = conn.cursor()
-
             now = datetime.now(timezone.utc).isoformat()
-
-            cursor.execute(
-                """
-                UPDATE subscriptions
-                SET last_checked = ?,
-                    last_error = ?,
-                    error_count = error_count + 1,
-                    consecutive_failures = consecutive_failures + 1,
-                    is_paused = ?
-                WHERE id = ?
-            """,
-                (now, error, 1 if should_pause else 0, subscription_id),
+            self._advance_failure_and_maybe_pause(
+                cursor, subscription_id, error, now, force_pause=should_pause
             )
 
     def reset_subscription_errors(self, subscription_id: int) -> None:
