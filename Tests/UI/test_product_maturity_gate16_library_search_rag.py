@@ -219,7 +219,7 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
     assert coverage_statics[0].has_class("library-rag-quiet-line")
     assert (
         str(coverage_statics[0].renderable)
-        == "Semantic search found nothing from: notes."
+        == "Semantic search found nothing from: Notes."
     )
     # It renders directly under the heading -- the first body child.
     assert rag_children[0] is coverage_statics[0]
@@ -584,7 +584,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         assert "Evidence · top 5" in visible_text
         assert "per source" not in visible_text
         assert (
-            "Semantic search found nothing from: notes, conversations."
+            "Semantic search found nothing from: Notes, Conversations."
             in visible_text
         )
 

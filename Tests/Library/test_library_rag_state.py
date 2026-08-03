@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
     LibraryRagPanelState,
@@ -16,6 +17,7 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_all_matches_weak,
     library_rag_coverage_note,
     library_rag_score_suffix,
+    library_rag_scope_summary,
     searching_status_line,
     update_search_history,
 )
@@ -69,6 +71,91 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
     assert empty_scope.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
     assert "Owner:" not in empty_scope.recovery_copy
     assert "Recovery checklist" not in empty_scope.recovery_copy
+
+
+class TestLibraryRagScopeSummary:
+    """(RAG-32) `library_rag_scope_summary` is the ONE builder both the
+    panel's compose() and the screen's incremental refresh path delegate
+    to -- see `Tests/UI/test_library_shell.py::
+    test_library_shell_search_scope_strip_refresh_path_uses_shared_copy`
+    for the agreement test that pins the two seams stay in sync.
+
+    Live UAT (critique RAG-32): the strip printed the hardcoded "all local
+    sources" copy even when a user had switched a source off. The common
+    case (every available source selected) keeps that exact copy verbatim;
+    only a genuine subset gets the explicit list.
+    """
+
+    def test_all_selected_keeps_the_unchanged_common_case_copy(self):
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2, media=1, conversations=3, prompts=1
+        )
+        assert scope.selected_source_types == (
+            "notes",
+            "media",
+            "conversations",
+            "prompts",
+        )
+        assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+
+    def test_subset_lists_selected_and_parenthesizes_the_off_sources(self):
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("notes", "conversations"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Notes, Conversations (Media, Prompts off)"
+        )
+
+    def test_subset_orders_selected_and_off_in_canonical_source_order(self):
+        """Selected/off lists follow LIBRARY_RAG_SOURCE_TYPES order, not
+        the order `selected` was passed in."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("prompts", "media"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Media, Prompts (Notes, Conversations off)"
+        )
+
+    def test_single_source_off_reads_as_a_compact_callout(self):
+        """The RAG-32 headline scenario: a user switches exactly one
+        source off and the strip must say so, not claim "all local
+        sources"."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2,
+            media=1,
+            conversations=3,
+            prompts=1,
+            selected=("notes", "conversations", "prompts"),
+        )
+        assert library_rag_scope_summary(scope) == (
+            "Scope: Notes, Conversations, Prompts (Media off)"
+        )
+
+    def test_no_sources_selected_reads_as_none_selected_not_all_off_list(self):
+        """Deselect-all is already surfaced by the run gate's own quiet
+        line ("Select at least one Library source.") -- repeating every
+        available source in a parenthetical "off" list here would just be
+        noise restating the same fact."""
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=2, media=1, selected=()
+        )
+        assert library_rag_scope_summary(scope) == "Scope: no sources selected"
+
+    def test_none_available_keeps_the_unchanged_common_case_copy(self):
+        """The empty-library edge is already owned by
+        `LIBRARY_RAG_NO_SOURCES_GATE_COPY` elsewhere on screen -- this
+        builder must not invent a second, conflicting message for it."""
+        scope = LibraryRagScopeState.from_source_counts()
+        assert scope.has_available_sources is False
+        assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
 def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
@@ -580,7 +667,7 @@ def test_panel_state_computes_coverage_note_from_diagnostics() -> None:
         },
     )
 
-    assert ready.coverage_note == "Semantic search found nothing from: notes."
+    assert ready.coverage_note == "Semantic search found nothing from: Notes."
 
     # Default: no `diagnostics` kwarg at all -> no coverage claim (keyword
     # mode, and every rag-mode call site that predates Task 8's diagnostics
@@ -912,7 +999,38 @@ class TestLibraryRagCoverageNote:
         }
         assert (
             library_rag_coverage_note(diagnostics, rows)
-            == "Semantic search found nothing from: notes, conversations."
+            == "Semantic search found nothing from: Notes, Conversations."
+        )
+
+    def test_uncovered_types_route_through_the_display_label_table(self):
+        """(controller amendment to Task 8) The Sources toggles two lines
+        above render capitalized display labels (e.g. "✓ Notes") from
+        `LIBRARY_RAG_SOURCE_TYPES` -- this note must speak the same
+        vocabulary, not the raw lowercase source-type identifiers the
+        service's diagnostics payload actually carries."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["media", "prompts"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Media, Prompts."
+        )
+
+    def test_unknown_uncovered_type_falls_back_to_the_raw_identifier(self):
+        """Diagnostics are service-supplied, not a closed enum this module
+        controls -- an unrecognized source type still renders (verbatim)
+        rather than disappearing or raising."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["mystery_source"]}
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: mystery_source."
         )
 
     def test_all_weak_with_everything_covered_renders_only_the_weak_prefix(self):
@@ -928,7 +1046,7 @@ class TestLibraryRagCoverageNote:
         diagnostics = {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}}
         assert library_rag_coverage_note(diagnostics, rows) == (
             "No strong semantic matches — results below are weak. "
-            "Semantic search found nothing from: notes."
+            "Semantic search found nothing from: Notes."
         )
 
     def test_empty_rows_never_render_a_coverage_note(self):

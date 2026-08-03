@@ -155,11 +155,11 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
-    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
+    library_rag_scope_summary,
     update_search_history,
 )
 from ...Library.library_rail_state import (
@@ -16672,7 +16672,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+        return library_rag_scope_summary(panel_state.scope)
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()

@@ -30,9 +30,12 @@ Top to bottom on the main canvas:
   "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
   sources"), and **Run** (reads "Searching…" while a search is in flight).
   A one-line status sits underneath.
-- **"Sources"** — the scope block: a "Scope: all local sources" summary line
-  and one toggle per source type — ✓/○ **Notes**, **Media**,
-  **Conversations**, **Prompts**, each with its count, e.g. "✓ Media (1)".
+- **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
+  all local sources" when every available source is selected, otherwise the
+  selected sources followed by what's off, e.g. "Scope: Notes, Conversations
+  (Media, Prompts off)") and one toggle per source type — ✓/○ **Notes**,
+  **Media**, **Conversations**, **Prompts**, each with its count, e.g.
+  "✓ Media (1)".
 - **"Evidence · top 5 per source"** (Search mode) / **"Evidence · top 5"**
   (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
   drops "per source" because it runs one merged semantic query, not one
@@ -176,8 +179,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   change this canvas. "Per source" only appears in Search mode — RAG
   Answer mode runs one merged semantic query across sources, not one per
   source, so the heading doesn't claim it.
-- **The scope summary line never changes.** "Scope: all local sources" is a
-  fixed label — the ✓/○ toggles are the real record of what's in scope.
+- **The scope summary line tracks the toggles.** Deselecting a source (e.g.
+  turning Media off) updates "Scope: …" to name what's still in scope and
+  what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
+  label.
 - **Workspaces and Collections can't be searched yet.** They exist as
   source types, but retrieval doesn't reach them, so no toggle appears for
   either.

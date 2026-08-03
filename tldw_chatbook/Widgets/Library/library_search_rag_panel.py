@@ -10,7 +10,6 @@ from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
 from ...Library.library_rag_state import (
-    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -18,6 +17,7 @@ from ...Library.library_rag_state import (
     LibraryRagScopeState,
     LibraryRagSourceOption,
     library_rag_score_suffix,
+    library_rag_scope_summary,
     searching_status_line,
 )
 
@@ -96,7 +96,7 @@ class LibrarySearchRagPanel(VerticalScroll):
 
 def _scope_summary(state: LibraryRagPanelState) -> str:
     """Return the source scope line for the main Search/RAG work lane."""
-    return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+    return library_rag_scope_summary(state.scope)
 
 
 def scope_toggle_label(option: LibraryRagSourceOption) -> str:

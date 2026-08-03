@@ -26,6 +26,14 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("workspaces", "Workspaces"),
     ("collections", "Collections"),
 )
+# The one display-label vocabulary for raw source-type identifiers, shared
+# by the Sources toggles (`scope_toggle_label`, "✓ Notes"/"✓ Media (1)"),
+# the scope-summary strip (`library_rag_scope_summary`), and the Evidence
+# region's coverage note (`library_rag_coverage_note`) -- before this table
+# existed, the coverage note joined RAW identifiers ("notes, conversations")
+# two lines below toggles reading capitalized labels, two vocabularies on
+# one screen (controller amendment to Task 8, folded into RAG-32).
+_LIBRARY_RAG_SOURCE_TYPE_LABELS: Mapping[str, str] = dict(LIBRARY_RAG_SOURCE_TYPES)
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
 # Search canvas scope region (B2): workspaces/collections have no retrieval
 # seam of their own yet, so they get no toggle row.
@@ -43,11 +51,17 @@ LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
-# The "#library-rag-scope-summary" strip text. One source of truth shared by
-# the panel's compose path (library_search_rag_panel._scope_summary) and the
-# screen's incremental refresh path (LibraryScreen._library_rag_scope_summary)
-# so the two can't drift apart. Per-source counts are deliberately absent --
-# the scope toggle buttons directly below the strip already carry them (L6).
+# The "#library-rag-scope-summary" strip text for the common case (every
+# available source selected). `library_rag_scope_summary` below is the ONE
+# source of truth both the panel's compose path
+# (library_search_rag_panel._scope_summary) and the screen's incremental
+# refresh path (LibraryScreen._library_rag_scope_summary) delegate to, so
+# the two can't drift apart -- this constant is that builder's common-case
+# return value, kept verbatim (RAG-32 review: it is the pre-existing,
+# already-pinned copy). Per-source counts are deliberately absent from the
+# strip in that case -- the scope toggle buttons directly below already
+# carry them (L6); a real subset instead gets the explicit source list (and
+# what's off) built by `library_rag_scope_summary`.
 LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
@@ -154,6 +168,19 @@ def _clean_text(value: Any, fallback: str = "") -> str:
         return fallback
     text = " ".join(str(value).strip().split())
     return text or fallback
+
+
+def _source_type_display_label(source_type: str) -> str:
+    """Map a raw source-type identifier to its `LIBRARY_RAG_SOURCE_TYPES`
+    display label (e.g. "notes" -> "Notes").
+
+    Falls back to the raw identifier, unchanged, when it isn't one of the
+    known types -- diagnostics payloads are service-supplied data, not a
+    closed enum this module controls, so an unrecognized value still
+    renders rather than disappearing or raising.
+    """
+    key = _clean_text(source_type).lower()
+    return _LIBRARY_RAG_SOURCE_TYPE_LABELS.get(key, source_type)
 
 
 def _remove_dangerous_display_patterns(value: str) -> tuple[str, bool]:
@@ -532,6 +559,76 @@ class LibraryRagScopeState:
             if option.source_type == normalized_source_type:
                 return option
         raise KeyError(source_type)
+
+
+def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
+    """Return the "#library-rag-scope-summary" strip text (RAG-32).
+
+    Live UAT (critique RAG-32): the strip printed the hardcoded "all local
+    sources" copy directly above the Sources toggles even when a user had
+    switched a source off -- e.g. deselecting Media still read "all local
+    sources". This is the ONE builder both `LibrarySearchRagPanel`'s
+    compose path and `LibraryScreen`'s incremental refresh path delegate
+    to (`Tests/UI/test_library_shell.py::
+    test_library_shell_search_scope_strip_refresh_path_uses_shared_copy`
+    pins the two seams agree).
+
+    Only sources with a real toggle row
+    (`LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES` -- notes/media/conversations/
+    prompts; workspaces/collections have no retrieval seam of their own
+    yet and are never user-togglable) are considered "available" here, so
+    the strip never mentions a source the user has no control over.
+
+    Three cases:
+      * No source is available at all (the empty-library edge, already
+        owned by `LIBRARY_RAG_NO_SOURCES_GATE_COPY` elsewhere on screen)
+        or every available source is selected (the common case): returns
+        `LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY` verbatim, unchanged.
+      * No available source is selected (deselect-all, already surfaced by
+        the run gate's own "Select at least one Library source." quiet
+        line): returns "Scope: no sources selected" rather than listing
+        every available source as "off", which would just restate the
+        same fact as noise.
+      * A genuine subset is selected: returns the selected sources'
+        display labels in canonical `LIBRARY_RAG_SOURCE_TYPES` order,
+        followed by the deselected sources parenthesized -- e.g.
+        "Scope: Notes, Conversations (Media, Prompts off)". The
+        parenthetical is deliberate, not incidental: RAG-32's own
+        complaint was a *missing negative* ("still reads all local
+        sources" after deselecting Media), so the fix names what's off,
+        not just what's on.
+
+    Args:
+        scope: Current Library Search/RAG source scope display state.
+
+    Returns:
+        The scope-summary strip's user-facing text.
+    """
+    toggle_types = [
+        source_type
+        for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+        if scope.option_by_type(source_type).available
+    ]
+    if not toggle_types:
+        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+    selected_values = set(scope.selected_source_types)
+    selected_types = [
+        source_type for source_type in toggle_types if source_type in selected_values
+    ]
+    if len(selected_types) == len(toggle_types):
+        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+    if not selected_types:
+        return "Scope: no sources selected"
+    off_types = [
+        source_type for source_type in toggle_types if source_type not in selected_values
+    ]
+    selected_labels = ", ".join(
+        _source_type_display_label(source_type) for source_type in selected_types
+    )
+    off_labels = ", ".join(
+        _source_type_display_label(source_type) for source_type in off_types
+    )
+    return f"Scope: {selected_labels} ({off_labels} off)"
 
 
 @dataclass(frozen=True)
@@ -987,9 +1084,14 @@ def library_rag_coverage_note(
         type is covered and no row bands weak, or when `diagnostics` carries
         no `semantic_scope_coverage` entry at all (e.g. keyword mode).
         Otherwise `"Semantic search found nothing from: <types>."` (types
-        in the order `semantic_scope_coverage["uncovered"]` lists them),
-        with `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined)
-        when `library_rag_all_matches_weak(rows)` is True -- or just the
+        in the order `semantic_scope_coverage["uncovered"]` lists them,
+        rendered through `_source_type_display_label` -- the same
+        `LIBRARY_RAG_SOURCE_TYPES` vocabulary the Sources toggles use, e.g.
+        "Notes" not "notes" -- rather than the raw identifiers the
+        diagnostics payload carries, so this note and the toggles two lines
+        above it speak one vocabulary), with
+        `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined) when
+        `library_rag_all_matches_weak(rows)` is True -- or just the
         weak-prefix alone when nothing is uncovered.
     """
     if not rows:
@@ -1004,9 +1106,12 @@ def library_rag_coverage_note(
         if isinstance(coverage, Mapping)
         else ()
     )
+    uncovered_labels = tuple(
+        _source_type_display_label(source_type) for source_type in uncovered
+    )
     message = (
-        f"Semantic search found nothing from: {', '.join(uncovered)}."
-        if uncovered
+        f"Semantic search found nothing from: {', '.join(uncovered_labels)}."
+        if uncovered_labels
         else ""
     )
     if library_rag_all_matches_weak(rows):
