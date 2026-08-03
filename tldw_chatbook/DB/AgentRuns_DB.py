@@ -148,6 +148,7 @@ class AgentRunsDB(BaseDB):
                     dels INTEGER NOT NULL DEFAULT 0,
                     reverted TEXT NOT NULL DEFAULT '',
                     tracking_error TEXT NOT NULL DEFAULT '',
+                    untracked_oversize INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
@@ -167,6 +168,19 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
                 )
+            # v3->v4 (TASK-1975): oversize disclosure count on snapshot
+            # rows -- same idempotent-ALTER migration mechanism as above.
+            snapshot_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(change_snapshots)"
+                ).fetchall()
+            }
+            if "untracked_oversize" not in snapshot_columns:
+                conn.execute(
+                    "ALTER TABLE change_snapshots ADD COLUMN "
+                    "untracked_oversize INTEGER NOT NULL DEFAULT 0"
+                )
 
     def record_change_snapshot(
         self,
@@ -179,6 +193,7 @@ class AgentRunsDB(BaseDB):
         adds: int = 0,
         dels: int = 0,
         tracking_error: str = "",
+        untracked_oversize: int = 0,
     ) -> None:
         """Record one root's turn snapshot pair (TASK-1971).
 
@@ -191,14 +206,17 @@ class AgentRunsDB(BaseDB):
             adds: Total added lines.
             dels: Total deleted lines.
             tracking_error: Non-empty when tracking failed for this root.
+            untracked_oversize: Files over the size cap left untracked at
+                the turn's end (TASK-1975 disclosure).
         """
         with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO change_snapshots
                     (run_id, root, baseline_sha, end_sha, files_changed,
-                     adds, dels, tracking_error, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     adds, dels, tracking_error, untracked_oversize,
+                     created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -209,9 +227,39 @@ class AgentRunsDB(BaseDB):
                     adds,
                     dels,
                     tracking_error,
+                    untracked_oversize,
                     _now_iso(),
                 ),
             )
+
+    def delete_change_snapshots_older_than(self, cutoff_iso: str) -> int:
+        """Delete snapshot rows created before ``cutoff_iso`` (TASK-1975).
+
+        Args:
+            cutoff_iso: ISO-8601 UTC timestamp in this DB's own format
+                (lexicographic compare is valid for it).
+
+        Returns:
+            Number of rows deleted.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "DELETE FROM change_snapshots WHERE created_at < ?",
+                (cutoff_iso,),
+            )
+            return int(cur.rowcount or 0)
+
+    def roots_with_change_snapshots(self) -> set[str]:
+        """Roots still referenced by at least one snapshot row (TASK-1975).
+
+        Returns:
+            The distinct ``root`` values across all remaining rows.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT root FROM change_snapshots"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def update_change_snapshot_reverted(
         self, row_id: int, reverted_paths: list[str]

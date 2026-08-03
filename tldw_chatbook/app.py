@@ -8739,6 +8739,22 @@ class TldwCli(
 
     def schedule_media_cleanup(self) -> None:
         """Schedule periodic media cleanup based on configuration."""
+        # TASK-1975: change-review snapshot retention rides the same
+        # maintenance path but has its OWN knob ([change_review]
+        # retention_days; <=0 disables inside the pass) -- disabling media
+        # cleanup must not silently disable snapshot retention.
+        try:
+            self._change_review_retention_startup_timer = self.set_timer(
+                DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
+                self._perform_change_review_retention,
+            )
+            self._change_review_retention_timer = self.set_interval(
+                24 * 3600, self._perform_change_review_retention
+            )
+        except Exception:  # noqa: BLE001 -- maintenance must never block boot
+            self.loguru_logger.opt(exception=True).warning(
+                "Could not schedule change-review retention"
+            )
         try:
             # Get cleanup configuration
             cleanup_config = get_cli_setting("media_cleanup", "enabled", True)
@@ -8775,6 +8791,23 @@ class TldwCli(
         except Exception as e:
             self.loguru_logger.opt(exception=True).error(
                 f"Error scheduling media cleanup: {e}"
+            )
+
+    async def _perform_change_review_retention(self) -> None:
+        """Run one change-review retention pass off the UI thread (TASK-1975)."""
+        try:
+            db = getattr(self, "chachanotes_db", None)
+            db_path = getattr(db, "db_path", None) if db is not None else None
+            if not db_path or str(db_path) == ":memory:":
+                return
+            from tldw_chatbook.Workspaces.change_retention import (
+                run_retention_for_app,
+            )
+
+            await asyncio.to_thread(run_retention_for_app, db_path)
+        except Exception:  # noqa: BLE001 -- retention must never surface to the UI
+            self.loguru_logger.opt(exception=True).warning(
+                "Change-review retention pass failed"
             )
 
     async def perform_media_cleanup(self) -> None:

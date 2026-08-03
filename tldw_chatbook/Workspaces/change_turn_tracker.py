@@ -41,6 +41,10 @@ from typing import Any, Iterable, Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Workspaces.change_bounds import (
+    DEFAULT_MAX_FILE_BYTES,
+    change_review_setting,
+)
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
     ShadowRepoService,
@@ -82,6 +86,7 @@ class TurnChangeRecord:
     adds: int = 0
     dels: int = 0
     tracking_error: str = ""
+    untracked_oversize: int = 0
 
 
 class TurnHandle:
@@ -91,6 +96,9 @@ class TurnHandle:
         self.roots = roots
         self.baselines: dict[str, str] = {}
         self.errors: dict[str, str] = {}
+        #: TASK-1975: each root's oversize-excluded set at B, so end_turn
+        #: can tell NEW oversize (disclose even changeless) from stable.
+        self.baseline_oversize: dict[str, tuple[str, ...]] = {}
         self._thread: threading.Thread | None = None
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
@@ -153,11 +161,26 @@ class ChangeTurnTracker:
         )
 
         def _baseline() -> None:
+            from tldw_chatbook.Workspaces.change_bounds import scan_root
+
             for root in handle.roots:
                 key = str(root)
                 try:
+                    # TASK-1975: budget gate BEFORE any snapshot work. Over
+                    # budget disables tracking for this root with honest
+                    # copy -- never a silent half-track.
+                    scan = scan_root(root)
+                    if scan.over_budget:
+                        handle.errors[key] = (
+                            "root over change-tracking budget "
+                            f"({scan.files}+ files / {scan.total_bytes}+ "
+                            "bytes) — narrow the root or add excludes; "
+                            "tracking disabled for this turn"
+                        )
+                        continue
                     repo = self.service.repo_for_root(root)
                     handle.baselines[key] = repo.snapshot("turn baseline")
+                    handle.baseline_oversize[key] = repo.last_oversize_excluded
                 except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
                     handle.errors[key] = str(exc)[:400]
 
@@ -211,9 +234,38 @@ class ChangeTurnTracker:
                 repo = self.service.repo_for_root(root)
                 in_root = self._paths_within(root, touched_paths)
                 if in_root:
+                    # TASK-1975: force-add exists to defeat IGNORE rules,
+                    # not the size cap -- a tool-written oversized file is
+                    # disclosed, never committed.
+                    cap = change_review_setting(
+                        "max_file_bytes", DEFAULT_MAX_FILE_BYTES
+                    )
+                    in_root = [
+                        rel
+                        for rel in in_root
+                        if not self._over_cap(root, rel, cap)
+                    ]
+                if in_root:
                     repo.force_add(in_root)
                 end = repo.snapshot("turn end")
+                oversize = repo.last_oversize_excluded
                 if end == baseline:
+                    # TASK-1975 (AC#6): an oversized file CREATED during
+                    # the turn is the turn's only event -- disclose it with
+                    # a zero-change record instead of staying silent. A
+                    # STABLE oversize set stays cardless (noise control).
+                    new_oversize = set(oversize) - set(
+                        handle.baseline_oversize.get(key, ())
+                    )
+                    if new_oversize:
+                        records.append(
+                            TurnChangeRecord(
+                                root=key,
+                                baseline_sha=baseline,
+                                end_sha=end,
+                                untracked_oversize=len(oversize),
+                            )
+                        )
                     continue
                 changed = repo.changed_files(baseline, end)
                 records.append(
@@ -224,6 +276,7 @@ class ChangeTurnTracker:
                         files_changed=len(changed),
                         adds=sum(c.adds for c in changed),
                         dels=sum(c.dels for c in changed),
+                        untracked_oversize=len(oversize),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
@@ -237,6 +290,14 @@ class ChangeTurnTracker:
         return records
 
     # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _over_cap(root: Path, rel: str, cap: int) -> bool:
+        """Whether a root-relative path currently exceeds the size cap."""
+        try:
+            return (root / rel).stat().st_size > cap
+        except OSError:
+            return False
 
     @staticmethod
     def _paths_within(root: Path, paths: Iterable[str]) -> list[str]:

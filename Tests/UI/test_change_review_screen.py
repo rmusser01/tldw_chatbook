@@ -46,6 +46,7 @@ def _record_turn(db, tracker, root, run_id: str, mutate) -> None:
             adds=rec.adds,
             dels=rec.dels,
             tracking_error=rec.tracking_error,
+            untracked_oversize=rec.untracked_oversize,
         )
 
 
@@ -434,4 +435,64 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
         await pilot.pause()
         assert (root / "edit.txt").read_text() == "after\n", (
             "the revert ran under an active run"
+        )
+
+
+@pytest.mark.asyncio
+async def test_oversize_disclosure_banner_renders(tmp_path, monkeypatch):
+    """TASK-1975 AC#2: the untracked-oversize count is disclosed in review."""
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "small.txt").write_text("hello\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "big.bin").write_bytes(b"x" * 500)
+        (root / "small.txt").write_text("edited\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen.query("#change-review-banner"), "banner"
+        )
+        banner = screen.query_one("#change-review-banner", Static)
+        text = str(banner.renderable)
+        assert "1 oversized" in text, text
+        assert banner.display is True
+
+
+@pytest.mark.asyncio
+async def test_pruned_snapshots_render_pruned_by_retention(review_fixture, tmp_path):
+    """TASK-1975 AC#7: a history row whose snapshots were pruned renders
+    'pruned by retention' instead of erroring."""
+    import shutil as _shutil
+
+    provider, root, run1, run2 = review_fixture
+    # Retention reset the shadow store; the DB rows remain.
+    _shutil.rmtree(tmp_path / "appdata")
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: "pruned by retention"
+            in str(screen.query_one("#change-review-banner", Static).renderable),
+            "pruned banner",
         )

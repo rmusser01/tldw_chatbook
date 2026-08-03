@@ -66,6 +66,31 @@ FORCED_EXCLUDES: tuple[str, ...] = (
     "build/",
 )
 
+def _exclude_pattern(rel_path: str) -> str:
+    """Turn a root-relative path into an anchored, literal exclude pattern.
+
+    Git exclude patterns treat ``* ? [ ] \\`` as globs and a trailing
+    space as trimmable — paths are data, so each is escaped and the
+    pattern anchored with a leading ``/``.
+
+    Args:
+        rel_path: POSIX-style path relative to the root.
+
+    Returns:
+        One ``info/exclude`` line matching exactly that path.
+    """
+    escaped = (
+        rel_path.replace("\\", "\\\\")
+        .replace("*", "\\*")
+        .replace("?", "\\?")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+    if escaped.endswith(" "):
+        escaped = escaped[:-1] + "\\ "
+    return "/" + escaped
+
+
 #: A lockdir older than this is treated as abandoned by a crashed process and
 #: taken over. Snapshot operations are seconds, not minutes.
 _STALE_LOCK_SECONDS = 300.0
@@ -211,6 +236,9 @@ class ShadowRepo:
         self.hooks_dir = hooks_dir
         self.lock_dir = lock_dir
         self._git = git_executable
+        #: Root-relative paths excluded as oversized by the LAST snapshot
+        #: on this instance (TASK-1975 disclosure).
+        self.last_oversize_excluded: tuple[str, ...] = ()
 
     # -- plumbing ----------------------------------------------------------
 
@@ -355,12 +383,38 @@ class ShadowRepo:
             return None
         return str(proc.stdout).strip()
 
+    def has_snapshot(self, sha: str) -> bool:
+        """Whether a snapshot commit still exists in this shadow repo.
+
+        Retention (TASK-1975) can reset a repo whose rows were pruned; a
+        surviving history row must then render "pruned by retention"
+        rather than erroring, and this probe is how callers tell.
+
+        Args:
+            sha: A snapshot commit sha.
+
+        Returns:
+            True when the commit object is present.
+        """
+        if not sha:
+            return False
+        proc = self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False)
+        return proc.returncode == 0
+
     def snapshot(self, message: str) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
         A clean tree returns the existing tip without a new commit. The very
         first snapshot commits even an empty tree (``--allow-empty``) so a
         baseline tip always exists.
+
+        TASK-1975: git cannot exclude by size, so every snapshot re-scans
+        the root and appends files over ``max_file_bytes`` to
+        ``info/exclude`` (``ensure_initialized`` rewrites the static block
+        first, so entries never accumulate stale). The excluded set lands on
+        :attr:`last_oversize_excluded` for disclosure. Limit: excludes only
+        stop UNTRACKED files — a file committed while small that later grew
+        stays tracked, which shows in diffs rather than lying by omission.
 
         Args:
             message: Commit message recorded on the snapshot (turn labels).
@@ -371,8 +425,24 @@ class ShadowRepo:
         Raises:
             ChangeTrackingError: A git step failed or produced no tip.
         """
+        import sys as _sys
+
+        from tldw_chatbook.Workspaces.change_bounds import scan_root
+
         with self._locked():
             self.ensure_initialized()
+            scan = scan_root(
+                self.root,
+                max_files=_sys.maxsize,
+                max_total_bytes=_sys.maxsize,
+            )
+            self.last_oversize_excluded = scan.oversized
+            if scan.oversized:
+                exclude = self.git_dir / "info" / "exclude"
+                with exclude.open("a", encoding="utf-8") as fh:
+                    fh.write("# oversize (TASK-1975), rewritten per snapshot\n")
+                    for rel in scan.oversized:
+                        fh.write(_exclude_pattern(rel) + "\n")
             self._run("add", "-A", "--", ".")
             had_tip = self.tip() is not None
             if had_tip:
