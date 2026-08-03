@@ -1,7 +1,7 @@
 ---
 id: TASK-1349
 title: _content_toggle_is_blocked is a predicate that notifies
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
