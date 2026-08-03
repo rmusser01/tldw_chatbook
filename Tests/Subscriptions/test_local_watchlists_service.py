@@ -297,6 +297,8 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
         # first check discarded nothing, a settings-change re-baseline threw
         # away a real diff window.
         "rebaselined": 0,
+        # task-1394: no URL raised in this run.
+        "error": 0,
     }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
@@ -391,6 +393,8 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
         "withheld": 0,
         "baseline": 0,
         "rebaselined": 0,
+        # task-1394: no URL raised in this run.
+        "error": 0,
     }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {
@@ -404,6 +408,212 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             "content_hash": "sitemap-hash-2",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_url_list_isolates_one_failing_url(
+    tmp_path, monkeypatch
+):
+    """task-1394 AC#1/#3: one bad URL must not sink the whole `url_list` run.
+
+    Before per-URL isolation, `check_url` raising for ANY url in the loop
+    propagated straight out of `_default_run_executor` uncaught; `execute_run`
+    then caught it at the top level and called `record_run_failure`, which
+    discards the items the OTHER, successful URLs in this same run already
+    collected. A 50-URL source with one dead link used to yield nothing at
+    all. This is the discriminator test: it reds under that old
+    all-or-nothing behaviour (confirmed by reverting the
+    `_check_url_isolated` try/except and re-running -- see the task's
+    Implementation Notes) and passes with the per-URL isolation in place.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    seen_urls = []
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            url = subscription["source"]
+            seen_urls.append(url)
+            if url == "https://example.com/b":
+                # Deliberately NOT a subclass of any of the others -- proves
+                # the isolation catches an arbitrary exception, not just one
+                # anticipated type.
+                raise TimeoutError("connect timed out")
+            return (
+                {
+                    "url": url,
+                    "title": f"Changed {len(seen_urls)}",
+                    "content_hash": f"hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {
+                "urls": [
+                    "https://example.com/a",
+                    "https://example.com/b",
+                    "https://example.com/c",
+                ],
+            },
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    # The run completed -- it did NOT fail via `record_run_failure` merely
+    # because one of its three URLs raised.
+    assert completed["status"] == "completed"
+    # And the loop kept going past the poisoned URL to check the one after it.
+    assert seen_urls == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+    # The two URLs that succeeded persisted their items...
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/a",
+            "title": "Changed 1",
+            "content_hash": "hash-1",
+        },
+        {
+            "url": "https://example.com/c",
+            "title": "Changed 3",
+            "content_hash": "hash-3",
+        },
+    ]
+    # ...and the run's dispositions say exactly one URL errored, rather than
+    # reporting a clean run that simply found less than it should have.
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_sitemap_isolates_one_failing_url(
+    tmp_path, monkeypatch
+):
+    """task-1394: the sitemap arm gets the same per-URL isolation as url_list.
+
+    The sitemap FETCH that produces this URL list (`_urls_for_sitemap`) is a
+    separate concern that this task deliberately leaves alone: it runs once,
+    before this loop starts, so a failure fetching the sitemap itself still
+    fails the whole run. This test is only about the per-URL loop that walks
+    the URLs the sitemap already produced.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    seen_urls = []
+
+    SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://example.com/page-a</loc></url>
+            <url><loc>https://example.com/page-b</loc></url>
+            <url><loc>https://example.com/page-c</loc></url>
+        </urlset>
+        """
+
+    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/xml"},
+            text=SITEMAP_XML,
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.guarded_fetch_httpx_async",
+        fake_guarded,
+    )
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            url = subscription["source"]
+            seen_urls.append(url)
+            if url == "https://example.com/page-b":
+                raise ConnectionError("connection refused")
+            return (
+                {
+                    "url": url,
+                    "title": f"Sitemap page {len(seen_urls)}",
+                    "content_hash": f"sitemap-hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs sitemap",
+            "url": "https://example.com/sitemap.xml",
+            "source_type": "sitemap",
+            "processing_options": {"max_urls": 3},
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert completed["status"] == "completed"
+    assert seen_urls == [
+        "https://example.com/page-a",
+        "https://example.com/page-b",
+        "https://example.com/page-c",
+    ]
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/page-a",
+            "title": "Sitemap page 1",
+            "content_hash": "sitemap-hash-1",
+        },
+        {
+            "url": "https://example.com/page-c",
+            "title": "Sitemap page 3",
+            "content_hash": "sitemap-hash-3",
+        },
+    ]
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 1,
+    }
 
 
 @pytest.mark.asyncio

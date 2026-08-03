@@ -70,6 +70,10 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     "withheld",
     "baseline",
     "rebaselined",
+    # TASK-1394. Appended last rather than inserted in "kind order" so nothing
+    # that reads this tuple positionally (none of the current readers do, but
+    # a future one might) sees the existing five counters shift place.
+    "error",
 )
 
 
@@ -92,9 +96,13 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
     them back into one leaves the `reason` with no production consumer at all,
     which is what made spec §3's "the Runs pane says why" untrue.
 
-    The five pairs below are exactly the five `_disposition` call sites in
-    `check_url`; an unlisted pair raises `KeyError` in `_disposition_counts`,
-    deliberately.
+    Five of the six pairs below are exactly the five `_disposition` call
+    sites in `check_url`; an unlisted pair raises `KeyError` in
+    `_disposition_counts`, deliberately. The sixth, `DISPOSITION_ERROR`, is
+    NOT one of `check_url`'s own outcomes -- it is synthesized by
+    `_default_run_executor`'s `url_list`/`sitemap` loops around a
+    `check_url` call that raised instead of returning (task-1394), so one
+    dead URL is counted rather than failing the whole run.
 
     The `monitoring_engine` import is deliberately local, not module-level:
     this module loads unconditionally from `Subscriptions/__init__.py`
@@ -108,6 +116,7 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
     from .monitoring_engine import (
         DISPOSITION_BASELINE_STORED,
         DISPOSITION_CHANGED,
+        DISPOSITION_ERROR,
         DISPOSITION_UNCHANGED,
         DISPOSITION_WITHHELD,
         REASON_BELOW_CHANGE_THRESHOLD,
@@ -124,23 +133,33 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
             DISPOSITION_BASELINE_STORED,
             REASON_EXTRACTION_SETTINGS_CHANGED,
         ): "rebaselined",
+        # task-1394: `reason` is always `None` here, unlike the exception
+        # detail logged at the catch site -- the counter answers "how many
+        # URLs errored", not "which exception", so it needs exactly one
+        # stable pair rather than one per exception type.
+        (DISPOSITION_ERROR, None): "error",
     }
 
 
 def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
-    """Aggregate one run's per-URL dispositions into the five counters.
+    """Aggregate one run's per-URL dispositions into the six counters.
 
     Spec §4. A run that produced no items used to be indistinguishable from a
     run that produced no items *because it withheld them*; these counters are
-    what makes the difference visible. All five keys are always present, so the
+    what makes the difference visible. All six keys are always present, so the
     reader never has to distinguish "zero" from "not recorded".
+
+    ``error`` (task-1394) is the odd one out: it does not come from
+    `check_url` completing with an outcome, it comes from `check_url` never
+    returning at all. A `url_list`/`sitemap` run with one dead URL among many
+    still reports `"error": 1` here rather than raising out of the whole run.
 
     Args:
         dispositions: One disposition dict per URL checked, in check order.
 
     Returns:
         ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n,
-        "rebaselined": n}``.
+        "rebaselined": n, "error": n}``.
 
     Raises:
         KeyError: If a disposition carries a ``(kind, reason)`` pair outside
@@ -913,12 +932,8 @@ class LocalWatchlistsService:
             items = []
             dispositions = []
             for url in self._urls_for_url_list(subscription_config):
-                result, disposition = await monitor.check_url(
-                    {
-                        **subscription_config,
-                        "source": url,
-                        "type": "url",
-                    }
+                result, disposition = await self._check_url_isolated(
+                    monitor, subscription_config, url
                 )
                 dispositions.append(disposition)
                 if result:
@@ -927,13 +942,15 @@ class LocalWatchlistsService:
             monitor = URLMonitor(db)
             items = []
             dispositions = []
+            # The sitemap FETCH that produces this URL list happens above, in
+            # the `await` the `for` iterates -- it is NOT covered by
+            # `_check_url_isolated` and a failure there still fails the whole
+            # run (task-1394's isolation is only for the per-URL loop body;
+            # if the sitemap itself cannot be fetched there is no per-URL
+            # work to isolate).
             for url in await self._urls_for_sitemap(subscription_config):
-                result, disposition = await monitor.check_url(
-                    {
-                        **subscription_config,
-                        "source": url,
-                        "type": "url",
-                    }
+                result, disposition = await self._check_url_isolated(
+                    monitor, subscription_config, url
                 )
                 dispositions.append(disposition)
                 if result:
@@ -965,6 +982,58 @@ class LocalWatchlistsService:
                 run_stats["max_withheld_pct"] = max_withheld
             result_payload["stats"] = run_stats
         return result_payload
+
+    @staticmethod
+    async def _check_url_isolated(
+        monitor: Any,
+        subscription_config: Mapping[str, Any],
+        url: str,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """One URL of a `url_list`/`sitemap` run's `check_url`, failure-isolated.
+
+        task-1394: the `url_list`/`sitemap` loops used to call `check_url`
+        with no per-URL `try/except`, so one failing URL (timeout, SSRF
+        block, HTTP error) raised out of the whole loop, failed the entire
+        run via `record_run_failure`, and discarded the items already
+        collected from the URLs that succeeded -- a 50-URL source with one
+        dead link yielded nothing at all.
+
+        A raise here is turned into a `DISPOSITION_ERROR` disposition and a
+        `None` item instead, so the caller's loop can `continue`: the run
+        still completes, the OTHER urls' items and dispositions still
+        persist, and `_disposition_counts` reports how many URLs errored
+        rather than the run reporting clean zeros or failing outright.
+
+        Args:
+            monitor: The `URLMonitor` (or fake, in tests) to check with.
+            subscription_config: The source's execution config; only
+                ``source``/``type`` are overridden per URL, same as the
+                caller did inline before this was extracted.
+            url: The one URL this call checks.
+
+        Returns:
+            Whatever `monitor.check_url` returned, unchanged, on success.
+            ``(None, {"kind": DISPOSITION_ERROR, "reason": None,
+            "withheld_percentage": None})`` if it raised.
+        """
+        from .monitoring_engine import DISPOSITION_ERROR
+
+        try:
+            return await monitor.check_url(
+                {**subscription_config, "source": url, "type": "url"}
+            )
+        except Exception as exc:
+            # Type-only: never the exception message or the URL itself, both
+            # of which can carry fetched page content or a query string with
+            # sensitive data.
+            logger.debug(
+                f"watchlist URL check failed, isolated: {type(exc).__name__}"
+            )
+            return None, {
+                "kind": DISPOSITION_ERROR,
+                "reason": None,
+                "withheld_percentage": None,
+            }
 
     @classmethod
     def _subscription_execution_config(

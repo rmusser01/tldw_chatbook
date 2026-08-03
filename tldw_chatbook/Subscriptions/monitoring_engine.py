@@ -514,6 +514,15 @@ DISPOSITION_UNCHANGED = "unchanged"
 DISPOSITION_WITHHELD = "withheld_below_threshold"
 #: A change was detected and an item produced.
 DISPOSITION_CHANGED = "changed"
+#: `check_url` itself never returned -- it raised (timeout, SSRF block, HTTP
+#: error, ...). Not one of the four outcomes above: those are `check_url`'s
+#: own dispositions for a call that COMPLETED, while this one is synthesized
+#: by the caller (`local_watchlists_service._default_run_executor`'s
+#: `url_list`/`sitemap` loops) around a call that did not (task-1394). One
+#: dead URL among many must not fail the whole run and discard what the
+#: other URLs already collected; this is how that partial failure stays
+#: visible instead of silently vanishing into "0 found".
+DISPOSITION_ERROR = "error"
 
 #: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
 #: interchangeable and must never be aggregated together (whole-branch review,

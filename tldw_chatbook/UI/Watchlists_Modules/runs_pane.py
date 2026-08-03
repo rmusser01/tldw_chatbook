@@ -164,7 +164,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
                 f"{withheld_text} | "
                 f"{dispositions.get('baseline', 0)} baseline | "
                 f"{dispositions.get('rebaselined', 0)} re-baselined "
-                "(settings changed)"
+                "(settings changed) | "
+                # task-1394: a URL that raised (timeout, SSRF block, HTTP
+                # error) instead of completing `check_url` -- rendered
+                # unconditionally, same as `changed`/`baseline`/etc. above,
+                # so a partially-failed run says so rather than reading like
+                # a clean one that merely found nothing.
+                f"{dispositions.get('error', 0)} error"
             )
         return base
 

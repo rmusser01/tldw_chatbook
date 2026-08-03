@@ -224,6 +224,8 @@ def _disposition_run(**dispositions: int) -> dict[str, object]:
             "withheld": 0,
             "baseline": 0,
             "rebaselined": 0,
+            # task-1394: a URL that raised instead of completing `check_url`.
+            "error": 0,
             **dispositions,
         },
     }
@@ -244,6 +246,25 @@ def test_stats_text_shows_check_dispositions_when_present():
     assert "1 baseline" in text
     assert "0 withheld" in text
     assert "2 re-baselined" in text
+
+
+def test_stats_text_shows_the_error_count_for_a_partially_failed_run():
+    """task-1394, AC#2: a partially-failed run must say so, not read clean.
+
+    `url_list`/`sitemap` runs now isolate per-URL failures instead of
+    aborting the whole run, so a run that had one bad URL among several
+    completes normally with the OTHER urls' items intact. Without a rendered
+    error count, that run would look indistinguishable from one where every
+    URL was checked cleanly and simply had nothing to report -- the same
+    silence spec §4 was written to remove for the other four dispositions.
+    """
+    text = RunsPane._stats_text(_disposition_run(changed=2, error=1))
+    assert "1 error" in text
+
+    # And a clean run explicitly reports zero rather than omitting the count,
+    # matching every other counter on this line (`0 withheld`, `0 baseline`).
+    clean = RunsPane._stats_text(_disposition_run(changed=2))
+    assert "0 error" in clean
 
 
 def test_stats_text_distinguishes_a_first_check_from_a_settings_rebaseline():
