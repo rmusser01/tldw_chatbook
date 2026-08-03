@@ -4885,6 +4885,7 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: 0;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
     background: $ds-surface-raised;
 }
 

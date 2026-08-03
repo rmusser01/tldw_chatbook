@@ -1611,6 +1611,15 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     assert_thin_inline_input_focus(inline_focus)
 
 
+def test_library_rag_query_input_uses_stable_thin_contracts():
+    text = AGENTIC.read_text(encoding="utf-8")
+    base = css_block(text, "#library-rag-query-input")
+    focus = css_block(text, "#library-rag-query-input:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert_thin_input_focus(focus)
+    assert "background: $ds-input-focus-bg;" in focus
+
+
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
     from tldw_chatbook.Widgets.Tamagotchi.base_tamagotchi import BaseTamagotchi
 
