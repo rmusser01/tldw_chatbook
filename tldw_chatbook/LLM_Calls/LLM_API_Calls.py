@@ -722,9 +722,17 @@ def chat_with_openai(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
     }
-    logger.debug(
-        "OpenAI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: this now actually interpolates (it used to be a plain
+        # string missing its `f` prefix, so it silently logged literal
+        # template text). Skipped entirely for sensitive/auxiliary requests
+        # -- the payload can carry a caller-supplied system prompt or other
+        # request content that must never reach a log in that context (see
+        # Tests/Chat/test_sensitive_llm_logging.py).
+        logger.debug(
+            f"OpenAI Request Payload (excluding messages): "
+            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+        )
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = (
@@ -1468,9 +1476,12 @@ def chat_with_anthropic(
         or anthropic_config.get("api_base_url")
         or builtin_provider_endpoint("anthropic", anthropic_config)
     ).rstrip("/") + "/messages"
-    logger.debug(
-        "Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Anthropic Request Payload (excluding messages): "
+            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+        )
 
     start_time = time.time()
     log_counter(
@@ -2896,9 +2907,12 @@ def chat_with_deepseek(
         or deepseek_config.get("api_base_url")
         or builtin_provider_endpoint("deepseek", deepseek_config)
     ).rstrip("/") + "/chat/completions"
-    logger.debug(
-        "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"DeepSeek Request Payload (excluding messages): "
+            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+        )
 
     try:
         if current_streaming:
@@ -3308,9 +3322,12 @@ def chat_with_google(
     ).rstrip("/")
     api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
-    logger.debug(
-        "Google Gemini Request Payload (excluding contents): {k: v for k,v in payload.items() if k != 'contents'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Google Gemini Request Payload (excluding contents): "
+            f"{ {k: v for k, v in payload.items() if k != 'contents'} }"
+        )
     logger.debug(
         "Google Gemini request content metadata: "
         f"message_count={len(gemini_contents)}; "
@@ -3899,9 +3916,12 @@ def chat_with_groq(
         or groq_config.get("api_base_url")
         or builtin_provider_endpoint("groq", groq_config)
     ).rstrip("/") + "/chat/completions"
-    logger.debug(
-        "Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Groq Request Payload (excluding messages): "
+            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+        )
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
@@ -4664,9 +4684,12 @@ def chat_with_mistral(
         or mistral_config.get("api_base_url")
         or builtin_provider_endpoint("mistralai", mistral_config)
     ).rstrip("/") + "/chat/completions"
-    logger.debug(
-        "Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Mistral Request Payload (excluding messages): "
+            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+        )
 
     try:
         if current_streaming:
@@ -4912,9 +4935,12 @@ def chat_with_openrouter(
         or openrouter_config.get("api_base_url")
         or builtin_provider_endpoint("openrouter", openrouter_config)
     ).rstrip("/") + "/chat/completions"
-    logger.debug(
-        "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"OpenRouter Request Payload (excluding messages): "
+            f"{ {k: v for k, v in data.items() if k != 'messages'} }"
+        )
 
     try:
         if current_streaming:
@@ -5277,9 +5303,12 @@ def chat_with_moonshot(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
     }
-    logger.debug(
-        "Moonshot Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Moonshot Request Payload (excluding messages): "
+            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+        )
 
     # Determine API endpoint based on config (default to international)
     if api_base_url:
@@ -5598,9 +5627,12 @@ def chat_with_zai(
     )
     api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
-    logger.debug(
-        "Z.AI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        logger.debug(
+            f"Z.AI Request Payload (excluding messages): "
+            f"{ {k: v for k, v in payload.items() if k != 'messages'} }"
+        )
 
     start_time = time.time()
 
