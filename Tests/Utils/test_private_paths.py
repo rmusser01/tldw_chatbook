@@ -1,3 +1,4 @@
+import errno
 import os
 import shutil
 import stat
@@ -1143,6 +1144,11 @@ def _seed_private_file(path, payload: bytes) -> None:
     )
 
 
+@pytest.mark.skipif(
+    not private_paths._atomic_posix_guards_available(),
+    reason="injects into the POSIX dir_fd path; the Windows/fallback path "
+    "has different mechanics (task-2060 Qodo)",
+)
 def test_no_residue_when_the_temp_write_side_fails(tmp_path, monkeypatch):
     """Injection point: the TEMP-FILE fsync (write side, pre-rename).
 
@@ -1165,7 +1171,7 @@ def test_no_residue_when_the_temp_write_side_fails(tmp_path, monkeypatch):
     def failing_first_fsync(fd: int) -> None:
         if not injected:
             injected.append(fd)
-            raise OSError(5, "injected write-side failure (task-2060)")
+            raise OSError(errno.EIO, "injected write-side failure (task-2060)")
         real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", failing_first_fsync)
@@ -1182,6 +1188,11 @@ def test_no_residue_when_the_temp_write_side_fails(tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.skipif(
+    not private_paths._atomic_posix_guards_available(),
+    reason="injects into the POSIX dir_fd path; the Windows/fallback path "
+    "has different mechanics (task-2060 Qodo)",
+)
 def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
     """Injection point: the RENAME of the temp sibling onto the destination.
 
@@ -1197,6 +1208,11 @@ def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
     making every assertion here pass vacuously. The platform's real dir_fd
     support is untouched (the write-side test above exercises the unpatched
     check on the same run).
+
+    Args:
+        tmp_path: pytest tmp dir holding the destination file.
+        monkeypatch: installs the selective failing `os.rename` and pins
+            the guards check.
     """
     destination = tmp_path / "settings.json"
     _seed_private_file(destination, b"original content")
@@ -1204,10 +1220,12 @@ def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: True)
 
     real_rename = os.rename
+    injected: list[tuple] = []
 
     def failing_rename(*args, **kwargs):
         if any(str(arg).endswith(".tmp") for arg in args):
-            raise OSError(5, "injected rename failure (task-2060)")
+            injected.append(args)
+            raise OSError(errno.EIO, "injected rename failure (task-2060)")
         return real_rename(*args, **kwargs)
 
     monkeypatch.setattr(os, "rename", failing_rename)
@@ -1215,6 +1233,10 @@ def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
         private_paths.atomic_private_write_bytes(destination, b"replacement")
     monkeypatch.setattr(os, "rename", real_rename)
 
+    assert injected, (
+        "the rename injection never fired -- the PrivatePathError came from "
+        "somewhere earlier and this test proved nothing about the rename path"
+    )
     assert destination.read_bytes() == b"original content", (
         "a failed rename must leave the destination untouched"
     )
