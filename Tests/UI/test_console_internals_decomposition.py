@@ -4120,6 +4120,50 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
 
 
 @pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
+    """RAG-43 end to end: the mock-level guard tests in
+    `test_console_rag_settings_modal.py` pin `_console_draft_looks_like_rag_query`
+    against a `Mock()` screen, never a real composer or a real control-bar
+    click -- so a wiring mistake at either call site (e.g. reading the wrong
+    composer, or the control-bar action not routing through the guarded
+    fallback at all) would pass every mock-level test while still leaking a
+    path straight into retrieval live. This drives the real thing: a real
+    `ConsoleComposerBar` holding a path-shaped draft, a real control-bar
+    click, and confirms both halves of the guard hold together -- no query
+    gets stored anywhere AND the settings modal (not a toast, not silent
+    retrieval) is what actually opens, exactly like the blank-draft case
+    above."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/Users/x/notes.md")
+        await pilot.pause()
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert modal._query == ""
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+        # The guarded draft is left exactly where the user typed it -- the
+        # guard drops the prefill, it does not touch the composer.
+        assert composer.draft_text() == "/Users/x/notes.md"
+
+
+@pytest.mark.asyncio
 async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
     """RAG-44 end to end: the settings modal's source toggles decide what
     retrieval actually reads. Switching Media off and running must send a
