@@ -16,10 +16,12 @@ See `.superpowers/sdd/2026-08-04-realtime-voice-engine/task-5-brief.md`.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from typing import Any
 
 import pytest
+from loguru import logger
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_dictation_streaming import (
@@ -35,6 +37,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -173,6 +176,7 @@ class FakeRecorder:
         self.callback = None
         self.start_calls = 0
         self.stop_calls = 0
+        self.stop_thread_ident: int | None = None
 
     def start_recording(self, callback) -> bool:
         self.callback = callback
@@ -181,6 +185,10 @@ class FakeRecorder:
 
     def stop_recording(self) -> None:
         self.stop_calls += 1
+        #: Which thread the (blocking, recorder-joining) stop ran on --
+        #: pinned by the teardown test, since running it on the UI thread
+        #: freezes the app for as long as the join takes.
+        self.stop_thread_ident = threading.get_ident()
         self._order.append("tap.stop")
 
     def push(self, frame: bytes) -> None:
@@ -292,8 +300,15 @@ def _patch_realtime_config(
     provider: str = "openai",
     acoustic: bool = False,
     idle_timeout_seconds: float = 300.0,
+    api_key: str = "test-realtime-key",
 ) -> None:
-    """Pin every config reader the engine fork consults."""
+    """Pin every config reader the engine fork consults.
+
+    `api_key` included: the wiring refuses to dispatch a connect without
+    one (there is nothing to authenticate with), so every mounted test
+    needs a configured key even though the injected session never uses it.
+    """
+    monkeypatch.setattr(chat_screen_module, "get_api_key", lambda _name: api_key)
     monkeypatch.setattr(
         chat_screen_module, "resolve_handsfree_engine", lambda: engine
     )
@@ -521,6 +536,32 @@ async def test_seed_sends_recent_turns_and_the_system_prompt_as_instructions(
 
 
 @pytest.mark.asyncio
+async def test_seed_skips_an_oversized_turn_instead_of_ending_the_seed(monkeypatch):
+    """F6: one long newest reply must not ship ZERO history. The budget
+    walk skips what cannot fit and keeps taking older turns that can."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id, role=ConsoleMessageRole.USER, content="short older turn"
+        )
+        store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content="A" * 9000
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("user", "short older turn")]
+
+
+@pytest.mark.asyncio
 async def test_seed_char_budget_drops_the_oldest_turns(monkeypatch):
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
@@ -615,6 +656,52 @@ async def test_turn_commit_creates_the_user_row_before_the_reply_row(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_late_input_transcript_never_overwrites_the_next_turn(monkeypatch):
+    """F5: `on_input_transcript` carries no item id, so a transcript that
+    arrives after the NEXT turn committed would land in that turn's row.
+    A filled row is never overwritten -- the stale text is dropped, loudly
+    enough to diagnose."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+    warnings: list[str] = []
+    sink_id = logger.add(lambda message: warnings.append(str(message)), level="WARNING")
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            session = await _enter_live_realtime(console, pilot, rig)
+
+            session.fire_turn_committed()
+            await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+            first_row_id = console._console_realtime.user_row_id
+            session.fire_turn_committed()
+            await _wait_for(lambda: len(_messages(console)) == 2, pilot)
+            second_row_id = console._console_realtime.user_row_id
+
+            session.fire_input_transcript("turn two")
+            await _wait_for(
+                lambda: _messages(console)[1].content == "turn two", pilot
+            )
+            # Turn one's transcript finally arrives -- far too late.
+            session.fire_input_transcript("turn one")
+            await pilot.pause()
+            await pilot.pause()
+
+            store = console._ensure_console_chat_store()
+            assert store.get_message(second_row_id).content == "turn two"
+            assert store.get_message(first_row_id).content == ""
+    finally:
+        logger.remove(sink_id)
+
+    assert any(
+        "realtime_input_transcript" in message and second_row_id in message
+        for message in warnings
+    ), warnings
+
+
+@pytest.mark.asyncio
 async def test_assistant_transcript_streams_into_the_reply_row(monkeypatch):
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
@@ -702,16 +789,10 @@ async def test_usage_is_attached_to_the_assistant_row(monkeypatch):
         assert usage.output == 7
 
 
-# ---------------------------------------------------------------------------
-# Rules 6 + 7: audio out, barge-in, mic gating
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
-    monkeypatch,
-):
-    """One second of 24 kHz mono PCM16 is 48000 bytes -> 1000 ms."""
+async def test_realtime_usage_records_cached_input_tokens(monkeypatch):
+    """F9: the Realtime API spells the details key `input_token_details`
+    (SINGULAR). Unrecognized, every cached token was billed as uncached."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -720,14 +801,118 @@ async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
 
         session.fire_turn_committed()
         session.fire_reply_started("item-1")
-        session.fire_audio_delta(b"\x00" * 48000)
-        session.fire_first_audio()
+        session.fire_output_transcript_delta("Hi.")
         await _wait_for(
-            lambda: console._console_realtime.controller.state == "speaking", pilot
+            lambda: console._console_realtime.assistant_row_id is not None, pilot
         )
+        row_id = console._console_realtime.assistant_row_id
+        session.fire_usage(
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "input_token_details": {"cached_tokens": 80},
+            }
+        )
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert usage.cache_read == 80
+        assert usage.uncached_input == 20
+        assert usage.output == 20
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audio_sink_is_latched_not_retried_per_delta(monkeypatch):
+    """F2: a sink that cannot open must fail ONCE per reply. Retrying per
+    audio delta means one construction (and one traceback) per ~20 ms of
+    speech -- a traceback storm on the UI thread, for a device that is not
+    coming back mid-reply."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    builds: list[int] = []
+
+    def _failing_sink_factory():
+        builds.append(1)
+        raise RuntimeError("no audio device")
+
+    app.console_realtime_sink_factory = _failing_sink_factory
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        for _ in range(12):
+            session.fire_audio_delta(b"\x00" * 480)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(builds) == 1, f"sink construction retried per delta: {len(builds)}"
+        assert (
+            sum(
+                1
+                for message, _kwargs in notifications
+                if "audio" in message.lower()
+            )
+            == 1
+        ), notifications
+
+        # A second reply is allowed one fresh attempt -- the device may have
+        # come back between replies.
+        session.fire_reply_done()
+        session.fire_reply_started("item-2")
+        session.fire_audio_delta(b"\x00" * 480)
+        await pilot.pause()
+        assert len(builds) == 2
+
+
+# ---------------------------------------------------------------------------
+# Rules 6 + 7: audio out, barge-in, mic gating
+# ---------------------------------------------------------------------------
+
+
+async def _drive_to_speaking(console, pilot, session, *, audio: bytes) -> None:
+    """Take a live loop through commit -> reply -> audio, into `speaking`."""
+    session.fire_turn_committed()
+    session.fire_reply_started("item-1")
+    session.fire_audio_delta(audio)
+    session.fire_first_audio()
+    await _wait_for(
+        lambda: console._console_realtime.controller.state == "speaking", pilot
+    )
+
+
+@pytest.mark.asyncio
+async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
+    monkeypatch,
+):
+    """One second of 24 kHz mono PCM16 is 48000 bytes -> 1000 ms.
+
+    Fix round 1 (F1): driven through a REAL `pilot.press`, on the ready
+    console harness, rather than by calling `controller.on_keypress()`
+    directly. The bare-`_build_test_app` harness sits behind the first-run
+    setup modal, where `on_key` returns before the hands-free branch is
+    ever reached -- so a direct controller call proved the FSM worked while
+    leaving the actual key routing (modal gate, focus gate ordering,
+    `event.stop`) completely uncovered.
+    """
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 48000)
         assert rig.sink.opened == (24000, 1)
         # Default (keyboard-only) barge-in mode gates the mic while a reply
         # is outstanding -- asserted on the TAP's real behavior (a pushed
@@ -736,7 +921,7 @@ async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
         rig.recorder.push(b"while speaking")
         assert b"while speaking" not in session.audio_frames
 
-        console._console_realtime.controller.on_keypress()
+        await pilot.press("x")
         await pilot.pause()
 
         assert rig.sink.terminal_reason == "stopped"
@@ -748,23 +933,134 @@ async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
 
 
 @pytest.mark.asyncio
-async def test_acoustic_mode_never_gates_the_mic(monkeypatch):
-    _patch_realtime_config(monkeypatch, acoustic=True)
-    app = _build_test_app()
+async def test_realtime_barge_in_and_esc_work_with_focus_off_the_composer(
+    monkeypatch,
+):
+    """The realtime engine inherits V3's promise: "press any key" / "Esc
+    from any point in the loop" must hold with focus on the transcript
+    (clicked or scrolled), not only on the composer."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
     rig = _install_realtime_fakes(app)
-    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        await pilot.pause()
+        assert console.app.focused is transcript
+        assert console._should_capture_console_input(composer) is False
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+        await pilot.press("x")
+        await pilot.pause()
+        assert console._console_realtime.controller.state == "live", (
+            "barge-in did nothing with focus off the composer"
+        )
+        assert session.cancels == [100]
+
+        transcript.focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+
+@pytest.mark.asyncio
+async def test_esc_exits_the_realtime_loop_and_the_action_gate_follows_it(
+    monkeypatch,
+):
+    """F8: the priority-Esc action and its `check_action` gate must know
+    about the realtime loop, not just the V3 one."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _enter_live_realtime(console, pilot, rig)
+
+        assert console.check_action("exit_console_hands_free", ()) is True
+
+        await pilot.press("escape")
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+        assert console.check_action("exit_console_hands_free", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_toggle_exits_a_running_realtime_loop(monkeypatch):
+    """F8: `ctrl+shift+h` is a toggle for BOTH engines."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         session = await _enter_live_realtime(console, pilot, rig)
 
+        console.action_toggle_console_hands_free()
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+        assert len(rig.sessions) == 1, "the toggle started a second loop"
+        await _wait_for(lambda: session.closed, pilot)
+
+
+@pytest.mark.asyncio
+async def test_exit_restores_the_ordinary_voice_chip(monkeypatch):
+    """F8: the realtime chip is borrowed; exiting must give it back rather
+    than leaving `realtime · listening` painted over an idle composer."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _enter_live_realtime(console, pilot, rig)
+        await _wait_for(lambda: "realtime" in _visible_text(console), pilot)
+
+        console._console_realtime.controller.on_exit_request()
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+        await pilot.pause()
+
+        assert "realtime" not in _visible_text(console), _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_reply_transcript_is_actually_repainted_mid_reply(monkeypatch):
+    """F8: the store write is not the point -- the user seeing it is. Pins
+    the repaint cadence with a token no chrome could supply."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
         session.fire_turn_committed()
         session.fire_reply_started("item-1")
-        session.fire_audio_delta(b"\x00" * 4800)
-        session.fire_first_audio()
-        await _wait_for(
-            lambda: console._console_realtime.controller.state == "speaking", pilot
-        )
+        session.fire_output_transcript_delta("ZEBRAFISH")
+
+        # No reply_done: the repaint must happen WHILE the reply streams.
+        await _wait_for(lambda: "ZEBRAFISH" in _visible_text(console), pilot)
+
+
+@pytest.mark.asyncio
+async def test_acoustic_mode_never_gates_the_mic(monkeypatch):
+    _patch_realtime_config(monkeypatch, acoustic=True)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
 
         assert console._console_realtime.mic_gated is False
         rig.recorder.push(b"live frame")
@@ -836,6 +1132,33 @@ async def test_connect_failure_without_a_viable_pipeline_names_both_reasons(
         joined = " ".join(message for message, _kwargs in notifications)
         assert "handshake rejected" in joined, joined
         assert "voice-activity" in joined or "auto-send" in joined, joined
+
+
+@pytest.mark.asyncio
+async def test_missing_api_key_refuses_before_any_connect_attempt(monkeypatch):
+    """There is nothing to authenticate with, so the connect is never
+    dispatched -- and the refusal names the real cause instead of quoting
+    whatever 401 the provider would have sent back."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _patch_realtime_config(monkeypatch, api_key="")
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+
+        console.action_toggle_console_hands_free()
+        await _wait_for(lambda: console._console_hands_free is not None, pilot)
+
+        assert rig.sessions == [], "a connect was attempted with no API key"
+        assert console._console_realtime is None
+        assert any(
+            "API key" in message for message, _kwargs in notifications
+        ), notifications
 
 
 @pytest.mark.asyncio
@@ -1008,6 +1331,9 @@ async def test_exit_tears_down_tap_then_session_then_sink(monkeypatch):
         assert rig.recorder.stop_calls == 1
         assert rig.order[0] == "tap.stop"
         assert rig.order.index("session.close") < rig.order.index("sink.stop")
+        # F3: the tap's stop waits for callback quiescence and then joins
+        # the recorder thread -- seconds of frozen UI if run inline.
+        assert rig.recorder.stop_thread_ident != threading.get_ident()
 
 
 @pytest.mark.asyncio
@@ -1042,6 +1368,26 @@ async def test_exit_mid_reply_closes_the_reply_row_as_interrupted(monkeypatch):
         ][0]
         assert assistant.status == "complete"
         assert assistant.content.endswith("interrupted"), assistant.content
+
+
+@pytest.mark.asyncio
+async def test_unmount_right_after_exit_still_closes_the_session(monkeypatch):
+    """F7: exit dispatches the close to a worker. Unmounting before that
+    worker has run must not leave the WebSocket open -- there is nothing
+    left holding a reference to it by then."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        # No pause between the two: the close worker has not run yet.
+        console._console_realtime.controller.on_exit_request()
+        await console.on_unmount()
+
+        assert session.closed is True
 
 
 @pytest.mark.asyncio

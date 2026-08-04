@@ -863,6 +863,19 @@ CONSOLE_REALTIME_UNSUPPORTED_PROVIDER_TEMPLATE = (
 #: connect-failure path as a refused handshake, since from the user's seat
 #: both mean "the realtime loop cannot run" and both deserve the fallback.
 CONSOLE_REALTIME_MIC_FAILED_MESSAGE = "the microphone could not be opened"
+#: Reported the same way, and for the same reason: there is nothing to
+#: authenticate with, so the connect is never dispatched at all.
+CONSOLE_REALTIME_NO_API_KEY_MESSAGE = (
+    f"no {CONSOLE_REALTIME_SUPPORTED_PROVIDER.title()} API key is configured"
+)
+#: Shown once per loop entry when reply audio cannot be played. The
+#: conversation itself still works (the transcript streams in), so this is
+#: a warning, not a failure -- but silently miming a spoken reply would be
+#: worse than either.
+CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE = (
+    "Realtime reply audio is unavailable (no output device); the reply "
+    "transcript still appears in the conversation."
+)
 CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = (
     "the connection timed out after {seconds:g}s"
 )
@@ -925,6 +938,12 @@ class ConsoleRealtimeSession:
             (the tap's own flag is private).
         fed_bytes: Bytes of reply audio handed to the sink queue for the
             CURRENT reply. Drives `played_ms`; reset per reply.
+        audio_failed_for_reply: True once this reply's audio sink failed to
+            open -- every later delta of the SAME reply is then dropped
+            without another attempt. Reset at the next reply start.
+        audio_unavailable_notified: True once the user has been told, in
+            THIS loop entry, that reply audio is unavailable. One toast per
+            loop, not one per reply.
         user_row_id: The transcript row created at turn-commit, waiting for
             its input transcript to land.
         assistant_row_id: The current reply's transcript row, or None
@@ -961,6 +980,8 @@ class ConsoleRealtimeSession:
     user_row_id: str | None = None
     assistant_row_id: str | None = None
     last_reply_row_id: str | None = None
+    audio_failed_for_reply: bool = False
+    audio_unavailable_notified: bool = False
     pending_text_turn: str | None = None
     adopt_capture: bool = False
     failure_text: str = ""
@@ -3512,6 +3533,10 @@ class ChatScreen(BaseAppScreen):
         #: session is set. See `ConsoleRealtimeSession` and
         #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
         self._console_realtime: ConsoleRealtimeSession | None = None
+        #: The worker releasing a just-exited realtime loop's tap/session/
+        #: sink, or None. Retained only so `on_unmount` can wait for it --
+        #: see `_teardown_console_realtime_loop`.
+        self._console_realtime_close_worker: Any | None = None
         #: True once `_install_console_hands_free_store_tap` has wrapped the
         #: store's `append_stream_chunk`/`mark_message_*` methods. The store
         #: itself is a lazily-created singleton for this screen instance
@@ -7787,6 +7812,12 @@ class ChatScreen(BaseAppScreen):
         Only user/assistant rows with real text are replayed -- tool
         markers and empty placeholder rows (a turn whose transcript never
         landed) would seed noise the user never said.
+
+        An over-budget message is SKIPPED, not treated as the end of the
+        walk (fix round 1, F6): stopping there meant one long newest reply
+        -- routine, a realtime reply is a monologue -- shipped ZERO history
+        on reconnect, silently amnesiac exactly when continuity matters
+        most. Skipping keeps every older turn that still fits.
         """
         store = self._ensure_console_chat_store()
         try:
@@ -7805,7 +7836,7 @@ class ChatScreen(BaseAppScreen):
             if not text:
                 continue
             if used_chars + len(text) > CONSOLE_REALTIME_SEED_CHARS:
-                break
+                continue
             selected.append((message.role.value, text))
             used_chars += len(text)
             if len(selected) >= CONSOLE_REALTIME_SEED_TURNS:
@@ -7834,9 +7865,7 @@ class ChatScreen(BaseAppScreen):
     def _console_realtime_api_key(self) -> str:
         """The configured API key for the realtime provider, or `""`.
 
-        Never raises and never logs the key: a missing key surfaces as an
-        ordinary connect failure (the provider refuses the handshake),
-        which already routes through the loud fallback.
+        Never raises and never logs the key itself.
         """
         try:
             return str(get_api_key(CONSOLE_REALTIME_SUPPORTED_PROVIDER) or "")
@@ -7943,6 +7972,20 @@ class ChatScreen(BaseAppScreen):
         drop takes.
         """
         session.connect_attempt += 1
+        # No credential, no connect (fix round 1): dispatching one anyway
+        # would spend the connect timeout to come back with whatever 401
+        # text the provider chose, and the fallback toast would quote THAT
+        # instead of the one thing the user can act on. Same
+        # blocker-shaped check as `_console_pipeline_hands_free_blocker`,
+        # routed through the SAME failure path so the fallback behaves
+        # identically.
+        if not self._console_realtime_api_key():
+            self._console_realtime_connect_failed(
+                session,
+                session.connect_attempt,
+                RuntimeError(CONSOLE_REALTIME_NO_API_KEY_MESSAGE),
+            )
+            return
         self.run_worker(
             self._connect_console_realtime(session, attempt=session.connect_attempt),
             exclusive=False,
@@ -8091,6 +8134,15 @@ class ChatScreen(BaseAppScreen):
         saw, e.g. one that arrived during a reconnect) creates its own row
         rather than being dropped: losing what the user said is worse than
         a row slightly out of order.
+
+        An ALREADY-FILLED row is never overwritten (fix round 1, F5). This
+        callback carries no item id, and `user_row_id` moves to each new
+        commit, so a transcription that finishes late -- after the next
+        turn committed AND after that turn's own transcript landed --
+        would otherwise replace a correct transcript with a stale one,
+        putting words in the user's mouth in the durable record. Dropped
+        instead, with the row id, because a wrong transcript is worse than
+        a missing one and this is the only place it can be diagnosed.
         """
         spoken = str(text or "").strip()
         if not spoken:
@@ -8102,6 +8154,21 @@ class ChatScreen(BaseAppScreen):
             )
             return
         store = self._ensure_console_chat_store()
+        try:
+            existing = str(store.get_message(row_id).content or "").strip()
+        except Exception:  # noqa: BLE001 - an unreadable row is a dropped one
+            logger.opt(exception=True).warning(
+                "Console realtime: could not read the input-transcript row: "
+                f"op=realtime_input_transcript row_id={row_id}"
+            )
+            return
+        if existing:
+            logger.warning(
+                "Console realtime: dropping a late input transcript; its row "
+                "already holds another turn's text: "
+                f"op=realtime_input_transcript row_id={row_id}"
+            )
+            return
         try:
             store.update_message_content(row_id, spoken)
         except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
@@ -8126,6 +8193,9 @@ class ChatScreen(BaseAppScreen):
         session.assistant_row_id = row_id
         session.last_reply_row_id = row_id or session.last_reply_row_id
         session.fed_bytes = 0
+        # A fresh attempt at the output device for this reply: the latch is
+        # per-reply, not per-loop (the toast is the per-loop half).
+        session.audio_failed_for_reply = False
         session.controller.on_reply_started()
 
     def _on_console_realtime_output_transcript_delta(
@@ -8297,8 +8367,17 @@ class ChatScreen(BaseAppScreen):
         `played_ms` over-count rather than under-count -- see
         `_console_realtime_played_ms` for why that direction is the safe
         one.
+
+        A sink that could not be opened is LATCHED for the rest of the
+        reply (fix round 1, F2). Audio deltas arrive roughly per 20 ms of
+        speech, so retrying the open per delta meant one construction --
+        and one logged traceback, on the UI thread -- every 20 ms for as
+        long as the assistant talked. The device is not coming back
+        mid-reply; the next reply gets a fresh attempt.
         """
         if not pcm:
+            return
+        if session.audio_failed_for_reply:
             return
         if session.audio_queue is None:
             self._begin_console_realtime_reply_audio(session)
@@ -8322,9 +8401,22 @@ class ChatScreen(BaseAppScreen):
         single-use by contract (open -> feed -> close/stop, then discard),
         and a per-reply pump is what lets a barge-in abort exactly this
         reply's audio without disturbing anything else.
+
+        Failure is latched rather than retried (see
+        `_on_console_realtime_audio_delta`), logged ONCE per reply and
+        toasted ONCE per loop entry -- a device that is missing will be
+        missing for every reply, and one toast per reply would bury the
+        conversation the user is still having.
         """
-        sink = self._build_console_realtime_sink()
+        try:
+            sink = self._build_console_realtime_sink()
+        except Exception:  # noqa: BLE001 - the conversation survives mute audio
+            sink = None
+            logger.opt(exception=True).warning(
+                "Console realtime: could not build the audio sink"
+            )
         if sink is None:
+            self._note_console_realtime_audio_unavailable(session)
             return
         try:
             sink.open(CONSOLE_REALTIME_SAMPLE_RATE, 1)
@@ -8332,6 +8424,7 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).warning(
                 "Console realtime: could not open the audio sink"
             )
+            self._note_console_realtime_audio_unavailable(session)
             return
         queue: asyncio.Queue = asyncio.Queue()
         session.sink = sink
@@ -8342,6 +8435,18 @@ class ChatScreen(BaseAppScreen):
             exclusive=False,
             group="console-realtime-audio",
             exit_on_error=False,
+        )
+
+    def _note_console_realtime_audio_unavailable(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """Latch "no reply audio this reply", and say so once per loop."""
+        session.audio_failed_for_reply = True
+        if session.audio_unavailable_notified:
+            return
+        session.audio_unavailable_notified = True
+        self.app_instance.notify(
+            CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE, severity="warning"
         )
 
     def _build_console_realtime_sink(self) -> Any:
@@ -8729,19 +8834,23 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.sync_dictation_state(self._console_dictation_state)
 
-    def _release_console_realtime_state(self) -> tuple[Any, Any, Any] | None:
-        """Drop the loop and release everything that can be released now.
+    def _release_console_realtime_state(self) -> tuple[Any, Any, Any, Any] | None:
+        """Drop the loop and hand its resources to the async release.
 
-        Teardown order is fixed (rule 11) and starts here: the TAP is
-        stopped first, synchronously, so the microphone stops feeding a
-        session that is about to close -- `RealtimeMicTap.stop()` is
-        terminal and guarantees no further `on_frames` once it returns.
-        The provider session and the audio sink need an await, so they are
-        handed to the caller (see `_close_console_realtime_resources`),
-        which is what keeps their order pinned too.
+        What happens synchronously here is only what is instant: the tick
+        timer stops, the reply row closes, and the tap is GATED -- a plain
+        flag flip that stops it feeding the session immediately.
+
+        `tap.stop()` itself is deliberately NOT called here (fix round 1,
+        F3). It waits up to 2 s for in-flight `on_frames` callbacks to
+        quiesce and then joins the recorder thread, which is the exact
+        ~4 s frozen-UI class `_discard_console_dictation_session` already
+        documents. It moves to the async release, where it still runs
+        FIRST -- before the session close -- so the teardown ORDER (tap ->
+        session -> sink) is unchanged.
 
         Returns:
-            The `(provider_session, sink, audio_queue)` triple still
+            The `(tap, provider_session, sink, audio_queue)` tuple still
             needing an async release, or None when no loop was running.
             The queue rides along so the reply's pump task -- parked on
             `queue.get()` and therefore blind to a sink that went terminal
@@ -8766,25 +8875,44 @@ class ChatScreen(BaseAppScreen):
         tap, session.tap = session.tap, None
         if tap is not None:
             try:
-                tap.stop()
+                # Instant, non-blocking: frames are dropped from now on, so
+                # nothing reaches a session that is about to close even
+                # though the real `stop()` happens off-thread below.
+                tap.set_gated(True)
             except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: stopping the mic tap failed"
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not gate the mic tap for teardown"
                 )
         provider_session, session.session = session.session, None
         sink, session.sink = session.sink, None
         queue, session.audio_queue = session.audio_queue, None
         session.pump_worker = None
-        return provider_session, sink, queue
+        return tap, provider_session, sink, queue
 
     def _teardown_console_realtime_loop(self) -> None:
-        """Exit teardown: release state, then the async resources, then repaint."""
+        """Exit teardown.
+
+        Order, end to end: gate + drop the loop state (sync, instant) ->
+        repaint the chip back to the ordinary dictation state (sync, so
+        the user sees the loop end immediately rather than after the
+        device teardown) -> tap.stop -> provider session close -> sink
+        stop -> pump released, all on a worker because the first three of
+        those block (fix round 1, F3/F10).
+        """
         released = self._release_console_realtime_state()
         if released is None:
             return
-        provider_session, sink, queue = released
-        self.run_worker(
-            self._close_console_realtime_resources(provider_session, sink, queue),
+        tap, provider_session, sink, queue = released
+        # Handle retained (fix round 1, F7): once the loop state is
+        # dropped, this worker is the ONLY thing still holding the
+        # WebSocket and the microphone. An unmount landing before it runs
+        # -- exiting the loop and leaving the screen in the same breath is
+        # an ordinary thing to do -- has nothing else left to release them
+        # by, so `on_unmount` waits on this.
+        self._console_realtime_close_worker = self.run_worker(
+            self._close_console_realtime_resources(
+                tap, provider_session, sink, queue
+            ),
             exclusive=False,
             group="console-realtime-close",
             exit_on_error=False,
@@ -8792,16 +8920,30 @@ class ChatScreen(BaseAppScreen):
         self._restore_console_voice_chip()
 
     async def _close_console_realtime_resources(
-        self, provider_session: Any, sink: Any, queue: Any = None
+        self, tap: Any, provider_session: Any, sink: Any, queue: Any = None
     ) -> None:
-        """Close the provider session, then the audio sink -- in that order.
+        """Release the tap, then the session, then the sink -- in that order.
 
-        Session first: closing it stops new audio arriving, so the sink is
-        never asked to play a chunk that outlived the conversation. The
-        pump's source is closed LAST, once the sink is already terminal, so
-        the pump returns immediately instead of draining a reply the user
-        has already left.
+        `tap.stop()` runs through `asyncio.to_thread`: it waits for
+        in-flight `on_frames` callbacks to quiesce (bounded at 2 s) and
+        then joins the recorder thread, which is seconds of frozen UI if
+        called inline -- the same reason `_discard_console_dictation_
+        session` exists. Still FIRST, so the microphone is released before
+        the session it was feeding.
+
+        Session before sink: closing it stops new audio arriving, so the
+        sink is never asked to play a chunk that outlived the
+        conversation. The pump's source is closed LAST, once the sink is
+        already terminal, so the pump returns immediately instead of
+        draining a reply the user has already left.
         """
+        if tap is not None:
+            try:
+                await asyncio.to_thread(tap.stop)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "Console realtime: stopping the mic tap failed"
+                )
         if provider_session is not None:
             await self._close_console_realtime_session(provider_session)
         if sink is not None:
@@ -15794,10 +15936,24 @@ class ChatScreen(BaseAppScreen):
         # worker dispatched from a screen already unmounting may never run.
         released = self._release_console_realtime_state()
         if released is not None:
-            provider_session, sink, queue = released
+            tap, provider_session, sink, queue = released
             await self._close_console_realtime_resources(
-                provider_session, sink, queue
+                tap, provider_session, sink, queue
             )
+        # A loop exited moments ago left its release on a worker that may
+        # not have run yet, and nothing else still references what it
+        # holds (fix round 1, F7).
+        close_worker, self._console_realtime_close_worker = (
+            self._console_realtime_close_worker,
+            None,
+        )
+        if close_worker is not None:
+            try:
+                await close_worker.wait()
+            except Exception:  # noqa: BLE001 - a cancelled release is not an error
+                logger.opt(exception=True).debug(
+                    "Console realtime: waiting for the release worker failed"
+                )
         # Dictation's own seven-statement teardown now lives in the
         # decomposed controller (dev's wave-1 extraction); calling it here
         # keeps this method one line per subsystem.

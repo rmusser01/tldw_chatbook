@@ -158,6 +158,13 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
   streamed text **marked interrupted** (metadata + visible marker). Documented
   divergence: the model remembers less than the transcript shows, and
   post-reconnect reseeding sends slightly more than the model previously had.
+- **Turn metadata deferred (task 5, fix round 1 / F4):** the per-turn
+  `engine`/`provider`/`model` and `interrupted` metadata above has no field to
+  live in — `ConsoleChatStore`'s message row exposes no metadata column, and
+  adding one is a schema change well outside a wiring task. Deferred pending
+  that field; today the provenance a reader actually needs is carried by the
+  visible `⏹ interrupted` marker on the cut reply and by the usage attached to
+  the row (recorded against the realtime provider/model).
 - Accepted oddity: reply text finishes rendering before the voice finishes
   speaking; the chip's `speaking` state carries the truth.
 
