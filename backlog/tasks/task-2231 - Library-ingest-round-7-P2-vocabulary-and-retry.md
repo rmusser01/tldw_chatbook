@@ -68,3 +68,15 @@ promises the post-commit surface won't honour.
 **Verification.** 300 core + 56 shell-subset green; 29,815 collect
 clean. Live: forecast "1 will match" + consent line → `≡ matched ·
 copy_of_report.txt` row → "Latest run: 1 matched".
+
+**Qodo round (fixed in `76dc40154`):** two internal inconsistencies from
+this PR's own changes. (1) The attempt suffix was appended BEFORE
+`detected_type`, so only rows WITH a type mis-ordered
+("… · attempt 2 · pdf") — my test used typeless jobs and missed it; the
+marker is now the trailing element in every state and the test carries a
+type. (2) `_queue_counts_line` bucketed purely by state, so the queue
+line said "2 done" while a group header below said "1 done · 1 matched";
+the tally now applies the same dedup predicate as the headers and rows.
+**Lesson: when a new distinction is introduced, EVERY surface that
+aggregates the old bucket has to learn it — the row, the group header,
+the tally, and the toast were four separate places.**
