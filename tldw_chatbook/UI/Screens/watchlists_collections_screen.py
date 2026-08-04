@@ -93,6 +93,7 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
+    ResumeSourceRequested,
     SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
@@ -123,7 +124,11 @@ from ..Watchlists_Modules.artifacts_pane import (
     cadence_scope_phrase,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
-from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
+from ..Watchlists_Modules.content_pane import (
+    ContentPane,
+    UnreadToggleRequested,
+    ViewSnapshotRequested,
+)
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
@@ -156,6 +161,7 @@ from ..Watchlists_Modules.rules_pane import (
     SaveRuleRequested,
 )
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.sources_pane import (
     CreateFormDraftChanged,
     CreateFormVisibilityChanged,
@@ -3382,6 +3388,99 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if any(str(s.get("id")) == str(keep_id) for s in (pane.sources or [])):
             pane.select_source_by_id(str(keep_id))
 
+    @on(ResumeSourceRequested)
+    def handle_resume_source_requested(self, event: ResumeSourceRequested) -> None:
+        """Dispatch a Resume press to `_resume_source` on a worker (task-2050).
+
+        Refuses any entity that is not a LOCAL `subscription` (task-2050
+        Qodo): `resume_source` takes a raw local db id, so a message carrying
+        some other entity kind that happens to hold a numeric `source_id`
+        (e.g. a server `watchlist_source`) would reset the counters of
+        whatever unrelated LOCAL subscription shares that number. The
+        Inspector's render gate already makes that unreachable today; this
+        guard keeps it unreachable from any future caller too. Type-only log,
+        no toast -- a refused programmatic message is not a user action.
+        """
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        if (
+            str(entity.get("backend") or "") != "local"
+            or str(entity.get("entity_kind") or "") != "subscription"
+        ):
+            logger.warning(
+                "ResumeSourceRequested for a non-local-subscription entity "
+                f"(backend={entity.get('backend')!r}, "
+                f"kind={entity.get('entity_kind')!r}); refusing."
+            )
+            return
+        self.run_worker(self._resume_source(entity), exclusive=True)
+
+    async def _resume_source(self, source: dict[str, Any]) -> None:
+        """Clear an auto-paused source's pause via the real service (AC#2/#3).
+
+        Local-only, the same reason `_open_snapshot_view`'s `url_snapshots`
+        lookup reaches `_local_watchlists_service()` directly rather than
+        through `self._controller` (`WatchlistsBackendController`): only a
+        local subscription currently carries a pause concept at all (see
+        `normalize_server_watchlist_source`, which always stamps `paused:
+        False`), so the controller -- which exists to route a call to
+        whichever of local/server is active -- has no reason to gain a
+        method for a concept the server backend does not have.
+
+        `source["source_id"]` (the subscription's raw db id) is read rather
+        than `source["id"]` (the namespaced `local:subscription:5` form
+        `self._controller` calls take): there is no routing layer here to
+        parse that namespacing back off, so the raw id
+        `normalize_local_subscription_row` already carries under
+        `source_id` is used directly, matching how `LocalWatchlistsService`
+        itself takes ids everywhere.
+        """
+        service = self._local_watchlists_service()
+        source_id = source.get("source_id")
+        name = (
+            source.get("name")
+            or source.get("source_title")
+            or source.get("title")
+            or "the source"
+        )
+        if service is None or source_id is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        try:
+            await service.resume_source(source_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to resume watchlist source {source_id!r}."
+            )
+            self._notify_watchlists(
+                "Could not resume that source. Check the logs and try again.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # markup=False: the name is user-entered (Create Source's Name
+        # field), same reasoning as every other toast on this screen that
+        # embeds one -- a bracket in a source name must reach the user
+        # verbatim rather than being interpreted (or swallowed) as Rich
+        # markup.
+        self._notify_watchlists(
+            f"Resumed {name}. It will be checked on its normal schedule.",
+            severity="information",
+            markup=False,
+        )
+        self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
+        # Reload preserving selection, same as `_check_now_source`: the row
+        # stays selected, but the Sources table's Status column -- and the
+        # Inspector's own `paused` flag, which decides whether this very
+        # Resume button renders -- both pick up the cleared pause once the
+        # reload lands.
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
+
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
         event.stop()
@@ -3690,6 +3789,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         instance carries no such attribute at all.
         """
         return getattr(self.app_instance, "chachanotes_db", None)
+
+    def _local_watchlists_service(self) -> Any:
+        """The live `LocalWatchlistsService`, or `None` (TASK-1494).
+
+        `url_snapshots` is local-only storage -- only `URLMonitor.check_url`
+        (the local monitoring engine) ever writes it, and there is no
+        server-backend equivalent to route to -- so the reader's snapshot
+        viewer reaches this service directly, the same `getattr(self.
+        app_instance, ..., None)` idiom `_watchlist_bundle_service`/`_
+        chachanotes_db` above use, rather than through `self._controller`
+        (`WatchlistsBackendController`), which exists to route a call to
+        whichever of local/server is active and has no reason to gain a
+        local-only method just for this one read.
+        """
+        return getattr(self.app_instance, "local_watchlists_service", None)
 
     def _briefing_schedules_enabled(self) -> bool:
         """Whether `[scheduling] briefing_schedules_enabled` is on for this
@@ -6718,6 +6832,93 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
+
+    @on(ViewSnapshotRequested)
+    def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        Deferred to a worker for the same reason every other DB-touching
+        handler on this screen is: `_open_snapshot_view` awaits a service
+        call and, on success, `push_screen_wait`, neither legal directly
+        inside a synchronous `@on` handler. No `exclusive=True`: like
+        `handle_kept_briefings_requested`'s sibling note explains, cancelling
+        a modal-owning worker mid-view would leave the modal on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        self.run_worker(
+            self._open_snapshot_view(item, event.which),
+            group="wl-view-snapshot",
+        )
+
+    async def _open_snapshot_view(self, item: dict[str, Any], which: str) -> None:
+        """Resolve `which` against `url_snapshots` and show it, or say why not.
+
+        AC#2: an absent snapshot (a `full_page` request against an item
+        whose page was somehow never stored, or a `previous` request when
+        only one snapshot exists yet) degrades to an honest toast, never an
+        empty modal and never a silent no-op -- the two failure modes the
+        acceptance criterion explicitly rules out.
+
+        Args:
+            item: The normalized watchlist item `ViewSnapshotRequested`
+                carried -- `source_id`/`url` key the `url_snapshots` lookup.
+            which: `"full_page"` (the newest snapshot) or `"previous"` (the
+                second-newest).
+        """
+        service = self._local_watchlists_service()
+        source_id = item.get("source_id")
+        url = item.get("url")
+        if service is None or source_id is None or not url:
+            self._notify_watchlists(
+                "Could not look up this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        try:
+            snapshots = await service.get_url_snapshots(source_id, url, limit=2)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load url_snapshots for the reader's snapshot viewer."
+            )
+            self._notify_watchlists(
+                "Could not load this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # Closed vocabulary, refused rather than defaulted (task-1494 Qodo):
+        # an unrecognized `which` silently treated as "previous" would open
+        # the WRONG snapshot after a typo'd/future caller, with a misleading
+        # toast on the absent case. Type-only log; nothing user-derived.
+        _SNAPSHOT_INDEX = {"full_page": 0, "previous": 1}
+        index = _SNAPSHOT_INDEX.get(which)
+        if index is None:
+            logger.warning(
+                f"ViewSnapshotRequested with unknown which={which!r}; refusing."
+            )
+            return
+        if index >= len(snapshots):
+            self._notify_watchlists(
+                "No page snapshot saved yet for this item."
+                if which == "full_page"
+                else "No previous snapshot yet for this page.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        snapshot = snapshots[index]
+        await self.app.push_screen_wait(
+            SnapshotViewModal(
+                url=url,
+                created_at=snapshot.get("created_at"),
+                content=snapshot.get("extracted_content"),
+            )
+        )
 
     async def _item_status_write_allowed(
         self, item_id: Any, intent: "_ItemStatusIntent"

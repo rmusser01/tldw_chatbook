@@ -103,6 +103,11 @@ def silence_ingest_worker_import_noise() -> None:
     logging.getLogger().addHandler(logging.NullHandler())
 
 
+#: Max underlying exception-chain messages captured for the UI's
+#: expanded failure details (task-2130).
+_ERROR_CHAIN_CAP = 3
+
+
 def classify_parse_failure(exc: Exception) -> bool:
     """Return whether an ingest-time exception is a *permanent* failure.
 
@@ -191,6 +196,28 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(exc, FileNotFoundError)
             else "parse_error"
         )
+        # (task-2130) The generic wrapper message ("PDF Extraction Error.")
+        # often hides the actual failure in the exception chain -- capture
+        # up to three distinct underlying messages so the UI's expanded
+        # details can say more than the one-line summary.
+        chain: list[str] = []
+        seen = {message}
+        visited_ids: set[int] = set()
+        cause = exc.__cause__ or exc.__context__
+        # Visited-identity guard (Qodo round): __cause__/__context__ can
+        # form a cycle, and repeated messages keep len(chain) flat -- a
+        # message-only loop condition could spin forever.
+        while (
+            cause is not None
+            and len(chain) < _ERROR_CHAIN_CAP
+            and id(cause) not in visited_ids
+        ):
+            visited_ids.add(id(cause))
+            text = str(cause).strip() or cause.__class__.__name__
+            if text not in seen:
+                chain.append(f"{cause.__class__.__name__}: {text}")
+                seen.add(text)
+            cause = cause.__cause__ or cause.__context__
         failure = {
             "ok": False,
             "error": message,
@@ -201,6 +228,7 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
                 "category": category,
                 "message": message,
                 "exception_type": exc.__class__.__name__,
+                "chain": chain,
             },
         }
         if isinstance(stt_failure_provenance, dict):

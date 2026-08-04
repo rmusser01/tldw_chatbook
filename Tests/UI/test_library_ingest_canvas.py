@@ -182,9 +182,12 @@ async def test_unsupported_files_summary_renders():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
-        assert (
-            "1 unsupported file will be recorded as a failure."
-            == str(summary.renderable)
+        # (task-2100) Unsupported-only selection is gate-blocked, so the
+        # line names the file instead of promising a failure row that a
+        # blocked submit never records.
+        assert str(summary.renderable) == (
+            "Unsupported: weird.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
         )
 
 
@@ -424,7 +427,7 @@ async def test_non_dependent_controls_stay_enabled():
     async with app.run_test() as pilot:
         analyze_checkbox = pilot.app.query_one("#opt-generic-analyze", Checkbox)
         chunk_checkbox = pilot.app.query_one("#opt-generic-chunk", Checkbox)
-        encoding_input = pilot.app.query_one("#opt-generic-encoding", Input)
+        encoding_input = pilot.app.query_one("#opt-generic-encoding", Select)
         assert analyze_checkbox.disabled is False
         assert chunk_checkbox.disabled is False
         assert encoding_input.disabled is False
@@ -825,11 +828,13 @@ async def test_recent_ingests_section_renders_terminal_jobs():
 
 @pytest.mark.asyncio
 async def test_recent_ingests_section_renders_when_queue_empty():
-    """Recent ingests is visible even when there are no jobs at all."""
+    """(task-2100) Recent ingests is HIDDEN when there is nothing recent --
+    it used to render always, and after a clear it expanded to an empty,
+    unlabeled shell (round-3 critique evidence)."""
     state = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        assert pilot.app.query_one("#library-ingest-recent", Collapsible)
+        assert not list(pilot.app.query("#library-ingest-recent"))
         assert len(pilot.app.query("#library-ingest-queue-empty")) == 1
 
 
@@ -1290,9 +1295,10 @@ async def test_unsupported_files_summary_pluralizes_correctly():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
-        assert (
-            "2 unsupported files will be recorded as failures."
-            == str(summary.renderable)
+        # (task-2100) Gate-blocked (nothing importable): names only.
+        assert str(summary.renderable) == (
+            "Unsupported: a.xyz, b.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
         )
 
 

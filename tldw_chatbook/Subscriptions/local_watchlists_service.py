@@ -422,6 +422,34 @@ class LocalWatchlistsService:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         return self._db().get_item_status(row_id)
 
+    async def get_url_snapshots(
+        self, source_id: Any, url: str, *, limit: int = 2
+    ) -> list[dict[str, Any]]:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        A thin passthrough to `SubscriptionsDB.get_url_snapshots` -- no
+        normalization needed on the way out; the three columns it returns
+        (`id`, `extracted_content`, `created_at`) are exactly what the
+        screen's `ViewSnapshotRequested` handler and `SnapshotViewModal`
+        read. Not wrapped in `asyncio.to_thread`: no read on this service
+        is (see `list_items`/`get_source`/`get_item_status` above) --
+        `SubscriptionsDB`'s SQLite reads are fast enough that this service
+        has never paid for a thread hop on one, and adding it just for this
+        method would be an inconsistency, not a fix.
+
+        Args:
+            source_id: Owning subscription id (bare, not namespaced) --
+                `normalize_watchlist_item`'s `source_id` field.
+            url: The exact URL the snapshot was captured for --
+                `normalize_watchlist_item`'s `url` field.
+            limit: How many rows to return, newest first.
+
+        Returns:
+            Up to `limit` dicts, newest first; empty when the (source, url)
+            pair has no snapshot yet.
+        """
+        return self._db().get_url_snapshots(int(source_id), str(url), limit=limit)
+
     async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
         """Move one watchlist item to a new status.
 
@@ -474,6 +502,42 @@ class LocalWatchlistsService:
             "entity_kind": "subscription",
             "source_id": int(source_id),
         }
+
+    async def resume_source(self, source_id: Any) -> dict[str, Any]:
+        """Clear an auto-paused source's pause and failure counters (task-2050).
+
+        The UI's one-press recourse for a source auto-paused by repeated
+        check failures (task-1410's `_advance_failure_and_maybe_pause`).
+        Delegates to `SubscriptionsDB.reset_subscription_errors`, which
+        already performs exactly this reset (`error_count`,
+        `consecutive_failures`, `last_error`, `is_paused` all cleared) for
+        the success branch of `record_check_result` -- this method is that
+        reset's first caller reachable from outside the DB layer, giving it
+        an explicit trigger instead of only ever firing as a side effect of
+        a successful check.
+
+        Safe to call on a source that is not currently paused: the
+        underlying write zeroes counters that are already zero and clears an
+        already-clear pause flag, so it is a harmless no-op. The UI never
+        offers this action for a non-paused source (see
+        `InspectorPane._is_paused_subscription`), but this method does not
+        need that guard to stay correct on its own.
+
+        Args:
+            source_id: The subscription's raw database id.
+
+        Returns:
+            The resumed source, freshly normalized.
+
+        Raises:
+            KeyError: `source_id` does not name a subscription.
+        """
+        db = self._db()
+        db.reset_subscription_errors(int(source_id))
+        row = db.get_subscription(int(source_id))
+        if row is None:
+            raise KeyError(f"Subscription not found: {source_id}")
+        return normalize_local_subscription_row(row)
 
     async def launch_run(
         self, *, source_id: Any = None, job_id: Any = None

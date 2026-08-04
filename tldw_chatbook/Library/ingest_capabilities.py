@@ -462,7 +462,10 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
             OptionField(
                 name="encoding",
                 label="Encoding",
-                type="text",
+                # (task-2100) A select of known encodings instead of free
+                # text -- typed garbage silently degraded parsing.
+                type="select",
+                options=("auto", "utf-8", "utf-16", "latin-1", "cp1252"),
                 default="auto",
                 depends_on=None,
             ),

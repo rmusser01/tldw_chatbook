@@ -16,6 +16,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
 
+from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
@@ -223,6 +224,27 @@ class UnreadToggleRequested(Message):
         super().__init__()
 
 
+class ViewSnapshotRequested(Message):
+    """Posted when the reader asks to see a `change` item's stored page.
+
+    TASK-1494: the design spec's Content-pane mockup promised `[full page]`
+    and `[previous snapshot]` affordances reading from `url_snapshots`, and
+    Phase D shipped both renderers without them -- the data was stored and
+    unreachable. `which` is `"full_page"` for the newest `url_snapshots`
+    row (the page this change's diff was measured against) or `"previous"`
+    for the second-newest (the page as it was one check before that); the
+    screen's handler resolves which row that actually is, since this pane
+    holds no DB handle of its own (see `ContentPane`'s own docstring).
+    Carries the full item dict, same as `UnreadToggleRequested`, so the
+    handler can read `source_id`/`url` off it without a second lookup.
+    """
+
+    def __init__(self, item: dict[str, Any] | None, which: str) -> None:
+        self.item = item
+        self.which = which
+        super().__init__()
+
+
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.
 
@@ -243,8 +265,10 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
 
         Yields:
             A single `#content-empty` `Static` when no item is selected;
-            otherwise the `#content-mark-unread-button` and a
-            `#content-body` `Static` holding `render_for(self.item)`.
+            otherwise the `#content-mark-unread-button`, the `#content-
+            full-page-button`/`#content-previous-snapshot-button` pair on a
+            `change`-kind item only (TASK-1494), and a `#content-body`
+            `Static` holding `render_for(self.item)`.
         """
         if self.item is None:
             yield Static("Select an item to read it.", id="content-empty")
@@ -267,9 +291,41 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             tooltip=_GLOBAL_STATUS_NOTE,
             compact=True,
         )
+        if str(self.item.get("content_kind") or "") == CONTENT_KIND_CHANGE:
+            # TASK-1494: the two affordances the design spec promised for a
+            # site change and Phase D never wired up. Article items never
+            # get these -- only `URLMonitor.check_url` (a `change`-kind
+            # producer) ever writes `url_snapshots`, so an article item has
+            # no rows there to show and the buttons would open a modal with
+            # nothing in it. `compact=True`, same footprint as "Mark
+            # unread" above: CONTENT's row budget is genuinely tight (see
+            # that button's own comment), but this is the one place the
+            # stored page these numbers were measured against becomes
+            # reachable at all, and a `change` item's diff body is the
+            # shorter of this pane's two bodies -- the trade favours making
+            # it reachable over a couple of extra lines of diff visible
+            # without scrolling.
+            yield Button(
+                "Full page",
+                id="content-full-page-button",
+                compact=True,
+                tooltip="Open the page this change was measured against.",
+            )
+            yield Button(
+                "Previous snapshot",
+                id="content-previous-snapshot-button",
+                compact=True,
+                tooltip="Open the page as it was before this change.",
+            )
         yield Static(render_for(self.item), id="content-body")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "content-mark-unread-button":
             event.stop()
             self.post_message(UnreadToggleRequested(self.item))
+        elif event.button.id == "content-full-page-button":
+            event.stop()
+            self.post_message(ViewSnapshotRequested(self.item, "full_page"))
+        elif event.button.id == "content-previous-snapshot-button":
+            event.stop()
+            self.post_message(ViewSnapshotRequested(self.item, "previous"))

@@ -127,6 +127,7 @@ class _Sink:
         self.finals: List[str] = []
         self.errors: List[Exception] = []
         self.segment_transcribing_calls: List[bool] = []
+        self.no_final_calls: int = 0
         self._lock = threading.Lock()
 
     def partial(self, text: str) -> None:
@@ -145,6 +146,10 @@ class _Sink:
         with self._lock:
             self.segment_transcribing_calls.append(done)
 
+    def segment_no_final(self) -> None:
+        with self._lock:
+            self.no_final_calls += 1
+
     def snapshot_finals(self) -> List[str]:
         with self._lock:
             return list(self.finals)
@@ -152,6 +157,10 @@ class _Sink:
     def snapshot_segment_transcribing_calls(self) -> List[bool]:
         with self._lock:
             return list(self.segment_transcribing_calls)
+
+    def snapshot_no_final_calls(self) -> int:
+        with self._lock:
+            return self.no_final_calls
 
 
 # --------------------------------------------------------------------------
@@ -215,6 +224,7 @@ def _mid_capture_service(transcription: Any, *, silence_threshold: float):
     service.on_error = None
     service.on_command = None
     service.on_segment_transcribing = None
+    service.on_segment_no_final = None
 
     return service
 
@@ -478,6 +488,7 @@ def test_a_blank_segment_still_fires_the_unconditional_completion_signal():
     service.on_final_transcript = sink.final
     service.on_error = sink.error
     service.on_segment_transcribing = sink.segment_transcribing
+    service.on_segment_no_final = sink.segment_no_final
 
     _run_loop(service)
     try:
@@ -496,6 +507,66 @@ def test_a_blank_segment_still_fires_the_unconditional_completion_signal():
         # final -- `done=True` above is the only thing that ever fired.
         assert sink.finals == []
         assert sink.partials == []
+        # Qodo review (task-5 follow-up): the SECOND unconditional signal a
+        # blank segment must fire -- positive proof no final is coming,
+        # which the hands-free resume latch depends on.
+        assert _wait_until(
+            lambda: sink.snapshot_no_final_calls() == 1, timeout=threshold + 1.0
+        ), f"expected on_segment_no_final to fire once, got {sink.snapshot_no_final_calls()!r}"
+    finally:
+        _stop_loop(service)
+
+
+def test_a_text_segment_never_fires_the_no_final_callback():
+    """The mirror image of the blank-segment test above: a segment that
+    DOES produce text must never fire `on_segment_no_final` -- it is
+    specific to the blank/whitespace-only outcome, not a third generic
+    per-segment signal alongside `on_segment_transcribing`'s pair."""
+    threshold = 0.15
+    transcription = _LatentTranscriptionService(0.0, texts=["hello"])
+    service = _mid_capture_service(transcription, silence_threshold=threshold)
+
+    sink = _Sink()
+    service.on_final_transcript = sink.final
+    service.on_error = sink.error
+    service.on_segment_transcribing = sink.segment_transcribing
+    service.on_segment_no_final = sink.segment_no_final
+
+    _run_loop(service)
+    try:
+        service._audio_callback(_chunk())
+        assert _wait_until(lambda: bool(sink.finals), timeout=threshold + 1.0)
+        assert sink.errors == []
+        assert sink.finals == ["hello"]
+        assert sink.snapshot_no_final_calls() == 0
+    finally:
+        _stop_loop(service)
+
+
+def test_a_service_with_no_no_final_callback_wired_transcribes_a_blank_segment_normally():
+    """`on_segment_no_final=None` (the default) must not break anything --
+    mirrors `test_a_service_with_no_callback_wired_transcribes_normally`
+    below for `on_segment_transcribing`."""
+    threshold = 0.15
+    transcription = _LatentTranscriptionService(0.0, texts=[""])
+    service = _mid_capture_service(transcription, silence_threshold=threshold)
+
+    sink = _Sink()
+    service.on_partial_transcript = sink.partial
+    service.on_final_transcript = sink.final
+    service.on_error = sink.error
+    service.on_segment_transcribing = sink.segment_transcribing
+    # on_segment_no_final deliberately left at its default (None).
+
+    _run_loop(service)
+    try:
+        service._audio_callback(_chunk())
+        assert _wait_until(
+            lambda: sink.snapshot_segment_transcribing_calls() == [False, True],
+            timeout=threshold + 1.0,
+        )
+        assert sink.errors == []
+        assert sink.finals == []
     finally:
         _stop_loop(service)
 

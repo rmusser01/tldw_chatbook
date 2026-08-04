@@ -15,16 +15,26 @@ class WatchlistContentAlertService:
         rules: list[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         matched: list[dict[str, Any]] = []
-        # Shared with `WatchlistFilterService` so the two cannot drift, and
-        # page-scoped rather than diff-scoped for a site change -- see
-        # `watchlist_rule_matching`.
-        haystack = build_rule_haystack(item)
+        # There are only three distinct scopes, so a per-scope cache builds each
+        # haystack at most once even when many rules share a scope (Qodo, the
+        # page-wide join over a large page is not free) -- keyed by the
+        # NORMALIZED scope so the whole `str(... or "anywhere").lower()` family
+        # collapses to one key.
+        haystack_by_scope: dict[str, str] = {}
         for rule in rules:
             conditions = dict(rule.get("conditions") or {})
             pattern = str(conditions.get("pattern") or "")
             if not pattern:
                 continue
             rule_type = str(conditions.get("type") or "keyword").lower()
+            # Shared with `WatchlistFilterService` so the two cannot drift.
+            # Page-scoped ("anywhere") by default for a site change -- see
+            # `watchlist_rule_matching` -- with a per-rule opt-in (TASK-1363)
+            # to narrow to just the text a change added or removed.
+            scope = str(conditions.get("scope") or "anywhere").lower()
+            if scope not in haystack_by_scope:
+                haystack_by_scope[scope] = build_rule_haystack(item, scope=scope)
+            haystack = haystack_by_scope[scope]
             is_match = False
             if rule_type == "keyword":
                 is_match = pattern.lower() in haystack

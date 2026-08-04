@@ -32,7 +32,10 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextAr
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chatbooks.chatbook_models import ContentType
 from ...config import (
+    TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+    TLDW_API_PLACEHOLDER_BASE_URL,
     get_cli_setting,
+    resolve_tldw_api_config,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
@@ -70,12 +73,17 @@ from ...Library.library_export_state import (
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
-from ...Widgets.Library.library_ingest_canvas import ingest_scope_label
+from ...Widgets.Library.library_ingest_canvas import (
+    _summarise_option,
+    ingest_scope_label,
+)
 from ...Library.library_ingest_jobs import (
+    IngestJobState,
     LibraryIngestJob,
     count_duplicate_done_jobs,
 )
 from ...Library.library_ingest_state import (
+    validate_ingest_option_value,
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
@@ -1446,6 +1454,10 @@ class LibraryScreen(BaseAppScreen):
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
+        # (task-2130) Durable session ledger: terminal jobs snapshotted at
+        # Clear-finished time so Recent ingests (incl. failure records)
+        # survives the registry removal.
+        self._library_ingest_recent_ledger: list[LibraryIngestJob] = []
         # (task-2043) Failed rows whose inline error details are expanded.
         self._library_ingest_expanded_details: set[str] = set()
         # Explicit user-started curated model install. It is separate from
@@ -6153,6 +6165,19 @@ class LibraryScreen(BaseAppScreen):
         # Display-managed canvas-level bits + the gate.
         for intro in canvas.query(".library-ingest-intro"):
             intro.display = bool(new_state.intro_lines)
+        # (task-2140) The commit-summary line is canvas-level and
+        # display-managed -- update content and visibility here so a
+        # non-structural pre-flight apply (or a Clear) can never leave it
+        # unmounted or stale.
+        try:
+            commit_summary = canvas.query_one(
+                "#library-ingest-commit-summary", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            commit_summary.update(new_state.commit_summary_line)
+            commit_summary.display = bool(new_state.commit_summary_line)
         try:
             clear_button = canvas.query_one(
                 "#library-ingest-clear-path", Button
@@ -6179,6 +6204,26 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         self._update_library_ingest_gate(new_state)
+
+    def _server_binding_is_shipped_placeholder(self) -> bool:
+        # A binding still matching config.py's shipped [tldw_api] template
+        # values is the template, not a user decision. Drift fails OPEN
+        # (the hint reappears for fresh installs) -- never hides a real
+        # server -- and a test pins the constants against the template.
+        api_config = resolve_tldw_api_config(
+            getattr(self.app_instance, "app_config", None)
+        )
+        url = str(
+            api_config.get("base_url")
+            or api_config.get("api_url")
+            or api_config.get("url")
+            or ""
+        ).strip()
+        token = str(api_config.get("auth_token") or "").strip()
+        return (
+            url.rstrip("/") == TLDW_API_PLACEHOLDER_BASE_URL
+            and token == TLDW_API_PLACEHOLDER_AUTH_TOKEN
+        )
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
         """Build the ingest canvas's full display state from the live registry + form.
@@ -6218,9 +6263,24 @@ class LibraryScreen(BaseAppScreen):
         server_service = getattr(
             self.app_instance, "server_media_reading_service", None
         )
-        server_ingest_available = callable(
-            getattr(server_service, "submit_ingest_jobs", None)
-        ) or callable(getattr(server_service, "submit_media_ingest_jobs", None))
+        # (task-2100) ...AND a server is actually configured: gating on the
+        # seam alone greeted every local-only install with server-mode talk
+        # as the canvas's second line. Runtime ``server_configured`` alone
+        # can't carry this: the shipped config template pre-fills
+        # ``[tldw_api]`` with a placeholder URL+token, so it is True on a
+        # virgin profile (live-verified) -- and reachability is normalized
+        # to "unknown" whenever the runtime is local, so the untouched
+        # template binding is the only remaining tell.
+        server_ingest_available = (
+            (
+                callable(getattr(server_service, "submit_ingest_jobs", None))
+                or callable(
+                    getattr(server_service, "submit_media_ingest_jobs", None)
+                )
+            )
+            and bool(getattr(runtime_state, "server_configured", False))
+            and not self._server_binding_is_shipped_placeholder()
+        )
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -6231,6 +6291,7 @@ class LibraryScreen(BaseAppScreen):
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
             clear_finished_armed=self._library_ingest_clear_finished_armed,
+            recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
         )
 
@@ -13132,7 +13193,20 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._invalidate_library_ingest_preflight()
         self._library_ingest_form.path = ""
-        self.refresh(recompose=True)
+        # (task-2100) In place: the whole-screen recompose this used to run
+        # replaced every canvas widget mid-press -- the one handler the
+        # task-2042 sweep missed. Clearing the Input's value directly lets
+        # its Changed handler hide the button/show intros, and the updater
+        # drops the stale pre-flight summary; focus moves to the path field
+        # (the button is about to hide, and a fresh path is the next act).
+        try:
+            path_input = self.query_one("#library-ingest-path", Input)
+        except (NoMatches, QueryError):
+            path_input = None
+        if path_input is not None:
+            path_input.value = ""
+            path_input.focus()
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#ingest-preflight-choose")
     @on(Button.Pressed, "#library-ingest-browse")
@@ -13180,6 +13254,24 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             A directory path suitable for ``FileOpen(location=...)``.
         """
+        # (task-2130) A typed path fragment names where the user is looking
+        # -- opening at home while "/private/tmp" sits in the field made
+        # Browse feel disconnected from the form.
+        typed = self._library_ingest_form.path.strip()
+        if typed:
+            # Centralized validation before any filesystem probe (Qodo
+            # round; same validator the submit path uses).
+            for candidate_text in (typed, str(Path(typed).parent)):
+                if not candidate_text or candidate_text == ".":
+                    continue
+                try:
+                    candidate = validate_path_simple(
+                        candidate_text, require_exists=True
+                    )
+                    if candidate.is_dir():
+                        return str(candidate)
+                except Exception:
+                    continue
         remembered = get_cli_setting("library.ingest", "last_directory", None)
         if remembered:
             try:
@@ -13244,6 +13336,24 @@ class LibraryScreen(BaseAppScreen):
         field = next((f for f in cap.fields if f.name == event.name), None)
         if field is not None and field.type not in ("text", "number"):
             self.refresh(recompose=True)
+        elif field is not None:
+            # (task-2130) Text/number edits deliberately skip the recompose
+            # (cursor survival), which used to leave the panel-header receipt
+            # asserting the OLD value and the only invalid signal a
+            # focus-only border. Update the receipt, the inline message, and
+            # the Start gate in place instead.
+            self._update_library_ingest_group_receipt(event.group)
+            message = validate_ingest_option_value(field, event.value)
+            try:
+                error_line = self.query_one(
+                    f"#opt-{event.group}-{event.name}-error", Static
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                error_line.update(message)
+                error_line.display = bool(message)
+            self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
     def handle_parakeet_v2_install_requested(
@@ -13507,6 +13617,10 @@ class LibraryScreen(BaseAppScreen):
         if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._trigger_library_ingest_preflight(path)
 
+    #: Max staged files probed for the duplicate forecast (task-2130:
+    #: when hit, the forecast copy switches to "at least N").
+    _DUPLICATE_PROBE_CAP = 20
+
     def _annotate_preflight_duplicates(
         self, result: PreflightResult
     ) -> PreflightResult:
@@ -13531,7 +13645,9 @@ class LibraryScreen(BaseAppScreen):
         media_db = getattr(self.app_instance, "media_db", None)
         if media_db is None:
             return result
-        candidates = list(result.type_groups.get("generic", ()))[:20]
+        all_candidates = list(result.type_groups.get("generic", ()))
+        candidates = all_candidates[: self._DUPLICATE_PROBE_CAP]
+        capped = len(all_candidates) > len(candidates)
         if not candidates:
             return result
         already = 0
@@ -13563,7 +13679,11 @@ class LibraryScreen(BaseAppScreen):
                 continue
         if not already:
             return result
-        return dataclasses.replace(result, already_in_library=already)
+        return dataclasses.replace(
+            result,
+            already_in_library=already,
+            already_in_library_capped=capped and already > 0,
+        )
 
     def _invalidate_library_ingest_preflight(self) -> None:
         """Drop the current pre-flight echo AND fence off in-flight workers.
@@ -14035,7 +14155,9 @@ class LibraryScreen(BaseAppScreen):
             # not already superseded/dismissed) -- a stale or now-wrong-state
             # job id is a safe no-op, not a mis-targeted retry.
             retry(job_id)
-        self.refresh(recompose=True)
+        # (task-2100) In place: the registry listener already updated the
+        # queue; a trailing full recompose yanked the scroll off the queue.
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, ".library-ingest-choose-gguf")
     def handle_library_ingest_choose_gguf(self, event: Button.Pressed) -> None:
@@ -14063,7 +14185,10 @@ class LibraryScreen(BaseAppScreen):
         )
         if callable(retry):
             retry(job_id, "faster-whisper")
-        self.refresh(recompose=True)
+        # (task-2100) In place: the registry listener already updated
+        # the queue; a trailing full recompose yanked the scroll off
+        # the queue (stranding the armed clear confirm off-screen).
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, ".library-ingest-cancel")
     def handle_library_ingest_cancel(self, event: Button.Pressed) -> None:
@@ -14127,9 +14252,26 @@ class LibraryScreen(BaseAppScreen):
         if callable(dismiss):
             # Same id-based no-op safety as retry above -- ``dismiss`` only
             # ever acts on a currently-FAILED, not-yet-hidden job_id.
-            dismiss(job_id)
+            dismissed_job = dismiss(job_id)
+            # (task-2140) Dismiss was the one destructive act that erased
+            # the failure from EVERY surface with zero friction -- the
+            # dismissed record now survives in the Recent-ingests ledger,
+            # marked as dismissed.
+            if dismissed_job is not None:
+                known = {
+                    job.job_id
+                    for job in self._library_ingest_recent_ledger
+                }
+                if dismissed_job.job_id not in known:
+                    self._library_ingest_recent_ledger = [
+                        dismissed_job,
+                        *self._library_ingest_recent_ledger,
+                    ][:10]
         self._library_ingest_expanded_details.discard(job_id)
-        self.refresh(recompose=True)
+        # (task-2100) In place: the registry listener already updated the
+        # queue; a trailing full recompose here yanked the scroll off the
+        # queue the user was working in.
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
@@ -14175,14 +14317,53 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_ingest_clear_finished_armed:
             self._library_ingest_clear_finished_armed = True
             self._update_library_ingest_dynamic_regions()
+            # (task-2130) The armed confirm must be seen to be answerable:
+            # with the button at the viewport's bottom edge the relabel
+            # landed off-screen and the press read as a no-op.
+            # (task-2140) With a TALL queue the panel recompose above has
+            # not laid out yet when this runs -- an immediate
+            # scroll_visible aimed at pre-refresh geometry and the pane
+            # then jumped to the queue top with the confirm below the
+            # fold. Defer the scroll until after the refresh settles, and
+            # query the button inside the callback (the recompose replaces
+            # it).
+            def _scroll_armed_confirm_into_view() -> None:
+                try:
+                    armed_button = self.query_one(
+                        "#library-ingest-clear-finished", Button
+                    )
+                except (NoMatches, QueryError):
+                    return
+                armed_button.scroll_visible()
+
+            self.call_after_refresh(_scroll_armed_confirm_into_view)
             return
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_expanded_details.clear()
         registry = self._library_ingest_registry()
+        # (task-2130) Snapshot the terminal jobs into the session ledger
+        # BEFORE the removal -- Recent ingests is the durable record.
+        jobs_fn = getattr(registry, "jobs", None)
+        if callable(jobs_fn):
+            terminal = [
+                job
+                for job in jobs_fn()
+                if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+            ]
+            known = {job.job_id for job in terminal}
+            terminal.extend(
+                job
+                for job in self._library_ingest_recent_ledger
+                if job.job_id not in known
+            )
+            self._library_ingest_recent_ledger = terminal[:10]
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()
-        self.refresh(recompose=True)
+        # (task-2100) In place: the registry listener already updated
+        # the queue; a trailing full recompose yanked the scroll off
+        # the queue (stranding the armed clear confirm off-screen).
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#ingest-expand-all")
     def handle_library_ingest_expand_all(self, event: Button.Pressed) -> None:
@@ -14191,19 +14372,44 @@ class LibraryScreen(BaseAppScreen):
         form = self._library_ingest_form
         state = self._build_library_ingest_state()
         form.expanded_type_groups.update(state.type_groups)
-        self.refresh(recompose=True)
+        # (task-2100 review) Panel collapsed state is set at compose time,
+        # so the in-place updater alone leaves mounted panels shut -- write
+        # `collapsed` on them directly (Textual's reactive handles the
+        # reveal), keeping the press non-structural.
+        self._set_library_ingest_panels_collapsed(state.type_groups, False)
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#ingest-collapse-all")
     def handle_library_ingest_collapse_all(self, event: Button.Pressed) -> None:
         """Collapse every per-type options panel."""
         event.stop()
         form = self._library_ingest_form
+        state = self._build_library_ingest_state()
         form.expanded_type_groups.clear()
-        self.refresh(recompose=True)
+        self._set_library_ingest_panels_collapsed(state.type_groups, True)
+        self._update_library_ingest_dynamic_regions()
+
+    def _set_library_ingest_panels_collapsed(
+        self, groups: Sequence[str], collapsed: bool
+    ) -> None:
+        for group in groups:
+            try:
+                panel = self.query_one(f"#type-group-{group}", Collapsible)
+            except (NoMatches, QueryError):
+                continue
+            panel.collapsed = collapsed
 
     @on(Button.Pressed, ".library-ingest-option-reset")
     def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
-        """Reset a per-type options panel to its defaults."""
+        """Reset a per-type options panel to its defaults.
+
+        (task-2130) "Defaults" must mean every control and every echo of the
+        value: the generic group's analyze/chunk/chunk_size mirror in the
+        top-level form fields used to survive the wipe (the state builder
+        re-injected them, so text Inputs kept their old values through two
+        Reset presses while Selects visibly reset), and the persisted
+        ``[library.ingest_options]`` section resurrected them next session.
+        """
         event.stop()
         button_id = event.button.id or ""
         if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
@@ -14212,7 +14418,34 @@ class LibraryScreen(BaseAppScreen):
         group = button_id[4:-6]
         form = self._library_ingest_form
         form.type_options[group] = {}
-        self.refresh(recompose=True)
+        if group == "generic":
+            cap = get_capabilities("generic")
+            defaults = {f.name: f.default for f in cap.fields}
+            form.analyze = bool(defaults.get("analyze", False))
+            form.chunk = bool(defaults.get("chunk", True))
+            form.chunk_size = str(defaults.get("chunk_size", 1000))
+        save_settings_to_cli_config({f"library.ingest_options.{group}": {}})
+        self._refresh_library_ingest_canvas_preserving_context()
+
+    def _update_library_ingest_group_receipt(self, group: str) -> None:
+        """Recompute one panel's title receipt from the ACTUAL option values."""
+        cap = get_capabilities(group)
+        values = dict(self._library_ingest_form.type_options.get(group, {}))
+        if group == "generic":
+            form = self._library_ingest_form
+            values.setdefault("analyze", form.analyze)
+            values["analyze"] = form.analyze
+            values["chunk"] = form.chunk
+            values["chunk_size"] = form.chunk_size
+        summary = ", ".join(
+            _summarise_option(f, values.get(f.name, f.default))
+            for f in cap.fields
+        )
+        try:
+            panel = self.query_one(f"#type-group-{group}", Collapsible)
+        except (NoMatches, QueryError):
+            return
+        panel.title = f"{cap.label} — {summary}"
 
     # ----- Export canvas: section entry points --------------------------
 

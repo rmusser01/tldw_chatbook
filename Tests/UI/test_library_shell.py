@@ -12998,3 +12998,497 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
         assert form.analyze is False
         assert form.chunk is True
         assert form.type_options.get("generic") in (None, {})
+
+
+@pytest.mark.asyncio
+async def test_retry_press_updates_queue_in_place(tmp_path):
+    """(task-2100) Retry's trailing full recompose yanked the viewport off
+    the queue; it now routes through the in-place path, pinned by form
+    widget identity surviving the press."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-retry")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-retry-{failing.job_id}"
+        )
+        start_before = screen.query_one("#library-ingest-start", Button)
+
+        screen.query_one(
+            f"#library-ingest-retry-{failing.job_id}", Button
+        ).press()
+        await pilot.pause()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if any(
+                j.retry_count for j in harness.library_ingest_jobs.jobs()
+            ):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+
+        assert screen.query_one("#library-ingest-start", Button) is start_before, (
+            "Retry press remounted the form (full recompose leaked back in)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_focused_panel_title_keeps_its_label(tmp_path):
+    """(task-2100) The app-wide title-focus border consumed the height:1
+    title's only row -- a focused panel title rendered blank. The label
+    must stay visible (glyph level) while focused."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-title")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
+
+        from textual.widgets._collapsible import CollapsibleTitle
+
+        title = screen.query_one("#type-group-generic CollapsibleTitle")
+        title.focus()
+        await pilot.pause()
+        assert screen.app.focused is title
+        # The bug was geometric: the app-wide focus border-bottom inside a
+        # height:1 title left ZERO content rows, so the label had nowhere
+        # to render. The content region keeping its row IS the label
+        # staying visible.
+        assert title.region.height == 1
+        assert title.content_region.height >= 1, (
+            "focus border consumed the title's only row -- label invisible"
+        )
+
+
+@pytest.mark.asyncio
+async def test_clear_path_button_responds_to_mouse_click(tmp_path):
+    """(task-2100 diagnosis pin) The round-3 live report called the Clear
+    button mouse-dead; the harness click works — pinned so a real
+    hit-region regression can never hide behind driving noise again."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-click")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = "/tmp/typo.txt"
+        await pilot.pause()
+
+        clear = screen.query_one("#library-ingest-clear-path", Button)
+        assert clear.display is True and clear.region.width > 0
+
+        await pilot.click("#library-ingest-clear-path")
+        await pilot.pause()
+        after = screen.query_one("#library-ingest-path", Input)
+        assert after.value == ""
+        # Identity: the press must NOT recompose the screen (the round-3
+        # "mouse-dead Clear" was this handler's whole-screen recompose
+        # replacing every widget mid-press -- the value LOOKED cleared in a
+        # re-query while live clicks were being swallowed).
+        assert after is path_input
+        assert screen.app.focused is after
+
+
+@pytest.mark.asyncio
+async def test_button_focus_style_is_reverse_video(tmp_path):
+    """(task-2100 diagnosis pin) Focus on the canvas's compact buttons is
+    bold reverse — asserted at the COMPUTED-style level (the round-3
+    'invisible focus' reports were attribute-blind glyph diffs; the
+    standing lesson is to verify focus with an attribute assertion)."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-focus")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-browse")
+
+        browse = screen.query_one("#library-ingest-browse", Button)
+        assert not browse.rich_style.reverse
+        browse.focus()
+        await pilot.pause()
+        assert screen.app.focused is browse
+        assert browse.rich_style.reverse and browse.rich_style.bold
+
+
+@pytest.mark.asyncio
+async def test_server_mode_line_requires_configured_server(tmp_path):
+    """(task-2100) The seam's mere existence used to greet local-only
+    installs with server-mode talk; availability now also requires the
+    runtime's server_configured."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-server")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        harness.server_media_reading_service = SimpleNamespace(
+            submit_ingest_jobs=lambda **kwargs: None
+        )
+        harness.runtime_policy = SimpleNamespace(
+            state=SimpleNamespace(
+                active_source="local", server_configured=False
+            )
+        )
+        state = screen._build_library_ingest_state()
+        assert state.server_quiet_line == ""
+
+        harness.runtime_policy = SimpleNamespace(
+            state=SimpleNamespace(
+                active_source="local", server_configured=True
+            )
+        )
+        configured = screen._build_library_ingest_state()
+        assert "server mode" in configured.server_quiet_line
+
+        # server_configured=True is NOT enough by itself: the shipped
+        # config template pre-fills [tldw_api] with a placeholder
+        # URL+token, so every virgin profile reports True (live-verified).
+        # The untouched template binding must stay silent.
+        from tldw_chatbook.config import (
+            CONFIG_TOML_CONTENT,
+            TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+            TLDW_API_PLACEHOLDER_BASE_URL,
+        )
+
+        # Drift guard: the screen's placeholder check fails OPEN, so if the
+        # template's values ever drift from these constants the hint would
+        # silently reappear for fresh installs -- fail HERE instead.
+        assert TLDW_API_PLACEHOLDER_BASE_URL in CONFIG_TOML_CONTENT
+        assert TLDW_API_PLACEHOLDER_AUTH_TOKEN in CONFIG_TOML_CONTENT
+
+        harness.app_config = {
+            "tldw_api": {
+                "base_url": TLDW_API_PLACEHOLDER_BASE_URL,
+                "auth_token": TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+            }
+        }
+        placeholder = screen._build_library_ingest_state()
+        assert placeholder.server_quiet_line == ""
+
+
+@pytest.mark.asyncio
+async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
+    """(task-2100 review) Panel collapsed state is compose-time, so the
+    in-place swap alone made Expand all a no-op on mounted panels -- the
+    handler must write `collapsed` on them directly, and the press must
+    stay non-structural (widget identity holds)."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c3-expand")
+    harness = _LibraryIngestCanvasHarness(db)
+    # The bulk buttons only compose with >1 type group -- stage a mixed
+    # folder so audio joins the always-present generic panel.
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "notes.txt").write_text("hello")
+    (folder / "talk.mp3").write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        screen.query_one("#library-ingest-path", Input).value = str(folder)
+        await _wait_for_selector(screen, pilot, "#ingest-expand-all")
+
+        from textual.widgets import Collapsible
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert panel.collapsed is True
+        start_before = screen.query_one("#library-ingest-start", Button)
+
+        screen.query_one("#ingest-expand-all", Button).press()
+        await pilot.pause()
+        assert panel.collapsed is False, "Expand all left the panel shut"
+        assert screen.query_one("#library-ingest-start", Button) is start_before
+
+        screen.query_one("#ingest-collapse-all", Button).press()
+        await pilot.pause()
+        assert panel.collapsed is True
+        assert screen.query_one("#library-ingest-start", Button) is start_before
+
+
+@pytest.mark.asyncio
+async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
+    """(task-2130) Text-Input option edits skip the recompose (cursor
+    survival) -- the receipt, the inline message, and the Start gate must
+    all update in place so the panel never lies about the actual values."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-receipt")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen.query_one("#library-ingest-path", Input).value = str(staged)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert "Chunk size: abc" in str(panel.title), (
+            "receipt still asserts the old value after an Input edit"
+        )
+        error_line = screen.query_one("#opt-generic-chunk_size-error", Static)
+        assert error_line.display is True
+        assert "whole number" in str(error_line.renderable)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+        # Same object throughout -- the updates were in place.
+        assert screen.query_one("#opt-generic-chunk_size", Input) is chunk_input
+
+        chunk_input.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert "Chunk size: 1500" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
+        assert screen.query_one(
+            "#opt-generic-chunk_size-error", Static
+        ).display is False
+        assert screen.query_one("#library-ingest-start", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
+    """(task-2130) Reset used to wipe type_options while the state builder
+    re-injected the generic mirror fields -- Chunk size survived two Reset
+    presses. Defaults must win everywhere: widget, form mirror, receipt."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-reset")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "10009999"
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_ingest_form.chunk_size == "10009999"
+
+        screen.query_one("#opt-generic-reset", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.chunk_size == "1000"
+        # The state builder re-injects the generic mirror on every build (by
+        # design) -- post-reset it must re-inject the DEFAULTS, not the old
+        # values.
+        generic = screen._library_ingest_form.type_options.get("generic", {})
+        assert generic.get("chunk_size") in (None, "1000", 1000)
+        fresh_input = screen.query_one("#opt-generic-chunk_size", Input)
+        assert fresh_input.value == "1000", (
+            "Reset left the stale value in the chunk-size Input"
+        )
+        assert "Chunk size: 1000" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
+    """(task-2130) A confirmed Clear finished must not erase the session's
+    only record: Recent ingests still lists the cleared failure, the empty
+    copy is honest, and the armed confirm is scrolled into view."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-ledger")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        clear = screen.query_one("#library-ingest-clear-finished", Button)
+        clear.press()
+        await pilot.pause()
+        await pilot.pause()
+        armed = screen.query_one("#library-ingest-clear-finished", Button)
+        assert "Press again" in str(armed.label)
+
+        armed.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not harness.library_ingest_jobs.jobs(), "registry not cleared"
+        state = screen._build_library_ingest_state()
+        assert [job.job_id for job in state.recent_jobs] == [failing.job_id], (
+            "Clear finished erased the session ledger"
+        )
+        assert state.queue_empty_line == "Queue is empty."
+        recent = list(screen.query("#library-ingest-recent"))
+        assert recent, "Recent ingests vanished after the clear"
+
+
+@pytest.mark.asyncio
+async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
+    """(task-2140) The commit-summary Static was conditionally composed, so
+    a text-only pre-flight (non-structural apply) never mounted it and a
+    Clear left it stale ('0 will import · 1 will match' over an empty
+    field). Always-mounted + updater-owned: renders for plain text,
+    clears with the selection."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-commit")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello world")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        summary = screen.query_one("#library-ingest-commit-summary", Static)
+        assert summary.display is False, "no selection yet -- line must hide"
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = str(staged)
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if screen._library_ingest_form.preflight is not None:
+                break
+        else:
+            raise AssertionError("preflight never completed")
+        await pilot.pause()
+
+        current = screen.query_one("#library-ingest-commit-summary", Static)
+        assert current is summary, "line must be always-mounted (identity)"
+        assert current.display is True, (
+            "plain-text selection never mounted the commit summary "
+            "(the non-structural apply path)"
+        )
+        assert "1 will import" in str(current.renderable)
+
+        screen.query_one("#library-ingest-clear-path", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        cleared = screen.query_one("#library-ingest-commit-summary", Static)
+        assert cleared.display is False, (
+            "commit summary stayed visible (stale) after Clear"
+        )
+
+
+@pytest.mark.asyncio
+async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
+    """(task-2140) Dismiss was the one destructive act that erased the
+    failure from every surface with zero friction -- the record now
+    survives in Recent ingests, marked dismissed."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-dismiss")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-dismiss-{failing.job_id}"
+        )
+        screen.query_one(
+            f"#library-ingest-dismiss-{failing.job_id}", Button
+        ).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        state = screen._build_library_ingest_state()
+        assert [job.job_id for job in state.recent_jobs] == [failing.job_id], (
+            "Dismiss erased the failure from the Recent ledger"
+        )
+        assert getattr(state.recent_jobs[0], "dismissed", False) is True
+        recent = list(screen.query("#library-ingest-recent"))
+        assert recent, "Recent ingests must render the dismissed record"
+
+
+@pytest.mark.asyncio
+async def test_start_click_immediately_after_typing_submits(tmp_path):
+    """(task-2140 pin) One live report of a dead Start click at the commit
+    moment (unreproduced) -- pin the type-then-immediately-click path so a
+    real first-click swallow can never hide as driving noise."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-deadclick")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello world")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = str(staged)
+        # Immediately click Start -- within the debounce window, before
+        # any pre-flight lands.
+        await pilot.pause()
+        await pilot.click("#library-ingest-start")
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if harness.library_ingest_jobs.jobs():
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        assert harness.library_ingest_jobs.jobs(), (
+            "first Start click after typing did not submit"
+        )

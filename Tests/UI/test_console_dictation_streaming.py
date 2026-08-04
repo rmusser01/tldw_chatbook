@@ -71,6 +71,8 @@ class FakeDictationService:
         self.on_final = None
         self.on_error = None
         self.on_segment_transcribing = None
+        self.on_speech_resumed = None
+        self.on_segment_no_final = None
         #: Set once `stop_dictation()` is running; if `stop_gate` is set too,
         #: it blocks there until released, so a test can drain events while
         #: the stop worker is provably mid-flight.
@@ -102,6 +104,8 @@ class FakeDictationService:
         on_state_change,
         on_error,
         on_segment_transcribing=None,
+        on_speech_resumed=None,
+        on_segment_no_final=None,
         save_audio: bool = False,
     ) -> bool:
         self.start_calls += 1
@@ -109,6 +113,8 @@ class FakeDictationService:
         self.on_final = on_final_transcript
         self.on_error = on_error
         self.on_segment_transcribing = on_segment_transcribing
+        self.on_speech_resumed = on_speech_resumed
+        self.on_segment_no_final = on_segment_no_final
         self.save_audio = save_audio
         self.start_entered.set()
         if self.start_gate is not None:
@@ -137,6 +143,16 @@ class FakeDictationService:
             "start_dictation() has not run yet"
         )
         self.on_segment_transcribing(done)
+
+    def emit_speech_resumed(self) -> None:
+        assert self.on_speech_resumed is not None, "start_dictation() has not run yet"
+        self.on_speech_resumed()
+
+    def emit_segment_no_final(self) -> None:
+        assert self.on_segment_no_final is not None, (
+            "start_dictation() has not run yet"
+        )
+        self.on_segment_no_final()
 
     def emit_error(self, message: str) -> None:
         assert self.on_error is not None, "start_dictation() has not run yet"
@@ -692,6 +708,55 @@ async def test_segment_transcribing_does_not_disturb_a_real_final_that_follows(
         await _wait_for_mic_label(composer, pilot, "Mic")
 
         assert composer.draft_text() == "hello dictated world"
+
+
+# --------------------------------------------------------------------------
+# `VoiceSpeechResumed` (Task 1 of the hands-free loop): a mic-side fact, not
+# recognizer output. `ConsoleStreamingDictationSession._handle_event` has no
+# `isinstance` branch for it -- it falls through to the same unconditional
+# forward every other unhandled event type gets (`VoiceStateChanged`,
+# `VoiceProviderOverridden`, ...), which is exactly what "does not touch
+# `_heard_recognizer_output`/`_segments`" means in practice. These exercise
+# the adapter directly, the same way `Tests/Chat/test_console_voice_input.py`
+# exercises the controller directly -- no Textual app needed, since neither
+# class has a Textual dependency of its own.
+# --------------------------------------------------------------------------
+
+
+def test_speech_resumed_is_forwarded_without_touching_recognizer_state():
+    """A mic-side fact, not recognizer output (see `VoiceSpeechResumed`'s
+    docstring in `console_voice_input.py`): forwarding it must not set
+    `_heard_recognizer_output` and must not touch `_segments`, unlike
+    `VoiceFinal`/`VoiceCommand`/a non-blank `VoicePartial`.
+    """
+    events: list = []
+    session = chat_screen_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._capture_generation = 3
+
+    session._handle_event(voice_module.VoiceSpeechResumed(), 3)
+
+    assert len(events) == 1
+    assert isinstance(events[0], voice_module.VoiceSpeechResumed)
+    assert session._heard_recognizer_output is False
+    assert session._segments == []
+
+
+def test_a_stale_speech_resumed_is_dropped_by_the_session_adapter():
+    """Generation-gated the same way `VoicePartial`/`VoiceFinal`/`VoiceCommand`/
+    `VoiceFailed` are: an event tagged with an earlier capture's generation
+    must never reach the screen.
+    """
+    events: list = []
+    session = chat_screen_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._capture_generation = 5
+
+    session._handle_event(voice_module.VoiceSpeechResumed(), 4)  # stale
+
+    assert events == []
 
 
 @pytest.mark.asyncio

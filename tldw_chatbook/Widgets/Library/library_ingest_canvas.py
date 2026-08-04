@@ -18,7 +18,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Library.library_ingest_state import (
-    QUEUE_EMPTY_COPY,
+    validate_ingest_option_value,
     LibraryIngestCanvasState,
     build_intro_lines,
 )
@@ -93,12 +93,9 @@ class LibraryIngestPreflightSummary(Vertical):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
-        if state.unsupported_files:
-            count = len(state.unsupported_files)
-            file_noun = "file" if count == 1 else "files"
-            recorded_as = "a failure" if count == 1 else "failures"
+        if state.unsupported_line:
             yield Static(
-                f"{count} unsupported {file_noun} will be recorded as {recorded_as}.",
+                state.unsupported_line,
                 id="ingest-unsupported-summary",
                 classes="library-ingest-quiet-line",
                 markup=False,
@@ -134,9 +131,9 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-counts",
                 markup=False,
             )
-        if not state.queue_rows:
+        if not state.queue_rows and state.queue_empty_line:
             yield Static(
-                QUEUE_EMPTY_COPY,
+                state.queue_empty_line,
                 id="library-ingest-queue-empty",
                 markup=False,
             )
@@ -309,15 +306,27 @@ class LibraryIngestQueuePanel(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
-        with Collapsible(
-            title="Recent ingests", collapsed=True, id="library-ingest-recent"
-        ):
-            for job in state.recent_jobs:
-                yield Static(
-                    f"{escape_markup(job.source_path)} — {job.state.value}",
-                    classes="library-ingest-recent-item",
-                    markup=False,
-                )
+        # (task-2100) Hidden when empty: after a clear it expanded to an
+        # unlabeled empty shell (round-3 critique; deliberately flips the
+        # earlier always-visible contract on that evidence).
+        if state.recent_jobs:
+            with Collapsible(
+                title="Recent ingests",
+                collapsed=True,
+                id="library-ingest-recent",
+            ):
+                for job in state.recent_jobs:
+                    dismissed_suffix = (
+                        " (dismissed)"
+                        if getattr(job, "dismissed", False)
+                        else ""
+                    )
+                    yield Static(
+                        f"{escape_markup(job.source_path)} — "
+                        f"{job.state.value}{dismissed_suffix}",
+                        classes="library-ingest-recent-item",
+                        markup=False,
+                    )
 
 _STT_RECOVERY_ACTIONS = frozenset(
     {"choose_another_gguf", "retry_faster_whisper"}
@@ -533,6 +542,22 @@ class LibraryIngestCanvas(VerticalScroll):
                         disabled=disabled,
                     )
                 )
+                # (task-2130) Inline validation message -- a text line, not a
+                # color-only border. Display-managed so typing updates it in
+                # place without recomposing the panel.
+                # A disabled field no longer gates Start (Qodo round) --
+                # its error line hides with it, so message and gate agree.
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                error_line = Static(
+                    error_message,
+                    id=f"{widget_id}-error",
+                    classes="type-group-field-error",
+                    markup=False,
+                )
+                error_line.display = bool(error_message)
+                children.append(error_line)
 
         if group == "audio_video":
             provider = cap_fields_by_name["transcription_provider"]
@@ -724,6 +749,21 @@ class LibraryIngestCanvas(VerticalScroll):
         # line's row when the text is empty (an auto-height empty Static
         # would collapse to 0); the screen's path-changed handler updates
         # the text in place instead of mounting/removing the widget.
+        # (task-2140) Always mounted, display-managed: the conditional
+        # compose reintroduced the round-3 empty-Recent bug class -- a
+        # text-only pre-flight applies via the NON-structural in-place
+        # path, which never mounts a conditionally-composed canvas-level
+        # element (PDF selections rendered the line, plain text never),
+        # and after Clear the stale line survived. The in-place updater
+        # owns its content and visibility.
+        commit_summary = Static(
+            state.commit_summary_line,
+            id="library-ingest-commit-summary",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        commit_summary.display = bool(state.commit_summary_line)
+        yield commit_summary
         start_quiet_line = Static(
             state.start_quiet_line,
             id="library-ingest-start-quiet-line",

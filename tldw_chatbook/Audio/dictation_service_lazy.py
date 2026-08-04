@@ -180,6 +180,23 @@ class LazyLiveDictationService:
     #: built via `__new__` without going through `start_dictation()` needs
     #: this class-level default too.
     on_segment_transcribing: Optional[Callable[[bool], None]] = None
+    #: Same `__new__`-safety reasoning again: `_audio_callback` reads both of
+    #: these unconditionally on every frame, so a service built via `__new__`
+    #: without going through `start_dictation()` needs class-level defaults
+    #: for both, or the very first delivered frame raises `AttributeError`.
+    on_speech_resumed: Optional[Callable[[], None]] = None
+    #: Same `__new__`-safety reasoning as `on_speech_resumed` just above:
+    #: `_transcribe_segment_audio` reads this unconditionally on its
+    #: blank-result branch, so a service built via `__new__` without going
+    #: through `start_dictation()` needs a class-level default too.
+    on_segment_no_final: Optional[Callable[[], None]] = None
+    #: Per-capture flag distinguishing "first frame of a fresh capture"
+    #: (`last_speech_time` is 0 from `__init__`/`start_dictation()`, but that
+    #: is capture *start*, not a resume) from "a frame after the silence gate
+    #: zeroed `last_speech_time` mid-capture" (a genuine resume). See
+    #: `_audio_callback`'s inline comment for the exact rule. Reset to
+    #: `False` in `start_dictation()` for each new capture.
+    _capture_saw_first_frame: bool = False
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -241,6 +258,7 @@ class LazyLiveDictationService:
         self.buffer_lock = threading.Lock()
         self.last_speech_time = 0
         self._current_audio_level = 0.0
+        self._capture_saw_first_frame = False
 
         # Transcription management
         self.transcript_segments = []
@@ -257,6 +275,8 @@ class LazyLiveDictationService:
         self.on_error = None
         self.on_command = None
         self.on_segment_transcribing = None
+        self.on_speech_resumed = None
+        self.on_segment_no_final = None
 
         # Processing thread
         self.processing_thread = None
@@ -540,6 +560,8 @@ class LazyLiveDictationService:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_command: Optional[Callable[[str], None]] = None,
         on_segment_transcribing: Optional[Callable[[bool], None]] = None,
+        on_speech_resumed: Optional[Callable[[], None]] = None,
+        on_segment_no_final: Optional[Callable[[], None]] = None,
         save_audio: bool = False,
     ) -> bool:
         """
@@ -567,6 +589,27 @@ class LazyLiveDictationService:
                 Never invoked for the streaming-transcriber regime, whose
                 `process_audio()` calls are cheap incremental pushes, not a
                 from-scratch transcription.
+            on_speech_resumed: Fired from `_audio_callback`, on the recorder's
+                own callback thread, the moment a frame arrives with
+                `last_speech_time == 0` for any reason OTHER than this being
+                the very first frame of the capture -- i.e. right after
+                `_processing_loop`'s silence gate has zeroed it mid-capture.
+                Carries no payload; see `_audio_callback`'s inline comment for
+                the exact rule. A mic-side fact, not recognizer output -- it
+                says nothing about what the recognizer will eventually
+                produce from this speech.
+            on_segment_no_final: Fired from `_transcribe_segment_audio`, on
+                the processing thread, immediately after its unconditional
+                `on_segment_transcribing(done=True)` call, and ONLY on that
+                method's blank/whitespace-only branch (routine for room
+                noise or a too-short VAD sliver -- see that method's own
+                `if not produced_text:` branch and its debug log). Positive
+                proof that no `on_final_transcript` will ever arrive for
+                this segment, which the hands-free resume-latch consumer
+                needs: without it, a latch armed while this segment was
+                (unknowingly) about to transcribe to nothing would sit
+                armed and incorrectly swallow the NEXT real segment's
+                final. Carries no payload.
         """
         with self.state_lock:
             if self.state != DictationState.IDLE:
@@ -583,6 +626,8 @@ class LazyLiveDictationService:
             self.on_error = on_error
             self.on_command = on_command
             self.on_segment_transcribing = on_segment_transcribing
+            self.on_speech_resumed = on_speech_resumed
+            self.on_segment_no_final = on_segment_no_final
 
             self._notify_state_change()
 
@@ -606,6 +651,10 @@ class LazyLiveDictationService:
             self.current_transcript = ""
             self.audio_buffer = []
             self.captured_bytes = 0
+            # A repeat capture on a reused service instance must not inherit
+            # the previous capture's "already saw a first frame" state -- its
+            # own very first frame is capture start again, not a resume.
+            self._capture_saw_first_frame = False
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
@@ -763,8 +812,41 @@ class LazyLiveDictationService:
             # Queue for processing
             self.processing_queue.put(("audio", audio_chunk))
 
-            # Update last speech time
-            self.last_speech_time = time.time()
+            # Speech-resumed detection. `last_speech_time == 0` happens for
+            # two different reasons: the very first frame of a fresh capture
+            # (set by `__init__`/`start_dictation()` -- capture start, not a
+            # resume), or a frame arriving after `_processing_loop`'s silence
+            # gate zeroed it mid-capture (a genuine resume).
+            # `_capture_saw_first_frame` is False only for that first frame,
+            # so this fires on every LATER zero -- exactly the post-silence
+            # case -- and never on capture start. Deliberately not derived
+            # from a delivery-gap time delta: without `webrtcvad` the recorder
+            # forwards every chunk unconditionally, so `last_speech_time` only
+            # ever advances and a mere gap (no finalize in between) can never
+            # make it 0.
+            #
+            # `buffer_lock` -- the same lock `_processing_loop`'s silence
+            # check now takes for its own read-check-zero of this field (see
+            # that call site) -- also guards this read-check-write. Unlocked,
+            # a frame landing in the few-microsecond window between this
+            # method's read and its write could silently overwrite a
+            # just-written 0 before `resumed` was ever computed from it: a
+            # MISSED resume, never a spurious one (review finding F6). Held
+            # only across the read/write, never across the callback itself --
+            # `_notify_speech_resumed()` runs after `buffer_lock` is released,
+            # so an arbitrarily slow callback cannot block
+            # `_processing_loop`'s own `buffer_lock` uses (its cadence-paced
+            # `_trim_privacy_audio_buffer()` calls run on the same lock, every
+            # ~`buffer_duration_ms`). No deadlock: neither thread ever calls
+            # back into the other while holding `buffer_lock` -- each
+            # acquisition here and in `_processing_loop` is a short,
+            # self-contained critical section with nothing blocking inside it.
+            with self.buffer_lock:
+                resumed = self.last_speech_time == 0 and self._capture_saw_first_frame
+                self._capture_saw_first_frame = True
+                self.last_speech_time = time.time()
+            if resumed:
+                self._notify_speech_resumed()
 
         except Exception as e:
             logger.error(f"Audio callback error: {e}")
@@ -935,12 +1017,27 @@ class LazyLiveDictationService:
                 # VAD is withholding frames during a pause. Cheap for BOTH
                 # regimes now: the non-streaming loop never blocks on a
                 # transcription except right here, once per segment.
-                if (
-                    self.last_speech_time
-                    and (current_time - self.last_speech_time)
-                    > self.silence_threshold_seconds
-                ):
-                    self.last_speech_time = 0
+                #
+                # The read-check-zero of `last_speech_time` is under
+                # `buffer_lock` -- the same lock `_audio_callback` takes for
+                # its own read-check-write of this field (see that method's
+                # comment; review finding F6) -- so a frame racing this check
+                # cannot silently overwrite a just-written 0 before
+                # `_audio_callback` ever computes a resume from it. Released
+                # before the (potentially seconds-long) finalize call below:
+                # holding it across a transcription would stall every
+                # `buffer_lock` use on the recorder's own callback thread for
+                # that whole duration, which is a far worse regression than
+                # the narrow race this closes.
+                with self.buffer_lock:
+                    stale = (
+                        self.last_speech_time
+                        and (current_time - self.last_speech_time)
+                        > self.silence_threshold_seconds
+                    )
+                    if stale:
+                        self.last_speech_time = 0
+                if stale:
                     if streaming:
                         # Finalizes whatever partial text streaming pushed in
                         # via `_handle_partial_text`, as a fallback for a
@@ -1100,19 +1197,18 @@ class LazyLiveDictationService:
         self._process_audio_buffer(audio_data)
         with self.transcript_lock:
             produced_text = self.current_transcript != before
-        # Unconditional, and always the LAST thing this method does: a
-        # blank/whitespace-only result (routine -- see the log line below)
-        # fires neither `on_partial_transcript` nor `on_final_transcript`,
-        # since `_handle_partial_text` no-ops on blank input and
-        # `_finalize_current_segment()` no-ops on empty text. Without an
-        # unconditional completion signal here, a consumer that shows a
-        # "transcribing" indicator on the `done=False` call above and hides
-        # it on the next partial/final has nothing to hide it on for a blank
-        # segment -- it would stay shown for the rest of the capture (review
-        # finding M1). `_process_audio_buffer` never raises (it catches and
-        # reports through `on_error` internally), so this always runs
-        # immediately after it, symmetric with the `done=False` call above:
-        # exactly one of each per segment.
+        # Unconditional: a blank/whitespace-only result (routine -- see the
+        # log line below) fires neither `on_partial_transcript` nor
+        # `on_final_transcript`, since `_handle_partial_text` no-ops on
+        # blank input and `_finalize_current_segment()` no-ops on empty
+        # text. Without an unconditional completion signal here, a consumer
+        # that shows a "transcribing" indicator on the `done=False` call
+        # above and hides it on the next partial/final has nothing to hide
+        # it on for a blank segment -- it would stay shown for the rest of
+        # the capture (review finding M1). `_process_audio_buffer` never
+        # raises (it catches and reports through `on_error` internally), so
+        # this always runs immediately after it, symmetric with the
+        # `done=False` call above: exactly one of each per segment.
         self._notify_segment_transcribing(done=True)
         if not produced_text:
             # Whisper-family models routinely return empty or whitespace-only
@@ -1125,6 +1221,13 @@ class LazyLiveDictationService:
                 "dropping silently",
                 len(audio_data),
             )
+            # Positive proof no `on_final_transcript` is coming for this
+            # segment -- fired right after the log line above, still
+            # unconditionally within this branch, so a consumer that only
+            # consumes a one-shot state (the hands-free resume latch, see
+            # `HandsFreeController.on_segment_no_final`'s docstring) has
+            # something to consume it on.
+            self._notify_segment_no_final()
 
     def _cleanup(self):
         """Clean up resources with privacy considerations."""
@@ -1534,6 +1637,44 @@ class LazyLiveDictationService:
                 self.on_segment_transcribing(done)
             except Exception as e:
                 logger.error(f"Segment-transcribing callback error: {e}")
+
+    def _notify_speech_resumed(self):
+        """Tell the caller speech resumed after a silence-gated pause.
+
+        Called only from `_audio_callback`, on the recorder's own callback
+        thread, after `buffer_lock` has already been released -- see that
+        call site's comment for why the callback must run outside the lock.
+        Advisory, like every other `_notify_*`/callback invocation in this
+        class: never lets a raising callback escape into the audio-recording
+        thread.
+        """
+        if self.on_speech_resumed:
+            try:
+                self.on_speech_resumed()
+            except Exception as e:
+                logger.error(
+                    f"Speech resumed callback error in state {self.state}: {e}"
+                )
+
+    def _notify_segment_no_final(self):
+        """Tell the caller this segment produced no usable transcript, so
+        no `on_final_transcript` will ever arrive for it.
+
+        Called only from `_transcribe_segment_audio`, on this thread,
+        immediately after the unconditional `_notify_segment_transcribing
+        (done=True)` call, and only on that method's blank/whitespace-only
+        branch (see that method's own comment/log line for why the outcome
+        is routine, not exceptional). Advisory, like every other
+        `_notify_*`/callback invocation in this class: never lets a
+        raising callback escape into the processing loop.
+        """
+        if self.on_segment_no_final:
+            try:
+                self.on_segment_no_final()
+            except Exception as e:
+                logger.error(
+                    f"Segment-no-final callback error in state {self.state}: {e}"
+                )
 
 
 class AudioInitializationError(Exception):
