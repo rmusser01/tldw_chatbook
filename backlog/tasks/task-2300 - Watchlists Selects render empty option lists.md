@@ -1,7 +1,7 @@
 ---
 id: TASK-2300
 title: Watchlists Selects render empty option lists
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

@@ -1,7 +1,7 @@
 ---
 id: TASK-2304
 title: Rail counts and the scoped sources table tell the truth
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
