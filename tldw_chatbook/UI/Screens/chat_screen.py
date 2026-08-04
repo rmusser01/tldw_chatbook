@@ -52,6 +52,7 @@ from ..Console_Modules.frame import (
     frame_console_region,
 )
 from ..Console_Modules.left_rail import ConsoleLeftRail
+from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -14916,109 +14917,33 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         yield self._ensure_console_session_surface()
 
-                right_rail = Vertical(
-                    id="console-right-rail",
-                    classes="console-region destination-workbench-pane",
+                # The live-work card is the one piece of this rail's content
+                # that reaches beyond rail-local state (self.app_instance,
+                # self._console_library_rag_query via
+                # _build_console_live_work_source_readiness_card) -- built
+                # here, on the screen, exactly as it was built inline before
+                # this extraction (wave-1 console decomposition, task 4),
+                # and handed to `ConsoleInspectorRail` as a finished widget,
+                # mirroring how task 3 hands `character_avatar_widget` to
+                # `ConsoleLeftRail`.
+                live_work_card = (
+                    self._build_console_live_work_status_card(pending_launch)
+                    if pending_launch
+                    else self._build_console_live_work_source_readiness_card()
+                )
+                right_rail = ConsoleInspectorRail(
+                    staged_context_state=staged_context_state,
+                    retrieval_scope_state=retrieval_scope_state,
+                    inspector_state=inspector_state,
+                    settings_summary_state=self._build_console_settings_summary_state(),
+                    live_work_card=live_work_card,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                with self._frame_console_region(right_rail):
-                    right_rail_header = Horizontal(classes="console-rail-header")
-                    right_rail_header.styles.height = 1
-                    right_rail_header.styles.min_height = 1
-                    right_rail_header.styles.max_height = 1
-                    with right_rail_header:
-                        rail_label = Static(
-                            "Inspector",
-                            id="console-inspector-rail-title",
-                            classes="console-rail-title",
-                        )
-                        rail_label.styles.width = "1fr"
-                        yield rail_label
-                        collapse_button = Button(
-                            GLYPH_COLLAPSE_RIGHT,
-                            id="console-inspector-rail-collapse",
-                            classes="console-rail-collapse-button",
-                            compact=True,
-                        )
-                        collapse_button.tooltip = "Collapse Inspector rail"
-                        collapse_button.styles.width = 3
-                        collapse_button.styles.min_width = 3
-                        collapse_button.styles.max_width = 3
-                        yield collapse_button
-                    with VerticalScroll(
-                        id="console-inspector-rail-body",
-                        classes="console-inspector-rail-body",
-                    ):
-                        # Context (staged sources) section -- moved here from
-                        # the left rail (task-400). Pinned to the TOP of the
-                        # Inspector body so it is visible without scrolling
-                        # and reads above the run inspector's Source
-                        # Readiness section (splitting the monolithic
-                        # ConsoleRunInspector at that boundary would have
-                        # meant reworking its TASK-259 in-place-update
-                        # fingerprinting for a placement change). Same pure
-                        # display-state seam as before: no DB reads on
-                        # compose/recompose.
-                        staged_context_tray = ConsoleStagedContextTray(
-                            staged_context_state,
-                            id="console-staged-context-tray",
-                            classes="console-inspector-context-section",
-                        )
-                        staged_context_tray.styles.width = "100%"
-                        staged_context_tray.styles.min_width = 0
-                        staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = (
-                            3 if staged_context_state.is_empty else 4
-                        )
-                        staged_context_tray.styles.max_height = (
-                            6 if staged_context_state.is_empty else 10
-                        )
-                        yield self._frame_console_region(
-                            staged_context_tray,
-                            variant=self._staged_context_frame_variant(
-                                staged_context_state
-                            ),
-                        )
-                        # task-9: Retrieval scope row -- a sibling of the
-                        # Sources tray above (never a row inside it or
-                        # inside ConsoleRunInspector below: design spec
-                        # section 4 keeps the staged-vs-scope mechanism
-                        # boundary visible). Renders purely from session
-                        # state -- no DB reads on compose/recompose.
-                        retrieval_scope_row = ConsoleRetrievalScopeRow(
-                            retrieval_scope_state,
-                            id=CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
-                            classes="console-inspector-context-section",
-                        )
-                        retrieval_scope_row.styles.width = "100%"
-                        retrieval_scope_row.styles.min_width = 0
-                        retrieval_scope_row.styles.height = "auto"
-                        yield self._frame_console_region(
-                            retrieval_scope_row, variant="quiet"
-                        )
-                        with Vertical(id="console-run-inspector"):
-                            yield ConsoleRunInspector(
-                                inspector_state,
-                                id="console-run-inspector-state",
-                            )
-                            settings_summary = ConsoleSettingsSummary(
-                                self._build_console_settings_summary_state(),
-                                id="console-settings-summary",
-                                classes="console-inspector-session-settings console-settings-summary",
-                            )
-                            settings_summary.styles.width = "100%"
-                            settings_summary.styles.min_width = 0
-                            yield settings_summary
-                        if pending_launch:
-                            yield from self._render_console_live_work_status_card(
-                                pending_launch
-                            )
-                        else:
-                            yield from self._render_console_live_work_source_readiness()
+                yield self._frame_console_region(right_rail)
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
