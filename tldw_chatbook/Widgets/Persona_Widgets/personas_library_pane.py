@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.events import Resize
 from textual.widgets import Button, Input, ListItem, ListView, Static
 
 from .personas_messages import (
@@ -21,6 +22,10 @@ from .personas_messages import (
 )
 
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
+
+#: Columns one toolbar button occupies beyond its label: `padding: 0 1`
+#: plus the `margin-right: 1` gap from the pane CSS below.
+_TOOLBAR_BUTTON_CHROME_COLS = 3
 
 
 def _row_dom_id(kind: str, item_id: str) -> str:
@@ -115,6 +120,35 @@ class PersonasLibraryPane(Vertical):
         width: 1fr;
         text-align: center;
     }
+
+    /* F-030: toolbar buttons size to their labels. The Textual Button
+       default min-width:16 let "New" alone fill a narrow pane and clipped
+       Import/Duplicate/Tag off the right edge at supported widths. */
+    PersonasLibraryPane #personas-library-toolbar Button,
+    PersonasLibraryPane #personas-library-filterbar Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        margin-right: 1;
+    }
+
+    /* F-030 narrow panes: stack each bar vertically so every action wraps
+       onto its own full-width row (a Textual Horizontal never wraps, so one
+       over-wide row would clip instead). */
+    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar,
+    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
+        layout: vertical;
+        height: auto;
+    }
+
+    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,
+    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button {
+        width: 100%;
+        margin-right: 0;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -131,6 +165,45 @@ class PersonasLibraryPane(Vertical):
         """
         self.query_one("#personas-library-duplicate", Button).display = True
         self.query_one("#personas-library-pagebar").display = False
+        self._sync_control_layout()
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-wrap the toolbar bars when the pane width changes (F-030)."""
+        self._sync_control_layout()
+
+    def _required_toolbar_row_width(self) -> int:
+        """Widest single-row width the currently visible bar buttons need.
+
+        Derived from labels, not rendered sizes, so toggling the stacked
+        class never changes the measurement (no layout oscillation).
+        """
+        required = 0
+        for bar_id in ("#personas-library-toolbar", "#personas-library-filterbar"):
+            row = 0
+            for button in self.query(f"{bar_id} Button").results():
+                if not button.display:
+                    continue
+                row += len(str(button.label)) + _TOOLBAR_BUTTON_CHROME_COLS
+            required = max(required, row)
+        return required
+
+    def _sync_control_layout(self) -> None:
+        """Stack the toolbar bars when one row would clip actions (F-030).
+
+        A pane narrower than the single-row width clipped the rightmost
+        buttons off-screen (at 100x30 that hid Import -- the roleplay
+        onboarding path). Stacking switches each bar to a vertical layout so
+        every action wraps onto its own row instead.
+        """
+        width = self.content_size.width
+        if width <= 0:
+            # Not laid out yet (on_mount); on_resize re-syncs once sized.
+            return
+        try:
+            required = self._required_toolbar_row_width()
+        except Exception:
+            return
+        self.set_class(width < required, "personas-library-stacked-controls")
 
     def compose(self) -> ComposeResult:
         """Compose the Library pane header, search controls, and rows.
@@ -235,6 +308,8 @@ class PersonasLibraryPane(Vertical):
         if not sort_visible:
             # dict/lore never paginate - keep the page bar hidden.
             self.query_one("#personas-library-pagebar").display = False
+        # Which buttons render changed, so the single-row fit changed too.
+        self._sync_control_layout()
 
     async def update_rows(
         self,
@@ -403,10 +478,13 @@ class PersonasLibraryPane(Vertical):
     def set_sort_label(self, text: str) -> None:
         """Update the sort button's label (the screen owns the sort cycle/copy)."""
         self.query_one("#personas-library-sort", Button).label = text
+        # A longer/shorter label changes the single-row fit (F-030).
+        self._sync_control_layout()
 
     def set_tag_label(self, text: str) -> None:
         """Update the tag button's label (the screen owns the active tag)."""
         self.query_one("#personas-library-tag", Button).label = text
+        self._sync_control_layout()
 
     @on(Input.Changed, "#personas-library-search")
     def _search_changed(self, event: Input.Changed) -> None:
