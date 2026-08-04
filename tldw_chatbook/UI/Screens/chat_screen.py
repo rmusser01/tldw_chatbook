@@ -239,7 +239,23 @@ from ...Chat.console_voice_input import (
     acoustic_barge_in_enabled,
     default_service_factory,
     handsfree_send_delay_seconds,
+    realtime_enabled,
+    realtime_idle_timeout_seconds,
+    realtime_model,
+    realtime_provider,
+    realtime_voice,
+    resolve_handsfree_engine,
 )
+from ...Chat.console_realtime_loop import RealtimeLoopController
+
+# Import-safe at module scope for the same reason `console_voice_input` is:
+# `LLM_Calls/realtime/__init__.py` re-exports pure dataclasses/typing only
+# and is documented never to import `websockets` (or any provider transport)
+# at package-import time. The provider session itself
+# (`realtime/openai_session.py`, which does reach a transport) is imported
+# lazily, in `_build_console_realtime_session`, exactly like
+# `default_service_factory` defers the speech stack.
+from ...LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
 from ...Chat.console_hands_free import (
     CloseCapture,
     CountdownTick,
@@ -343,6 +359,7 @@ from ...config import (
     coerce_bool_setting,
     coerce_int_setting,
     delete_settings_from_cli_config,
+    get_api_key,
     get_cli_providers_and_models,
     get_cli_setting,
     load_settings,
@@ -770,6 +787,533 @@ class ConsoleHandsFreeSession:
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
     pending_existing_assistant_ids: frozenset[str] = frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Realtime (V4) hands-free loop -- constants
+#
+# The realtime engine keeps ONE provider session open for the whole
+# conversation (`LLM_Calls/realtime/`), streams raw microphone PCM into it
+# (`Audio/realtime_mic_tap.py`), plays its reply audio back through the
+# streaming sink (`Audio/streaming_sink.py`), and is driven by the headless
+# FSM in `Chat/console_realtime_loop.py`. Everything below is that stack's
+# Console-screen wiring vocabulary. See
+# `.superpowers/sdd/2026-08-04-realtime-voice-engine/`.
+# ---------------------------------------------------------------------------
+
+#: The only realtime provider this app implements a transport for. The
+#: config reader (`realtime_provider()`) deliberately does NOT validate its
+#: value -- it is a plain passthrough -- so the engine fork is the single
+#: place a typo'd or aspirational provider name can be refused honestly
+#: instead of failing later as an opaque connection error.
+CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
+
+#: Wall-clock ceiling on the provider handshake. A realtime connect that
+#: never completes is indistinguishable from a hang to the user, and the
+#: mic is already open by then (see `_enter_console_realtime_loop`), so it
+#: must be bounded rather than awaited forever. Module-scope (not inlined)
+#: so tests can shrink it instead of waiting out a real 8 s.
+CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS = 8.0
+
+#: Input AND output PCM rate for the realtime engine, in Hz. Both ends are
+#: pinned to the same rate on purpose: the mic tap captures at it, the
+#: session declares it in both directions, and the sink plays at it, so
+#: there is exactly one number to keep true.
+CONSOLE_REALTIME_SAMPLE_RATE = 24000
+
+#: Bytes of PCM16 mono per second of audio at `CONSOLE_REALTIME_SAMPLE_RATE`
+#: -- the divisor behind `played_ms` (see `_console_realtime_played_ms`).
+CONSOLE_REALTIME_BYTES_PER_SECOND = CONSOLE_REALTIME_SAMPLE_RATE * 2
+
+#: Seeding budget: at most this many prior turns, and at most this many
+#: characters across them, are replayed into a fresh session. Both are
+#: applied newest-first (see `_console_realtime_seed_items`) -- a realtime
+#: session is billed per token of context it holds, so an unbounded replay
+#: of a long Console conversation would be a silent, permanent cost.
+CONSOLE_REALTIME_SEED_TURNS = 20
+CONSOLE_REALTIME_SEED_CHARS = 8000
+
+#: Appended to the assistant's transcript row when a barge-in cut its reply
+#: short. Without it, the stored transcript claims the user heard a whole
+#: sentence they cut off mid-word -- and that transcript is what later
+#: seeds/exports/summarizes the conversation.
+CONSOLE_REALTIME_INTERRUPTED_MARKER = " ⏹ interrupted"
+
+#: Chip copy per `RealtimeLoopState`. States absent from this map
+#: (`idle`) never paint: the loop is gone by then and
+#: `_restore_console_voice_chip` puts the ordinary dictation chip back.
+CONSOLE_REALTIME_CHIP_MESSAGES: dict[str, str] = {
+    "connecting": "realtime · connecting…",
+    "live": "realtime · listening",
+    "thinking": "realtime · thinking…",
+    "speaking": "realtime · speaking",
+    "reconnecting": "realtime · reconnecting…",
+}
+
+CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE = (
+    "Hands-free is set to the realtime engine, but [realtime] enabled is "
+    'false. Turn it on in config, or set dictation.handsfree_engine to "auto" '
+    'or "pipeline".'
+)
+CONSOLE_REALTIME_UNSUPPORTED_PROVIDER_TEMPLATE = (
+    "Realtime voice provider '{provider}' is not supported. Only "
+    "'{supported}' is implemented; hands-free did not start."
+)
+#: The microphone could not be opened at all -- reported through the SAME
+#: connect-failure path as a refused handshake, since from the user's seat
+#: both mean "the realtime loop cannot run" and both deserve the fallback.
+CONSOLE_REALTIME_MIC_FAILED_MESSAGE = "the microphone could not be opened"
+CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = (
+    "the connection timed out after {seconds:g}s"
+)
+CONSOLE_REALTIME_FALLBACK_TEMPLATE = (
+    "Realtime voice unavailable ({reason}); using the pipeline hands-free "
+    "loop instead."
+)
+CONSOLE_REALTIME_NO_LOOP_TEMPLATE = (
+    "Hands-free unavailable. Realtime failed ({reason}); the pipeline loop "
+    "is not usable either ({pipeline_reason})."
+)
+CONSOLE_REALTIME_RECONNECTING_MESSAGE = "Realtime reconnecting…"
+CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = (
+    "Hands-free ended: connection lost"
+)
+CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE = "Hands-free ended: idle for {minutes:g} minutes"
+
+
+@dataclass
+class ConsoleRealtimeSession:
+    """Everything the realtime (V4) hands-free loop needs while it runs.
+
+    Constructed once per loop entry (`ChatScreen._enter_console_realtime_
+    loop`) and dropped on `ExitLoop` (`ChatScreen._release_console_realtime_
+    state`) -- never reused across entries, exactly like its V3 sibling
+    `ConsoleHandsFreeSession`, so every entry gets a clean FSM.
+
+    Attributes:
+        controller: The headless FSM driving the loop.
+        console_session_id: The Console chat session this loop is bound to,
+            captured at entry. Every continuity row is written to THIS
+            session, never to `store.active_session_id` re-read later --
+            a tab switch mid-conversation must not scatter half a spoken
+            exchange across two transcripts (the same discipline V3's
+            `pending_session_id` enforces for its own send).
+        idle_timeout_seconds: The configured idle ceiling, kept here so the
+            exit toast can name it without re-reading config at exit time.
+        tap: The `RealtimeMicTap` streaming microphone PCM into the session.
+        session: The live `RealtimeSession`, or None before the first
+            connect completes and between a drop and its reconnect.
+        sink: The `StreamingPcmSink` playing the CURRENT reply's audio, or
+            None between replies.
+        audio_queue: The `asyncio.Queue` feeding this reply's `pump` task;
+            a `None` item is the end-of-reply sentinel that closes the
+            async iterator.
+        pump_worker: The worker running `pump(sink, aiter)` for this reply.
+        tick_timer: The `set_interval(0.1, ...)` handle driving
+            `controller.tick(now)` (the idle ceiling) and the chip repaint.
+        connect_attempt: Monotonic per-loop counter, incremented for every
+            connect (first and each reconnect). Callbacks are bound to the
+            attempt that created them, so a superseded session's late
+            events are dropped instead of driving the FSM (see
+            `_console_realtime_marshal`).
+        ready: True once the provider acknowledged the handshake and the
+            tap was flushed; an adopted transcript arriving before that is
+            held in `pending_text_turn` rather than enqueued into a session
+            that cannot send it yet.
+        mic_gated: The gate value last synced to `tap.set_gated(...)` --
+            the wiring's record of rule 7, and what tests assert against
+            (the tap's own flag is private).
+        fed_bytes: Bytes of reply audio handed to the sink queue for the
+            CURRENT reply. Drives `played_ms`; reset per reply.
+        user_row_id: The transcript row created at turn-commit, waiting for
+            its input transcript to land.
+        assistant_row_id: The current reply's transcript row.
+        pending_text_turn: An adopted pipeline capture's transcript waiting
+            for `on_ready` (see `ready`).
+        adopt_capture: True while a live pipeline capture is being stopped
+            so its transcript can become this loop's first turn.
+        failure_text: Why the last connect attempt failed, in user-facing
+            words -- consumed by the fallback toast.
+        transcript_dirty: Set by every continuity write; consumed by the
+            0.1 s tick, which is what actually repaints the transcript (a
+            per-delta resync would be one full UI rebuild per audio
+            transcript chunk).
+    """
+
+    controller: RealtimeLoopController
+    console_session_id: str
+    idle_timeout_seconds: float
+    tap: Any = None
+    session: Any = None
+    sink: Any = None
+    audio_queue: Any = None
+    pump_worker: Any = None
+    tick_timer: Any = None
+    connect_attempt: int = 0
+    ready: bool = False
+    mic_gated: bool = False
+    fed_bytes: int = 0
+    user_row_id: str | None = None
+    assistant_row_id: str | None = None
+    pending_text_turn: str | None = None
+    adopt_capture: bool = False
+    failure_text: str = ""
+    transcript_dirty: bool = False
+
+
+def _join_segments(segments: list[str]) -> str:
+    """Join transcript segments with single spaces, without padding breaks.
+
+    A plain `" ".join(segments)` would sandwich an inline `new-paragraph`/
+    `new-line` break entry between two spaces -- `"para. \\n\\n para"` --
+    which reads as a blank line with a stray leading and trailing space
+    rather than a clean paragraph break. A break entry is recognized as
+    exactly `"\\n"` or `"\\n\\n"` (the only values
+    `ConsoleStreamingDictationSession` ever appends for an inline command)
+    and is concatenated directly, trimming any trailing space the previous
+    segment left behind first.
+
+    Args:
+        segments: Finalized transcript text and inline-command break entries,
+            in the order the recognizer produced them.
+
+    Returns:
+        The joined transcript: dictated segments separated by single spaces,
+        breaks concatenated without surrounding padding.
+    """
+    out = ""
+    for segment in segments:
+        if segment in ("\n", "\n\n"):
+            out = out.rstrip(" ") + segment
+        elif out and not out.endswith((" ", "\n")):
+            out += " " + segment
+        else:
+            out += segment
+    return out
+
+
+class ConsoleStreamingDictationSession:
+    """Drive `ConsoleVoiceInputController` through the one-shot session port.
+
+    The Console screen owns dictation as three blocking calls -- `start()`,
+    `stop_and_transcribe()` and `discard()` -- each already run off the UI
+    thread by `asyncio.to_thread`, with the visible button transitions applied
+    around them. Keeping that port intact is what lets the streaming backend
+    replace the one-shot recorder without changing a single observable
+    transition:
+
+    ============================  ==================  =========================
+    Controller state              Button state        Applied by
+    ============================  ==================  =========================
+    ``preparing``                 ``starting``        before ``start()`` runs
+    ``listening``                 ``recording``       when ``start()`` returns
+    ``finishing``                 ``transcribing``    before ``stop_and_transcribe()``
+    ``idle``                      ``idle``            when it returns
+    ============================  ==================  =========================
+
+    `spawn` is therefore inline: this object is *already* on a worker thread,
+    and the controller's blocking halves must complete before the call it
+    stands behind returns.
+
+    Live events still flow the moment they happen -- partials and per-segment
+    finals go straight to `on_event` -- but the finals are accumulated here so
+    `stop_and_transcribe()` returns one transcript at the instant the
+    controller reaches `idle`. That preserves the shipping insertion contract:
+    the draft is written once, at the caret, and never mid-capture.
+
+    A finalized segment that matched the spoken-command grammar arrives as a
+    `VoiceCommand` instead of a `VoiceFinal` (see `classify_segment`). Two
+    command names -- `new-paragraph` and `new-line` -- are this adapter's to
+    act on: they become break entries in `_segments` (see `_join_segments`),
+    never dictated text. Every other command name ends the capture and is
+    Task 3's to route; this class only keeps it out of `_segments`, counts it
+    in `commands_consumed`, and forwards it to `on_event` unchanged, exactly
+    like any other event.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_event: Callable[[Any, Any], None],
+        service_factory: Callable[..., Any] = default_service_factory,
+        max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
+    ) -> None:
+        """Build a session over a fresh controller.
+
+        Args:
+            on_event: Called with `(session, event)` for every controller
+                event, from whatever thread emitted it.
+            service_factory: Builds the dictation service; injected by tests.
+            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
+                capture, passed through to the dictation service. `None`
+                leaves the recorder unbounded (the service default, which the
+                non-Console dictation callers still use).
+        """
+        self._on_event = on_event
+        self._lock = threading.Lock()
+        self._segments: list[str] = []
+        #: Finalized commands seen this capture -- inline (`new-paragraph`,
+        #: `new-line`) and capture-ending alike. Read by `stop_and_transcribe`
+        #: to tell a capture that was only ever spoken commands apart from a
+        #: genuinely silent one, since both join down to an empty (or
+        #: whitespace-only) transcript.
+        self.commands_consumed: int = 0
+        self._failure = ""
+        self._in_blocking_call = False
+        self._heard_recognizer_output = False
+        # Bumped by every `start()`. This session object is reused across
+        # captures (only a failure or an explicit cancel drops it -- see
+        # `_notify_console_dictation_error`/`_request_console_dictation_cancel`
+        # on the screen), so when `stop_and_transcribe()`'s join times out
+        # (point 3 below) the orphaned processing thread's tail flush is
+        # still bound to the SAME controller and the SAME `_handle_event`.
+        # `_handle_event` compares the generation the event's callback closure
+        # captured at wiring time (see `ConsoleVoiceInputController.start`'s
+        # `capture_generation` parameter) against this counter's CURRENT
+        # value and drops anything that no longer matches, before it can
+        # mutate `_segments`/`commands_consumed` or reach the screen.
+        self._capture_generation: int = 0
+        self._service_factory = service_factory
+        self._max_buffer_bytes = max_buffer_bytes
+        self._on_buffer_limit: Callable[[], None] | None = None
+        self._controller = ConsoleVoiceInputController(
+            emit=self._handle_event,
+            spawn=lambda thunk: thunk(),
+            # Not `service_factory` directly: the controller builds the service
+            # deep inside `start()`, long after the caller handed us its
+            # buffer-limit callback, so the bound has to be attached here.
+            service_factory=self._build_service,
+        )
+
+    def _build_service(self, **kwargs: Any) -> Any:
+        """Build the dictation service with this session's PCM bound attached.
+
+        Args:
+            **kwargs: Provider, model and language keywords chosen by the
+                controller. Passed through untouched.
+
+        Returns:
+            The dictation service the controller will drive.
+        """
+        if self._max_buffer_bytes is not None:
+            kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
+        if self._on_buffer_limit is not None:
+            kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
+        return self._service_factory(**kwargs)
+
+    def _handle_event(self, event: Any, generation: int | None = None) -> None:
+        """Record what the screen cannot see, then forward. Never raises.
+
+        A raise here would land in the recognizer's callback -- or, for a
+        `VoiceFailed`, inside the controller's own `_fail()`, whose raising-emit
+        handling exists precisely so a plumbing error cannot bury the real
+        cause. Neither is a place to propagate from.
+
+        Args:
+            event: The controller event being emitted.
+            generation: The capture generation `ConsoleVoiceInputController`
+                bound into this event's callback closure at wiring time (see
+                `start()`'s `capture_generation` parameter and `_run_begin()`
+                in `console_voice_input.py`). `None` for events that are
+                always emitted synchronously within the current capture's own
+                blocking call (state changes, advisory notices) and therefore
+                need no check. A mismatch against `self._capture_generation`
+                means an orphaned processing thread from a capture
+                `stop_and_transcribe()` already gave up joining (see its
+                docstring, point 3) has only now delivered its tail flush --
+                after a LATER capture reused this same session object and
+                bumped the generation. The event is dropped before it can
+                mutate `_segments`/`commands_consumed` or reach the screen;
+                this is what closes the race for all four variants a stale
+                delivery can take: command, final, partial, and failed.
+        """
+        try:
+            if generation is not None and generation != self._capture_generation:
+                logger.debug(
+                    "Dropping stale console dictation event (generation {}, "
+                    "current generation {})",
+                    generation,
+                    self._capture_generation,
+                )
+                return
+            forward = True
+            if isinstance(event, VoiceFinal):
+                text = event.text.strip()
+                with self._lock:
+                    # A final that strips to nothing still proves the
+                    # recognizer ran and produced output; only its text is
+                    # discarded. `stop_and_transcribe()` needs that distinction
+                    # to pick between the two silent-capture messages.
+                    self._heard_recognizer_output = True
+                    if text:
+                        self._segments.append(text)
+            elif isinstance(event, VoiceCommand):
+                # A command proves the recognizer ran, same as a `VoiceFinal`
+                # above. `_INLINE_BREAK_COMMANDS` is this adapter's own to
+                # act on -- its break text joins `_segments` in place of
+                # dictated text. Every other command name (the
+                # capture-ending ones `stop`/`send`/`discard`/
+                # `read-that-back`/`new-session`) is deliberately left out of
+                # `_segments` and just forwarded below, unchanged, for the
+                # screen to route in Task 3.
+                break_text = _INLINE_BREAK_COMMANDS.get(event.name)
+                with self._lock:
+                    self._heard_recognizer_output = True
+                    if break_text is not None:
+                        self._segments.append(break_text)
+                    self.commands_consumed += 1
+            elif isinstance(event, VoicePartial):
+                if event.text.strip():
+                    with self._lock:
+                        self._heard_recognizer_output = True
+            elif isinstance(event, VoiceFailed):
+                with self._lock:
+                    self._failure = (f"{event.reason} {event.remedy}").strip()
+                    # A blocking call is in flight, so it is about to raise
+                    # this failure and the screen's existing error path will
+                    # report it. Forwarding it as well would notify the user
+                    # about one failure twice. What does need forwarding is
+                    # the other kind: the recognizer dying mid-capture, with
+                    # nothing blocked on it to carry the news.
+                    forward = not self._in_blocking_call
+            if forward:
+                self._on_event(self, event)
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).warning(
+                "Console dictation event could not be delivered"
+            )
+
+    def _take_failure(self) -> str:
+        with self._lock:
+            failure, self._failure = self._failure, ""
+        return failure
+
+    @contextmanager
+    def _blocking_call(self) -> Iterator[None]:
+        """Mark the window in which a failure will be raised, not forwarded."""
+        with self._lock:
+            self._in_blocking_call = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._in_blocking_call = False
+
+    def start(self, *, on_buffer_limit: Callable[[], None] | None = None) -> None:
+        """Open the microphone, blocking until it is live or has failed.
+
+        Args:
+            on_buffer_limit: Invoked once, from a recorder notification thread,
+                if the capture reaches `max_buffer_bytes`. Wired through to
+                `AudioRecordingService`, which stops taking audio at the bound.
+                Streaming does *not* make the PCM go away: the recorder's own
+                `audio_buffer`, its undrained `audio_queue`, and
+                `LazyLiveDictationService.audio_buffer` all grow for the whole
+                capture at ~32 KB/s each, and the screen's wall-clock timer is
+                the only other thing bounding them.
+
+        Raises:
+            RuntimeError: The controller refused or could not start capture.
+        """
+        self._on_buffer_limit = on_buffer_limit
+        with self._lock:
+            self._segments.clear()
+            self.commands_consumed = 0
+            self._failure = ""
+            self._heard_recognizer_output = False
+            self._capture_generation += 1
+            generation = self._capture_generation
+        with self._blocking_call():
+            self._controller.start(capture_generation=generation)
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        if self._controller.state != STATE_LISTENING:
+            # `start()` was ignored -- the controller was abandoned, or a
+            # previous capture never returned it to idle.
+            raise RuntimeError("Microphone dictation could not be started.")
+
+    def stop_and_transcribe(self) -> str:
+        """Close the microphone and return every segment finalized so far.
+
+        Blocks until the controller reaches `idle`, so the screen inserts
+        exactly once, with the whole transcript, at that moment.
+
+        Never returns an empty transcript for an ordinary capture, matching
+        the one-shot backend this replaced (`Audio/console_dictation.py`): it
+        raised rather than hand back nothing, and the screen's insertion has
+        no empty case for dictated text -- an empty transcript still pads to
+        a stray space at the caret, silently, and gets persisted to the
+        session draft. The one deliberate exception is a capture made of
+        nothing but spoken commands (`self.commands_consumed > 0` -- e.g.
+        "Console, new paragraph." alone, or "Console, stop." with nothing
+        dictated first): the segments still join down to `""` or pure
+        whitespace, but that is not a silent microphone, so this returns
+        `""` rather than raising it as one. The caller must treat that empty
+        return as "nothing to insert," not as the empty case above.
+
+        An empty transcript with no commands consumed has three genuinely
+        different causes, and this reports each as itself rather than
+        blaming the microphone for all three:
+
+        1. The recorder delivered no bytes -- a real capture or permission
+           problem. Keeps the one-shot backend's wording verbatim.
+        2. Bytes arrived but nothing was recognized -- also that backend's
+           wording, verbatim.
+        3. The service's processing thread was still transcribing when its
+           join expired, so audio was dropped unread. Nothing here is a
+           statement about the microphone, which worked fine.
+
+        The recorder's byte count comes from the service
+        (`CaptureOutcome.captured_bytes`), not from guessing at the transcript.
+        When a service does not report it -- test fakes, older services -- the
+        recognizer-output flag is the fallback, exactly as before.
+
+        Returns:
+            The accumulated segments, joined by `_join_segments` (so an
+            inline command's break lands unpadded). Empty only when the
+            capture consisted solely of spoken commands; an ordinary
+            dictated capture is never empty.
+
+        Raises:
+            RuntimeError: The controller failed while finishing, or the
+                capture was genuinely silent (`self.commands_consumed == 0`
+                and nothing was transcribed, or the transcription never
+                completed).
+        """
+        with self._blocking_call():
+            self._controller.stop()
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        with self._lock:
+            transcript = _join_segments(self._segments)
+            heard = self._heard_recognizer_output
+            commands_consumed = self.commands_consumed
+        if transcript.strip():
+            return transcript
+        if commands_consumed > 0:
+            return ""
+        outcome = self._controller.last_capture_outcome
+        if not outcome.transcription_complete:
+            raise RuntimeError(
+                f"{TRANSCRIPTION_INCOMPLETE_REASON} {TRANSCRIPTION_INCOMPLETE_REMEDY}"
+            )
+        heard = heard or bool(outcome.captured_bytes)
+        raise RuntimeError(NO_SPEECH_MESSAGE if heard else NO_CAPTURE_MESSAGE)
+
+    def discard(self) -> None:
+        """Release the microphone without the blocking join.
+
+        Terminal teardown only (unmount, or a failure the screen has already
+        surfaced): `abandon()` is one-way for this instance, and the screen
+        drops the session on both of those paths.
+        """
+        self._controller.abandon()
+        with self._lock:
+            self._segments.clear()
+            self.commands_consumed = 0
+            self._failure = ""
 
 
 @dataclass(frozen=True)
@@ -2943,6 +3487,14 @@ class ChatScreen(BaseAppScreen):
         #: loop is not running. See `ConsoleHandsFreeSession` and
         #: `_enter_console_hands_free_loop`/`_teardown_console_hands_free_loop`.
         self._console_hands_free: ConsoleHandsFreeSession | None = None
+        #: The realtime (V4) hands-free loop's live session, or None when
+        #: that loop is not running. Mutually exclusive with
+        #: `_console_hands_free` by construction: the engine fork in
+        #: `_enter_console_hands_free_loop` picks exactly one engine per
+        #: loop entry, and neither entry point runs while the other's
+        #: session is set. See `ConsoleRealtimeSession` and
+        #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
+        self._console_realtime: ConsoleRealtimeSession | None = None
         #: True once `_install_console_hands_free_store_tap` has wrapped the
         #: store's `append_stream_chunk`/`mark_message_*` methods. The store
         #: itself is a lazily-created singleton for this screen instance
@@ -6274,16 +6826,71 @@ class ChatScreen(BaseAppScreen):
     # ------------------------------------------------------------------
 
     def action_toggle_console_hands_free(self) -> None:
-        """`ctrl+shift+h`: enter the hands-free loop, or exit it if already running."""
+        """`ctrl+shift+h`: enter the hands-free loop, or exit it if already running.
+
+        Both engines exit through their own controller's `on_exit_request()`
+        -- the toggle never tears state down directly, so the exit runs the
+        same reasoned `ExitLoop` path every other exit route uses.
+        """
         if self._console_hands_free is not None:
             self._console_hands_free.controller.on_exit_request()
+            return
+        if self._console_realtime is not None:
+            self._console_realtime.controller.on_exit_request()
             return
         self._enter_console_hands_free_loop(
             capture_live=self._console_dictation_state == "recording"
         )
 
     def _enter_console_hands_free_loop(self, *, capture_live: bool) -> None:
-        """Start (or re-confirm) the hands-free loop.
+        """Pick the hands-free engine, then start that engine's loop.
+
+        The fork (V4 task 5, rule 1) is deliberately the ONLY place engine
+        selection happens, and it happens once per loop entry -- never
+        mid-loop. A loop that is already running keeps the engine it was
+        started with: `resolve_handsfree_engine()` reads live config, and
+        re-resolving it on a re-entry (a spoken "hands free" mid-loop, say)
+        could otherwise hand a running V3 loop's re-entry to the realtime
+        engine and leave two loops fighting over the microphone.
+
+        `"realtime"` selected while `[realtime] enabled` is false is a
+        FORCED-but-unconfigured selection, not a mistake to paper over:
+        `resolve_handsfree_engine()`'s docstring is explicit that it never
+        silently downgrades an explicit `dictation.handsfree_engine =
+        "realtime"` to the pipeline, and that being honest about it is the
+        caller's job. So it is refused here, loudly, rather than starting
+        an engine the user disabled or a fallback they did not ask for.
+
+        Args:
+            capture_live: True when an existing one-shot dictation capture
+                is already open and should be adopted as the loop's first
+                turn; forwarded verbatim to whichever engine is selected.
+        """
+        if self._console_hands_free is not None:
+            self._enter_console_hands_free_pipeline_loop(capture_live=capture_live)
+            return
+        if self._console_realtime is not None:
+            # `RealtimeLoopController.enter()` is itself idempotent, so a
+            # stray re-entry has nothing to re-confirm here (unlike V3,
+            # whose `enter()` carries capture bookkeeping).
+            return
+        if resolve_handsfree_engine() == "realtime":
+            if not realtime_enabled():
+                self.app_instance.notify(
+                    CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, severity="warning"
+                )
+                return
+            self._enter_console_realtime_loop(capture_live=capture_live)
+            return
+        self._enter_console_hands_free_pipeline_loop(capture_live=capture_live)
+
+    def _enter_console_hands_free_pipeline_loop(self, *, capture_live: bool) -> None:
+        """Start (or re-confirm) the V3 pipeline hands-free loop.
+
+        Reached from the engine fork above, and directly from the realtime
+        engine's loud fallback (`_console_realtime_fallback_to_pipeline`),
+        which must NOT re-run the fork -- it would resolve straight back to
+        the realtime engine that just failed.
 
         Args:
             capture_live: True when an existing one-shot dictation capture
@@ -6982,6 +7589,808 @@ class ChatScreen(BaseAppScreen):
         if session is None:
             return
         session.controller.on_sequencer_drained()
+
+    # ------------------------------------------------------------------
+    # Realtime (V4) hands-free loop: one live provider session for the
+    # whole conversation. `Chat/console_realtime_loop.py`
+    # (`RealtimeLoopController`, the headless FSM), `Audio/realtime_mic_
+    # tap.py` (the raw 24 kHz mic tap), `LLM_Calls/realtime/` (the
+    # provider-neutral session protocol + the OpenAI transport) and
+    # `Audio/streaming_sink.py` (reply audio playback) are all pure/
+    # headless; this section is their thin Console-screen wiring, mirroring
+    # the V3 section above one for one. See `.superpowers/sdd/
+    # 2026-08-04-realtime-voice-engine/`.
+    # ------------------------------------------------------------------
+
+    def _enter_console_realtime_loop(self, *, capture_live: bool) -> None:
+        """Start the realtime hands-free loop.
+
+        Order matters here and is load-bearing:
+
+        1. Refuse an unsupported provider BEFORE anything is opened -- the
+           config reader does not validate it (see
+           `CONSOLE_REALTIME_SUPPORTED_PROVIDER`).
+        2. Enter the FSM, which paints `connecting…` immediately, so the
+           several seconds a handshake can take never look like a hang.
+        3. Open the MICROPHONE, before the connect is even started. The tap
+           buffers everything it captures until `mark_ready()`, so a user
+           who starts talking the instant the chip appears keeps their
+           first words instead of losing them to the handshake window.
+        4. Only then connect, bounded by
+           `CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS`.
+
+        Args:
+            capture_live: True when a one-shot pipeline capture is already
+                open (the key binding pressed while recording, or a spoken
+                "hands free" mid-capture). That capture is stopped and
+                transcribed through the existing V2 path, and its
+                transcript becomes this loop's first turn -- see
+                `_console_realtime_adopt_transcript`.
+        """
+        if self._console_realtime is not None:
+            return
+        provider = str(realtime_provider() or "").strip().lower()
+        if provider != CONSOLE_REALTIME_SUPPORTED_PROVIDER:
+            self.app_instance.notify(
+                CONSOLE_REALTIME_UNSUPPORTED_PROVIDER_TEMPLATE.format(
+                    provider=realtime_provider(),
+                    supported=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
+                ),
+                severity="warning",
+            )
+            return
+
+        # Bind the Console session ONCE, here: every continuity row this
+        # loop writes goes to this id, never to a re-read `active_session_
+        # id` (see `ConsoleRealtimeSession.console_session_id`).
+        self._ensure_active_console_session_settings()
+        store = self._ensure_console_chat_store()
+        console_session_id = store.active_session_id
+        if not console_session_id:
+            logger.debug("Console realtime loop refused: no active Console session")
+            return
+
+        idle_timeout = realtime_idle_timeout_seconds()
+        controller = RealtimeLoopController(
+            self._handle_console_realtime_intent,
+            acoustic_barge_in=acoustic_barge_in_enabled(),
+            idle_timeout_seconds=idle_timeout,
+        )
+        session = ConsoleRealtimeSession(
+            controller=controller,
+            console_session_id=console_session_id,
+            idle_timeout_seconds=idle_timeout,
+        )
+        self._console_realtime = session
+        session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
+        controller.enter()
+
+        if not self._start_console_realtime_tap(session):
+            self._console_realtime_connect_failed(
+                session,
+                session.connect_attempt,
+                RuntimeError(CONSOLE_REALTIME_MIC_FAILED_MESSAGE),
+            )
+            return
+
+        if capture_live and self._console_dictation_state == "recording":
+            session.adopt_capture = True
+            self._request_console_dictation_stop()
+
+        self._start_console_realtime_connect(session)
+
+    def _start_console_realtime_tap(self, session: ConsoleRealtimeSession) -> bool:
+        """Open the microphone for `session`. Returns True on success.
+
+        The tap is constructed with a lazily-imported `RealtimeMicTap`: its
+        module reaches `Audio/recording_service.py` (and therefore NumPy
+        plus the optional capture backends) at import time, which must not
+        be paid at app start by every Console mount that never speaks.
+
+        `recorder_factory` is left as None in production; the app-level
+        `console_realtime_recorder_factory` seam exists so tests exercise
+        the REAL tap (its buffering/ordering guarantees are what rule 3
+        depends on) against a fake recorder rather than a real device.
+        """
+        from ...Audio.realtime_mic_tap import RealtimeMicTap
+
+        recorder_factory = getattr(
+            self.app_instance, "console_realtime_recorder_factory", None
+        )
+        tap = RealtimeMicTap(
+            lambda frames: self._on_console_realtime_frames(session, frames),
+            sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
+            recorder_factory=recorder_factory if callable(recorder_factory) else None,
+        )
+        session.tap = tap
+        try:
+            started = bool(tap.start())
+        except Exception:  # noqa: BLE001 - a device failure is a fallback, not a crash
+            logger.opt(exception=True).warning(
+                "Console realtime: microphone tap failed to start"
+            )
+            started = False
+        return started
+
+    def _on_console_realtime_frames(
+        self, session: ConsoleRealtimeSession, frames: bytes
+    ) -> None:
+        """Forward one captured PCM chunk to the provider session.
+
+        Runs on the RECORDER's own background thread (see
+        `RealtimeMicTap`'s module docstring), which is exactly the call
+        pattern `OpenAIRealtimeSession.append_audio` documents itself
+        thread-safe for -- it marshals onto its own loop internally, so
+        nothing is marshalled here. Both reads below are plain attribute
+        loads, safe from any thread, and a stale session (the loop exited
+        while a frame was in flight) is dropped rather than resurrected.
+        """
+        if self._console_realtime is not session:
+            return
+        provider_session = session.session
+        if provider_session is None:
+            return
+        try:
+            provider_session.append_audio(frames)
+        except Exception:  # noqa: BLE001 - never kill the recorder thread
+            logger.opt(exception=True).debug(
+                "Console realtime: append_audio failed; dropping this chunk"
+            )
+
+    def _console_realtime_instructions(self) -> str | None:
+        """The active session's system prompt, as realtime `instructions`.
+
+        A realtime session has no per-request message list to carry a
+        system prompt in -- instructions are session-level -- so the
+        Console's own system prompt has to be handed over at handshake and
+        re-handed on every reconnect, or the model silently loses its
+        persona the moment the transport blips.
+        """
+        try:
+            settings = self._ensure_active_console_session_settings()
+        except Exception:  # noqa: BLE001 - a settings failure must not block voice
+            logger.opt(exception=True).debug(
+                "Console realtime: could not read the session system prompt"
+            )
+            return None
+        prompt = str(getattr(settings, "system_prompt", "") or "").strip()
+        return prompt or None
+
+    def _console_realtime_seed_items(
+        self, console_session_id: str
+    ) -> list[tuple[str, str]]:
+        """Build the conversation seed for a fresh (or reconnected) session.
+
+        Newest-first selection under BOTH budgets
+        (`CONSOLE_REALTIME_SEED_TURNS`, `CONSOLE_REALTIME_SEED_CHARS`),
+        then reversed back into transcript order: what a returning session
+        most needs is the recent thread, and an unbounded replay of a long
+        Console conversation is billed context on every reconnect.
+
+        Only user/assistant rows with real text are replayed -- tool
+        markers and empty placeholder rows (a turn whose transcript never
+        landed) would seed noise the user never said.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            messages = store.messages_for_session(console_session_id)
+        except KeyError:
+            return []
+        selected: list[tuple[str, str]] = []
+        used_chars = 0
+        for message in reversed(messages):
+            if message.role not in (
+                ConsoleMessageRole.USER,
+                ConsoleMessageRole.ASSISTANT,
+            ):
+                continue
+            text = str(message.content or "").strip()
+            if not text:
+                continue
+            if used_chars + len(text) > CONSOLE_REALTIME_SEED_CHARS:
+                break
+            selected.append((message.role.value, text))
+            used_chars += len(text)
+            if len(selected) >= CONSOLE_REALTIME_SEED_TURNS:
+                break
+        selected.reverse()
+        return selected
+
+    def _build_console_realtime_session(
+        self, config: RealtimeSessionConfig, callbacks: RealtimeCallbacks
+    ) -> Any:
+        """Construct the provider session, honoring the test seam.
+
+        `console_realtime_session_factory` mirrors `console_provider_
+        gateway_factory`'s getattr idiom exactly. The real session is
+        imported inside this method, not at module scope: it owns a
+        WebSocket transport, and a Console mount that never opens a
+        realtime loop must not pay for it.
+        """
+        factory = getattr(self.app_instance, "console_realtime_session_factory", None)
+        if callable(factory):
+            return factory(config, callbacks)
+        from ...LLM_Calls.realtime.openai_session import OpenAIRealtimeSession
+
+        return OpenAIRealtimeSession(config, callbacks)
+
+    def _console_realtime_api_key(self) -> str:
+        """The configured API key for the realtime provider, or `""`.
+
+        Never raises and never logs the key: a missing key surfaces as an
+        ordinary connect failure (the provider refuses the handshake),
+        which already routes through the loud fallback.
+        """
+        try:
+            return str(get_api_key(CONSOLE_REALTIME_SUPPORTED_PROVIDER) or "")
+        except Exception:  # noqa: BLE001 - config trouble is a connect failure
+            logger.opt(exception=True).debug(
+                "Console realtime: could not resolve the provider API key"
+            )
+            return ""
+
+    def _build_console_realtime_callbacks(
+        self, session: ConsoleRealtimeSession, attempt: int
+    ) -> RealtimeCallbacks:
+        """Wire this connect attempt's callbacks onto the screen.
+
+        Every callback is bound to `attempt`, so a session superseded by a
+        reconnect can never drive the FSM afterward (see
+        `_console_realtime_marshal`), and every one of them is marshalled
+        rather than called inline -- they arrive on the session's own
+        asyncio task.
+        """
+
+        def _route(handler: Callable[..., None]) -> Callable[..., None]:
+            def _fire(*args: Any) -> None:
+                self._console_realtime_marshal(handler, session, attempt, *args)
+
+            return _fire
+
+        return RealtimeCallbacks(
+            on_ready=_route(self._on_console_realtime_ready),
+            on_turn_committed=_route(self._on_console_realtime_turn_committed),
+            on_first_audio=_route(self._on_console_realtime_first_audio),
+            on_reply_done=_route(self._on_console_realtime_reply_done),
+            on_speech_started=_route(self._on_console_realtime_speech_started),
+            on_error=_route(self._on_console_realtime_error),
+            on_closed=_route(self._on_console_realtime_closed),
+        )
+
+    def _console_realtime_marshal(
+        self,
+        handler: Callable[..., None],
+        session: ConsoleRealtimeSession,
+        attempt: int,
+        *args: Any,
+    ) -> None:
+        """Run `handler(session, *args)` on the app's own thread.
+
+        Realtime callbacks fire from the session's asyncio task. In
+        production that task runs on the app's event loop (the connect
+        worker is dispatched there), so the fast path below is a direct
+        call -- but the contract does not promise it, and a foreign-thread
+        callback must never touch widgets. `call_soon_threadsafe` is used
+        rather than `App.call_from_thread` on purpose: `call_from_thread`
+        BLOCKS its caller until the callback completes, and blocking a
+        provider's receive loop on the UI thread would stall inbound audio
+        for the whole conversation.
+
+        The staleness check runs at DELIVERY time, not schedule time: a
+        callback queued just before a reconnect must be judged against the
+        state it will actually land in.
+        """
+
+        def _run() -> None:
+            if self._console_realtime is not session:
+                return
+            if session.connect_attempt != attempt:
+                return
+            try:
+                handler(session, *args)
+            except Exception:  # noqa: BLE001 - a wiring fault must not kill the loop
+                logger.opt(exception=True).warning(
+                    "Console realtime: callback handler failed; dropping it"
+                )
+
+        if threading.get_ident() == self.app_instance._thread_id:
+            _run()
+            return
+        loop = getattr(self.app_instance, "_loop", None)
+        if loop is None:
+            logger.debug(
+                "Console realtime: no app loop to marshal onto; dropping callback"
+            )
+            return
+        try:
+            loop.call_soon_threadsafe(_run)
+        except Exception:  # noqa: BLE001 - a closing loop is not an error here
+            logger.opt(exception=True).debug(
+                "Console realtime: marshal onto the app loop failed"
+            )
+
+    def _start_console_realtime_connect(self, session: ConsoleRealtimeSession) -> None:
+        """Dispatch one connect attempt (first connect or reconnect).
+
+        ONE code path serves both, which is exactly what
+        `RealtimeLoopController.on_connect_failed`'s docstring expects: it
+        routes a `connecting` failure to `connect-failed` and a
+        `reconnecting` failure to the same give-up exit a second transport
+        drop takes.
+        """
+        session.connect_attempt += 1
+        self.run_worker(
+            self._connect_console_realtime(session, attempt=session.connect_attempt),
+            exclusive=False,
+            group="console-realtime-connect",
+            exit_on_error=False,
+        )
+
+    async def _connect_console_realtime(
+        self, session: ConsoleRealtimeSession, *, attempt: int
+    ) -> None:
+        """Build and connect one provider session, bounded by a timeout."""
+        config = RealtimeSessionConfig(
+            api_key=self._console_realtime_api_key(),
+            model=realtime_model(),
+            voice=realtime_voice(),
+            input_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
+            output_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
+            instructions=self._console_realtime_instructions(),
+        )
+        callbacks = self._build_console_realtime_callbacks(session, attempt)
+        try:
+            provider_session = self._build_console_realtime_session(config, callbacks)
+        except Exception as exc:  # noqa: BLE001 - reported, never raised at the user
+            self._console_realtime_connect_failed(session, attempt, exc)
+            return
+        if self._console_realtime is not session or session.connect_attempt != attempt:
+            # Superseded before we even connected (exit, or another
+            # reconnect): release what was just built rather than leaking
+            # a live transport nobody owns.
+            await self._close_console_realtime_session(provider_session)
+            return
+        session.session = provider_session
+        try:
+            await asyncio.wait_for(
+                provider_session.connect(),
+                timeout=CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            await self._close_console_realtime_session(provider_session)
+            self._console_realtime_connect_failed(
+                session,
+                attempt,
+                TimeoutError(
+                    CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE.format(
+                        seconds=CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS
+                    )
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure is a fallback
+            await self._close_console_realtime_session(provider_session)
+            self._console_realtime_connect_failed(session, attempt, exc)
+
+    def _console_realtime_connect_failed(
+        self, session: ConsoleRealtimeSession, attempt: int, exc: BaseException
+    ) -> None:
+        """Record why a connect attempt failed and tell the FSM.
+
+        The FSM decides what that MEANS (a first-connect failure exits with
+        `connect-failed`, which the exit handler turns into the loud
+        fallback; a failed reconnect exits with `connection-lost`), so this
+        never decides for it.
+        """
+        if self._console_realtime is not session or session.connect_attempt != attempt:
+            return
+        session.failure_text = str(exc) or type(exc).__name__
+        logger.warning(
+            "Console realtime: connect attempt failed: "
+            f"op=realtime_connect attempt={attempt} error={exc!r}"
+        )
+        session.session = None
+        session.controller.on_connect_failed()
+
+    # -- provider callbacks -------------------------------------------------
+
+    def _on_console_realtime_ready(self, session: ConsoleRealtimeSession) -> None:
+        """`on_ready`: seed the session, release the buffered audio, go live.
+
+        Seeding happens BEFORE `mark_ready()` on purpose: the tap flushes
+        its pre-ready buffer synchronously into `append_audio`, and the
+        provider must already hold the conversation history (and the
+        instructions) when the user's first words arrive, not after them.
+        """
+        provider_session = session.session
+        if provider_session is not None:
+            try:
+                provider_session.send_seed(
+                    self._console_realtime_seed_items(session.console_session_id),
+                    self._console_realtime_instructions(),
+                )
+            except Exception:  # noqa: BLE001 - a seed failure is not fatal
+                logger.opt(exception=True).warning(
+                    "Console realtime: seeding the session failed"
+                )
+        tap = session.tap
+        if tap is not None:
+            try:
+                tap.mark_ready()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "Console realtime: flushing the mic tap failed"
+                )
+        session.ready = True
+        session.controller.on_session_ready()
+
+    def _on_console_realtime_turn_committed(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """`on_turn_committed`: the provider closed the user's input turn."""
+        session.controller.on_turn_committed(time.monotonic())
+
+    def _on_console_realtime_first_audio(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """`on_first_audio`: reply audio started -- `thinking` -> `speaking`."""
+        session.controller.on_first_audio()
+
+    def _on_console_realtime_reply_done(self, session: ConsoleRealtimeSession) -> None:
+        """`on_reply_done`: a genuine end-of-reply.
+
+        Never fires for a response this client cancelled (Task 2's
+        semantics), so there is no barge-in case to disambiguate here.
+        """
+        session.controller.on_reply_done(time.monotonic())
+
+    def _on_console_realtime_speech_started(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """`on_speech_started`: server-side VAD heard the user start talking.
+
+        The FSM itself decides whether that is a barge-in (acoustic mode
+        only) or noise to ignore.
+        """
+        session.controller.on_speech_started()
+
+    def _on_console_realtime_error(
+        self, session: ConsoleRealtimeSession, exc: Exception
+    ) -> None:
+        """`on_error`: logged, never fatal on its own.
+
+        A provider error that actually ends the session arrives separately
+        as `on_closed`; treating every error event as terminal would end a
+        working conversation over a single recoverable event.
+        """
+        logger.warning(
+            f"Console realtime: provider error: op=realtime_error error={exc!r}"
+        )
+
+    def _on_console_realtime_closed(
+        self, session: ConsoleRealtimeSession, reason: str
+    ) -> None:
+        """`on_closed`: the transport ended.
+
+        Always reported to the FSM as an ERROR close: a close this wiring
+        performed deliberately (exit, reconnect) can never reach here,
+        because both paths supersede the attempt first -- the marshal drops
+        the callback before it lands. So anything that does arrive is by
+        definition an unexpected drop, and the FSM's reconnect-once policy
+        is what decides between a retry and giving up.
+        """
+        logger.info(
+            f"Console realtime: transport closed: op=realtime_closed reason={reason!r}"
+        )
+        session.failure_text = reason
+        session.controller.on_transport_closed(error=True)
+
+    # -- intents ------------------------------------------------------------
+
+    def _handle_console_realtime_intent(self, intent: object) -> None:
+        """Route one intent emitted synchronously by `RealtimeLoopController`.
+
+        The V4 FSM emits a strict subset of V3's vocabulary
+        (`ModeChanged`/`ExitLoop`/`SilenceSpeech`, imported from
+        `console_hands_free.py` rather than redefined), so this dispatcher
+        mirrors `_handle_console_hands_free_intent`'s shape exactly.
+        """
+        if isinstance(intent, SilenceSpeech):
+            self._console_realtime_silence_speech()
+        elif isinstance(intent, ModeChanged):
+            self._console_realtime_mode_changed(intent.state, intent.reason)
+        elif isinstance(intent, ExitLoop):
+            self._console_realtime_exit_loop(intent.reason)
+
+    def _console_realtime_mode_changed(self, state: str, reason: str | None) -> None:
+        """`ModeChanged`: sync the mic gate, handle reconnects, repaint.
+
+        The mic gate is synced on EVERY transition, unconditionally (rule
+        7): `mic_gated` is a derived property of the FSM's state, so
+        syncing it anywhere less than every transition would let the two
+        drift -- and a mic left hot while the assistant speaks feeds the
+        reply's own audio straight back into the provider.
+        """
+        session = self._console_realtime
+        if session is None:
+            return
+        gated = session.controller.mic_gated
+        session.mic_gated = gated
+        tap = session.tap
+        if tap is not None:
+            try:
+                tap.set_gated(gated)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not sync the mic gate"
+                )
+        if reason == "reconnecting":
+            self.app_instance.notify(
+                CONSOLE_REALTIME_RECONNECTING_MESSAGE, severity="warning"
+            )
+            self._console_realtime_begin_reconnect(session)
+        self._repaint_console_realtime_chip()
+
+    def _console_realtime_begin_reconnect(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """Open a fresh session for the same loop after a transport drop.
+
+        The old session is released and a new one built through the SAME
+        factory and the SAME connect path, so a reconnect re-seeds from the
+        store (including everything said since the loop started) exactly
+        the way the first connect did. Incrementing the attempt inside
+        `_start_console_realtime_connect` is what retires the dead
+        session's callbacks.
+        """
+        provider_session, session.session = session.session, None
+        session.ready = False
+        if provider_session is not None:
+            self.run_worker(
+                self._close_console_realtime_session(provider_session),
+                exclusive=False,
+                group="console-realtime-close",
+                exit_on_error=False,
+            )
+        self._start_console_realtime_connect(session)
+
+    def _console_realtime_silence_speech(self) -> None:
+        """`SilenceSpeech`: barge-in -- stop talking, tell the provider.
+
+        `cancel_response(played_ms)` is what keeps the provider's record of
+        the conversation honest: without it the model believes the user
+        heard the whole reply it was midway through generating.
+        """
+        session = self._console_realtime
+        if session is None:
+            return
+        played_ms = self._console_realtime_played_ms(session)
+        provider_session = session.session
+        if provider_session is not None:
+            try:
+                provider_session.cancel_response(played_ms)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "Console realtime: cancel_response failed"
+                )
+
+    def _console_realtime_played_ms(self, session: ConsoleRealtimeSession) -> int:
+        """Milliseconds of THIS reply's audio the user has plausibly heard.
+
+        Counted from bytes handed to the sink, not from bytes the device
+        actually rendered, so it OVER-counts by at most the sink's own
+        buffered depth. That is the safe direction on purpose: `played_ms`
+        drives the provider's `conversation.item.truncate`, and truncating
+        slightly LATE leaves a few words in the model's record that the
+        user nearly heard, while truncating early would delete words they
+        definitely did hear -- which then reads as the model denying it
+        ever said them.
+        """
+        return int(session.fed_bytes * 1000 / CONSOLE_REALTIME_BYTES_PER_SECOND)
+
+    def _console_realtime_exit_loop(self, reason: str | None) -> None:
+        """`ExitLoop`: tear the loop down, then say why it ended.
+
+        Teardown happens FIRST so nothing can keep streaming into a loop
+        the user has already been told is over.
+        """
+        session = self._console_realtime
+        if session is None:
+            return
+        failure = session.failure_text
+        self._teardown_console_realtime_loop()
+        if reason == "connect-failed":
+            self._console_realtime_fallback_to_pipeline(failure)
+            return
+        message = self._console_realtime_exit_message(reason, session)
+        if message:
+            self.app_instance.notify(message, severity="warning")
+
+    def _console_realtime_exit_message(
+        self, reason: str | None, session: ConsoleRealtimeSession
+    ) -> str:
+        """Turn an `ExitLoop` reason into user-facing copy.
+
+        A reasonless exit (the user pressed Esc or the mic) gets NO toast:
+        they know what they just did, and narrating it back is noise.
+        """
+        if reason == "connection-lost":
+            return CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE
+        if reason == "idle-timeout":
+            return CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE.format(
+                minutes=round(session.idle_timeout_seconds / 60.0, 1)
+            )
+        return ""
+
+    def _console_realtime_fallback_to_pipeline(self, failure: str) -> None:
+        """The realtime engine could not start: fall back, loudly, or refuse.
+
+        "Loudly" is the whole point (rule 4). Silently downgrading to the
+        pipeline engine would leave the user believing they are talking to
+        a realtime session -- with its latency, its barge-in, and its
+        billing -- when they are not. And when the pipeline stack is not
+        usable either, BOTH reasons are named: a bare "hands-free
+        unavailable" sends the user hunting through the realtime config
+        for a fault that is really a missing microphone or speech model.
+        """
+        reason = failure or "the realtime session could not be opened"
+        pipeline_reason = self._console_pipeline_hands_free_blocker()
+        if pipeline_reason is None:
+            self.app_instance.notify(
+                CONSOLE_REALTIME_FALLBACK_TEMPLATE.format(reason=reason),
+                severity="warning",
+            )
+            self._enter_console_hands_free_pipeline_loop(
+                capture_live=self._console_dictation_state == "recording"
+            )
+            return
+        self.app_instance.notify(
+            CONSOLE_REALTIME_NO_LOOP_TEMPLATE.format(
+                reason=reason, pipeline_reason=pipeline_reason
+            ),
+            severity="error",
+        )
+
+    def _console_pipeline_hands_free_blocker(self) -> str | None:
+        """Why the V3 pipeline loop is not a usable fallback, or None.
+
+        Two blockers, both already defined elsewhere in this screen: a
+        degraded VAD (the pipeline loop cannot auto-send at all -- see
+        `_console_hands_free_vad_degraded`), and dictation being
+        unavailable outright (no capture backend or no speech provider).
+        """
+        if self._console_hands_free_vad_degraded:
+            return "voice-activity detection is unavailable, so auto-send cannot work"
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash is not a refusal
+            logger.opt(exception=True).debug(
+                "Console realtime: dictation availability probe crashed"
+            )
+            return None
+        if not availability.ok:
+            return availability.reason or "dictation is unavailable"
+        return None
+
+    # -- chip, clock and teardown -------------------------------------------
+
+    def _tick_console_realtime(self) -> None:
+        """`set_interval(0.1, ...)`: the FSM's only clock input."""
+        session = self._console_realtime
+        if session is None:
+            return
+        session.controller.tick(time.monotonic())
+        self._repaint_console_realtime_chip()
+
+    def _repaint_console_realtime_chip(self) -> None:
+        """Paint the realtime loop's mode into the composer's voice chip.
+
+        Driven through `set_voice_status` for every state, unlike V3 --
+        which restores the ordinary dictation chip while `listening`
+        because the one-shot pipeline is painting it. Nothing else paints
+        during a realtime loop: the microphone here belongs to the tap, not
+        to `_console_dictation_state`, which stays `idle` throughout.
+        """
+        session = self._console_realtime
+        if session is None:
+            return
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        message = CONSOLE_REALTIME_CHIP_MESSAGES.get(session.controller.state)
+        if message is None:
+            return
+        composer.set_voice_status(session.controller.state, message=message)
+
+    def _restore_console_voice_chip(self) -> None:
+        """Repaint the chip from the REAL one-shot dictation state.
+
+        Same idiom (and same reason) as `_teardown_console_hands_free_
+        loop`'s closing lines: the realtime states are not lifecycle states
+        `sync_dictation_state` knows, so only a fresh call with the actual
+        current state clears the borrowed text.
+        """
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.sync_dictation_state(self._console_dictation_state)
+
+    def _release_console_realtime_state(self) -> tuple[Any, Any] | None:
+        """Drop the loop and release everything that can be released now.
+
+        Teardown order is fixed (rule 11) and starts here: the TAP is
+        stopped first, synchronously, so the microphone stops feeding a
+        session that is about to close -- `RealtimeMicTap.stop()` is
+        terminal and guarantees no further `on_frames` once it returns.
+        The provider session and the audio sink need an await, so they are
+        handed to the caller (see `_close_console_realtime_resources`),
+        which is what keeps their order pinned too.
+
+        Returns:
+            The `(provider_session, sink)` pair still needing an async
+            release, or None when no loop was running.
+        """
+        session = self._console_realtime
+        if session is None:
+            return None
+        self._console_realtime = None
+        if session.tick_timer is not None:
+            try:
+                session.tick_timer.stop()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: stopping the tick timer failed"
+                )
+        tap, session.tap = session.tap, None
+        if tap is not None:
+            try:
+                tap.stop()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "Console realtime: stopping the mic tap failed"
+                )
+        provider_session, session.session = session.session, None
+        sink, session.sink = session.sink, None
+        return provider_session, sink
+
+    def _teardown_console_realtime_loop(self) -> None:
+        """Exit teardown: release state, then the async resources, then repaint."""
+        released = self._release_console_realtime_state()
+        if released is None:
+            return
+        provider_session, sink = released
+        self.run_worker(
+            self._close_console_realtime_resources(provider_session, sink),
+            exclusive=False,
+            group="console-realtime-close",
+            exit_on_error=False,
+        )
+        self._restore_console_voice_chip()
+
+    async def _close_console_realtime_resources(
+        self, provider_session: Any, sink: Any
+    ) -> None:
+        """Close the provider session, then the audio sink -- in that order.
+
+        Session first: closing it stops new audio arriving, so the sink is
+        never asked to play a chunk that outlived the conversation.
+        """
+        if provider_session is not None:
+            await self._close_console_realtime_session(provider_session)
+        if sink is not None:
+            try:
+                sink.stop()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: stopping the audio sink failed"
+                )
+
+    async def _close_console_realtime_session(self, provider_session: Any) -> None:
+        """Close one provider session; failures are logged, never raised."""
+        try:
+            await provider_session.close()
+        except Exception:  # noqa: BLE001 - teardown must never raise at the user
+            logger.opt(exception=True).warning(
+                "Console realtime: closing the provider session failed"
+            )
 
     def _request_console_dictation_stop(self) -> None:
         """Stop the live capture and insert its transcript.
@@ -13942,6 +15351,18 @@ class ChatScreen(BaseAppScreen):
             # screen that is being torn down.
             hands_free.tick_timer.stop()
         self._console_hands_free = None
+        # Same abandon-teardown discipline for the realtime loop, one step
+        # further: its resources are OS-level (an open microphone, a live
+        # WebSocket, an audio device stream), so they are actually released
+        # here rather than merely dropped -- and awaited inline, since a
+        # worker dispatched from a screen already unmounting may never run.
+        released = self._release_console_realtime_state()
+        if released is not None:
+            provider_session, sink = released
+            await self._close_console_realtime_resources(provider_session, sink)
+        # Dictation's own seven-statement teardown now lives in the
+        # decomposed controller (dev's wave-1 extraction); calling it here
+        # keeps this method one line per subsystem.
         await self._dictation.teardown()
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
@@ -19894,6 +21315,20 @@ class ChatScreen(BaseAppScreen):
             # rather than double-firing hands-free's own voice-triggered
             # send.
             hands_free.controller.on_composer_key()
+        # V4 task 5, rule 7: the SAME hook, consulting whichever loop is
+        # actually running. Only one can be (the engine fork picks one per
+        # entry), and the two controllers spell the input differently --
+        # V3's `on_composer_key`, V4's `on_keypress` -- so the branch stays
+        # explicit rather than duck-typed. Byte-identical semantics when no
+        # realtime loop is running: the whole block is gated on it.
+        realtime = self._console_realtime
+        if realtime is not None:
+            if event.key == "escape":
+                realtime.controller.on_exit_request()
+                event.stop()
+                event.prevent_default()
+                return
+            realtime.controller.on_keypress()
         if not self._should_capture_console_input(composer):
             return
         popup = self._console_command_popup_or_none()
