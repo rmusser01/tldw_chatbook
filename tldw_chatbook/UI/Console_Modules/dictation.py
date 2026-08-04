@@ -125,6 +125,7 @@ from ...Chat.console_voice_input import (
     default_service_factory,
 )
 from ...Utils.persistent_diagnostics import persist_event
+from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -621,6 +622,9 @@ class ConsoleDictationController:
         screen: "ChatScreen",
         *,
         app_instance: Any,
+        composer_accessor: Callable[[], ConsoleComposerBar | None],
+        chat_store_accessor: Callable[[], Any],
+        speak_status: Callable[[str], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -631,43 +635,60 @@ class ConsoleDictationController:
         that is not this controller's own state, under the SAME name the
         original method used.
 
-        ONE binding rule, applied uniformly (see the `@property`
-        definitions below, not this method body): every name that was a
-        late-bound `self.<name>(...)` call on the pre-extraction
-        `ChatScreen` -- framework services, hands-free's entry points,
-        `_run_pending_console_voice_action`, AND the composer/chat-store/
-        speak-status helpers -- stays late-bound here too, re-reading
-        `self._screen.<name>` on every access. A value captured once at
-        construction (a bound method is just that: a fixed reference to a
-        function plus the `self` it closes over) goes stale the instant a
-        test replaces the attribute on the SCREEN INSTANCE afterward --
-        confirmed for `set_timer`/`set_interval` by this cluster's own
-        test suite, and equally real, whether or not a test happens to
-        exercise it, for every other name below. `app_instance` is the
-        one deliberate exception: see its own line below for why.
+        Three kinds of binding, one rule each, not one rule for
+        everything:
+
+        1. **Framework services** (`run_worker`, `post_message`,
+           `set_timer`, `set_interval`, `is_mounted`) live-read from
+           `screen` via `@property` on every access -- never snapshotted.
+           A value captured once at construction (a bound method is just
+           a fixed reference to a function plus the `self` it closes
+           over) goes stale the instant a test replaces the attribute on
+           the SCREEN INSTANCE afterward, confirmed for `set_timer`/
+           `set_interval` by this cluster's own test suite.
+        2. **Hands-free's reach-backs** (`_console_hands_free` and its
+           siblings, `_enter_console_hands_free_loop`,
+           `_console_hands_free_force_immediate_send`,
+           `_deliver_console_hands_free_capture_ended`) and one general
+           screen-orchestration method (`_run_pending_console_voice_
+           action`) are the SAME live-`@property`-through-`screen` shape,
+           for the same staleness reason -- but they are a disclosed,
+           temporary exception, not a controller dependency: they belong
+           to sibling clusters this wave does not touch (hands-free is
+           not yet its own controller), so there is no named-parameter
+           home for them yet. `screen` is the only handle that reaches
+           them.
+        3. **Everything else dictation genuinely depends on that is not
+           its own state** -- the composer accessor, the chat-store
+           accessor, and the speak-status gate -- is a NAMED constructor
+           dependency (`composer_accessor`/`chat_store_accessor`/
+           `speak_status` below), matching the design spec's rule that
+           "a controller's dependencies are its signature": discoverable
+           by reading the constructor, not by reading every `@property`
+           on the class. Each is a zero-arg callable the CALLER
+           constructs to close over the screen's own attribute lookup at
+           CALL time, not at construction time -- see `ChatScreen.
+           __init__`'s `lambda: self._console_composer_or_none()` (not
+           `composer_accessor=self._console_composer_or_none`, which
+           would freeze the bound method the same way `run_worker` used
+           to) -- so the same staleness guarantee kind 1 gets from a
+           property, kind 3 gets from the lambda's own late attribute
+           lookup. The controller's own `_console_composer_or_none`/
+           `_ensure_console_chat_store`/`_speak_status` properties below
+           are thin returns of these stored callables, kept under their
+           original names so every one of the 20 moved method bodies
+           still calls `self._console_composer_or_none()` etc. unchanged.
+
+        `app_instance` is the one plain-attribute exception to all three
+        rules above: see its own line below for why.
 
         Args:
-            screen: The Console screen. Used for the framework services
-                dictation genuinely needs (`run_worker`, `post_message`,
-                `set_timer`, `set_interval`, `is_mounted`), for the
-                composer/chat-store/speak-status helpers dictation shares
-                with the rest of the screen (`_console_composer_or_none`:
-                33 call sites screen-wide, not dictation-specific;
-                `_ensure_console_chat_store`: 65 call sites;
-                `_speak_status`: shared by two non-dictation voice paths
-                too), and for a narrow, explicitly-named reach-back into
-                two sibling clusters this wave does not touch: the
-                hands-free loop (`_console_hands_free`, `_console_hands_
-                free_vad_degraded`, `_enter_console_hands_free_loop`,
-                `_console_hands_free_force_immediate_send`, `_deliver_
-                console_hands_free_capture_ended`), the not-yet-extracted
-                composer/workspace draft state (`_console_undo_
-                histories`, `_console_visible_draft_session_id`), and one
-                general screen-orchestration method a capture-ending
-                voice command's queued action runs through
-                (`_run_pending_console_voice_action`). None of this is
-                `query_one` traffic -- dictation owns no DOM of its own,
-                so there is no region boundary for it to cross.
+            screen: The Console screen. Used ONLY for the framework
+                services in binding kind 1 above and the disclosed,
+                temporary hands-free/orchestration reach-backs in kind 2.
+                None of this is `query_one` traffic -- dictation owns no
+                DOM of its own, so there is no region boundary for it to
+                cross.
             app_instance: For `notify()`, posting TTS events, and the
                 once-per-app-run notification latches the moved event
                 handler stores on it (`_console_dictation_override_
@@ -680,9 +701,24 @@ class ConsoleDictationController:
                 it as a plain attribute (`self.app_instance.notify(...)`),
                 never as a call, so there is no late-binding hazard here
                 to guard against.
+            composer_accessor: A general screen helper (33 call sites
+                across the whole screen, not dictation-specific) --
+                `ChatScreen._console_composer_or_none`. Passed as a
+                late-binding lambda (see above), never the bound method
+                directly.
+            chat_store_accessor: Same rationale as `composer_accessor` --
+                `ChatScreen._ensure_console_chat_store`, 65 call sites
+                screen-wide.
+            speak_status: `ChatScreen._speak_status`, shared by two
+                non-dictation voice paths too (hands-free's queued-send
+                ack, "read that back"), so it stays screen-owned;
+                dictation only calls it.
         """
         self._screen = screen
         self.app_instance = app_instance
+        self._composer_accessor = composer_accessor
+        self._chat_store_accessor = chat_store_accessor
+        self._speak_status_fn = speak_status
 
         # Dictation's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_dictation_session: Any | None = None
@@ -728,18 +764,22 @@ class ConsoleDictationController:
 
     @property
     def _console_composer_or_none(self) -> Any:
-        """`ChatScreen._console_composer_or_none`, bound. See `__init__`."""
-        return self._screen._console_composer_or_none
+        """The injected `composer_accessor`. Kept under this name so the
+        20 moved method bodies below still call `self._console_composer_
+        or_none()` unchanged. See `__init__`'s docstring (binding kind 3)."""
+        return self._composer_accessor
 
     @property
     def _ensure_console_chat_store(self) -> Any:
-        """`ChatScreen._ensure_console_chat_store`, bound. See `__init__`."""
-        return self._screen._ensure_console_chat_store
+        """The injected `chat_store_accessor`. See `_console_composer_or_
+        none`'s docstring immediately above."""
+        return self._chat_store_accessor
 
     @property
     def _speak_status(self) -> Any:
-        """`ChatScreen._speak_status`, bound. See `__init__`."""
-        return self._screen._speak_status
+        """The injected `speak_status`. See `_console_composer_or_none`'s
+        docstring above."""
+        return self._speak_status_fn
 
     @property
     def _enter_console_hands_free_loop(self) -> Any:

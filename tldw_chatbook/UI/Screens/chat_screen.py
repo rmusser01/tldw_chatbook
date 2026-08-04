@@ -2928,6 +2928,18 @@ class ChatScreen(BaseAppScreen):
         self._dictation = ConsoleDictationController(
             self,
             app_instance=self.app_instance,
+            # Late-binding lambdas, not the bound methods directly: a
+            # bound method captured here would freeze the CURRENT
+            # `_console_composer_or_none`/`_ensure_console_chat_store`/
+            # `_speak_status`, invisible to a later `monkeypatch.setattr`
+            # on this screen instance. The lambda instead closes over
+            # `self` (this screen, whose identity never changes) and does
+            # the attribute lookup at CALL time, so a later instance-level
+            # patch is still picked up -- see `ConsoleDictationController.
+            # __init__`'s docstring, binding kind 3.
+            composer_accessor=lambda: self._console_composer_or_none(),
+            chat_store_accessor=lambda: self._ensure_console_chat_store(),
+            speak_status=lambda reason: self._speak_status(reason),
         )
         #: The hands-free conversation loop's live session, or None when the
         #: loop is not running. See `ConsoleHandsFreeSession` and
