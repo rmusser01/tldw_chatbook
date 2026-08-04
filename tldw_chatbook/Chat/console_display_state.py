@@ -570,6 +570,35 @@ def console_staged_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(bundle.references) or 1
 
 
+def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return how many staged references a Console send will actually prompt.
+
+    Distinct from :func:`console_staged_source_count`, which answers "how
+    much is staged". This answers "how much reaches the model", and it
+    applies exactly the filter
+    ``capture_console_staged_evidence_for_chat`` applies before formatting
+    the prompt blocks: available status (``EvidenceBundle.
+    available_references``) AND ``source_owner == "local"``. A four-result
+    bundle carrying two blocked references stages four and sends two.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        Count of references eligible to enter the prompt; ``0`` when nothing
+        is staged or the launch carries no evidence bundle (a bundleless
+        launch yields no prompt context at all).
+    """
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return 0
+    return sum(
+        1
+        for reference in bundle.available_references()
+        if reference.source_owner.strip().lower() == "local"
+    )
+
+
 @dataclass(frozen=True)
 class ConsoleStagedEvidenceRow:
     """One compact staged-evidence line for the composer-level strip.

@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedEvidenceStripState,
     build_console_staged_evidence_strip_state,
+    console_prompted_source_count,
     console_staged_source_count,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
@@ -44,7 +45,13 @@ STRIP_ID = "#console-staged-evidence-strip"
 UNSTAGE_ID = "#console-unstage-evidence"
 
 
-def _reference(index: int, *, title: str | None = None) -> EvidenceReference:
+def _reference(
+    index: int,
+    *,
+    title: str | None = None,
+    status: str = "available",
+    source_owner: str = "local",
+) -> EvidenceReference:
     return EvidenceReference(
         evidence_id=f"S{index}",
         source_id=f"media-{index}",
@@ -52,6 +59,29 @@ def _reference(index: int, *, title: str | None = None) -> EvidenceReference:
         title=title if title is not None else f"Source {index}",
         snippet=f"Body {index}",
         authority_label="local",
+        status=status,
+        source_owner=source_owner,
+    )
+
+
+def _mixed_launch() -> ConsoleLiveWorkLaunch:
+    """Four staged references, of which only two can ever reach the prompt."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-mixed",
+        query="question",
+        source="Library Search/RAG",
+        references=(
+            _reference(1),
+            _reference(2, status="blocked"),
+            _reference(3),
+            _reference(4, source_owner="server"),
+        ),
+    )
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+        status="staged",
     )
 
 
@@ -148,6 +178,16 @@ def test_staged_source_count_is_the_bundle_reference_count() -> None:
         source="Library Search/RAG", title="Notes", payload={"source_id": "n1"}
     )
     assert console_staged_source_count(bundleless) == 1
+
+
+def test_prompted_source_count_applies_the_captures_own_filter() -> None:
+    """"How much is staged" and "how much reaches the model" are different."""
+    launch = _mixed_launch()
+    # Four staged...
+    assert console_staged_source_count(launch) == 4
+    # ...but one is blocked and one is server-owned, so two are prompted.
+    assert console_prompted_source_count(launch) == 2
+    assert console_prompted_source_count(None) == 0
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +371,200 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         assert capture.await_args_list[1].args[1] is None
         # The transient is one-send only.
         assert "Evidence sent with this message" not in _strip_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_console_sent_notice_counts_only_what_reached_the_model(
+    monkeypatch,
+) -> None:
+    """4 staged, 2 promptable -- the notice must claim 2, not 4."""
+    app = _build_test_app()
+    launch = _mixed_launch()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context="[S1] MEDIA — Source 1\nBody 1",
+            citation_builder=None,
+        )
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 4 staged" in str(sources_chip.renderable)
+
+        await _submit(screen, "question")
+        await pilot.pause()
+
+        assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
+    monkeypatch,
+) -> None:
+    """The repair contract's ordinals are one-per-prompt-entry: the exact count."""
+    from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+    from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
+
+    app = _build_test_app()
+    launch = _mixed_launch()
+    context = "[S1] MEDIA — Source 1\nBody 1"
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=context,
+            citation_builder=None,
+            citation_repair_contract=CitationRepairContract(
+                schema_version=1,
+                marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+                # Prompt authority dropped one of the two eligible refs.
+                allowed_ordinals=(1,),
+                evidence_context=context,
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        await _submit(screen, "question")
+        await pilot.pause()
+
+        assert "Evidence sent with this message · 1 source" in _strip_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence(
+    monkeypatch,
+) -> None:
+    """The release sits on the provider path: it must not be able to throw.
+
+    ``ConsoleChatController._capture_rag_context`` turns any provider
+    exception into ``context=None``, so a fan-out failure escaping the
+    release would send the message WITHOUT the evidence it just consumed.
+    """
+    app = _build_test_app()
+    launch = _launch(2)
+    context = "[S1] MEDIA — Source 1\nBody 1"
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(context=context, citation_builder=None)
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        def _explode() -> bool:
+            raise RuntimeError("rail body vanished mid-send")
+
+        monkeypatch.setattr(
+            screen, "_sync_console_pending_launch_surfaces", _explode
+        )
+
+        controller = screen._ensure_console_chat_controller()
+        # The send still receives the captured context...
+        captured = await controller._capture_rag_context("question")
+        assert captured[0] == context
+        # ...and the staging is still consumed.
+        assert screen._pending_console_launch_context is None
+
+
+@pytest.mark.asyncio
+async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
+    """The CHAT_HANDOFF writer must fan out like Console's own staging.
+
+    It finishes via ``_sync_native_console_chat_ui``, which refreshes the
+    chip but neither the strip nor the tray -- so a bare field assignment
+    left the chip claiming staged sources the user could not see or clear.
+    """
+    from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
+
+        screen._stage_handoff_as_console_live_work(
+            ChatHandoffPayload(
+                source="Library Search/RAG",
+                title="Transformer notes",
+                body="Attention is all you need.",
+                item_type="media",
+                source_id="media-77",
+                content_ref="media-77#c1",
+                runtime_backend="local",
+            )
+        )
+        await pilot.pause()
+
+        strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is True
+        assert "Transformer notes" in _strip_text(screen)
+        assert len(strip.query(UNSTAGE_ID)) == 1
+        tray = screen.query_one(
+            "#console-staged-context-tray", ConsoleStagedContextTray
+        )
+        assert tray.state.is_empty is False
+
+
+@pytest.mark.asyncio
+async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> None:
+    """The rail badge and settings estimate read the workspace context; the
+    chip reads the bundle. Both must land on the same number."""
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        screen._stage_console_library_rag_launch(_launch(4))
+        await pilot.pause()
+
+        workspace_context = screen._current_console_workspace_context()
+        assert len(workspace_context.staged_sources) == 4
+        assert [source.label for source in workspace_context.staged_sources] == [
+            "Source 1",
+            "Source 2",
+            "Source 3",
+            "Source 4",
+        ]
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 4 staged" in str(sources_chip.renderable)
+
+
+def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> None:
+    """A generic handoff has no bundle -- all three surfaces still say 1."""
+    from types import SimpleNamespace
+
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Watchlists",
+        title="Daily papers",
+        payload={"target_id": "local:watchlist_run:daily"},
+        status="ready",
+    )
+    screen = SimpleNamespace(
+        _pending_console_launch_context=launch,
+        app_instance=SimpleNamespace(),
+    )
+    context = chat_screen_module.ChatScreen._current_console_workspace_context(screen)
+    assert len(context.staged_sources) == 1
+    assert context.staged_sources[0].label == "Daily papers"
+    assert console_staged_source_count(launch) == 1
 
 
 @pytest.mark.asyncio

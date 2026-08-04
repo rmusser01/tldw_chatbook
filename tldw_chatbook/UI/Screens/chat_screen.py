@@ -246,7 +246,9 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
+    console_prompted_source_count,
     console_staged_source_count,
+    evidence_bundle_from_launch,
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
@@ -4554,21 +4556,54 @@ class ChatScreen(BaseAppScreen):
         pending_launch = self._pending_console_launch_context
         if pending_launch is not None:
             payload = pending_launch.payload
-            source_id = (
-                payload.get("source_id")
-                or payload.get("target_id")
-                or payload.get("run_id")
-                or pending_launch.title
-            )
             source_workspace = payload.get("workspace_id")
-            staged_sources.append(
-                ConsoleStagedSource(
-                    source_id=str(source_id),
-                    label=pending_launch.title,
-                    source_type=str(pending_launch.source),
-                    workspace_id=str(source_workspace) if source_workspace else None,
-                )
+            launch_workspace_id = (
+                str(source_workspace) if source_workspace else None
             )
+            # RAG UX v2 PR-4: this builder is the SINGLE seam feeding both
+            # the Inspector rail badge ("{n} staged") and the settings
+            # context estimate, and it used to append exactly ONE staged
+            # source per launch -- so the status chip could read "Sources: 4
+            # staged" while its two siblings read 1. One row per bundle
+            # reference puts all three in the same vocabulary (and gives the
+            # workspace policy check a real per-source id to gate on).
+            bundle = evidence_bundle_from_launch(pending_launch)
+            references = bundle.references if bundle is not None else ()
+            for reference in references:
+                chunk_id = reference.metadata.get("chunk_id")
+                # Two chunks of one document share a source_id; qualify with
+                # the chunk id (exactly as the capture adapter does) so
+                # `allowed_sources`' source_id dedupe cannot collapse them.
+                staged_sources.append(
+                    ConsoleStagedSource(
+                        source_id=str(
+                            chunk_id
+                            if isinstance(chunk_id, str) and chunk_id
+                            else reference.source_id
+                        ),
+                        label=reference.title,
+                        source_type=reference.source_type,
+                        workspace_id=reference.workspace_id or launch_workspace_id,
+                    )
+                )
+            if not staged_sources:
+                # A launch with no (or an empty) evidence bundle is still one
+                # staged item -- the same fallback `console_staged_source_count`
+                # and the strip use, so all three surfaces still agree.
+                source_id = (
+                    payload.get("source_id")
+                    or payload.get("target_id")
+                    or payload.get("run_id")
+                    or pending_launch.title
+                )
+                staged_sources.append(
+                    ConsoleStagedSource(
+                        source_id=str(source_id),
+                        label=pending_launch.title,
+                        source_type=str(pending_launch.source),
+                        workspace_id=launch_workspace_id,
+                    )
+                )
 
         return ConsoleWorkspaceContext(
             active_workspace_id=workspace_id,
@@ -5199,24 +5234,87 @@ class ChatScreen(BaseAppScreen):
         )
         context = getattr(result, "context", None)
         if launch is not None and isinstance(context, str) and context.strip():
-            self._release_consumed_console_launch(launch)
+            self._release_consumed_console_launch(launch, result)
+        # The captured result is returned unconditionally: nothing in the
+        # release above may change what this send transmits (see the
+        # containment note there).
         return result
 
-    def _release_consumed_console_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+    def _release_consumed_console_launch(
+        self,
+        launch: ConsoleLiveWorkLaunch,
+        result: Any,
+    ) -> None:
         """Clear the launch context a send just consumed and refresh surfaces.
+
+        Ordering matters. The clear happens FIRST and cannot raise; both
+        fallible steps (counting what was prompted, refreshing surfaces) are
+        contained here. This method sits on the provider's capture path, and
+        ``ConsoleChatController._capture_rag_context`` converts ANY exception
+        from that provider into ``context=None`` -- so an escaping failure
+        here would send the message WITHOUT the evidence it had just
+        consumed. A stale chip is recoverable; a silently unsent bundle is
+        not.
 
         Args:
             launch: The launch handed to the capture adapter for this send.
                 A staging that landed while the capture was awaited wins:
                 the identity check below leaves the newer context alone
                 rather than dropping evidence the user just staged.
+            result: The capture's ``LocalRagContextResult``, read only for
+                the exact prompted-entry count.
         """
         if self._pending_console_launch_context is not launch:
             return
         self._pending_console_launch_context = None
         self._pending_console_launch_auto_open_inspector = False
-        self._console_evidence_sent_notice = console_staged_source_count(launch)
-        self._sync_console_pending_launch_surfaces()
+        try:
+            self._console_evidence_sent_notice = self._console_prompted_source_count(
+                launch, result
+            )
+            self._sync_console_pending_launch_surfaces()
+        except Exception as exc:
+            logger.warning(
+                "Console staged-evidence surfaces did not refresh after a "
+                "consuming send (exception_category={})",
+                type(exc).__name__,
+            )
+
+    @staticmethod
+    def _console_prompted_source_count(
+        launch: ConsoleLiveWorkLaunch,
+        result: Any,
+    ) -> int:
+        """Return how many sources this send actually put in front of the model.
+
+        The "Evidence sent with this message" line is a claim about what
+        reached the provider, so it must never report the staged total: the
+        capture prompts only available, locally-owned references.
+
+        Preference order:
+
+        1. ``citation_repair_contract.allowed_ordinals`` -- one ordinal per
+           FORMATTED prompt entry, so this is the exact count, and the
+           capture attaches the contract to every context-bearing return.
+        2. :func:`console_prompted_source_count` -- the same
+           available-and-local filter applied to the bundle, used when the
+           contract could not be built.
+
+        Args:
+            launch: The launch this send consumed.
+            result: The capture's ``LocalRagContextResult``.
+
+        Returns:
+            The number of evidence entries carried into the prompt.
+        """
+        ordinals = getattr(
+            getattr(result, "citation_repair_contract", None),
+            "allowed_ordinals",
+            None,
+        )
+        if isinstance(ordinals, tuple) and ordinals:
+            return len(ordinals)
+        return console_prompted_source_count(launch)
 
     def _clear_console_evidence_sent_notice(self) -> None:
         """Drop the one-send "evidence sent" line and refresh only the strip."""
@@ -16307,13 +16405,25 @@ class ChatScreen(BaseAppScreen):
                     type(exc).__name__,
                 )
 
-        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
-            source=payload.source,
-            title=payload.title,
-            payload=launch_payload,
-            status=payload.status or "staged",
-        )
+        # PR-4/task-1: route through the staging SEAM, never a bare
+        # assignment. This method finishes via `_sync_native_console_chat_ui`,
+        # which refreshes the chip but not the staged-evidence strip or the
+        # Inspector tray -- so a "Use in Console" handoff landing on a
+        # composed screen used to read "Sources: 1 staged" with nothing
+        # listed and no reachable un-stage control, and then had the strip
+        # announce "Evidence sent" for evidence the user was never shown.
+        # The auto-open flag is set BEFORE staging for the same reason the
+        # Library-RAG failure path does: staging syncs the rail state
+        # synchronously, so a flag set afterwards misses that pass.
         self._pending_console_launch_auto_open_inspector = True
+        self._stage_console_library_rag_launch(
+            ConsoleLiveWorkLaunch.from_values(
+                source=payload.source,
+                title=payload.title,
+                payload=launch_payload,
+                status=payload.status or "staged",
+            )
+        )
 
         suggested_prompt = launch_payload["suggested_prompt"]
         if suggested_prompt:
