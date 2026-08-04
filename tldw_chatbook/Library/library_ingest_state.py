@@ -15,12 +15,13 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import PurePath
 
-from tldw_chatbook.Workspaces.conversation_browser_state import (
-    format_console_relative_age as format_batch_relative_age,
-)
+
 from collections.abc import Mapping
 from typing import Any, Sequence
 
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age as format_batch_relative_age,
+)
 from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed as _dependency_installed,
     get_capabilities,
@@ -896,7 +897,6 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     return f"{joined} — all ingests" if joined else ""
 
 
-
 #: Suffix appended to a queue row for a job that runs on the server. Local is
 #: the overwhelmingly common case, so it stays unannotated rather than every
 #: row carrying a backend tag.
@@ -1027,7 +1027,16 @@ class IngestQueueGroup:
 
 
 def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
-    """Per-state outcome segments for one batch, active work last."""
+    """Per-state outcome segments for one batch, active work last.
+
+    Args:
+        members: The batch's jobs, in render order.
+
+    Returns:
+        Non-zero tally segments in ``_COUNTS_LINE_ORDER`` order (e.g.
+        ``["2 done", "1 skipped"]``), with a trailing ``"N running"``
+        segment when any member is still queued/parsing/writing.
+    """
     tallies: dict[str, int] = {}
     active = 0
     for job in members:
@@ -1088,12 +1097,24 @@ def build_ingest_queue_groups(
             return
         source = PurePath(str(members[0].source_path)).parent.name or "batch"
         count = len(members)
+        # (Qodo round) A batch is "running" until EVERY member is
+        # terminal -- a finished member's age on an in-progress batch
+        # misled about the run's state.
+        any_active = any(
+            job.state
+            in (
+                IngestJobState.QUEUED,
+                IngestJobState.PARSING,
+                IngestJobState.WRITING,
+            )
+            for job in members
+        )
         finished_walls = [
             job.finished_at_wall for job in members if job.finished_at_wall
         ]
         age = (
             format_batch_relative_age(max(finished_walls), now=reference_now)
-            if finished_walls
+            if finished_walls and not any_active
             else "running"
         )
         parts = _batch_outcome_parts(members)

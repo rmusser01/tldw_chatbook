@@ -1912,6 +1912,9 @@ class LibraryIngestQueueMixin:
         When ``self.media_db`` is unavailable, the job is failed immediately
         (with the exact copy ``"Media database is unavailable."``) and it
         never reaches the parse pool.
+        ``batch_id`` carries the folder-expansion batch id (task-2221) so
+        the queue can group one submission's jobs; ``None`` for single
+        files.
 
         Args:
             source_path: The file path to ingest.
