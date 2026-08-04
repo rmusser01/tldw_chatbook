@@ -1,16 +1,16 @@
 ---
 id: TASK-2119
-title: >-
-  Provider exception handlers leak API keys into logs via loguru diagnose
-status: To Do
+title: Provider exception handlers leak API keys into logs via loguru diagnose
+status: Done
 assignee: []
 created_date: '2026-08-03 18:50'
+updated_date: '2026-08-04 02:14'
 labels:
   - security
   - llm-calls
   - observability
-priority: high
 dependencies: []
+priority: high
 ---
 
 ## Description
@@ -49,7 +49,6 @@ exposed by default.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [x] #1 An exception raised inside a provider call with an API key in scope does NOT write the key value to any log sink (file or console), on both the sensitive and non-sensitive request paths
 - [x] #2 The fix is applied at the sink/configuration level so a newly added exception handler is safe by default, not dependent on the author remembering a flag
@@ -61,13 +60,16 @@ exposed by default.
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Fix at the loguru sink rather than the call sites
 2. Cover the auto-init default sink that the incident script actually hit
 3. Pin with a sentinel regression test plus a positive control
 4. Sweep for any remaining sink registration
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Fixed at the sink. All three live `logger.add()` registrations in the package now
 pass `diagnose=False` explicitly, with `backtrace=True` kept so exception type,
 message, and the stack of source lines still log — only the per-frame local-variable
@@ -104,9 +106,25 @@ The sentinel test deliberately drives a real `ConnectionError` through `requests
 internals rather than a mocked session — a fully-mocked `.post()` has no
 intermediate frames and does not reproduce the leak at all.
 
+**Post-fix gate sweep found a second, unrelated failure:** `Tests/Architecture/
+test_persistent_diagnostic_inventory.py` pins a checked-in JSON snapshot
+(`Docs/security/production-diagnostic-inventory.json`) of every production
+diagnostic call and persistent-sink registration, keyed by source digest. It failed
+after this fix — correctly: the `Logging_Config.py` sink's digest changed because
+`diagnose=False, backtrace=True` were added to it. The rest of the diff (~200 of
+~212 changed lines) was pre-existing drift already on `origin/dev`: the checked-in
+snapshot predates PR #1235 (2026-08-02 16:54) by six minutes and had never been
+regenerated since, so unrelated files (console_cost_tracker.py,
+prompt_improvement_service.py, change_review_screen.py, several UI screen
+refactors) were already out of sync before this branch existed. Reviewed the full
+diff line by line for anything suspicious (a new `diagnose=True`, a new bare
+`FileHandler`, etc.) — none found — then regenerated via the script's own
+`--write` flag, the sanctioned path for an explicit, reviewed topology change.
+
 **Modified:** `tldw_chatbook/__init__.py`, `tldw_chatbook/Logging_Config.py`,
 `tldw_chatbook/Metrics/logger_config.py`, `Tests/Chat/test_sensitive_llm_logging.py`
-(67 passing).
+(67 passing), `Docs/security/production-diagnostic-inventory.json` (regenerated).
 
 **AC#6 remains open and is an owner action:** the disclosed Moonshot key still needs
 rotating. Code changes cannot close that.
+<!-- SECTION:NOTES:END -->
