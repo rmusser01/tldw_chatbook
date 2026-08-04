@@ -1117,3 +1117,107 @@ def test_open_private_binary_traverses_a_root_owned_intermediate_symlink(
 
     with open_private_binary(alias / "config.toml") as opened:
         assert opened.stream.read() == payload
+
+
+# --- TASK-2060: atomic write leaves no residue under an injected OS failure --
+#
+# `atomic_private_write_bytes`'s POSIX path writes a `.{leaf}.{token}.tmp`
+# sibling, fsyncs it, then renames it onto the destination; its `finally`
+# unlinks the temp whenever the rename never happened. That cleanup guarantee
+# was asserted-by-inspection only (surfaced during task-1719's audio-pipeline
+# work, which leans on it). These two tests inject a failure at each of the
+# two operations that can strand a temp file -- the WRITE side (the temp-file
+# fsync, after the data is written but before the rename) and the RENAME
+# itself -- and prove no residue remains: the destination is untouched and no
+# temp sibling survives. Naming the exact injection point is deliberate
+# (AC#2): a future change to the temp+rename strategy that reopens a residue
+# window at either point fails the matching test by name.
+
+
+def _seed_private_file(path, payload: bytes) -> None:
+    result = private_paths.atomic_private_write_bytes(path, payload)
+    assert result.status in (
+        PrivatePathStatus.CREATED_PRIVATE,
+        PrivatePathStatus.ALREADY_PRIVATE,
+        PrivatePathStatus.HARDENED_PRIVATE,
+    )
+
+
+def test_no_residue_when_the_temp_write_side_fails(tmp_path, monkeypatch):
+    """Injection point: the TEMP-FILE fsync (write side, pre-rename).
+
+    The payload has been fully written to the temp sibling when this raises,
+    so a stranded `.tmp` here is exactly the residue the `finally` unlink
+    exists to prevent -- and the destination must retain its original
+    content, since the rename never ran.
+    """
+    destination = tmp_path / "settings.json"
+    _seed_private_file(destination, b"original content")
+    # Snapshot AFTER seeding: the residue assertion is "nothing new appeared",
+    # immune to whatever unrelated entries the test environment keeps in
+    # tmp_path, and strict against ANY residue shape a future temp-file
+    # strategy might use.
+    entries_before = {p.name for p in tmp_path.iterdir()}
+
+    real_fsync = os.fsync
+    injected: list[int] = []
+
+    def failing_first_fsync(fd: int) -> None:
+        if not injected:
+            injected.append(fd)
+            raise OSError(5, "injected write-side failure (task-2060)")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_first_fsync)
+    with pytest.raises(PrivatePathError):
+        private_paths.atomic_private_write_bytes(destination, b"replacement")
+    monkeypatch.setattr(os, "fsync", real_fsync)
+
+    assert injected, "the injection point was never reached"
+    assert destination.read_bytes() == b"original content", (
+        "a write-side failure must leave the destination untouched"
+    )
+    assert {p.name for p in tmp_path.iterdir()} == entries_before, (
+        "no temp sibling may survive a write-side failure"
+    )
+
+
+def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
+    """Injection point: the RENAME of the temp sibling onto the destination.
+
+    The temp file is complete and fsynced when this raises; only the rename
+    separates it from becoming the destination. A failure here must unlink
+    the finished temp rather than leave it beside an untouched destination.
+
+    `_atomic_posix_guards_available` is pinned True for the test's duration:
+    it checks `{os.rename, os.unlink} <= os.supports_dir_fd` by FUNCTION
+    IDENTITY, so the wrapper this test installs would otherwise flunk the
+    membership test and the call would bail out (reason
+    `required_posix_guards_unavailable`) before any temp file existed --
+    making every assertion here pass vacuously. The platform's real dir_fd
+    support is untouched (the write-side test above exercises the unpatched
+    check on the same run).
+    """
+    destination = tmp_path / "settings.json"
+    _seed_private_file(destination, b"original content")
+    entries_before = {p.name for p in tmp_path.iterdir()}  # see write-side test
+    monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: True)
+
+    real_rename = os.rename
+
+    def failing_rename(*args, **kwargs):
+        if any(str(arg).endswith(".tmp") for arg in args):
+            raise OSError(5, "injected rename failure (task-2060)")
+        return real_rename(*args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", failing_rename)
+    with pytest.raises(PrivatePathError):
+        private_paths.atomic_private_write_bytes(destination, b"replacement")
+    monkeypatch.setattr(os, "rename", real_rename)
+
+    assert destination.read_bytes() == b"original content", (
+        "a failed rename must leave the destination untouched"
+    )
+    assert {p.name for p in tmp_path.iterdir()} == entries_before, (
+        "no temp sibling may survive a failed rename"
+    )
