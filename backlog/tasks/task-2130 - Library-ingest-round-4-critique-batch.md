@@ -2,7 +2,7 @@
 id: TASK-2130
 title: >-
   Library ingest round-4 critique batch (options trust, error experience, session ledger, mechanical minors)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 00:00'
 labels:
@@ -140,6 +140,18 @@ directory; disabled Start = 3.15:1 measured live (the TASK-1801 stack
 lesson applied: neutralize `opacity: 50%` before any color matters;
 `$text NN%` alpha blends toward BLACK, not the surface); toasts lifted
 2 rows via `Toast { margin-bottom: 2 }`.
+
+**Qodo round (7 findings, fixed in `94f5bceef`; 1 declined).** Real bug:
+option errors gated Start from HIDDEN groups and disabled fields (stale
+persisted values with nothing visible to fix) — collect now scopes to
+rendered groups and skips gated-off/dep-missing fields. Real mismatch:
+UI bounds now mirror `clamp_chunk_size` [100, 5000] so the gate never
+blesses what submit would rewrite. Reliability: visited-identity guard
+on the exception-chain walk (cyclic `__cause__` could spin a worker).
+Compliance: typed browse path through `validate_path_simple`; named
+caps; Args/Returns docstrings. Declined: delegating to
+`input_validation.validate_number_range` (float-based, boolean — '1.5'
+would pass and no message could be built).
 
 **Verification.** 241 core + 114 shell-subset tests green; 29,327
 collect. Live on a fresh isolated profile: inline "Chunk size must be a
