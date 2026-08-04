@@ -851,6 +851,11 @@ class PersonasScreen(BaseAppScreen):
                 with Vertical(
                     id="personas-work-area", classes="destination-workbench-pane"
                 ):
+                    # F-039: the preview toggle anchors the TOP of the center
+                    # canvas (immediately above the detail stack) so the
+                    # affordance reads as the canvas's own section instead of
+                    # a bar stranded at the work-area bottom.
+                    yield PersonasPreviewPane(id="personas-preview-pane")
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
@@ -891,7 +896,6 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-characters-empty",
                             markup=True,
                         )
-                    yield PersonasPreviewPane(id="personas-preview-pane")
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
                     tryit.display = False
                     yield tryit

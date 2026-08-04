@@ -106,7 +106,7 @@ class PersonasPreviewPane(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Button(
-            "Preview conversation",
+            "▸ Preview conversation",
             id="personas-preview-toggle",
             tooltip="Test the selected character or persona in an ephemeral conversation; nothing is saved.",
             classes="console-action-subdued",
@@ -169,6 +169,9 @@ class PersonasPreviewPane(Vertical):
     def expand(self) -> None:
         """Show the collapsible body."""
         self.query_one("#personas-preview-body").display = True
+        self.query_one("#personas-preview-toggle", Button).label = (
+            "▾ Preview conversation"
+        )
 
     async def seed_greeting(self, text: str) -> None:
         """Store the greeting and restart the transcript from it.
@@ -423,6 +426,11 @@ class PersonasPreviewPane(Vertical):
         event.stop()
         body = self.query_one("#personas-preview-body")
         body.display = not body.display
+        # The toggle doubles as the section header, so it carries the
+        # expand/collapse state (F-039).
+        self.query_one("#personas-preview-toggle", Button).label = (
+            "▾ Preview conversation" if body.display else "▸ Preview conversation"
+        )
 
     def _submit_preview_message(self) -> None:
         """Shared Test Reply path: validate, clear, append, request a reply.

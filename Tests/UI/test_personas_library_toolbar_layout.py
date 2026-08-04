@@ -118,3 +118,31 @@ async def test_toolbar_single_row_at_wide_terminal(
         import_button = screen.query_one("#personas-library-import", Button)
         assert new_button.region.y == toolbar.region.y
         assert import_button.region.y == toolbar.region.y
+
+
+async def test_preview_pane_anchors_top_of_center_canvas(
+    mock_app_instance, stub_characters
+):
+    """F-039: the preview affordance is attached to the canvas it previews -
+    the toggle sits immediately above the center detail stack, not stranded
+    at the bottom of the work area."""
+    app = StyledPersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(170, 50)) as pilot:
+        screen = await _mounted_screen(pilot)
+        work_area = screen.query_one("#personas-work-area")
+        preview = screen.query_one("#personas-preview-pane")
+        stack = screen.query_one("#personas-detail-stack")
+        # Inside the center column...
+        assert preview.region.x >= work_area.region.x
+        assert preview.region.x + preview.region.width <= (
+            work_area.region.x + work_area.region.width
+        )
+        # ...and flush against the top of the detail stack (adjacent edges).
+        assert preview.region.y + preview.region.height == stack.region.y
+        # The toggle reads as an expand/collapse section header.
+        toggle = screen.query_one("#personas-preview-toggle", Button)
+        assert "▸" in str(toggle.label)
+        await pilot.click("#personas-preview-toggle")
+        await pilot.pause()
+        assert "▾" in str(toggle.label)
+        assert screen.query_one("#personas-preview-body").display is True
