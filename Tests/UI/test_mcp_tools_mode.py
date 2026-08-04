@@ -11,6 +11,7 @@ import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
+from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import parse_schema
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -119,6 +120,20 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         assert search_row[4] == "form"
 
         assert app.query_one("#mcp-tools-empty").display is False
+
+
+def test_all_builtin_tools_render_form_column():
+    """RAG-48 part 3: with array-of-simple-items support in
+    `parse_schema()`, every one of the ten builtin tools' real manifest
+    `inputSchema` -- including `search_rag.media_types` and
+    `ingest_media.tags`, both `array` typed -- renders as a form rather
+    than falling back to raw JSON."""
+    from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
+
+    tools = describe_local_mcp_capabilities()["tools"]
+    assert len(tools) == 10
+    for tool in tools:
+        assert parse_schema(tool["inputSchema"]) is not None, tool["name"]
 
 
 @pytest.mark.asyncio
