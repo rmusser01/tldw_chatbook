@@ -13449,6 +13449,22 @@ class LibraryScreen(BaseAppScreen):
             else:
                 error_line.update(message)
                 error_line.display = bool(message)
+            # (task-2230 Qodo round) The persistent invalid marker is set at
+            # compose time, but text/number edits deliberately skip the
+            # recompose -- without toggling it here a field stayed marked
+            # after becoming valid (and never got marked after becoming
+            # invalid), which is exactly the unreliable "highlighted" the
+            # marker was added to fix.
+            try:
+                field_input = self.query_one(
+                    f"#opt-{event.group}-{event.name}", Input
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                field_input.set_class(
+                    bool(message), "-ingest-option-invalid"
+                )
             self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)

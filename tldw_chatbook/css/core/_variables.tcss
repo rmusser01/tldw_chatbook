@@ -43,6 +43,12 @@ $ds-status-warning: $warning;
 $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
+/* task-2230 (a11y): $error measures 3.06:1 on the app's dark canvases --
+   an AA fail, and LESS readable than ordinary help text (7.21:1), which
+   inverts the importance hierarchy. This token is the readable error
+   foreground (7.71:1) for text and marks that must be READ, while
+   $ds-status-error stays the decorative status hue. */
+$ds-status-error-readable: #ff8fa3;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;

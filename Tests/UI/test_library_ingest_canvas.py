@@ -1497,11 +1497,14 @@ async def test_duplicate_forecast_line_renders_in_summary():
 
 
 @pytest.mark.asyncio
-async def test_severity_colour_supplements_glyphs_and_invalid_field_marked():
-    """(task-2230 a11y) Failed/skipped rows carry a severity class ON TOP
-    of the glyph+word they already have (never colour-only), and an
-    invalid option field stays marked without focus -- the gate line's
-    "highlighted" pointed at a border that only existed while focused."""
+async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> None:
+    """Severity colour supplements glyphs; invalid fields stay marked.
+
+    (task-2230 a11y) Failed/skipped rows carry a severity class ON TOP of
+    the glyph+word they already have (never colour-only), and an invalid
+    option field stays marked without focus -- the gate line's
+    "highlighted" pointed at a border that only existed while focused.
+    """
     failed = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/broken.pdf",

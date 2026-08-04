@@ -6485,9 +6485,9 @@ LibraryIngestCanvas Collapsible.-collapsed > CollapsibleTitle:focus {
 LibraryIngestCanvas .type-group-field-error {
     /* task-2230 (a11y): $error measured 3.06:1 on this canvas -- an AA
        fail, and LESS readable than ordinary help text at 7.21:1, which
-       inverted the importance hierarchy. #ff8fa3 measures 7.71:1 and
-       still reads as an error colour. */
-    color: #ff8fa3;
+       inverted the importance hierarchy. The readable token measures
+       7.71:1 and still reads as an error colour. */
+    color: $ds-status-error-readable;
     height: auto;
     padding: 0 0 0 2;
 }
@@ -6497,14 +6497,14 @@ LibraryIngestCanvas .type-group-field-error {
    to "Fix the highlighted options" -- pointing at a highlight that had
    already vanished. Mark the field whenever its value is invalid. */
 LibraryIngestCanvas Input.-ingest-option-invalid {
-    border: tall #ff8fa3;
+    border: tall $ds-status-error-readable;
 }
 
 /* task-2230 (a11y): failed/skipped rows carried no colour distinction
    from done rows. Colour is ADDED to the existing glyph+word, never
    replacing them (the round-4 lesson: severity must survive monochrome). */
 LibraryIngestCanvas .library-ingest-row-failed {
-    color: #ff8fa3;
+    color: $ds-status-error-readable;
 }
 LibraryIngestCanvas .library-ingest-row-skipped {
     color: $text-muted;

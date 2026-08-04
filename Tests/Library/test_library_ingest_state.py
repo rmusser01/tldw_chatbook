@@ -2053,10 +2053,13 @@ def test_single_file_submission_reads_naturally_without_header():
     assert state.latest_batch_line == ""
 
 
-def test_latest_run_line_follows_a_single_file_submission():
-    """(task-2230) THE round-7 regression: the line was computed only from
-    groups carrying a batch_id, so a single-file run left it reporting the
-    previous multi-file batch. Every submission is a run."""
+def test_latest_run_line_follows_a_single_file_submission() -> None:
+    """The latest-run line reports a single-file submission.
+
+    (task-2230) THE round-7 regression: the line was computed only from
+    groups carrying a batch_id, so a single-file run left it reporting
+    the previous multi-file batch. Every submission is a run.
+    """
     b1 = _job(
         job_id="ingest-job-1",
         state=IngestJobState.DONE,
@@ -2085,19 +2088,24 @@ def test_latest_run_line_follows_a_single_file_submission():
     )
 
 
-def test_latest_run_line_hidden_when_the_queue_holds_one_run():
-    """(task-2230) With a single run the group header already says it --
-    the line would just repeat itself."""
+def test_latest_run_line_hidden_when_the_queue_holds_one_run() -> None:
+    """The latest-run line hides when the queue holds a single run.
+
+    (task-2230) The group header already reports it, so the line would
+    just repeat itself.
+    """
     only = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
     state = build_library_ingest_state((only,), form=LibraryIngestFormState())
     assert state.latest_batch_line == ""
 
 
-def test_unresolvable_path_gates_start_with_an_explanation():
-    """(task-2230) A path that cannot be resolved gates Start like every
-    other known-doomed selection -- it used to leave Start styled exactly
-    like a valid selection with a BLANK gate line, and pressing it left no
-    queue record at all."""
+def test_unresolvable_path_gates_start_with_an_explanation() -> None:
+    """An unresolvable path gates Start and explains itself.
+
+    (task-2230) It used to leave Start styled exactly like a valid
+    selection with a BLANK gate line, and pressing it left no queue
+    record at all.
+    """
     state = build_library_ingest_state(
         (),
         form=LibraryIngestFormState(path="/tmp/nope_does_not_exist.txt"),
