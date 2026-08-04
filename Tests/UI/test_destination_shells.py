@@ -2404,7 +2404,7 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
 @pytest.mark.parametrize(
     ("route", "expected_text"),
     [
-        ("mcp", "scoped tools"),
+        ("mcp", "Model Context Protocol"),
         ("acp", "Agent Client Protocol"),
         ("skills", "SKILL.md"),
         ("settings", "Global preferences"),
@@ -2523,8 +2523,8 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
         assert "tldw_chatbook (built-in)" in _static_text(inspector_state)
 
         assert (
-            "Manage MCP servers, scoped tools, permissions, and audit readiness."
-            in text
+            "MCP (Model Context Protocol) lets chatbook use external tools — "
+            "most people never need to change anything here." in text
         )
 
 
@@ -4009,8 +4009,8 @@ async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
             for widget in screen.query(Static)
             if hasattr(widget, "renderable")
         )
-        assert "MCP servers" in visible_text
-        assert "scoped tools" in visible_text
+        assert "Model Context Protocol" in visible_text
+        assert "scoped tools" not in visible_text
         assert "global preferences" not in visible_text
 
 

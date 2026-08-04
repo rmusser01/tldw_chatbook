@@ -120,17 +120,17 @@ class MCPScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="mcp-shell"):
             yield Static("MCP", id="mcp-title", classes="ds-destination-header")
+            # F-052/F-060 + task-2241: the plain-language onramp IS the
+            # purpose line -- it leads directly under the title (nothing
+            # jargon in front of it) and expands the acronym exactly once.
+            # The old jargon purpose line ("Manage MCP servers, scoped
+            # tools, permissions, and audit readiness.") is deleted rather
+            # than demoted: the mode chips below already enumerate what the
+            # screen manages, so the line was a tautology.
             yield Static(
-                "Manage MCP servers, scoped tools, permissions, and audit readiness.",
+                "MCP (Model Context Protocol) lets chatbook use external "
+                "tools — most people never need to change anything here.",
                 id="mcp-purpose",
-                classes="destination-purpose",
-            )
-            # F-052/F-060: plain-language onramp under the jargon purpose
-            # line -- what MCP is for, and reassurance that it is optional.
-            yield Static(
-                "MCP lets chatbook use external tools — most people never "
-                "need to change anything here.",
-                id="mcp-purpose-explainer",
                 classes="destination-purpose",
             )
             with DestinationModeStrip(

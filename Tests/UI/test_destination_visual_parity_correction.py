@@ -2355,6 +2355,21 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
             height=42,
         )
         await _assert_advanced_run_reachable(screen, pilot)
+        # task-2240: this fresh install's lone built-in row is pre-selected,
+        # so the canvas opens on the built-in's DETAIL view -- return to the
+        # overview ("← All servers") before checking its geometry.
+        await _wait_for_selector(screen, pilot, "#mcp-detail-back")
+        await pilot.click("#mcp-detail-back")
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            overview = screen.query_one("#mcp-servers-overview")
+            if overview.display and overview.region.width > 0:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "servers overview did not reappear after ← All servers"
+            )
         _assert_marker_inside_container(
             screen,
             "#mcp-overview-summary",
