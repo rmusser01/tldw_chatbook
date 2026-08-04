@@ -38,9 +38,85 @@ async def test_default_state_shows_no_selection_and_disabled_actions():
             "#personas-delete",
         ):
             assert pilot.app.query_one(button_id, Button).disabled is True
-        assert "Console blocked" in str(
+        assert str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
+        ) == "Pick a character or persona to start chatting."
+
+
+async def test_no_selection_shows_single_guidance_line():
+    """F-031: pre-selection the inspector is one plain guidance line - no
+    wall of disabled buttons, no dangling section headers, no false
+    "Validation: OK"."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        assert (
+            pilot.app.query_one("#personas-inspector-actions").display is False
         )
+        assert (
+            pilot.app.query_one("#personas-conversations-header", Static).display
+            is False
+        )
+        assert (
+            pilot.app.query_one("#personas-conversations-list", ListView).display
+            is False
+        )
+        assert (
+            pilot.app.query_one("#personas-readiness-header", Static).display
+            is False
+        )
+        assert (
+            pilot.app.query_one("#personas-validation-summary", Static).display
+            is False
+        )
+        guidance = pilot.app.query_one("#personas-readiness-console", Static)
+        assert guidance.display is True
+        assert (
+            str(guidance.renderable)
+            == "Pick a character or persona to start chatting."
+        )
+
+
+async def test_selection_reveals_inspector_sections():
+    """F-031: selecting an item wakes the whole inspector back up."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pilot.pause()
+        assert (
+            pilot.app.query_one("#personas-inspector-actions").display is True
+        )
+        assert (
+            pilot.app.query_one("#personas-conversations-header", Static).display
+            is True
+        )
+        assert (
+            pilot.app.query_one("#personas-conversations-list", ListView).display
+            is True
+        )
+        assert (
+            pilot.app.query_one("#personas-readiness-header", Static).display
+            is True
+        )
+        assert (
+            pilot.app.query_one("#personas-validation-summary", Static).display
+            is True
+        )
+
+
+async def test_validation_line_stays_hidden_until_first_selection():
+    """F-031: a fresh inspector must not claim "Validation: OK" for nothing."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        summary = pilot.app.query_one("#personas-validation-summary", Static)
+        assert summary.display is False
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Tutor", kind="character")
+        await pilot.pause()
+        assert summary.display is True
+        await pane.clear_selection()
+        await pilot.pause()
+        assert summary.display is False
 
 
 async def test_readiness_copy_is_compact_for_narrow_inspector():
@@ -50,9 +126,12 @@ async def test_readiness_copy_is_compact_for_narrow_inspector():
         readiness = pilot.app.query_one("#personas-readiness-console", Static)
 
         default_copy = str(readiness.renderable)
-        assert default_copy == "Console blocked: select an item"
+        assert default_copy == "Pick a character or persona to start chatting."
         assert " - " not in default_copy
 
+        # A screen-supplied reason renders once there is a selection for the
+        # copy to be about (pre-selection the guidance line owns the copy).
+        pane.show_selection(name="Tutor", kind="character")
         pane.set_console_actions_enabled(False, reason="prompts are not attachable")
         await pilot.pause()
 
@@ -211,9 +290,10 @@ async def test_lore_selection_hides_console_and_export_actions():
 
 async def test_clear_selection_restores_action_visibility():
     """Task-443: leaving a dictionary/lore selection (kind -> None) must not
-    leave the never-applies buttons permanently hidden - the pre-selection
-    baseline shows every action (disabled, with the "select an item"
-    reason), same as before any selection was ever made."""
+    leave the never-applies buttons permanently hidden - their per-button
+    display flags reset to the pre-selection baseline. F-031 layers on top:
+    with no selection the whole action STACK is hidden behind the guidance
+    line, so the restored flags only take effect on the next selection."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
@@ -232,6 +312,11 @@ async def test_clear_selection_restores_action_visibility():
             assert (
                 pilot.app.query_one(button_id, Button).display is True
             ), button_id
+        # ...but the stack itself is hidden again until a selection returns.
+        assert pilot.app.query_one("#personas-inspector-actions").display is False
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-inspector-actions").display is True
 
 
 async def test_console_action_enablement_is_explicitly_screen_owned():
@@ -332,6 +417,8 @@ async def test_conversations_panel_rows_post_selection():
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
+        # The conversations panel only renders for a selection (F-031).
+        pane.show_selection(name="Detective Sam", kind="character")
         await pane.show_conversations(
             (("conv-1", "First case"), ("conv-2", "Cold trail"))
         )
@@ -354,6 +441,7 @@ async def test_conversation_click_after_rerender_posts_new_id():
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
         await pane.show_conversations((("conv-1", "First case"),))
         await pane.show_conversations((("conv-9", "New case"),))
         await pilot.pause()
@@ -375,6 +463,7 @@ async def test_conversation_list_arrow_enter():
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
         await pane.show_conversations(
             (
                 ("conv-1", "First case"),

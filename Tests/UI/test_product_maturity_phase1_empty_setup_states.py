@@ -27,6 +27,8 @@ from Tests.UI.test_destination_shells import (
     _wait_for_wc_snapshot,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_personas_dictionaries import patch_character_paging
+import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -278,8 +280,20 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
 
 
 @pytest.mark.asyncio
-async def test_personas_default_state_disables_false_console_handoff() -> None:
-    """Personas starts local-first; Console attach stays blocked until selection."""
+async def test_personas_default_state_disables_false_console_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Personas starts local-first; Console attach stays blocked until selection.
+
+    F-031 auto-selects the first library row on first paint when rows exist,
+    so the no-selection contract this test pins needs an empty library
+    (stubbed deterministically; the harness otherwise reads the ambient
+    character DB).
+    """
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
+    patch_character_paging(monkeypatch, records=[])
     app = _build_test_app()
     host = DestinationHarness(app, "personas")
 
@@ -289,7 +303,7 @@ async def test_personas_default_state_disables_false_console_handoff() -> None:
         button = screen.query_one("#personas-attach-to-console", Button)
 
         visible_text = _visible_text(screen)
-        assert "Console blocked: select an item" in visible_text
+        assert "Pick a character or persona to start chatting." in visible_text
         assert button.disabled is True
 
 

@@ -751,6 +751,11 @@ class PersonasScreen(BaseAppScreen):
         self._workbench_compact: bool | None = None
         self._library_rail_collapsed: bool = False
         self._inspector_rail_collapsed: bool = False
+        # Set by restore_state when the mount carries saved navigation state:
+        # a Console -> back round-trip keeps its own selection semantics
+        # (restored, or deliberately cleared), so first-paint auto-select
+        # (F-031) must not fire on those mounts.
+        self._restored_from_saved_state: bool = False
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
@@ -953,8 +958,13 @@ class PersonasScreen(BaseAppScreen):
         super().restore_state(state)
         if not isinstance(state, dict):
             self._pending_restore = None
+            self._restored_from_saved_state = False
             return
         wb = state.get("personas_workbench")
+        # Any saved workbench payload - even one the Characters-only gate
+        # below falls back from - marks this as a navigation round-trip, not
+        # a first paint, so auto-select stays out of the restore semantics.
+        self._restored_from_saved_state = isinstance(wb, dict)
         if isinstance(wb, dict) and wb.get("active_mode") == "characters":
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
@@ -1010,6 +1020,49 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
             self._sync_title_and_console_actions()
 
+    async def _auto_select_first_library_row(self) -> None:
+        """Select the first library row on a fresh first paint (F-031).
+
+        A non-empty library that opens with nothing selected paints a void
+        center and a disabled inspector; selecting the first row wakes the
+        card, actions, and preview instead. Skipped when a selection already
+        exists (including a successful restore) and on navigation
+        round-trips (``restore_state`` payloads keep their own selection
+        semantics, even the deliberately-cleared fallbacks). Runs the exact
+        ``_select_character`` path a row click takes, and never moves focus,
+        so the focus-steal guards are not involved. Mode switches
+        deliberately do NOT auto-select - this is a mount-time onboarding
+        behavior only.
+        """
+        if self._restored_from_saved_state:
+            return
+        if self.state.selected_entity_id:
+            return
+        if self.state.active_mode != "characters":
+            return
+        first = next(
+            (r for r in self._characters if r.get("id") is not None), None
+        )
+        if first is None:
+            return
+        try:
+            await self._select_character(
+                str(first["id"]), str(first.get("name") or "Unnamed")
+            )
+        except Exception:
+            # Auto-select is an onboarding convenience; a row that fails to
+            # load must degrade to the pre-selection guidance, never break
+            # the mount worker.
+            logger.opt(exception=True).warning(
+                "Personas first-paint auto-select failed; leaving no selection."
+            )
+            return
+        # _select_character runs outside _run_guarded here, so re-register
+        # the header/footer/console-action sync it normally gets from the
+        # guarded wrapper - the footer attach hint and header status must
+        # reflect the auto-selected row on first paint.
+        self._sync_title_and_console_actions()
+
     def on_mount(self) -> None:
         """Paint the shell now, load the library after (TASK-1320).
 
@@ -1054,6 +1107,7 @@ class PersonasScreen(BaseAppScreen):
                 await self.character_handler.refresh_character_list()
             self._sync_title_and_console_actions()
             await self._apply_pending_restore()
+            await self._auto_select_first_library_row()
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Personas initial load failed "

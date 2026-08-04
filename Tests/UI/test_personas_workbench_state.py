@@ -169,16 +169,19 @@ class TestWorkbenchSelectionRestore:
             # center shows the character card view, not blank
             assert screen2.query_one("#ccp-character-card-view").display is True
 
-    async def test_fresh_screen_without_saved_state_shows_blank_center(
+    async def test_fresh_screen_without_saved_state_auto_selects_first_row(
         self, mock_app_instance, stub_characters
     ):
-        """No prior selection: on_mount's default (blank) center is untouched."""
+        """No prior selection + a non-empty library: F-031 first-paint
+        auto-select picks the first row and shows its card, not a void."""
         mock_app_instance.chat_dictionary_scope_service = None
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            assert screen.state.selected_entity_id is None
-            assert screen.query_one("#ccp-character-card-view").display is False
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True
 
 
 class TestPreviewRestore:

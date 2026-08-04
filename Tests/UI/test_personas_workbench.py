@@ -420,7 +420,10 @@ class TestWorkbenchShell:
             assert work_area.size.width >= 34
             assert inspector.size.width >= 18
             assert _right_edge(inspector) <= _right_edge(workbench)
-            assert str(readiness.renderable).startswith("Console blocked:")
+            # task-440 honesty contract: with no provider configured the
+            # readiness line never claims ready (F-031 auto-select means a
+            # selection exists, so this is the provider gate talking).
+            assert "blocked" in str(readiness.renderable).lower()
 
     async def test_library_rail_collapses_and_reopens_from_handle(
         self,
@@ -540,15 +543,19 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             context = screen._shortcut_context()
             rendered = context.render()
             assert "new" in rendered.lower()
             assert "search" in rendered.lower()
-            # task-445: unavailable actions (nothing is being edited/selected
-            # at fresh mount) are dropped from the rendered hint entirely
-            # rather than shown with a literal "unavailable" suffix.
+            # task-445: unavailable actions are dropped from the rendered
+            # hint entirely rather than shown with a literal "unavailable"
+            # suffix. F-031 auto-selects the first row on first paint, so
+            # attach IS available here; "save" (no editor open) is the
+            # remaining dropped hint.
             assert "save" not in rendered.lower()
-            assert "attach" not in rendered.lower()
+            assert "attach" in rendered.lower()
             assert context.source == "personas"
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
@@ -662,12 +669,17 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             title = screen.query_one("#personas-header #workbench-header-title", Static)
             assert str(title.renderable).startswith("Roleplay")
             status = screen.query_one(
                 "#personas-header #workbench-header-status", Static
             )
-            assert str(status.renderable) == "Ready"
+            # F-031 auto-selects the first row on first paint, which makes
+            # the provider gate operative (task-440): the mock config has no
+            # ready provider, so the header honestly reads Blocked.
+            assert str(status.renderable) == "Blocked"
             # dynamic suffix still appends in create mode
             screen._edit_mode = "create"
             screen._update_title()
@@ -758,11 +770,14 @@ class TestCharacterSelectionAndEdit:
                 screen.query_one("#personas-selected-name", Static).renderable
             )
             assert "Detective Sam" not in selected_name
-            # Unsaved gating must survive the identity reset.
+            # Unsaved gating must survive the identity reset: no Console
+            # action is offered for a pristine create session (F-031: the
+            # readiness line falls back to the no-selection guidance).
             readiness = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert "blocked" in readiness
+            assert readiness == "Pick a character or persona to start chatting."
+            assert screen._console_action_allowed() is False
 
     async def test_ctrl_n_opens_editor_in_create_mode(
         self, mock_app_instance, stub_characters
@@ -3406,11 +3421,16 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
-            await pilot.pause()
+            # F-031: first-paint auto-select already started the (gated)
+            # listing during mount - the loading placeholder is up while the
+            # worker thread waits on the gate.
             panel = screen.query_one("#personas-conversations-list")
-            texts = [str(s.renderable) for s in panel.query(Static)]
+            texts: list[str] = []
+            for _ in range(200):
+                await pilot.pause(0.05)
+                texts = [str(s.renderable) for s in panel.query(Static)]
+                if any("Loading conversations..." in text for text in texts):
+                    break
             assert any("Loading conversations..." in text for text in texts)
             release.set()
             await pilot.app.workers.wait_for_complete()
@@ -3811,12 +3831,18 @@ class TestConsoleActions:
         assert "Detective Sam" in payload.suggested_prompt
 
     async def test_attach_blocked_without_selection(
-        self, mock_app_instance, stub_characters, stub_conversations
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
+        # No-selection requires an empty library now: F-031 auto-selects the
+        # first row on a fresh mount when rows exist.
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
             await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.press("ctrl+enter")
             await pilot.pause()
@@ -4280,7 +4306,14 @@ class TestConsoleActions:
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            # F-031: first-paint auto-select already fetched the mounted row
+            # (server detail + card render) once; reset those provenance
+            # mocks so the strict assertions below pin only the click-driven
+            # selection path they were written for.
+            scope_service.get_character.reset_mock()
+            detail_dto.model_dump.reset_mock()
             row = screen.query_one("#personas-library-row-character-1")
             assert "Remote Elara" in _row_text(row)
             assert "Local collision" not in _row_text(row)
@@ -4562,13 +4595,16 @@ class TestConsoleActions:
     async def test_footer_shortcut_attach_available(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """The attach action is truthful: allowed only with a saved selection."""
+        """The attach action is truthful: allowed only with a saved, clean selection."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
-            screen = await _mounted(pilot)
-            assert screen._console_action_allowed() is False  # nothing selected yet
-            await self._select_first_character(pilot)
+            # F-031: first paint auto-selects the first row, so attach is
+            # allowed from the start...
+            screen = await self._select_first_character(pilot)
             assert screen._console_action_allowed() is True
+            # ...but the gate still closes the moment the selection is dirty.
+            screen.state.has_unsaved_changes = True
+            assert screen._console_action_allowed() is False
 
 
 class TestServerCharacterSourceIsolation:
@@ -8280,7 +8316,13 @@ class TestPersonaHumanIdentityRemoval:
 
 class TestCharactersEmptyStateGuidance:
     """task-436: Characters mode shows onboarding guidance when nothing is
-    selected, instead of a blank center pane that reads as broken."""
+    selected, instead of a blank center pane that reads as broken.
+
+    F-031 (task-2082) layers first-paint auto-select on top: a non-empty
+    library mounts with its first row already selected (guidance hidden,
+    card shown), so the guidance state is only reachable with an empty
+    library, after a delete, or after a mode round-trip.
+    """
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -8314,12 +8356,64 @@ class TestCharactersEmptyStateGuidance:
         await pilot.pause()
         return screen
 
-    async def test_guidance_shown_when_no_selection(
-        self, mock_app_instance, stub_characters
+    async def test_first_paint_auto_selects_first_library_row(
+        self, mock_app_instance, stub_characters, stub_conversations
     ):
+        """F-031: a non-empty library mounts with its first row selected -
+        card loaded, inspector awake - instead of a void center."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert screen.state.selected_entity_kind == "character"
+            assert screen.state.selected_entity_name == "Detective Sam"
+            assert screen.query_one("#ccp-character-card-view").display is True
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            assert "Selected: Detective Sam" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+            # Auto-select must not move focus (focus-steal guards, F-031).
+            search = screen.query_one("#personas-library-search", Input)
+            assert not search.has_focus
+
+    async def test_first_paint_auto_select_keeps_unsaved_guards_quiet(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """F-031: the auto-selected row is a clean selection - no unsaved
+        state, no guard dialog on a follow-up selection."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert screen.state.has_unsaved_changes is False
+            # A second selection runs the clean fast path (no confirm).
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "2"
+
+    async def test_guidance_shown_when_library_empty(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """With no rows there is nothing to auto-select: the no-selection
+        guidance paints (the state first-time users with no card see until
+        they New/Import one)."""
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             assert screen.state.active_mode == "characters"
             assert not screen.state.selected_entity_id
             guidance = screen.query_one("#personas-characters-empty", Static)
@@ -8329,24 +8423,26 @@ class TestCharactersEmptyStateGuidance:
             assert screen.query_one("#ccp-character-card-view").display is False
 
     async def test_guidance_hidden_after_selection(
-        self, mock_app_instance, stub_characters
+        self, mock_app_instance, stub_characters, stub_conversations
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Guidance is visible before any selection (pins the transition so
-            # the "hidden after" assertion below is non-vacuous).
+            # First paint already auto-selected row 1 (F-031), so the
+            # guidance is hidden from the start...
+            assert screen.state.selected_entity_id == "1"
             assert (
                 screen.query_one("#personas-characters-empty", Static).display
-                is True
+                is False
             )
-            # ... and disappears the moment a character is selected (AC#2).
-            await pilot.click("#personas-library-row-character-1")
+            # ...and stays hidden when the selection moves to another row.
+            await pilot.click("#personas-library-row-character-2")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert screen.state.selected_entity_id
+            assert screen.state.selected_entity_id == "2"
             assert (
                 screen.query_one("#personas-characters-empty", Static).display
                 is False
@@ -8905,6 +9001,12 @@ class TestDirtyTracking:
         """UX-E2 carryover: import-selection must enable the attach action."""
         source = tmp_path / "card.json"
         source.write_bytes(b'{"name":"Detective Sam"}')
+        # F-031 auto-selects the first row on a fresh mount when rows exist;
+        # the "no prior selection" baseline this test pins needs an empty
+        # library.
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
         monkeypatch.setattr(
             character_handler_module,
             "inspect_character_card_tts_attachment",
@@ -9663,7 +9765,13 @@ def _configure_character_tts_app(
 async def test_character_tts_population_requires_one_generation_and_observes_off_page_assignment(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: an empty library keeps first-paint auto-select from consuming
+    # this state machine's exact-call seams before the explicit select below.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -9755,7 +9863,12 @@ async def test_character_tts_population_rejects_mixed_repository_generations(
 async def test_character_tts_off_page_assignment_requires_matching_capability_revisions(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: empty library - see the population-generation test above.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -9906,7 +10019,12 @@ async def test_character_tts_server_principal_change_rejects_late_population(
 async def test_character_tts_local_authority_change_rejects_late_population(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: empty library - see the population-generation test above.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     profile = _character_tts_profile(1)
     original_ref = CharacterRef(
         source="local",

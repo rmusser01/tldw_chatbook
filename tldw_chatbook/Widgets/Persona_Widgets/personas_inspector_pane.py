@@ -15,6 +15,11 @@ from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
 
+#: The one plain line a no-selection inspector shows (F-031): intent-first
+#: guidance instead of a wall of disabled controls and a false
+#: "Validation: OK". Doubles as the Console readiness line pre-selection.
+_NO_SELECTION_GUIDANCE = "Pick a character or persona to start chatting."
+
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 # Kind-applicability for actions that can never apply to some selections
@@ -24,8 +29,10 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 # separate from "applies but is currently blocked" (unsaved edits, provider
 # readiness, no selection yet), which stays owned by
 # set_console_actions_enabled/_apply_action_state's disabled+tooltip logic
-# below. Before a kind is known (no selection) every action still renders,
-# matching the pre-selection "select an item" baseline.
+# below. Before a kind is known (no selection) the per-button display flags
+# still reset to visible, but the whole action stack is hidden behind the
+# no-selection guidance line (F-031), so the flags only take effect once a
+# selection reveals the stack again.
 _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
@@ -135,12 +142,34 @@ class PersonasInspectorPane(Vertical):
         # character by its picture at least as much as by its name, and the
         # inspector previously showed every attribute EXCEPT the portrait.
         yield ClickableAvatarBox(id="personas-inspector-avatar-thumb")
-        yield Static("Validation: OK", id="personas-validation-summary")
-        yield Static("Conversations", classes="destination-section")
-        yield ListView(id="personas-conversations-list")
-        yield Static("Readiness", classes="destination-section")
-        yield Static("Console blocked: select an item", id="personas-readiness-console")
-        with Vertical(id="personas-inspector-actions"):
+        # F-031: everything below the portrait is hidden until there is a
+        # selection - pre-selection the inspector is just the summary lines
+        # plus one plain guidance line (the readiness Static below), not a
+        # false "Validation: OK", dangling section headers, and dead buttons.
+        validation = Static("Validation: OK", id="personas-validation-summary")
+        validation.display = False
+        yield validation
+        conversations_header = Static(
+            "Conversations",
+            id="personas-conversations-header",
+            classes="destination-section",
+        )
+        conversations_header.display = False
+        yield conversations_header
+        conversations_list = ListView(id="personas-conversations-list")
+        conversations_list.display = False
+        yield conversations_list
+        readiness_header = Static(
+            "Readiness",
+            id="personas-readiness-header",
+            classes="destination-section",
+        )
+        readiness_header.display = False
+        yield readiness_header
+        yield Static(_NO_SELECTION_GUIDANCE, id="personas-readiness-console")
+        actions = Vertical(id="personas-inspector-actions")
+        actions.display = False
+        with actions:
             yield Button(
                 "Attach to Console",
                 id="personas-attach-to-console",
@@ -342,8 +371,19 @@ class PersonasInspectorPane(Vertical):
         selected = self._has_selection
         unsaved = self._is_unsaved
         kind = self._selected_kind
+        # F-031: pre-selection the inspector is one guidance line only. The
+        # section chrome (Validation, Conversations, Readiness header) and
+        # the action stack stay hidden until there is something to act on;
+        # per-button kind gating below is unchanged for when they render.
+        self.query_one("#personas-validation-summary", Static).display = selected
+        self.query_one("#personas-conversations-header", Static).display = selected
+        self.query_one("#personas-conversations-list", ListView).display = selected
+        self.query_one("#personas-readiness-header", Static).display = selected
+        self.query_one("#personas-inspector-actions", Vertical).display = selected
         readiness = self.query_one("#personas-readiness-console", Static)
-        if not self._console_actions_enabled:
+        if not selected:
+            readiness.update(_NO_SELECTION_GUIDANCE)
+        elif not self._console_actions_enabled:
             reason = self._console_action_block_reason or "unavailable"
             readiness.update(f"Console blocked: {reason}")
         elif self._provider_block_reason:
