@@ -420,6 +420,23 @@ def configure_application_logging(app_instance):
             _forward_loguru_to_standard,
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
             level="TRACE",
+            # task-2119 (security): diagnose=False is load-bearing, not
+            # cosmetic. With it left at loguru's default (True), any
+            # exception logged via `logger.opt(exception=True)` -- e.g. the
+            # provider request handlers in LLM_Calls/LLM_API_Calls.py, which
+            # hold the raw Authorization/x-api-key header and the resolved
+            # API key as frame locals -- has those locals dumped alongside
+            # the traceback. `_forward_loguru_to_standard` itself only reads
+            # `record["exception"]` (safe against stdlib's own, locals-free
+            # formatter), but loguru builds the diagnose-formatted text for
+            # *every* sink on this record regardless of what the sink does
+            # with it, so leaving this sink diagnose=True still means a
+            # secret-bearing string gets materialized on each such call.
+            # backtrace stays True: the exception type, message, and full
+            # stack of *source lines* are still logged -- only the per-frame
+            # local-variable dump is suppressed.
+            diagnose=False,
+            backtrace=True,
         )
         # This log message will also currently go to the initial basicConfig stderr handler
         logging.info(
