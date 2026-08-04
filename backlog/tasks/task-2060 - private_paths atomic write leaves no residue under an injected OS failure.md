@@ -1,7 +1,7 @@
 ---
 id: TASK-2060
 title: private_paths atomic write leaves no residue under an injected OS failure
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02'
 labels:
