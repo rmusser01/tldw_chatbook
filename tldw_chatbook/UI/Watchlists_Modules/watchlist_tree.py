@@ -174,8 +174,30 @@ class WatchlistTree(Vertical):
 
     # --- rendering ---
 
+    #: TASK-2304 AC#3. Every node in this tree renders a bare number after
+    #: its name, and nothing on screen said what that number counted -- the
+    #: 2026-08-04 UAT watched it read 0 while the centre header said
+    #: "(1 source)" and reasonably concluded the two disagreed about the same
+    #: fact. They never described the same fact: this one is UNREAD ITEMS
+    #: (`SubscriptionsDB.get_watchlist_item_counts`), the header's is SOURCES
+    #: in the current tree scope.
+    #:
+    #: A legend row rather than a per-node suffix ("All sources  0 unread"):
+    #: the rail's interior is 26 columns (`.watchlists-region-left_rail` is
+    #: 28 wide), a suffix costs 7 of them on EVERY node, and any label that
+    #: overflows renders with an ellipsis -- which
+    #: `test_watchlists_left_rail_is_labelled_when_expanded` rightly fails on.
+    #: One row labels every node at once and cannot truncate. The tooltips
+    #: say it too, so the answer is available both ways.
+    _COUNT_LEGEND = "Counts: unread items"
+
     def compose(self) -> ComposeResult:
         yield from self._action_bar()
+        yield Static(
+            self._COUNT_LEGEND,
+            id="wl-tree-count-legend",
+            classes="watchlist-tree-count-legend",
+        )
         yield self._root_node("all", "All sources", ALL_SOURCES_BUCKET)
         yield self._root_node("unassigned", "Unassigned", UNASSIGNED_BUCKET)
 
@@ -319,13 +341,27 @@ class WatchlistTree(Vertical):
                 classes="watchlist-tree-actions-note",
             )
 
+    @staticmethod
+    def _unread_phrase(unread: int) -> str:
+        """"3 unread items" / "1 unread item" / "No unread items".
+
+        TASK-2304 AC#3, the hover half of the answer. Says the word the bare
+        number cannot, on the node the pointer is actually over, including
+        the zero case -- "0" beside a name the user has just assigned a
+        source to is the exact reading the UAT could not resolve.
+        """
+        if unread == 0:
+            return "No unread items"
+        noun = "item" if unread == 1 else "items"
+        return f"{unread} unread {noun}"
+
     def _root_node(self, key: str, label: str, bucket: int) -> Button:
         unread = self._counts.get(bucket, {}).get("unread", 0)
         button = Button(
             f"{label}  {unread}",
             id=f"wl-tree-node-{key}",
             compact=True,
-            tooltip=f"Show {label.lower()}.",
+            tooltip=f"Show {label.lower()}. {self._unread_phrase(unread)}.",
         )
         button.add_class("watchlist-tree-root")
         # `key` is always "all" or "unassigned" here (the only two callers,
@@ -355,7 +391,10 @@ class WatchlistTree(Vertical):
             f"{watchlist_name}  {unread}",
             id=f"wl-tree-node-watchlist-{watchlist_id}",
             compact=True,
-            tooltip=f"Show sources in {watchlist_name}.",
+            tooltip=(
+                f"Show sources in {watchlist_name}. "
+                f"{self._unread_phrase(unread)}."
+            ),
         )
         node.add_class("watchlist-tree-watchlist")
         if self.active_scope == TreeScope(kind="watchlist", watchlist_id=watchlist_id):

@@ -1763,38 +1763,63 @@ class SubscriptionsDB(BaseDB):
     def get_new_items(
         self,
         subscription_id: Optional[int] = None,
-        status: str = "new",
+        status: Optional[str] = "new",
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Get items with filtering and pagination."""
-        cursor = self.conn.cursor()
+        """Items for a subscription (or all of them), newest first.
 
+        TASK-2301. `status=None` means EVERY status, and until this task there
+        was no way to ask for that: the status predicate was unconditional, so
+        the only listing this class offered was a single-status one. The
+        Watchlists Items tab reads through here, its filter reads "All
+        statuses", and it was structurally incapable of showing anything but
+        `new` -- so triaging an item (Ingest, Ignore, or merely opening it,
+        which marks it read) made the row vanish from a list whose own filter
+        said it should still be there. Acting on an item read as data loss.
+
+        The default stays `"new"`, so every existing caller
+        (`briefing_selection`, the smoke suite, the read-status tests) is
+        untouched; only a caller that deliberately passes `None` sees the new
+        behaviour.
+
+        Args:
+            subscription_id: Restrict to one subscription, or `None` for all.
+            status: The single status to return, or `None` for every status.
+            limit: Maximum rows.
+
+        Returns:
+            One dict per item row, joined to its subscription's name and type,
+            ordered by `created_at` descending.
+        """
+        # Built as predicate fragments rather than four hand-written SELECTs:
+        # the two dimensions (subscription filter, status filter) are
+        # independent, and enumerating their product is how the "all statuses"
+        # case came to be missing in the first place. Values stay bound
+        # parameters -- only the fixed predicate TEXT is assembled here.
+        predicates: List[str] = []
+        params: List[Any] = []
         if subscription_id:
-            cursor.execute(
-                """
-                SELECT i.*, s.name as subscription_name, s.type as subscription_type
-                FROM subscription_items i
-                JOIN subscriptions s ON i.subscription_id = s.id
-                WHERE i.subscription_id = ? AND i.status = ?
-                ORDER BY i.created_at DESC
-                LIMIT ?
-            """,
-                (subscription_id, status, limit),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT i.*, s.name as subscription_name, s.type as subscription_type
-                FROM subscription_items i
-                JOIN subscriptions s ON i.subscription_id = s.id
-                WHERE i.status = ?
-                ORDER BY i.created_at DESC
-                LIMIT ?
-            """,
-                (status, limit),
-            )
+            predicates.append("i.subscription_id = ?")
+            params.append(subscription_id)
+        if status is not None:
+            predicates.append("i.status = ?")
+            params.append(status)
+        where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        params.append(limit)
 
-        return [dict(row) for row in cursor.fetchall()]
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                FROM subscription_items i
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {where_clause}
+                ORDER BY i.created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_item_status(self, item_id: int) -> str:
         """Read one item's current status by its own row id.

@@ -151,8 +151,33 @@ ModalScreen {
 /* Enhanced hover states */
 /* Button:hover handled in components/_buttons.tcss to fix persistent hover issue */
 
-Select:hover {
-    border: solid $primary-lighten-1;
+/* TASK-2300 + review wave I1. This was `Select:hover { border: solid ... }`,
+ * which added two rows of chrome to a widget that has no border of its own
+ * (a `Select` draws one on its child) -- so on a one-row compact Select the
+ * value vanished behind it, on the way TO clicking, before anything had been
+ * chosen.
+ *
+ * The first fix moved it to `Select:hover > SelectCurrent`, which is DEAD:
+ * Textual assigns `:hover` to the innermost widget under the pointer that has
+ * a hover style, and `_has_hover_style` is derived from the selector NAMES a
+ * rule mentions (`css/stylesheet.py:506`). Naming `SelectCurrent` in the rule
+ * is what makes `SelectCurrent` the hover target -- so the `Select` never gets
+ * `:hover` and `Select:hover > ...` can never match. Measured on the
+ * production bundle: `select.mouse_hover=False`, `current.mouse_hover=True`,
+ * painted rows identical at rest and hovered.
+ *
+ * Written to match the mechanism instead of fighting it: the pseudo-class goes
+ * on `SelectCurrent`, which is both the widget Textual actually hovers AND the
+ * one painting the surface a user sees. `background` rather than `border`, so
+ * it recolours cells the widget already draws and moves nothing -- geometry
+ * changes on hover are what made C1's frame strobe, because they move the
+ * pointer's own target out from under it. `$surface-lighten-1` is this app's
+ * established hover background (`ListView ListItem:hover`,
+ * `OptionList > .option-list--option-hover`, `DataTable > .datatable--hover`),
+ * so the cue now reads the same as every other hoverable row.
+ */
+Select > SelectCurrent:hover {
+    background: $surface-lighten-1;
 }
 
 
