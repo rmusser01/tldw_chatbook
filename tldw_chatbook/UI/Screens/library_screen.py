@@ -73,12 +73,16 @@ from ...Library.library_export_state import (
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
-from ...Widgets.Library.library_ingest_canvas import ingest_scope_label
+from ...Widgets.Library.library_ingest_canvas import (
+    _summarise_option,
+    ingest_scope_label,
+)
 from ...Library.library_ingest_jobs import (
     LibraryIngestJob,
     count_duplicate_done_jobs,
 )
 from ...Library.library_ingest_state import (
+    validate_ingest_option_value,
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
@@ -13187,6 +13191,24 @@ class LibraryScreen(BaseAppScreen):
         field = next((f for f in cap.fields if f.name == event.name), None)
         if field is not None and field.type not in ("text", "number"):
             self.refresh(recompose=True)
+        elif field is not None:
+            # (task-2130) Text/number edits deliberately skip the recompose
+            # (cursor survival), which used to leave the panel-header receipt
+            # asserting the OLD value and the only invalid signal a
+            # focus-only border. Update the receipt, the inline message, and
+            # the Start gate in place instead.
+            self._update_library_ingest_group_receipt(event.group)
+            message = validate_ingest_option_value(field, event.value)
+            try:
+                error_line = self.query_one(
+                    f"#opt-{event.group}-{event.name}-error", Static
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                error_line.update(message)
+                error_line.display = bool(message)
+            self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
     def handle_parakeet_v2_install_requested(
@@ -14174,7 +14196,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-ingest-option-reset")
     def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
-        """Reset a per-type options panel to its defaults."""
+        """Reset a per-type options panel to its defaults.
+
+        (task-2130) "Defaults" must mean every control and every echo of the
+        value: the generic group's analyze/chunk/chunk_size mirror in the
+        top-level form fields used to survive the wipe (the state builder
+        re-injected them, so text Inputs kept their old values through two
+        Reset presses while Selects visibly reset), and the persisted
+        ``[library.ingest_options]`` section resurrected them next session.
+        """
         event.stop()
         button_id = event.button.id or ""
         if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
@@ -14183,7 +14213,34 @@ class LibraryScreen(BaseAppScreen):
         group = button_id[4:-6]
         form = self._library_ingest_form
         form.type_options[group] = {}
-        self.refresh(recompose=True)
+        if group == "generic":
+            cap = get_capabilities("generic")
+            defaults = {f.name: f.default for f in cap.fields}
+            form.analyze = bool(defaults.get("analyze", False))
+            form.chunk = bool(defaults.get("chunk", True))
+            form.chunk_size = str(defaults.get("chunk_size", 1000))
+        save_settings_to_cli_config({f"library.ingest_options.{group}": {}})
+        self._refresh_library_ingest_canvas_preserving_context()
+
+    def _update_library_ingest_group_receipt(self, group: str) -> None:
+        """Recompute one panel's title receipt from the ACTUAL option values."""
+        cap = get_capabilities(group)
+        values = dict(self._library_ingest_form.type_options.get(group, {}))
+        if group == "generic":
+            form = self._library_ingest_form
+            values.setdefault("analyze", form.analyze)
+            values["analyze"] = form.analyze
+            values["chunk"] = form.chunk
+            values["chunk_size"] = form.chunk_size
+        summary = ", ".join(
+            _summarise_option(f, values.get(f.name, f.default))
+            for f in cap.fields
+        )
+        try:
+            panel = self.query_one(f"#type-group-{group}", Collapsible)
+        except (NoMatches, QueryError):
+            return
+        panel.title = f"{cap.label} — {summary}"
 
     # ----- Export canvas: section entry points --------------------------
 

@@ -1638,3 +1638,37 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert many.unsupported_line.endswith("u0.bin, u1.bin, u2.bin, ....")
+
+
+def test_invalid_option_values_gate_start_with_text_message():
+    """(task-2130) 'abc' as a chunk size used to sail into a running job;
+    invalid option values now gate Start like a bad path, with a text
+    message (not a color-only border)."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((), form=form)
+    assert not state.start_enabled
+    assert ("generic", "chunk_size", "Chunk size must be a whole number.") in (
+        state.option_errors
+    )
+    assert state.start_quiet_line == (
+        "Fix the highlighted options to start: "
+        "Chunk size must be a whole number."
+    )
+
+    form.type_options["generic"] = {"chunk_size": "0"}
+    zero = build_library_ingest_state((), form=form)
+    assert ("generic", "chunk_size", "Chunk size must be at least 1.") in (
+        zero.option_errors
+    )
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "-5"}
+    negative = build_library_ingest_state((), form=form)
+    assert ("generic", "chunk_overlap", "Chunk overlap must be at least 0.") in (
+        negative.option_errors
+    )
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "100"}
+    valid = build_library_ingest_state((), form=form)
+    assert valid.option_errors == ()
+    assert valid.start_enabled

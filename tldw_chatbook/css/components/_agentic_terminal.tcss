@@ -6217,3 +6217,12 @@ LibraryIngestCanvas Collapsible > CollapsibleTitle:focus {
 LibraryIngestCanvas Collapsible.-collapsed > CollapsibleTitle:focus {
     border-bottom: none;
 }
+
+/* task-2130: inline option-validation message -- a TEXT line (never
+   color-only; the color is decoration on top of words). Display-managed
+   by the screen's option-change handler. */
+LibraryIngestCanvas .type-group-field-error {
+    color: $error;
+    height: auto;
+    padding: 0 0 0 2;
+}

@@ -13,9 +13,13 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
+from collections.abc import Mapping
 from typing import Any, Sequence
 
-from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+from tldw_chatbook.Library.ingest_capabilities import (
+    get_capabilities,
+    list_type_groups,
+)
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
@@ -56,6 +60,43 @@ INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
 START_QUIET_LINE_COPY = "Enter a file path to start."
+
+
+def validate_ingest_option_value(field: Any, value: Any) -> str:
+    """Validation message for one option value, or "" when valid.
+
+    (task-2130) Shared by the state gate and the canvas's inline per-field
+    messages so the two can never disagree. Only ``number`` fields have a
+    wrong shape today; other types are constrained by their widgets.
+    """
+    if getattr(field, "type", "") != "number":
+        return ""
+    text = str(value).strip()
+    minimum = 1 if getattr(field, "name", "") == "chunk_size" else 0
+    try:
+        number = int(text)
+    except (TypeError, ValueError):
+        return f"{field.label} must be a whole number."
+    if number < minimum:
+        return f"{field.label} must be at least {minimum}."
+    return ""
+
+
+def collect_ingest_option_errors(
+    type_options: Mapping[str, Mapping[str, Any]],
+) -> tuple[tuple[str, str, str], ...]:
+    """(group, field name, message) for every invalid option value."""
+    errors: list[tuple[str, str, str]] = []
+    for group in list_type_groups():
+        cap = get_capabilities(group)
+        values = type_options.get(group, {}) or {}
+        for field in cap.fields:
+            message = validate_ingest_option_value(
+                field, values.get(field.name, field.default)
+            )
+            if message:
+                errors.append((group, field.name, message))
+    return tuple(errors)
 
 # First-visit orientation. Shown only while the form is untouched, so it fills
 # the otherwise-blank pane a new user lands on without ever competing with a
@@ -489,6 +530,7 @@ class LibraryIngestCanvasState:
     form: LibraryIngestFormState
     start_enabled: bool
     start_quiet_line: str
+    option_errors: tuple[tuple[str, str, str], ...]
     queue_heading: str
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
@@ -1000,11 +1042,16 @@ def build_library_ingest_state(
         and active_preflight.total_files > 0
         and not type_groups
     )
+    # (task-2130) Invalid option values gate Start exactly like a bad path:
+    # "abc" as a chunk size used to sail into a running job with only a
+    # focus-only colored border as the signal.
+    option_errors = collect_ingest_option_errors(form.type_options)
     start_enabled = (
         registry_available
         and media_db_available
         and bool(form.path.strip())
         and not nothing_importable
+        and not option_errors
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
     # unavailable line wins, then the guaranteed-failure explanation, then
@@ -1017,6 +1064,10 @@ def build_library_ingest_state(
         start_quiet_line = (
             f"Nothing in this selection can be imported — "
             f"{count} unsupported {noun}."
+        )
+    elif option_errors:
+        start_quiet_line = (
+            f"Fix the highlighted options to start: {option_errors[0][2]}"
         )
     elif not form.path.strip():
         start_quiet_line = START_QUIET_LINE_COPY
@@ -1071,6 +1122,7 @@ def build_library_ingest_state(
         form=form,
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
+        option_errors=option_errors,
         queue_heading=QUEUE_HEADING_COPY,
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,

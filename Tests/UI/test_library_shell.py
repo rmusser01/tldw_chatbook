@@ -13176,3 +13176,96 @@ async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
         await pilot.pause()
         assert panel.collapsed is True
         assert screen.query_one("#library-ingest-start", Button) is start_before
+
+
+@pytest.mark.asyncio
+async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
+    """(task-2130) Text-Input option edits skip the recompose (cursor
+    survival) -- the receipt, the inline message, and the Start gate must
+    all update in place so the panel never lies about the actual values."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-receipt")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen.query_one("#library-ingest-path", Input).value = str(staged)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert "Chunk size: abc" in str(panel.title), (
+            "receipt still asserts the old value after an Input edit"
+        )
+        error_line = screen.query_one("#opt-generic-chunk_size-error", Static)
+        assert error_line.display is True
+        assert "whole number" in str(error_line.renderable)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+        # Same object throughout -- the updates were in place.
+        assert screen.query_one("#opt-generic-chunk_size", Input) is chunk_input
+
+        chunk_input.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert "Chunk size: 1500" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
+        assert screen.query_one(
+            "#opt-generic-chunk_size-error", Static
+        ).display is False
+        assert screen.query_one("#library-ingest-start", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
+    """(task-2130) Reset used to wipe type_options while the state builder
+    re-injected the generic mirror fields -- Chunk size survived two Reset
+    presses. Defaults must win everywhere: widget, form mirror, receipt."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-reset")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "10009999"
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_ingest_form.chunk_size == "10009999"
+
+        screen.query_one("#opt-generic-reset", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.chunk_size == "1000"
+        # The state builder re-injects the generic mirror on every build (by
+        # design) -- post-reset it must re-inject the DEFAULTS, not the old
+        # values.
+        generic = screen._library_ingest_form.type_options.get("generic", {})
+        assert generic.get("chunk_size") in (None, "1000", 1000)
+        fresh_input = screen.query_one("#opt-generic-chunk_size", Input)
+        assert fresh_input.value == "1000", (
+            "Reset left the stale value in the chunk-size Input"
+        )
+        assert "Chunk size: 1000" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
