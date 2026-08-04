@@ -1,5 +1,5 @@
 ---
-id: TASK-2062
+id: TASK-2153
 title: 'MCP: stop framing the built-in server opt-in as a failure (F-051)'
 status: Done
 assignee: []
