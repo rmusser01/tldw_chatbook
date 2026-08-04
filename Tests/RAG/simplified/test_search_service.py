@@ -18,6 +18,11 @@ import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.MCP.tools import MCPTools
+from tldw_chatbook.RAG_Search.simplified.citations import (
+    Citation,
+    CitationType,
+    SearchResultWithCitations,
+)
 from tldw_chatbook.RAG_Search.simplified.search_service import (
     SimplifiedRAGSearchService,
 )
@@ -61,6 +66,23 @@ def _seed(
     )
     assert media_id is not None, f"seed failed: {message}"
     return media_id
+
+
+class _StubEnhancedRAGService:
+    """Provides ONLY the `.search()` seam that `semantic_search` calls into
+    the embeddings-backed RAG service -- the mapping code that consumes the
+    returned objects (semantic_search's formatting loop) is real and
+    unpatched. Returns real `SearchResultWithCitations`/`SearchResult`
+    instances so the mapping is exercised against the actual dataclass
+    fields, not an imagined shape."""
+
+    def __init__(self, results):
+        self._results = results
+        self.calls: list[tuple] = []
+
+    async def search(self, *, query, top_k, search_type, filter_metadata=None):
+        self.calls.append((query, top_k, search_type, filter_metadata))
+        return self._results
 
 
 class TestKeywordSearchRealRowMapping:
@@ -185,6 +207,108 @@ class TestKeywordSearchFailureSurfacesAsError:
         results = await tools.perform_rag_search("anything", use_semantic=False)
 
         assert results == [{"error": "simulated media_db failure"}]
+
+
+class TestSemanticSearchEnhancedMapping:
+    """Round 2 (task-2271): semantic_search's own result-mapping read
+    `result.content`, which does not exist on either
+    `RAG_Search.simplified.citations.SearchResultWithCitations` or
+    `RAG_Search.simplified.vector_store.SearchResult` -- both real dataclasses
+    expose the document text as `.document`. That crash was hidden behind the
+    same swallow-to-[] pattern this task already fixed for keyword_search,
+    and this is what a real profile hits by default (`perform_rag_search`'s
+    `use_semantic` defaults True). Uses the REAL `SearchResultWithCitations`/
+    `Citation` classes -- no invented stub shape -- with only the embeddings
+    seam (`.search()`) stubbed."""
+
+    @pytest.mark.asyncio
+    async def test_maps_real_search_result_with_citations_document_field(
+        self, media_db
+    ):
+        real_result = SearchResultWithCitations(
+            id="chunk-1",
+            score=0.87,
+            document="Real document body text for the semantic result.",
+            metadata={
+                "title": "Semantic Doc",
+                "media_type": "article",
+                "url": "https://example.com/semantic-doc",
+            },
+            citations=[
+                Citation(
+                    document_id="media-1",
+                    document_title="Semantic Doc",
+                    chunk_id="chunk-1",
+                    text="Real document body",
+                    start_char=0,
+                    end_char=19,
+                    confidence=0.9,
+                    match_type=CitationType.SEMANTIC,
+                )
+            ],
+        )
+        service = _make_service(media_db)
+        service.rag_service = _StubEnhancedRAGService([real_result])
+
+        results = await service.semantic_search("anything", limit=5)
+
+        assert len(results) == 1
+        mapped = results[0]
+        assert mapped["id"] == "chunk-1"
+        assert mapped["title"] == "Semantic Doc"
+        assert mapped["content"] == "Real document body text for the semantic result."
+        assert mapped["media_type"] == "article"
+        assert mapped["url"] == "https://example.com/semantic-doc"
+        assert mapped["file_path"] is None
+        assert mapped["score"] == 0.87
+        assert mapped["metadata"] == real_result.metadata
+
+    @pytest.mark.asyncio
+    async def test_media_types_filter_reaches_the_enhanced_service(self, media_db):
+        service = _make_service(media_db)
+        stub = _StubEnhancedRAGService([])
+        service.rag_service = stub
+
+        results = await service.semantic_search(
+            "anything", limit=5, media_types=["pdf", "video"]
+        )
+
+        assert results == []
+        assert stub.calls == [
+            ("anything", 5, "semantic", {"media_type": {"$in": ["pdf", "video"]}})
+        ]
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_perform_rag_search_default_semantic_path(self, media_db):
+        """AC: the tool's DEFAULT path (use_semantic=True, the value
+        perform_rag_search actually defaults to) returns real results, not
+        the previously-crashing-then-swallowed empty list."""
+        real_result = SearchResultWithCitations(
+            id="chunk-9",
+            score=0.5,
+            document="Default-path semantic document body.",
+            metadata={"title": "Default Path Doc", "media_type": "video"},
+            citations=[],
+        )
+        service = _make_service(media_db)
+        service.rag_service = _StubEnhancedRAGService([real_result])
+
+        tools = MCPTools.__new__(MCPTools)
+        tools.rag_service = service
+
+        results = await tools.perform_rag_search("anything")  # use_semantic defaults True
+
+        assert results == [
+            {
+                "id": "chunk-9",
+                "title": "Default Path Doc",
+                "content": "Default-path semantic document body.",
+                "media_type": "video",
+                "source": None,
+                "score": 0.5,
+                "metadata": {"title": "Default Path Doc", "media_type": "video"},
+            }
+        ]
 
 
 class TestSemanticSearchFallback:

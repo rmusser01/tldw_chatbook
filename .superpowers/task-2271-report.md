@@ -142,3 +142,128 @@ real in-memory `MediaDatabase(":memory-equivalent tmp_path", client_id=...)`
   The unit test covers the same code path end-to-end through
   `MCPTools.perform_rag_search`, but if live verification is required for
   merge, that's still open.
+
+---
+
+## Round 2 (live-check follow-up): semantic_search's own mapping crashed too
+
+The controller's live check confirmed the keyword path works (real result on
+a matching query, honest 0 on a nonsense one), but the tool's **default**
+path failed: `perform_rag_search`'s `use_semantic` parameter defaults `True`,
+so every real call goes through `semantic_search`'s "enhanced RAG service"
+branch (not the keyword-fallback branch my round-1 tests exercised), and
+that branch crashed with `'SearchResultWithCitations' object has no
+attribute 'content'`. My round-1 swallow removal correctly turned this into
+`perform_rag_search`'s honest `[{"error": ...}]` shape instead of a fake `[]`
+— but AC#1 requires the default path to actually return results, so this is
+a second, previously-undiscovered bug in the same method, same failure
+class (an imagined attribute name), one layer deeper.
+
+### Real field names found
+
+Read the actual dataclasses instead of guessing:
+
+- `tldw_chatbook/RAG_Search/simplified/citations.py:129` —
+  `SearchResultWithCitations`: `id: str`, `score: float`, `document: str`,
+  `metadata: dict`, `citations: List[Citation]`. **No `content` field.**
+- `tldw_chatbook/RAG_Search/simplified/vector_store.py:47` — `SearchResult`
+  (the other possible return type of `RAGService.search()`): `id: str`,
+  `score: float`, `document: str`, `metadata: dict`. Same shape, same
+  `document` field, no `content` here either.
+
+So the ONLY invented attribute was `result.content`; every other attribute
+the mapping touches (`result.id`, `result.score`, `result.metadata`, and
+`.metadata.get(...)` calls with defaults) is real on both possible return
+types. I also cross-checked the `self.rag_service.search(query=, top_k=,
+search_type=, filter_metadata=)` call itself against both concrete `search()`
+implementations that `create_rag_service` can hand back
+(`rag_service.py:543` `RAGService.search` and
+`enhanced_rag_service_v2.py:161` `EnhancedRAGServiceV2.search`, the subclass
+actually instantiated at runtime) — both accept exactly those keyword
+arguments, so the call site itself was already correct; nothing else in the
+branch was reading an imagined attribute or calling with wrong parameter
+names.
+
+### Fix
+
+`search_service.py`'s `semantic_search`, in the enhanced-RAG-service
+formatting loop: `"content": result.content` → `"content": result.document`.
+No other line changed. Outer shape unchanged.
+
+### TDD evidence (round 2)
+
+Added `TestSemanticSearchEnhancedMapping` to
+`Tests/RAG/simplified/test_search_service.py` (3 new tests, file now 11
+total), importing and constructing the **real**
+`SearchResultWithCitations`/`Citation`/`CitationType` classes from
+`tldw_chatbook.RAG_Search.simplified.citations` — no invented stub class, per
+the coordinator's explicit instruction (a stub is exactly how this bug
+survived round 1). Only the embeddings-level seam is stubbed
+(`_StubEnhancedRAGService.search()`, returning the real dataclass
+instances) — the mapping code under test (`semantic_search`'s formatting
+loop) is real and unpatched.
+
+- `test_maps_real_search_result_with_citations_document_field` — asserts the
+  mapped dict's `content` equals the real object's `.document`, plus
+  `id`/`title`/`media_type`/`url`/`file_path`/`score`/`metadata` are all
+  correctly pulled from the real fields.
+- `test_media_types_filter_reaches_the_enhanced_service` — asserts the
+  `filter_metadata={"media_type": {"$in": [...]}}` construction still reaches
+  `.search()` unchanged (untouched by this fix; regression guard).
+- `test_end_to_end_perform_rag_search_default_semantic_path` — drives it
+  through the real `MCPTools.perform_rag_search("anything")` with no
+  `use_semantic` argument (i.e. the actual default), asserting the full
+  formatted-and-filtered result the tool returns to a caller — this is the
+  exact AC#1 default-path scenario the live check found broken.
+
+RED: reverted only the `"content": result.document` line back to
+`result.content` (kept everything else from round 1's fix in place), ran
+`pytest Tests/RAG/simplified/test_search_service.py -q -k
+TestSemanticSearchEnhancedMapping`: **2 failed** (the third,
+media_types-filter test, doesn't touch `.content` since its stub returns an
+empty list, so it passed even against the bug — expected), both failures
+showing the exact reported error message
+`'SearchResultWithCitations' object has no attribute 'content'` in the
+captured log, including in the end-to-end test where it surfaced through
+`perform_rag_search` as `[{"error": "...has no attribute 'content'"}]`.
+
+GREEN: restored `result.document`; reran the same command: **3 passed**.
+
+### Commands run (round 2) + output
+
+```
+pytest Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_search_tool.py -q
+→ 13 passed, 1 warning
+
+pytest Tests/ --collect-only -q | tail -3
+→ 29919 tests collected in ~13s, 0 errors
+  (Tests/Notes/test_notes_api_integration.py's one pre-existing SKIPPED is
+  unrelated — optional server dep not installed)
+```
+
+`Tests/MCP/test_rag_search_tool.py` (protected oracle): still unmodified,
+still passes — it stubs at the `SimplifiedRAGSearchService` interface level,
+so it never touches the `SearchResultWithCitations`/`SearchResult` mapping
+either.
+
+### Files changed (round 2)
+
+- `tldw_chatbook/RAG_Search/simplified/search_service.py` — one-line fix
+  (`result.content` → `result.document`) plus an explanatory comment; no
+  other lines touched.
+- `Tests/RAG/simplified/test_search_service.py` — added
+  `TestSemanticSearchEnhancedMapping` (3 tests) and the `_StubEnhancedRAGService`
+  helper + `Citation`/`CitationType`/`SearchResultWithCitations` imports.
+- `backlog/tasks/task-2271 - ...md` — Implementation Notes appended with the
+  round-2 summary; AC#1 re-evaluated (see below).
+
+### AC#1 status
+
+The default-path (`use_semantic=True`) crash is now fixed and covered
+end-to-end at the unit level. Combined with round 1's keyword-path fix, both
+`search_rag` code paths now return real results against a real in-memory
+media DB in tests. I still did not run the live app in this worktree
+(pytest-only per standing rules), so full live-profile confirmation is left
+to the controller — but the specific defect the live check reported
+(`SearchResultWithCitations` has no `.content`) is fixed and reproduced/
+verified via the RED/GREEN cycle above.

@@ -79,7 +79,14 @@ class SimplifiedRAGSearchService:
                         {
                             "id": result.id,
                             "title": result.metadata.get("title", "Untitled"),
-                            "content": result.content,
+                            # `.document` is the real field on both
+                            # SearchResultWithCitations (citations.py) and
+                            # SearchResult (vector_store.py) -- neither
+                            # dataclass has a `.content` attribute (task-2271
+                            # round 2: this crashed with AttributeError on
+                            # every semantic search, i.e. the tool's DEFAULT
+                            # path, since use_semantic defaults True).
+                            "content": result.document,
                             "media_type": result.metadata.get("media_type", "unknown"),
                             "url": result.metadata.get("url"),
                             "file_path": result.metadata.get("file_path"),

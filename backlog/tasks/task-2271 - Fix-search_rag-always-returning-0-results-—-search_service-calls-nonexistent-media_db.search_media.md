@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-04 21:30'
-updated_date: '2026-08-04 18:47'
+updated_date: '2026-08-04 19:13'
 labels:
   - rag
   - mcp
@@ -63,4 +63,22 @@ Gates run: Tests/RAG/simplified/test_search_service.py + Tests/MCP/test_rag_sear
 AC#1 ("search_rag returns real results against a profile...") has a unit-level equivalent (test_end_to_end_perform_rag_search_returns_real_results, calling MCPTools.perform_rag_search against a real in-memory MediaDatabase) but no live-app/live-profile verification was run in this worktree -- left unchecked for the controller to verify live if desired, per task instructions.
 
 Files changed: tldw_chatbook/RAG_Search/simplified/search_service.py (keyword_search rewritten, both excepts now raise); Tests/RAG/simplified/test_search_service.py (new).
+
+Review round (Approved): the report's blast-radius claim ("only MCP/tools.py imports this service") was corrected by the reviewer — `MCP/prompts.py` also imports it (`search_and_synthesize_prompt`). No regression from the raise change there (its own blanket except catches it), and that call site carries a PRE-EXISTING missing-`await` bug (the PR #1226 class) — filed as TASK-2320.
+
+## Round 2 (live-check follow-up)
+
+Live check found a SECOND swallowed crash, one layer deeper: perform_rag_search's `use_semantic` defaults True, so the tool's DEFAULT path goes through semantic_search's enhanced-RAG-service branch (not the keyword fallback round 1's tests exercised), which crashed with `'SearchResultWithCitations' object has no attribute 'content'`. Round 1's swallow-removal correctly surfaced this as the tool's [{"error": ...}] shape instead of a fake [], but AC#1 needs the default path to actually return results.
+
+Real fields (read the actual dataclasses, not guessed): `citations.py:129` SearchResultWithCitations = id/score/document/metadata/citations; `vector_store.py:47` SearchResult (the other possible return type of RAGService.search()) = id/score/document/metadata. Neither has `content` -- `document` is the real field on both. Every other attribute the mapping touched (id/score/metadata, and .metadata.get(...) with defaults) is real; the `.search(query=,top_k=,search_type=,filter_metadata=)` call itself was already correct against both concrete search() implementations create_rag_service can return (RAGService.search, EnhancedRAGServiceV2.search).
+
+Fix: one line, `"content": result.content` -> `"content": result.document`.
+
+TDD: added TestSemanticSearchEnhancedMapping (3 tests, file now 11 total) using the REAL SearchResultWithCitations/Citation/CitationType classes (no invented stub shape, per the coordinator's instruction -- a stub is exactly how this survived round 1); only the embeddings-level `.search()` seam is stubbed. RED (reverted only the one line, kept round-1 fix): 2/3 failed with the exact reported AttributeError, including via perform_rag_search's error shape. GREEN after restoring `result.document`: 3/3 passed.
+
+Gates: `pytest Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_search_tool.py -q` -> 13 passed. `pytest Tests/ --collect-only -q` -> 29919 collected, 0 errors. Protected oracle Tests/MCP/test_rag_search_tool.py unmodified, still passes (stubs above the SearchResultWithCitations mapping boundary too).
+
+Files: tldw_chatbook/RAG_Search/simplified/search_service.py (1-line fix + comment); Tests/RAG/simplified/test_search_service.py (+3 tests, stub helper, real-class imports).
+
+AC#1: both search_rag code paths (keyword and the default semantic-with-fallback) now return real results against a real in-memory media DB in tests; no live app run was done in this worktree (pytest-only per standing rules), left for the controller if still required.
 <!-- SECTION:NOTES:END -->
