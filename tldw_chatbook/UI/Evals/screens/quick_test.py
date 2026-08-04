@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Optional, Dict, Any
 from datetime import datetime
+import asyncio
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -226,7 +227,7 @@ class QuickTestScreen(Container):
             with Container(classes="form-section"):
                 yield Static("Quick Test Configuration", classes="section-title")
                 yield Static(
-                    "Demo mode: runs a simulated evaluation — no model is queried.",
+                    "Runs a real evaluation via the configured provider; results are saved and appear in Results Browser.",
                     id="quick-test-demo-note",
                 )
 
@@ -315,6 +316,14 @@ class QuickTestScreen(Container):
             self.nav_bar.push_breadcrumb("Quick Test", "quick_test")
 
         self._initialize_orchestrator()
+        if self.orchestrator is None:
+            # Honest blocked state instead of a form that can never run.
+            self.query_one("#quick-test-demo-note", Static).update(
+                "Evaluation service unavailable — the evaluations database did "
+                "not initialize. Check the Logs screen, then restart the app."
+            )
+            self.query_one("#run-button", Button).disabled = True
+            return
         self._load_tasks()
         self._load_models()
         self.query_one("#task-select").focus()
@@ -475,28 +484,46 @@ class QuickTestScreen(Container):
     def _run_evaluation_worker(
         self, task_id: str, model_id: str, samples: int, temperature: float
     ) -> None:
-        """Worker to run evaluation."""
+        """Worker that runs a real evaluation through the orchestrator."""
+        import time
+
+        if self.orchestrator is None:
+            self.call_from_thread(
+                self._handle_error,
+                "Evaluation service unavailable — the evaluations database "
+                "did not initialize. Check the Logs screen for details.",
+            )
+            self.call_from_thread(self._cleanup_evaluation)
+            return
+
+        def _progress(completed: int, total: int, result: Any = None) -> None:
+            percent = (completed / total * 100.0) if total else 0.0
+            self.call_from_thread(
+                self._update_progress, percent, f"Sample {completed}/{total}"
+            )
+
         try:
-            # Simulate evaluation progress
-            import time
-
-            for i in range(101):
-                if self.is_cancelled:
-                    break
-
-                self.call_from_thread(
-                    self._update_progress, i, f"Processing sample {i}/{samples}"
+            run_id = asyncio.run(
+                self.orchestrator.run_evaluation(
+                    task_id=task_id,
+                    model_id=model_id,
+                    run_name=f"quick_test_{int(time.time())}",
+                    max_samples=samples,
+                    config_overrides={"temperature": temperature},
+                    progress_callback=_progress,
                 )
-                time.sleep(0.05)  # Simulate work
-
-            # Generate mock results
+            )
+            summary = self.orchestrator.get_run_summary(run_id)
+            metrics = summary.get("metrics") or {}
             results = {
                 "task": self.available_tasks.get(task_id, {}).get("name", "Unknown"),
                 "model": self.available_models.get(model_id, {}).get("name", "Unknown"),
-                "samples": samples,
-                "accuracy": 0.87,
-                "duration": "5.2s",
+                "samples": summary.get("sample_count", samples),
+                "accuracy": metrics.get("accuracy"),
+                "duration": f"{summary.get('duration_seconds', 0.0):.1f}s",
                 "timestamp": datetime.now().isoformat(),
+                "run_id": run_id,
+                "metrics": metrics,
             }
 
             self.call_from_thread(self._handle_results, results)
@@ -525,35 +552,41 @@ class QuickTestScreen(Container):
         """Handle evaluation results."""
         self.last_results = results
 
-        # This worker is a simulation (see _run_evaluation_worker): say so
-        # everywhere the numbers appear — invented accuracy must never read
-        # as a real measurement (UX-052).
+        accuracy = results.get("accuracy")
+        accuracy_line = (
+            f"Accuracy: {accuracy:.2%}"
+            if isinstance(accuracy, (int, float))
+            else "Accuracy: n/a (see metrics below)"
+        )
         summary_text = f"""
-SIMULATED RUN — no model was queried. Numbers below are placeholders.
-
 Task: {results["task"]}
 Model: {results["model"]}
 Samples: {results["samples"]}
-Accuracy: {results["accuracy"]:.2%} (simulated)
-Duration: {results["duration"]} (simulated)
+{accuracy_line}
+Duration: {results["duration"]}
 Completed: {results["timestamp"]}
+Run ID: {results.get("run_id", "—")}
         """.strip()
 
         summary_widget = self.query_one("#summary-text", Static)
         summary_widget.update(summary_text)
 
-        # Update detailed results
+        # Update detailed results with the full metrics payload
+        import json
+
         detail_widget = self.query_one("#results-detail", TextArea)
+        metrics = results.get("metrics") or {}
         detail_widget.text = (
-            f"Detailed results (simulated):\n\n{summary_text}\n\n"
-            "[Simulated metrics — no model was queried]"
+            f"Summary:\n\n{summary_text}\n\n"
+            f"Metrics:\n{json.dumps(metrics, indent=2, default=str)}"
         )
 
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.SUCCESS)
 
         self._show_status(
-            "Simulated run complete — no model was queried.", "warning"
+            "Evaluation complete — saved and visible in Results Browser.",
+            "success",
         )
 
     def _handle_error(self, error: str) -> None:

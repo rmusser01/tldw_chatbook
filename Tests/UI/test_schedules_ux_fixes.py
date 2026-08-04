@@ -54,7 +54,10 @@ def test_every_binding_has_an_implemented_action() -> None:
 
 
 def test_footer_shortcuts_match_bindings_exactly() -> None:
-    binding_keys = {binding.key for binding in SchedulesWorkbench.BINDINGS}
+    # Escape (clear marks) needs no advertising; everything else must be 1:1.
+    binding_keys = {
+        binding.key for binding in SchedulesWorkbench.BINDINGS if binding.key != "escape"
+    }
     hint_keys = {key for key, _label in SchedulesWorkbench.SCHEDULES_SHORTCUTS}
     assert hint_keys == binding_keys, (
         f"Footer hints {hint_keys} are not 1:1 with BINDINGS {binding_keys}"

@@ -29,15 +29,16 @@ def test_nav_labels_carry_the_ctrl_modifier() -> None:
     assert nav_button_label(12, "Settings") == "F9 Settings"
 
 
-# UX-052 + UX-058 ---------------------------------------------------------
-def test_quick_test_card_is_marked_demo() -> None:
+# UX-052 + UX-058 + UX-071 ----------------------------------------------
+def test_quick_test_card_runs_a_real_evaluation() -> None:
     quick_test = next(c for c in EVAL_NAV_CARDS if c.id == "quick_test")
-    assert quick_test.demo is True
-    assert "simulated" in quick_test.description.lower()
+    assert quick_test.demo is False
+    assert quick_test.planned is False
+    assert "simulated" not in quick_test.description.lower()
 
 
 def test_evals_chip_label_counts_live_demo_planned() -> None:
-    assert evals_workflows_chip_label() == "2 live · 1 demo · 3 planned"
+    assert evals_workflows_chip_label() == "3 live · 3 planned"
 
 
 def test_evals_screen_binds_no_dead_digit_keys() -> None:
@@ -55,7 +56,7 @@ class _QuickTestHost(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_simulated_results_are_labeled_everywhere() -> None:
+async def test_results_render_real_metrics() -> None:
     with patch.object(QuickTestScreen, "_initialize_screen", lambda self: None):
         app = _QuickTestHost()
         async with app.run_test(size=(120, 40)) as pilot:
@@ -65,18 +66,20 @@ async def test_simulated_results_are_labeled_everywhere() -> None:
                 {
                     "task": "demo-task",
                     "model": "demo-model",
-                    "samples": 1,
+                    "samples": 12,
                     "accuracy": 0.87,
-                    "duration": "1s",
+                    "duration": "5.2s",
                     "timestamp": "2026-08-04T00:00:00",
+                    "run_id": "run-1",
+                    "metrics": {"accuracy": 0.87, "f1": 0.81},
                 }
             )
             await pilot.pause()
             summary = str(screen.query_one("#summary-text", Static).render())
-            assert "SIMULATED RUN" in summary
-            assert "no model was queried" in summary
+            assert "87.00%" in summary
+            assert "run-1" in summary
             detail = screen.query_one("#results-detail").text
-            assert "simulated" in detail.lower()
+            assert '"f1": 0.81' in detail
 
 
 # UX-056 -----------------------------------------------------------------

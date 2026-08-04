@@ -7,6 +7,7 @@
 # content; the copy actions live in their own bottom bar.
 #
 # Imports
+import re
 from collections import deque
 from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
 
@@ -49,16 +50,20 @@ class LogRecord(NamedTuple):
     message: str
 
 
-def _passes_filter(record: LogRecord, level_chip: str, text: str) -> bool:
-    """True when a record matches the active level chip and text filter."""
+def _passes_filter(
+    record: LogRecord, level_chip: str, text: str, pattern: "re.Pattern | None" = None
+) -> bool:
+    """True when a record matches the active level chip and text/regex filter."""
     for chip_id, _label, levels in _LEVEL_FILTERS:
         if chip_id == level_chip:
             if levels and record.level not in levels:
                 return False
             break
-    if text and text.lower() not in record.message.lower():
-        return False
-    return True
+    if not text:
+        return True
+    if pattern is not None:
+        return bool(pattern.search(record.message))
+    return text.lower() in record.message.lower()
 
 
 def _styled_line(record: LogRecord) -> Text:
@@ -127,7 +132,7 @@ class LogsWindow(Container):
                     id=f"logs-filter-{chip_id}",
                     classes="logs-filter-chip" + (" is-active" if chip_id == "all" else ""),
                 )
-            yield Input(placeholder="Filter logs…", id="logs-filter-text")
+            yield Input(placeholder="Filter logs (regex ok)…", id="logs-filter-text")
             yield Button("Pause", id="logs-pause")
         yield Static(
             "No log entries yet.\n"
@@ -165,6 +170,18 @@ class LogsWindow(Container):
         if self._loaded_from_app:
             return
         self._loaded_from_app = True
+        # Restore the last-used filter and level chip (UX-077 saved filters).
+        try:
+            from ..config import get_cli_setting
+
+            saved_chip = get_cli_setting("logs", "last_level_chip", "all")
+            if saved_chip in {chip_id for chip_id, _l, _lv in _LEVEL_FILTERS}:
+                self._level_chip = saved_chip
+            saved_text = get_cli_setting("logs", "last_filter", "")
+            if saved_text:
+                self.query_one("#logs-filter-text", Input).value = saved_text
+        except Exception:  # noqa: BLE001 - config read must never block logs
+            pass
         app_records: Iterable[tuple] = getattr(
             self.app_instance, "_log_records", ()
         ) or ()
@@ -172,6 +189,22 @@ class LogsWindow(Container):
             level, name, message = entry
             self._records.append(LogRecord(level, name, message))
         self._render_view()
+
+    def save_filter_state(self) -> None:
+        """Persist the current filter text and level chip (UX-077)."""
+        try:
+            from ..config import save_setting_to_cli_config
+
+            save_setting_to_cli_config(
+                "logs", "last_filter", self.query_one("#logs-filter-text", Input).value
+            )
+            save_setting_to_cli_config("logs", "last_level_chip", self._level_chip)
+        except Exception:  # noqa: BLE001 - config write must never break navigation
+            pass
+
+    def on_unmount(self) -> None:
+        """Save the filter state when the screen is left."""
+        self.save_filter_state()
 
     def append_record(self, level: str, name: str, message: str) -> None:
         """Receive one live log record from the app's logging handler."""
@@ -198,16 +231,29 @@ class LogsWindow(Container):
     # Filtering & rendering
     # ------------------------------------------------------------------
     def _passes(self, record: LogRecord) -> bool:
+        text = self.query_one("#logs-filter-text", Input).value
         return _passes_filter(
-            record, self._level_chip, self.query_one("#logs-filter-text", Input).value
+            record, self._level_chip, text, self._compile_pattern(text)
         )
+
+    @staticmethod
+    def _compile_pattern(text: str) -> "re.Pattern | None":
+        """Compile the filter text as a regex; invalid input falls back to
+        plain substring matching (None means: use substring)."""
+        if not text:
+            return None
+        try:
+            return re.compile(text, re.IGNORECASE)
+        except re.error:
+            return None
 
     def _visible_records(self) -> list[LogRecord]:
         text = self.query_one("#logs-filter-text", Input).value
+        pattern = self._compile_pattern(text)
         return [
             record
             for record in self._records
-            if _passes_filter(record, self._level_chip, text)
+            if _passes_filter(record, self._level_chip, text, pattern)
         ]
 
     def _render_view(self) -> None:
@@ -297,6 +343,7 @@ class LogsWindow(Container):
         if chip_id and chip_id != self._level_chip:
             self._level_chip = chip_id
             self._render_view()
+            self.save_filter_state()
 
     @on(Input.Changed, "#logs-filter-text")
     def _on_filter_text_changed(self, event: Input.Changed) -> None:

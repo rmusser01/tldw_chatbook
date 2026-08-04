@@ -12,7 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
+from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ...Workbench.workbench_state import RecoveryState, WorkbenchHeaderState, WorkbenchStatus
@@ -56,6 +56,8 @@ class SchedulesWorkbench(BaseAppScreen):
         Binding("e", "edit_task", "Edit"),
         Binding("space", "toggle_enabled", "Enable/Disable"),
         Binding("d", "delete", "Delete"),
+        Binding("x", "mark_task", "Mark"),
+        Binding("escape", "clear_marks", "Clear marks"),
         Binding("s", "sync_now", "Sync"),
     ]
 
@@ -67,6 +69,7 @@ class SchedulesWorkbench(BaseAppScreen):
         ("e", "edit"),
         ("space", "enable/disable"),
         ("d", "delete"),
+        ("x", "mark for bulk"),
         ("s", "sync now"),
     )
 
@@ -76,6 +79,9 @@ class SchedulesWorkbench(BaseAppScreen):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask | ScheduledTask] = []
+        self._visible_tasks: list[ReminderTask | ScheduledTask] = []
+        self._filter_text = ""
+        self._marked_ids: set[str] = set()
         self._sync_running = False
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
@@ -132,6 +138,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 with Horizontal(id="scheduling-workbench"):
                     with Vertical(id="scheduling-list-pane"):
                         yield Static("Schedule Queue", id="scheduling-list-title")
+                        yield Input(
+                            placeholder="Filter tasks…",
+                            id="scheduling-queue-filter",
+                        )
                         yield DataTable(id="scheduling-task-table", cursor_type="row")
                         yield Static("", id="scheduling-pane-notice")
                     with Vertical(id="scheduling-detail-pane"):
@@ -187,15 +197,25 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         self._tasks = list(tasks)
+        self._render_table()
+        await self._refresh_console_context()
 
+    def _render_table(self) -> None:
+        """Rebuild the queue rows from the current tasks + filter text."""
+        text = self._filter_text.strip().lower()
+        self._visible_tasks = [
+            task
+            for task in self._tasks
+            if not text or text in task.title.lower()
+        ]
         rows: list[tuple[str, str, Text, str]] = [
             (
-                task.title,
+                ("● " if task.id in self._marked_ids else "") + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 _format_next_run(task),
             )
-            for task in self._tasks
+            for task in self._visible_tasks
         ]
 
         table = self.query_one("#scheduling-task-table", DataTable)
@@ -207,11 +227,23 @@ class SchedulesWorkbench(BaseAppScreen):
             self._update_detail_for_index(0)
         else:
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-                None, queue_empty=True
+                None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            if self._tasks and self._filter_text.strip():
+                # Everything filtered out: say so instead of "select a task".
+                self.query_one(
+                    "#scheduling-task-detail-empty-state", Static
+                ).update(
+                    f"No tasks match '{self._filter_text.strip()}'. "
+                    "Clear the filter to see the queue."
+                )
 
-        await self._refresh_console_context()
+    @on(Input.Changed, "#scheduling-queue-filter")
+    def _on_queue_filter_changed(self, event: Input.Changed) -> None:
+        """Filter the queue rows by title substring."""
+        self._filter_text = event.value
+        self._render_table()
 
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -220,14 +252,14 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
-        if not (0 <= index < len(self._tasks)):
+        if not (0 <= index < len(self._visible_tasks)):
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
-        task = self._tasks[index]
+        task = self._visible_tasks[index]
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
@@ -350,6 +382,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_delete_task_requested(self, event: DeleteTaskRequested) -> None:
         """Delete the requested task and refresh the queue."""
         event.stop()
+        self._marked_ids.discard(event.task.id)
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -651,7 +684,24 @@ class SchedulesWorkbench(BaseAppScreen):
             pass
 
     def action_delete(self) -> None:
-        """Delete the selected schedule after confirmation."""
+        """Delete marked tasks in bulk, else the selected one (confirmed)."""
+        marked = self._marked_reminder_tasks()
+        if marked:
+            from ....Widgets.delete_confirmation_dialog import (
+                DeleteConfirmationDialog,
+            )
+
+            self.app.push_screen(
+                DeleteConfirmationDialog(
+                    item_type="Scheduled tasks",
+                    item_name=f"{len(marked)} marked tasks",
+                    permanent=True,
+                ),
+                callback=lambda confirmed: self._on_bulk_delete_confirmed(
+                    confirmed, marked
+                ),
+            )
+            return
         if not self._tasks:
             self.app_instance.notify(
                 "Nothing to delete — the queue is empty.",
@@ -660,15 +710,46 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
+    def _on_bulk_delete_confirmed(self, confirmed, marked: list[ReminderTask]) -> None:
+        """Delete all marked tasks after the confirmation dialog."""
+        if not confirmed:
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot delete tasks.",
+                severity="warning",
+            )
+            return
+
+        async def _bulk_delete() -> None:
+            errors = 0
+            for task in marked:
+                try:
+                    await service.delete_reminder(task.id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to delete reminder {}", task.id)
+                    errors += 1
+            count = len(marked) - errors
+            self.app_instance.notify(
+                f"Deleted {count} marked task{'s' if count != 1 else ''}"
+                + (f" ({errors} failed)" if errors else "") + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._marked_ids.clear()
+            await self.load_tasks()
+
+        self.run_worker(_bulk_delete, exclusive=True)  # type: ignore[arg-type]
+
     def _selected_task(self) -> ReminderTask | ScheduledTask | None:
         """Return the task under the queue cursor, if any."""
-        if not self._tasks:
+        if not self._visible_tasks:
             return None
         table = self.query_one("#scheduling-task-table", DataTable)
         row = table.cursor_row
-        if row is None or not (0 <= row < len(self._tasks)):
+        if row is None or not (0 <= row < len(self._visible_tasks)):
             return None
-        return self._tasks[row]
+        return self._visible_tasks[row]
 
     def action_edit_task(self) -> None:
         """Open the highlighted task in the edit form (e key)."""
@@ -687,8 +768,69 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         self.post_message(EditTaskRequested(task))
 
+    def action_mark_task(self) -> None:
+        """Mark/unmark the highlighted task for bulk actions (x key)."""
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to mark — select a task first.",
+                severity="warning",
+            )
+            return
+        if task.id in self._marked_ids:
+            self._marked_ids.discard(task.id)
+        else:
+            self._marked_ids.add(task.id)
+        self._render_table()
+
+    def action_clear_marks(self) -> None:
+        """Clear all bulk marks (escape key)."""
+        if self._marked_ids:
+            self._marked_ids.clear()
+            self._render_table()
+
+    def _marked_reminder_tasks(self) -> list[ReminderTask]:
+        """Marked tasks that support bulk operations."""
+        return [
+            task
+            for task in self._tasks
+            if task.id in self._marked_ids and isinstance(task, ReminderTask)
+        ]
+
     def action_toggle_enabled(self) -> None:
-        """Enable/disable the highlighted task (space key)."""
+        """Enable/disable marked tasks in bulk, else the highlighted one."""
+        marked = self._marked_reminder_tasks()
+        if marked:
+            service = self._service()
+            if service is None:
+                self.app_instance.notify(
+                    "Scheduling service is unavailable; cannot update reminders.",
+                    severity="warning",
+                )
+                return
+
+            async def _bulk_toggle() -> None:
+                errors = 0
+                for task in marked:
+                    try:
+                        await service.update_reminder(
+                            task.id, {"enabled": not task.enabled}
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Failed to toggle reminder {}", task.id)
+                        errors += 1
+                count = len(marked) - errors
+                self.app_instance.notify(
+                    f"Toggled {count} marked task{'s' if count != 1 else ''}"
+                    + (f" ({errors} failed)" if errors else "") + ".",
+                    severity="information" if not errors else "warning",
+                )
+                self._marked_ids.clear()
+                await self.load_tasks()
+
+            self.run_worker(_bulk_toggle, exclusive=True)  # type: ignore[arg-type]
+            return
+
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(

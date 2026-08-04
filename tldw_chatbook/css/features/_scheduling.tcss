@@ -35,6 +35,14 @@
     height: 1fr;
 }
 
+#scheduling-queue-filter {
+    height: 1;
+    border: none;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $surface-darken-1;
+}
+
 /* Pane headers */
 #scheduling-list-title,
 #scheduling-task-detail-header,

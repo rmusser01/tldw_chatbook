@@ -36,10 +36,9 @@ EVAL_NAV_CARDS: tuple[NavigationCard, ...] = (
         id="quick_test",
         title="Quick Test",
         icon="⚡",
-        description="Run a simulated demo evaluation\n(no model is queried)",
+        description="Run a single evaluation\nwith one model and task",
         shortcut="Press [1]",
         color="success",
-        demo=True,
     ),
     NavigationCard(
         id="comparison",
@@ -92,7 +91,11 @@ def evals_workflows_chip_label() -> str:
     live = sum(1 for c in EVAL_NAV_CARDS if not c.planned and not c.demo)
     demo = sum(1 for c in EVAL_NAV_CARDS if c.demo and not c.planned)
     planned = sum(1 for c in EVAL_NAV_CARDS if c.planned)
-    return f"{live} live · {demo} demo · {planned} planned"
+    parts = [f"{live} live"]
+    if demo:
+        parts.append(f"{demo} demo")
+    parts.append(f"{planned} planned")
+    return " · ".join(parts)
 
 
 class NavigateToEvalScreen(Message):
@@ -207,7 +210,7 @@ class EvalNavigationScreen(Container):
         background: $ds-focus-bg;
         border: round $ds-focus-accent;
         color: $ds-focus-fg;
-        text-style: bold;
+        text-style: bold underline;
     }
 
     .card-icon {

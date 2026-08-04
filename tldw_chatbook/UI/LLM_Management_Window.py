@@ -133,6 +133,16 @@ class LLMManagementWindow(Container):
         height: 3;
         margin: 0 0 1 0;
     }
+
+    /* Side-by-side form rows (UX-054): the label lives inside the input row
+     * instead of stacked above it, so server forms fit the fold. */
+    .inline-label {
+        width: 28;
+        height: 3;
+        content-align: right middle;
+        padding-right: 1;
+        color: $text;
+    }
     
     .input_container Input {
         width: 1fr;
@@ -264,11 +274,13 @@ class LLMManagementWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
 
-        # Map navigation button IDs to view IDs
+        # Map navigation button IDs to view IDs. Order matters: it drives the
+        # [/] cycling and the position indicator, so it matches the sidebar's
+        # visual order (Ollama first, library views last).
         self.view_mapping = {
+            "ollama": "llm-view-ollama",
             "llama-cpp": "llm-view-llama-cpp",
             "llamafile": "llm-view-llamafile",
-            "ollama": "llm-view-ollama",
             "vllm": "llm-view-vllm",
             "onnx": "llm-view-onnx",
             "transformers": "llm-view-transformers",
@@ -283,6 +295,76 @@ class LLMManagementWindow(Container):
         # Trigger the watcher to set up the initial view state
         # This ensures buttons and views are properly initialized
         self.call_after_refresh(self._initialize_view)
+        # Autofill the Ollama executable when it's discoverable (UX-078).
+        self.call_after_refresh(self._autofill_ollama_path)
+
+    def _autofill_ollama_path(self) -> None:
+        """Prefill the Ollama executable path from PATH when empty."""
+        import shutil
+
+        found = shutil.which("ollama")
+        if not found:
+            return
+        try:
+            path_input = self.query_one("#ollama-exec-path", Input)
+        except Exception:  # noqa: BLE001 - view not mounted
+            return
+        if not path_input.value.strip():
+            path_input.value = found
+
+    #: Detect button id -> (target input id, candidate binary names).
+    _DETECT_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
+        "llamacpp-detect-exec-button": (
+            "llamacpp-exec-path",
+            ("llama-server", "llama-cpp-server", "server"),
+        ),
+        "llamafile-detect-exec-button": (
+            "llamafile-exec-path",
+            ("llamafile", "llavafile"),
+        ),
+    }
+
+    @staticmethod
+    def _discover_binary(names: tuple[str, ...]) -> str | None:
+        """Find a backend binary on PATH or in common install locations."""
+        import shutil
+        from pathlib import Path
+
+        for name in names:
+            found = shutil.which(name)
+            if found:
+                return found
+        candidates = (
+            Path.home() / ".local" / "bin",
+            Path("/usr/local/bin"),
+            Path("/opt/homebrew/bin"),
+        )
+        for directory in candidates:
+            for name in names:
+                candidate = directory / name
+                if candidate.is_file():
+                    return str(candidate)
+        return None
+
+    @on(Button.Pressed, ".detect-button")
+    def handle_detect_button(self, event: Button.Pressed) -> None:
+        """Fill the executable path from local discovery (UX-078)."""
+        target = self._DETECT_TARGETS.get(event.button.id or "")
+        if not target:
+            return
+        input_id, names = target
+        found = self._discover_binary(names)
+        path_input = self.query_one(f"#{input_id}", Input)
+        if found:
+            path_input.value = found
+            self.app_instance.notify(f"Found: {found}", severity="information")
+        else:
+            self.app_instance.notify(
+                f"Could not find {names[0]} on PATH or common install locations — "
+                "use Browse to point at it manually.",
+                severity="warning",
+            )
+            path_input.focus()
 
     def _initialize_view(self) -> None:
         """Initialize the active view after mounting."""
@@ -328,7 +410,7 @@ class LLMManagementWindow(Container):
             yield Button(
                 "Download Models", id="nav-download-models", classes="llm-nav-button"
             )
-            yield Static("[ / ] switch view", classes="sidebar-hint")
+            yield Static("", id="llm-sidebar-hint", classes="sidebar-hint")
 
         # Main content area
         with Container(id="llm-main-content"):
@@ -358,8 +440,8 @@ class LLMManagementWindow(Container):
                         classes="action_button",
                     )
 
-                yield Label("Llama.cpp Server Executable Path:", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Llama.cpp Server Executable Path:", classes="inline-label")
                     yield Input(
                         id="llamacpp-exec-path",
                         placeholder="e.g. /opt/llama.cpp/build/bin/server",
@@ -370,9 +452,15 @@ class LLMManagementWindow(Container):
                         classes="browse_button",
                         tooltip="Choose the llama.cpp server executable.",
                     )
+                    yield Button(
+                        "Detect",
+                        id="llamacpp-detect-exec-button",
+                        classes="browse_button detect-button",
+                        tooltip="Find the llama.cpp server binary on this machine.",
+                    )
 
-                yield Label("GGUF Model File Path:", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("GGUF Model File Path:", classes="inline-label")
                     yield Input(
                         id="llamacpp-model-path",
                         placeholder="e.g. /models/model.gguf",
@@ -444,8 +532,8 @@ class LLMManagementWindow(Container):
                     )
 
 
-                yield Label("Llamafile Executable (.llamafile):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Llamafile Executable (.llamafile):", classes="inline-label")
                     yield Input(
                         id="llamafile-exec-path", placeholder="/path/to/model.llamafile"
                     )
@@ -455,9 +543,15 @@ class LLMManagementWindow(Container):
                         classes="browse_button",
                         tooltip="Choose the llamafile executable.",
                     )
+                    yield Button(
+                        "Detect",
+                        id="llamafile-detect-exec-button",
+                        classes="browse_button detect-button",
+                        tooltip="Find the llamafile executable on this machine.",
+                    )
 
-                yield Label("Optional External Model (GGUF):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Optional External Model (GGUF):", classes="inline-label")
                     yield Input(
                         id="llamafile-model-path",
                         placeholder="/path/to/external-model.gguf (optional)",
@@ -521,8 +615,8 @@ class LLMManagementWindow(Container):
                     )
 
 
-                yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
                         id="vllm-python-path",
                         value="python",
@@ -535,8 +629,8 @@ class LLMManagementWindow(Container):
                         tooltip="Choose the Python interpreter used to launch vLLM.",
                     )
 
-                yield Label("Model Path (or HuggingFace Repo ID):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Model Path (or HuggingFace Repo ID):", classes="inline-label")
                     yield Input(
                         id="vllm-model-path",
                         placeholder="e.g., /path/to/model or HuggingFaceName/ModelName",
@@ -588,8 +682,8 @@ class LLMManagementWindow(Container):
                     )
 
 
-                yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
                         id="onnx-python-path",
                         value="python",
@@ -602,8 +696,8 @@ class LLMManagementWindow(Container):
                         tooltip="Choose the Python interpreter used to launch the ONNX server.",
                     )
 
-                yield Label("Path to your ONNX Server Script (.py):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Path to your ONNX Server Script (.py):", classes="inline-label")
                     yield Input(
                         id="onnx-script-path",
                         placeholder="/path/to/your/onnx_server_script.py",
@@ -615,8 +709,8 @@ class LLMManagementWindow(Container):
                         tooltip="Choose the ONNX server script to run.",
                     )
 
-                yield Label("Model to Load (Path for script):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Model to Load (Path for script):", classes="inline-label")
                     yield Input(
                         id="onnx-model-path",
                         placeholder="Path to your .onnx model file or directory",
@@ -714,8 +808,8 @@ class LLMManagementWindow(Container):
                     placeholder="e.g., /path/to/venv/bin/python",
                 )
 
-                yield Label("Path to your Server Script (.py):", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Path to your Server Script (.py):", classes="inline-label")
                     yield Input(
                         id="transformers-script-path",
                         placeholder="/path/to/your_transformers_server_script.py",
@@ -833,8 +927,8 @@ class LLMManagementWindow(Container):
                 yield Label("Ollama Service Management", classes="section-title")
                 yield Static(self._ollama_prereq_text(), classes="prereq-hint")
 
-                yield Label("Ollama Executable Path:", classes="label")
                 with Container(classes="input_container"):
+                    yield Label("Ollama Executable Path:", classes="inline-label")
                     yield Input(
                         id="ollama-exec-path",
                         placeholder="Path to ollama executable (e.g., /usr/local/bin/ollama)",
@@ -1059,6 +1153,15 @@ class LLMManagementWindow(Container):
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
+
+        # Sidebar position indicator: keeps keyboard cycling oriented.
+        views = list(self.view_mapping)
+        try:
+            hint = self.query_one("#llm-sidebar-hint", Static)
+            position = views.index(new_view) + 1 if new_view in views else 1
+            hint.update(f"[ / ] switch view · {position} of {len(views)}")
+        except QueryError:
+            pass
 
         # Update navigation buttons
         for button in self.query(".llm-nav-button"):

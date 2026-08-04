@@ -255,9 +255,19 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         nav = home.query_one(MainNavigationBar)
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
-        _assert_no_horizontal_overlap(
-            settings, more, context="More hint overlaps Settings nav item"
-        )
+        strip = nav.query_one("#nav-destination-strip")
+        if more.display:
+            # Overflow regime (F-key labels made the bar wider than 140):
+            # the hint is docked outside the strip, so it can never sit on a
+            # button; the strip's scroll window clips labels instead.
+            assert more.region.x >= strip.region.right, (
+                "More hint must dock right of the destination strip"
+            )
+            assert strip.max_scroll_x > 0
+        else:
+            _assert_no_horizontal_overlap(
+                settings, more, context="More hint overlaps Settings nav item"
+            )
 
 
 @pytest.mark.asyncio

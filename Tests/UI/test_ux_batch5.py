@@ -23,7 +23,9 @@ def test_queue_keyboard_ops_bound_and_implemented() -> None:
 
 def test_footer_hints_cover_queue_keyboard_ops() -> None:
     hint_keys = {key for key, _label in SchedulesWorkbench.SCHEDULES_SHORTCUTS}
-    binding_keys = {binding.key for binding in SchedulesWorkbench.BINDINGS}
+    binding_keys = {
+        binding.key for binding in SchedulesWorkbench.BINDINGS if binding.key != "escape"
+    }
     assert hint_keys == binding_keys
 
 
