@@ -2,7 +2,7 @@
 id: TASK-2160
 title: >-
   Library ingest round-6 critique batch (in-place clear confirm, picker dedupe, empty-file forecast, focus fragments)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 03:40'
 labels:
@@ -93,3 +93,10 @@ forecast + kind-accurate gate copy; (4) container focus paint suppressed;
 **Verification.** 285 core + 72 shell-subset targeted green; 29,614
 collect. Live (fresh isolated profile): tall-queue arm-in-place, dead
 text, empty forecast + gate copy, picker single-listing.
+
+**Qodo round (PR #1313, both fixed in `141f9221f`):** (1) dead-zone
+threshold named `_CLEAR_FINISHED_DEAD_ZONE_SECONDS`; (2) REAL bug — an
+unstatable file was classified "0 B"/empty via `_safe_size`'s error
+fallback; new `_statted_size` returns None on OSError so the file stays
+in its type group and ingest surfaces the real error
+(`test_unstatable_files_are_not_mislabeled_empty`).
