@@ -47,12 +47,38 @@ def test_local_record_without_snapshot_yields_nothing():
     )
 
 
-def test_builtin_tools_have_no_schema_but_execute():
+def test_builtin_tools_carry_schema_and_execute():
+    """RAG-48 part 2: builtins now carry a real `inputSchema` (synthesized
+    from the tool's AST signature, part 1) instead of always `None` --
+    deliberate contract change, was `test_builtin_tools_have_no_schema_but_execute`."""
+    tools = builtin_tools_from_inventory(
+        {
+            "tools": [
+                {
+                    "name": "chat_with_llm",
+                    "description": "Chat.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
+                }
+            ]
+        }
+    )
+    assert isinstance(tools[0].input_schema, dict)
+    assert tools[0].input_schema["type"] == "object"
+    assert tools[0].executable
+    assert tools[0].server_key == "builtin:tldw_chatbook"
+
+
+def test_builtin_tool_without_schema_still_yields_none():
+    """A builtin entry with no (or empty) `inputSchema` still normalizes to
+    `None`, same as the other two `_normalized_schema()` call sites."""
     tools = builtin_tools_from_inventory(
         {"tools": [{"name": "chat_with_llm", "description": "Chat."}]}
     )
     assert tools[0].input_schema is None and tools[0].executable
-    assert tools[0].server_key == "builtin:tldw_chatbook"
 
 
 def test_server_tools_read_extras_defensively():

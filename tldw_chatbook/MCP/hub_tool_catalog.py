@@ -119,11 +119,14 @@ def builtin_tools_from_inventory(inventory: dict) -> list[HubTool]:
 
     Args:
         inventory: `local_service.get_inventory()` payload — a `tools`
-            list of `{name, description}` entries.
+            list of `{name, description, inputSchema}` entries (RAG-48
+            part 1 synthesizes `inputSchema` from each tool function's AST
+            signature in `MCP/server.py`).
 
     Returns:
         One `HubTool` per entry, always executable and never stale, with
-        no input schema (the built-in tool registry doesn't expose one).
+        `input_schema` populated when the source entry carries a non-empty
+        `inputSchema`, else `None`.
     """
     raw_tools = inventory.get("tools") if isinstance(inventory, Mapping) else None
     if not isinstance(raw_tools, list):
@@ -146,7 +149,7 @@ def builtin_tools_from_inventory(inventory: dict) -> list[HubTool]:
                 source="builtin",
                 name=name,
                 description=_text(raw_tool.get("description")),
-                input_schema=None,
+                input_schema=_normalized_schema(raw_tool.get("inputSchema")),
                 tags=(),
                 stale=False,
                 executable=True,

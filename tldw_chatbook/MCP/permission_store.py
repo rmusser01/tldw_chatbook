@@ -505,7 +505,10 @@ def definition_hash(description: str | None, input_schema: dict | None) -> str:
 BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
 
 #: Server keys whose tools carry no meaningful ``definition_hash``, so
-#: ``set_tool_state(..., "allow")`` does not require one.
+#: ``set_tool_state(..., "allow")`` does not require one, and
+#: ``resolve_effective_state()`` skips its hash-staleness comparison for
+#: them entirely (see the ``tool.server_key not in HASH_FREE_SERVER_KEYS``
+#: guard in that function).
 #:
 #: The hash is a RUG-PULL guard: it detects a *remote* server changing a
 #: tool's description/schema after the user trusted it. ``agent:builtin``
@@ -514,9 +517,20 @@ BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
 #: while a stored hash would force a re-prompt on every release that edits
 #: a docstring. ``resolve_builtin_state`` correspondingly never reads one.
 #:
+#: ``builtin:tldw_chatbook`` (RAG-48 part 2) is exempted for the identical
+#: reason: it is the built-in MCP *server*'s namespace (see
+#: ``readiness.BUILTIN_SERVER_KEY``) -- also in-process code that ships
+#: with the app and changes only via an app update, not a live remote
+#: connection. Without this exemption, RAG-48 part 1 synthesizing a real
+#: ``inputSchema`` for these tools (previously always ``None``) would make
+#: every already-stored "allow" decision's definition_hash go stale on the
+#: very next resolve, silently downgrading it to "ask" with "Definition
+#: changed since you allowed it" -- a rug-pull false positive against the
+#: app's own code, not an attacker.
+#:
 #: Adding a REMOTE namespace here would silently disable the rug-pull guard
 #: for it; the contents are pinned by test.
-HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY})
+HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY, "builtin:tldw_chatbook"})
 
 #: Precedence floor for built-in tools: they inherit ``allow`` rather than
 #: the MCP ``global_default``, so changing MCP's posture never starts
@@ -599,7 +613,13 @@ def resolve_effective_state(
        ``definition_hash`` no longer matches the one stored alongside the
        ``allow``, or when the entry carries a persisted ``config_changed``
        marker -- regardless of whether the hash happens to match again.
-       Only a fresh ``set_tool_state`` (Task 1) clears the marker.
+       Only a fresh ``set_tool_state`` (Task 1) clears the marker. Skipped
+       entirely (never downgrades, ``config_changed`` stays False) when
+       ``tool.server_key`` is in ``HASH_FREE_SERVER_KEYS`` -- those
+       namespaces store no ``definition_hash`` to begin with (RAG-48 part
+       2), so comparing would always "mismatch" a live tool's real schema
+       against the stored ``None`` and rug-pull every stored allow the
+       first time a schema is attached.
     2. High-risk floor: an *inherited* ``allow`` (origin ``server_default``
        or ``global_default``) is downgraded to ``ask``
        (``risk_floored=True``) when the tool's tags intersect
@@ -639,7 +659,7 @@ def resolve_effective_state(
     if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
         origin = "tool_override"
         state = tool_entry["state"]
-        if state == "allow":
+        if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
             current_hash = definition_hash(tool.description, tool.input_schema)
             stale_hash = tool_entry.get("definition_hash") != current_hash
             marked_changed = bool(tool_entry.get("config_changed"))
