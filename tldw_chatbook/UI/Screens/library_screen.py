@@ -185,6 +185,8 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -248,6 +250,8 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
+    SKILL_DISCARD_TOOLTIP_CLEAN,
+    SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
     library_rag_answer_children,
     library_rag_history_children,
@@ -263,11 +267,14 @@ from ...Widgets.Library import (
     skill_disable_model_label,
     skill_editor_warning_lines,
     skill_script_grant_line,
+    skill_trust_approve_tooltip,
     skill_trust_panel_remediation_copy,
     skill_trust_review_enabled,
     skill_trust_review_preview,
+    skill_trust_review_tooltip,
     skill_trust_state_line,
     skill_trust_unlock_enabled,
+    skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
 from ...Widgets.Library.library_file_notes_workspace import (
@@ -721,6 +728,14 @@ def _apply_library_row_toggle(
         button.label = f"{glyph}{label_rest}"
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
+        # F-018: the reason/action tooltip flips in place with `disabled`
+        # (this patcher deliberately avoids a recompose, so the compose-
+        # time tooltip would otherwise go stale).
+        export_button.tooltip = (
+            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+            if export_button.disabled
+            else LIBRARY_EXPORT_SELECTED_TOOLTIP
+        )
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -8938,22 +8953,27 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one(
-                "#library-skill-trust-unlock", Button
-            ).disabled = not skill_trust_unlock_enabled(state.trust_status)
+            unlock_button = self.query_one("#library-skill-trust-unlock", Button)
+            unlock_button.disabled = not skill_trust_unlock_enabled(state.trust_status)
+            # F-018: reason/action tooltips flip in place with `disabled`.
+            unlock_button.tooltip = skill_trust_unlock_tooltip(state.trust_status)
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one(
-                "#library-skill-trust-review", Button
-            ).disabled = not skill_trust_review_enabled(
+            review_button = self.query_one("#library-skill-trust-review", Button)
+            review_button.disabled = not skill_trust_review_enabled(
+                state.trust_status, state.trust_blocked
+            )
+            review_button.tooltip = skill_trust_review_tooltip(
                 state.trust_status, state.trust_blocked
             )
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-trust-approve", Button).disabled = (
-                self._library_skill_active_review is None
+            approve_button = self.query_one("#library-skill-trust-approve", Button)
+            approve_button.disabled = self._library_skill_active_review is None
+            approve_button.tooltip = skill_trust_approve_tooltip(
+                self._library_skill_active_review is not None
             )
         except (NoMatches, QueryError):
             pass
@@ -9412,6 +9432,12 @@ class LibraryScreen(BaseAppScreen):
         for button in self.query("#library-skill-discard"):
             if isinstance(button, Button):
                 button.disabled = not enabled
+                # F-018: the reason/action tooltip flips in place with
+                # `disabled` (this patcher exists precisely to avoid a
+                # recompose, so the compose-time tooltip would go stale).
+                button.tooltip = (
+                    SKILL_DISCARD_TOOLTIP_DIRTY if enabled else SKILL_DISCARD_TOOLTIP_CLEAN
+                )
 
     def _library_skill_editor_active(self) -> bool:
         """True while the in-canvas skill editor is the live view (task-424)."""

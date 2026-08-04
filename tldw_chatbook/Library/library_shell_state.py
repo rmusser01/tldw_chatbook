@@ -52,6 +52,13 @@ LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 # scope-service gating pattern (F4 design spec, "Entry points").
 LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP = "Export packages local content only."
 
+# F-018: every disabled Library action says why. The three canvas
+# "Export selected" actions share this pair -- reason while disabled,
+# action description once a selection exists (the workspaces handoff
+# button's pattern, library_screen.py `_workspace_handoff_action_state`).
+LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP = "Select one or more items to export them."
+LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
+
 
 @dataclass(frozen=True)
 class LibraryRailRow:
