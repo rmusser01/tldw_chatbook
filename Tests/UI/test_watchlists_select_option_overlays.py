@@ -223,6 +223,43 @@ async def test_new_rule_condition_select_paints_the_real_vocabulary():
         )
 
 
+async def test_the_rule_condition_select_still_shows_its_value_when_focused():
+    """The non-compact half of the same defect, on the other reported Select.
+
+    A three-row `Select` draws its border on its child `SelectCurrent`, so an
+    app rule putting one on the `Select` ADDS two rows of chrome to a widget
+    whose three rows are already spoken for -- and the value goes. Clicking
+    the control is what focuses it, so this was its state the instant a user
+    reached for it. See the TASK-2300 block in components/_forms.tcss.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=UAT_SIZE) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "rules"
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#rules-new-button", timeout=5.0)
+        screen.query_one("#rules-new-button", Button).press()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#rules-create-condition", timeout=5.0)
+        select = screen.query_one("#rules-create-condition", Select)
+
+        painted = "".join(_painted_rows(screen, select.region))
+        assert "No items" in painted, "precondition: the value is readable at rest"
+
+        select.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert "No items" in "".join(_painted_rows(screen, select.region)), (
+            "a focused Select must still say what it is set to"
+        )
+
+        await pilot.hover("#rules-create-condition")
+        await pilot.pause()
+        assert "No items" in "".join(_painted_rows(screen, select.region)), (
+            "and so must a hovered one"
+        )
+
+
 async def test_a_two_option_select_overlay_is_not_painted_away_entirely():
     """The worst case of the same mechanism, pinned separately.
 

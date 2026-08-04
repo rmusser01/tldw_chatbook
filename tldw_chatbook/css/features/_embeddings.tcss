@@ -151,8 +151,16 @@ ModalScreen {
 /* Enhanced hover states */
 /* Button:hover handled in components/_buttons.tcss to fix persistent hover issue */
 
-Select:hover {
-    border: solid $primary-lighten-1;
+/* TASK-2300: on `SelectCurrent`, not on the `Select` itself. A `Select` has
+ * no border of its own -- it draws one on that child -- so a border here was
+ * an ADDITIONAL two rows of chrome around a widget with no rows to spare, and
+ * the value it was meant to be highlighting vanished behind it. Worse than
+ * the `:focus` twin in components/_forms.tcss (see the long note there),
+ * because hover fires on the way TO clicking, before anything is chosen.
+ * Same cue, same colour, on the border the widget already reserves room for.
+ */
+Select:hover > SelectCurrent {
+    border: tall $primary-lighten-1;
 }
 
 

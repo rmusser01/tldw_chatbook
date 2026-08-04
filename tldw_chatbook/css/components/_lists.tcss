@@ -250,3 +250,16 @@ Select.-textual-compact:hover {
 Select.-textual-compact:hover {
     background: $surface-lighten-1;
 }
+
+/* And the same exemption one level in. The `:focus`/`:hover` cues that used
+ * to sit on the `Select` now live on `SelectCurrent`, where a three-row
+ * `Select` reserves a `tall` border for them -- but a compact one strips that
+ * border precisely because it has no row to spend, so the child needs the
+ * exemption as much as the parent did. Without this, moving those rules
+ * inward just moves the empty box inward with them: measured, the compact
+ * filter went straight back to '▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎'.
+ */
+Select.-textual-compact:focus > SelectCurrent,
+Select.-textual-compact:hover > SelectCurrent {
+    border: none;
+}
