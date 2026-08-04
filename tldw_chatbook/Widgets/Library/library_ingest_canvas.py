@@ -739,6 +739,13 @@ class LibraryIngestCanvas(VerticalScroll):
         # line's row when the text is empty (an auto-height empty Static
         # would collapse to 0); the screen's path-changed handler updates
         # the text in place instead of mounting/removing the widget.
+        if state.commit_summary_line:
+            yield Static(
+                state.commit_summary_line,
+                id="library-ingest-commit-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
         start_quiet_line = Static(
             state.start_quiet_line,
             id="library-ingest-start-quiet-line",

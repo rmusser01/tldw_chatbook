@@ -13133,6 +13133,19 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             A directory path suitable for ``FileOpen(location=...)``.
         """
+        # (task-2130) A typed path fragment names where the user is looking
+        # -- opening at home while "/private/tmp" sits in the field made
+        # Browse feel disconnected from the form.
+        typed = self._library_ingest_form.path.strip()
+        if typed:
+            try:
+                candidate = Path(typed).expanduser()
+                if candidate.is_dir():
+                    return str(candidate)
+                if candidate.parent.is_dir() and str(candidate.parent) != ".":
+                    return str(candidate.parent)
+            except OSError:
+                pass
         remembered = get_cli_setting("library.ingest", "last_directory", None)
         if remembered:
             try:
@@ -13502,7 +13515,9 @@ class LibraryScreen(BaseAppScreen):
         media_db = getattr(self.app_instance, "media_db", None)
         if media_db is None:
             return result
-        candidates = list(result.type_groups.get("generic", ()))[:20]
+        all_candidates = list(result.type_groups.get("generic", ()))
+        candidates = all_candidates[:20]
+        capped = len(all_candidates) > len(candidates)
         if not candidates:
             return result
         already = 0
@@ -13534,7 +13549,11 @@ class LibraryScreen(BaseAppScreen):
                 continue
         if not already:
             return result
-        return dataclasses.replace(result, already_in_library=already)
+        return dataclasses.replace(
+            result,
+            already_in_library=already,
+            already_in_library_capped=capped and already > 0,
+        )
 
     def _invalidate_library_ingest_preflight(self) -> None:
         """Drop the current pre-flight echo AND fence off in-flight workers.

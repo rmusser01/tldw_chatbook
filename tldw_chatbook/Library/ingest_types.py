@@ -44,3 +44,8 @@ class PreflightResult:
     #: Library (content-hash match, generic/text group only -- the DB hashes
     #: PARSED content, so only read≈parse types can be checked pre-parse).
     already_in_library: int = 0
+    #: (task-2130) True when the duplicate check hit its candidate cap --
+    #: ``already_in_library`` is then a floor, not a total, and the UI must
+    #: say "at least N" rather than presenting the cap as the truth (an
+    #: 80-duplicate folder read "20 files appear to already be…").
+    already_in_library_capped: bool = False

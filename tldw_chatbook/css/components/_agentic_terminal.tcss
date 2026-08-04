@@ -6226,3 +6226,21 @@ LibraryIngestCanvas .type-group-field-error {
     height: auto;
     padding: 0 0 0 2;
 }
+
+/* task-2130: the disabled Start-ingest label measured ~1.5:1 against its
+   background (round-4 Sam persona) -- readable muted text instead, so a
+   keyboard user can find the primary action to learn why it is gated. */
+LibraryIngestCanvas Button:disabled {
+    color: $text-muted;
+    text-opacity: 90%;
+}
+
+/* task-2130: completion toasts overdrew both canvas bottom-border rows
+   (round-4, exact rows pinned by the evidence agent). Same lever as
+   task-1562's inspector clearance: the rack's built-in align resists
+   app-tier margins, but a margin on the Toast itself reliably offsets it
+   from the bottom-right anchor. App-wide by necessity (screen-level
+   mount); two rows clears both frame borders. */
+Toast {
+    margin-bottom: 2;
+}

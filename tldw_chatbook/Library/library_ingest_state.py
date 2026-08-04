@@ -536,6 +536,7 @@ class LibraryIngestCanvasState:
     form: LibraryIngestFormState
     start_enabled: bool
     start_quiet_line: str
+    commit_summary_line: str
     option_errors: tuple[tuple[str, str, str], ...]
     queue_heading: str
     queue_counts_line: str
@@ -1044,6 +1045,9 @@ def build_library_ingest_state(
             )
         warning_lines = build_warning_lines(active_preflight.warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
+        already_capped = bool(
+            getattr(active_preflight, "already_in_library_capped", False)
+        )
         if already and not errors:
             noun = "file" if already == 1 else "files"
             verb = "appears" if already == 1 else "appear"
@@ -1052,8 +1056,12 @@ def build_library_ingest_state(
                 if already == 1
                 else "they'll be matched, not re-imported."
             )
+            # (task-2130) When the duplicate check hit its candidate cap the
+            # count is a floor -- presenting the cap as the total told an
+            # 80-duplicate folder "20 files appear to already be…".
+            count_text = f"at least {already}" if already_capped else str(already)
             duplicate_line = (
-                f"{already} {noun} {verb} to already be in your Library — "
+                f"{count_text} {noun} {verb} to already be in your Library — "
                 f"{outcome}"
             )
         else:
@@ -1119,6 +1127,31 @@ def build_library_ingest_state(
         start_quiet_line = START_QUIET_LINE_COPY
     else:
         start_quiet_line = ""
+
+    # (task-2130) A one-line commit summary beside Start for a valid
+    # selection: the forecast lives at the top of a long form, and the
+    # commit point at the bottom -- restate the outcome where the finger
+    # is. Only renders when the gate is open and there is a real forecast.
+    commit_summary_line = ""
+    if start_enabled and active_preflight is not None and not errors:
+        supported_total = sum(
+            len(files) for files in type_groups.values()
+        )
+        will_match = getattr(active_preflight, "already_in_library", 0) or 0
+        match_capped = bool(
+            getattr(active_preflight, "already_in_library_capped", False)
+        )
+        will_fail = len(unsupported_files)
+        will_import = max(supported_total - will_match, 0)
+        parts: list[str] = [f"{will_import} will import"]
+        if will_match:
+            match_text = (
+                f"at least {will_match}" if match_capped else str(will_match)
+            )
+            parts.append(f"{match_text} will match")
+        if will_fail:
+            parts.append(f"{will_fail} will fail")
+        commit_summary_line = " · ".join(parts)
 
     # (task-2100) Name the unsupported files -- a count alone forces a
     # submit-and-read-the-rows round trip to learn WHICH files. When the
@@ -1190,6 +1223,7 @@ def build_library_ingest_state(
         form=form,
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
+        commit_summary_line=commit_summary_line,
         option_errors=option_errors,
         queue_heading=QUEUE_HEADING_COPY,
         queue_counts_line=_queue_counts_line(jobs),

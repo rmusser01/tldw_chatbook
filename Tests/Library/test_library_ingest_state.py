@@ -1739,3 +1739,43 @@ def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
 
     untouched = build_library_ingest_state((), form=LibraryIngestFormState())
     assert untouched.queue_empty_line == "No ingest jobs yet."
+
+
+def test_queue_counts_line_shows_in_flight_batch_work():
+    """(task-2130 pin) The tally names queued/parsing work during a batch
+    -- the round-4 live report of '3 done' with no in-flight signal was a
+    sampling artifact, and this pins the contract that keeps it one."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.PARSING),
+        _job(job_id="ingest-job-3", state=IngestJobState.QUEUED),
+        _job(job_id="ingest-job-4", state=IngestJobState.QUEUED),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == (
+        "1 parsing · 2 queued · 1 done — all ingests"
+    )
+
+
+def test_capped_duplicate_forecast_says_at_least():
+    """(task-2130) When the duplicate check hits its 20-candidate cap the
+    count is a floor -- an 80-duplicate folder used to read '20 files
+    appear to already be…' presenting the cap as the total."""
+    capped = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"generic": [f"/tmp/f{i}.txt" for i in range(20)]},
+            warnings=[],
+            errors=[],
+            total_size=1000,
+            truncated=False,
+            total_files=80,
+            already_in_library=20,
+            already_in_library_capped=True,
+        ),
+    )
+    assert capped.duplicate_line.startswith(
+        "at least 20 files appear to already be in your Library"
+    )
+    assert "at least 20 will match" in capped.commit_summary_line
