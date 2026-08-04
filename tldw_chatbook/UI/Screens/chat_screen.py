@@ -888,6 +888,10 @@ CONSOLE_REALTIME_NO_LOOP_TEMPLATE = (
     "is not usable either ({pipeline_reason})."
 )
 CONSOLE_REALTIME_RECONNECTING_MESSAGE = "Realtime reconnecting…"
+#: The other half of the reconnect story. Without it the chip returning to
+#: `listening` is the only signal, and that looks identical whether the
+#: reconnect landed or is still in flight.
+CONSOLE_REALTIME_RECONNECTED_MESSAGE = "Realtime reconnected"
 CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = (
     "Hands-free ended: connection lost"
 )
@@ -7832,7 +7836,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleMessageRole.ASSISTANT,
             ):
                 continue
-            text = str(message.content or "").strip()
+            # The interrupted marker is OUR chrome for the human reader
+            # (final review M4). Replaying it into the model's context on
+            # every reseed would teach it that "⏹ interrupted" is part of
+            # how the assistant speaks.
+            text = str(message.content or "").replace(
+                CONSOLE_REALTIME_INTERRUPTED_MARKER, ""
+            ).strip()
             if not text:
                 continue
             if used_chars + len(text) > CONSOLE_REALTIME_SEED_CHARS:
@@ -8071,7 +8081,15 @@ class ChatScreen(BaseAppScreen):
         its pre-ready buffer synchronously into `append_audio`, and the
         provider must already hold the conversation history (and the
         instructions) when the user's first words arrive, not after them.
+
+        Arriving here from `reconnecting` also closes the loop the
+        "Realtime reconnecting…" toast opened (final review M6): without a
+        matching success toast, a reconnect that WORKED is
+        indistinguishable from one still in progress -- the chip returns
+        to `listening` either way, and the user is left unsure whether to
+        keep talking.
         """
+        reconnected = session.controller.state == "reconnecting"
         provider_session = session.session
         if provider_session is not None:
             try:
@@ -8093,6 +8111,10 @@ class ChatScreen(BaseAppScreen):
                 )
         session.ready = True
         session.controller.on_session_ready()
+        if reconnected:
+            self.app_instance.notify(
+                CONSOLE_REALTIME_RECONNECTED_MESSAGE, severity="information"
+            )
         pending, session.pending_text_turn = session.pending_text_turn, None
         if pending:
             # An adopted capture whose transcript landed while the
@@ -8762,6 +8784,11 @@ class ChatScreen(BaseAppScreen):
         degraded VAD (the pipeline loop cannot auto-send at all -- see
         `_console_hands_free_vad_degraded`), and dictation being
         unavailable outright (no capture backend or no speech provider).
+
+        `Availability.remedy` is included when there is one (final review
+        M7): this string ends up in the toast that reports BOTH engines
+        failing, which is the only place the user is told what to install
+        -- dropping it left them with a diagnosis and no fix.
         """
         if self._console_hands_free_vad_degraded:
             return "voice-activity detection is unavailable, so auto-send cannot work"
@@ -8773,7 +8800,9 @@ class ChatScreen(BaseAppScreen):
             )
             return None
         if not availability.ok:
-            return availability.reason or "dictation is unavailable"
+            reason = availability.reason or "dictation is unavailable"
+            remedy = str(availability.remedy or "").strip()
+            return f"{reason} {remedy}".strip() if remedy else reason
         return None
 
     # -- chip, clock and teardown -------------------------------------------
@@ -22737,6 +22766,18 @@ class ChatScreen(BaseAppScreen):
                 # ordinary one-shot toggle below for as long as the loop is
                 # running.
                 self._console_hands_free.controller.on_exit_request()
+                return
+            if self._console_realtime is not None:
+                # V4 task 5 (final review C1): the SAME rule for the
+                # realtime engine, and it matters more here. Falling
+                # through to the dictation toggle below would open a
+                # second `AudioRecordingService` (at 16 kHz, alongside the
+                # tap's 24 kHz stream), load the entire STT stack the
+                # realtime engine exists to avoid, and arm the V2 spoken-
+                # command classifier mid-session -- all while the realtime
+                # session kept running and billing. The docs promise this
+                # button exits the loop; it exits the loop.
+                self._console_realtime.controller.on_exit_request()
                 return
             if self._console_dictation_state == "idle":
                 self._request_console_dictation_start()

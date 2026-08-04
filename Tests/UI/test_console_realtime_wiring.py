@@ -119,6 +119,13 @@ class FakeRealtimeSession:
         self.calls.append("close")
         self._order.append("session.close")
         self.closed = True
+        # The REAL session fires `on_closed` from its recv loop's `finally`,
+        # so a deliberate close produces one too (final review M1). Firing
+        # it here is what puts the wiring's attempt-staleness guard under
+        # test at all -- without it, a reconnect never delivered the old
+        # session's close and the guard could be deleted with every test
+        # still green.
+        self._fire("on_closed", "closed by client")
 
     # -- test drivers ------------------------------------------------------
 
@@ -562,6 +569,35 @@ async def test_seed_skips_an_oversized_turn_instead_of_ending_the_seed(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_seed_strips_the_interrupted_ui_marker(monkeypatch):
+    """M4: `⏹ interrupted` is OUR chrome for the human reader. Replaying it
+    into the model's context teaches it that the marker is part of how the
+    assistant talks."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
 async def test_seed_char_budget_drops_the_oldest_turns(monkeypatch):
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
@@ -993,6 +1029,38 @@ async def test_esc_exits_the_realtime_loop_and_the_action_gate_follows_it(
 
 
 @pytest.mark.asyncio
+async def test_mic_button_exits_the_loop_and_opens_no_second_microphone(monkeypatch):
+    """CRITICAL (final review C1): the mic button must exit the realtime
+    loop, exactly like Esc and the toggle.
+
+    Falling through to the ordinary dictation toggle would open a SECOND
+    `AudioRecordingService` at 16 kHz alongside the realtime tap, load the
+    whole STT stack the realtime engine exists to avoid, and arm the V2
+    spoken-command classifier mid-session -- while the realtime session
+    kept billing.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        await pilot.click("#console-dictation")
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+        await pilot.pause(0.2)
+
+        assert console._console_dictation_state == "idle"
+        assert service.start_calls == 0, "a second capture stack was opened"
+        assert len(rig.recorders) == 1, "a second recorder was constructed"
+        await _wait_for(lambda: session.closed, pilot)
+
+
+@pytest.mark.asyncio
 async def test_toggle_exits_a_running_realtime_loop(monkeypatch):
     """F8: `ctrl+shift+h` is a toggle for BOTH engines."""
     _patch_realtime_config(monkeypatch)
@@ -1162,6 +1230,38 @@ async def test_missing_api_key_refuses_before_any_connect_attempt(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_double_failure_toast_carries_the_install_remedy(monkeypatch):
+    """M7: the pipeline's unavailability has a fix -- an install command --
+    and the toast that reports it is the only place the user sees it."""
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module.console_voice_input,
+        "probe",
+        lambda: chat_screen_module.console_voice_input.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason=chat_screen_module.console_voice_input.CAPTURE_REASON,
+            remedy=chat_screen_module.console_voice_input.CAPTURE_REMEDY,
+        ),
+    )
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    rig.connect_error = RuntimeError("handshake rejected")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+
+        console.action_toggle_console_hands_free()
+        await _wait_for(lambda: bool(notifications), pilot)
+
+        joined = " ".join(message for message, _kwargs in notifications)
+        assert "handshake rejected" in joined, joined
+        assert "pip install" in joined, joined
+
+
+@pytest.mark.asyncio
 async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
     service = FakeDictationService()
     _patch_availability(monkeypatch)
@@ -1224,6 +1324,11 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
 
         items, _instructions = rig.sessions[1].seeds[0]
         assert ("user", "remember this") in items
+        # M6: the docs promise a toast confirming the reconnect landed --
+        # "reconnecting…" alone leaves the user unsure it ever finished.
+        assert any(
+            "reconnected" in message.lower() for message, _kw in notifications
+        ), notifications
 
         # A SECOND drop within the same loop entry gives up outright.
         rig.sessions[1].fire_closed("connection lost")
