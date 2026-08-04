@@ -347,10 +347,12 @@ LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
 )
 LIBRARY_EMPTY_COPY = "No local Library content yet."
-LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
-LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
-    "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
-)
+# F-021: the retired inspector pane's LIBRARY_INSPECTOR_EMPTY_COPY /
+# LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY were deleted -- nothing has
+# composed #library-source-inspector since the legacy workbench chrome
+# went away, so the (architecture-talk) copy never rendered. The
+# user-facing guidance it gestured at lives in the F-013 landing copy
+# and the F-010 landing hub.
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 # Navigation composes a FRESH LibraryScreen instance per visit (PR #595
 # freeze fix), so a per-instance memo is useless -- the previous visit's

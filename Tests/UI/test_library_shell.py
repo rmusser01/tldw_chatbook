@@ -545,6 +545,21 @@ def test_library_dead_hub_helpers_are_removed():
     assert not hasattr(library_screen_module, "LIBRARY_EMPTY_NEXT_ACTION_COPY")
 
 
+def test_library_dead_inspector_copy_is_removed():
+    """F-021: the retired inspector pane's empty-state copy is gone. The
+    review flagged the next-action line as architecture-talk in user
+    chrome, but the pane itself was retired with the legacy workbench --
+    nothing composes ``#library-source-inspector`` and nothing reads
+    either constant, so the fix is deletion, not rewording. User-facing
+    guidance lives in the F-013 landing copy and the F-010 hub."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+
+    assert not hasattr(library_screen_module, "LIBRARY_INSPECTOR_EMPTY_COPY")
+    assert not hasattr(
+        library_screen_module, "LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY"
+    )
+
+
 @pytest.mark.asyncio
 async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
     """F-011: rail rows are one terminal line by default -- the blanket
