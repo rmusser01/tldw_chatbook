@@ -59,12 +59,15 @@ import json
 class TTSPlaygroundWidget(Widget):
     """TTS Playground for testing different providers and settings"""
 
+    # ADR-031: no ctrl-chords here (ctrl+p shadows the palette, ctrl+s is
+    # XOFF, ctrl+r is readline history); single printable letters are
+    # consumed first by the focused TextArea, so they're safe elsewhere.
     BINDINGS = [
-        Binding("ctrl+g", "generate_tts", "Generate Speech"),
-        Binding("ctrl+r", "random_text", "Random Text"),
-        Binding("ctrl+l", "clear_text", "Clear Text"),
-        Binding("ctrl+p", "play_audio", "Play Audio"),
-        Binding("ctrl+s", "stop_audio", "Stop Audio"),
+        Binding("g", "generate_tts", "Generate Speech"),
+        Binding("r", "random_text", "Random Text"),
+        Binding("x", "clear_text", "Clear Text"),
+        Binding("p", "play_audio", "Play Audio"),
+        Binding("s", "stop_audio", "Stop Audio"),
     ]
 
     DEFAULT_CSS = """
@@ -565,7 +568,7 @@ class TTSPlaygroundWidget(Widget):
             # Keyboard shortcuts info
             yield Rule()
             yield Static(
-                "Shortcuts: Ctrl+G=Generate | Ctrl+R=Random | Ctrl+L=Clear | Ctrl+P=Play | Ctrl+S=Stop",
+                "Shortcuts: g=Generate | r=Random | x=Clear | p=Play | s=Stop",
                 classes="tip-text",
             )
 

@@ -173,6 +173,7 @@ class EvalNavigationBar(Container):
                     classes="quick-action-btn",
                     variant="default",
                     disabled=not self.can_export,
+                    tooltip="Export — planned, not available yet.",
                 )
                 yield Button(
                     "🔄 Refresh",
@@ -223,7 +224,9 @@ class EvalNavigationBar(Container):
             elif new in [EvalStatus.SUCCESS, EvalStatus.ERROR]:
                 self.can_run = True
                 self.can_stop = False
-                self.can_export = True
+                # Export stays disabled until implemented (ADR-031 rule 4:
+                # never advertise an action that only toasts "coming soon").
+                self.can_export = False
             else:  # IDLE
                 self.can_run = True
                 self.can_stop = False

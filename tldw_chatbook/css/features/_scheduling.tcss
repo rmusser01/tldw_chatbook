@@ -43,6 +43,12 @@
     background: $surface-darken-1;
 }
 
+/* Compact mode: the filter's margin row goes to the table (80x24 has
+ * exactly one spare row; without this the queue shows only the filter). */
+#scheduling-workbench.compact #scheduling-queue-filter {
+    margin: 0;
+}
+
 /* Pane headers */
 #scheduling-list-title,
 #scheduling-task-detail-header,

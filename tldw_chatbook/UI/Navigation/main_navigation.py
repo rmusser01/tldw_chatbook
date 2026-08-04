@@ -234,13 +234,13 @@ class MainNavigationBar(Container):
         # offers every destination regardless of scroll position.
         new_left = scroll_x > 0
         new_right = max_scroll_x > 0
-        changed = left_hint.display != new_left or right_hint.display != new_right
         left_hint.display = new_left
         right_hint.display = new_right
-        if changed:
-            # The strip just gained or lost width; keep the active
-            # destination fully inside the visible window.
-            self.call_after_refresh(self._scroll_active_destination_into_view)
+        # Layout settles asynchronously (hint toggles change the strip's
+        # width, fonts finish, etc.), so keep the active destination pinned
+        # every tick instead of only when a hint changed state — the call is
+        # idempotent and cheap.
+        self.call_after_refresh(self._scroll_active_destination_into_view)
 
     def _scroll_active_destination_into_view(self) -> None:
         """Bring the active destination's button into the strip's visible scroll window."""

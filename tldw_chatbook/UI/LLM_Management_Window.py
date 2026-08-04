@@ -146,6 +146,7 @@ class LLMManagementWindow(Container):
     
     .input_container Input {
         width: 1fr;
+        min-width: 16;
     }
     
     .input_container Button {
@@ -381,7 +382,7 @@ class LLMManagementWindow(Container):
             return f"Requires: Ollama installed (found: {found})"
         return (
             "Requires: Ollama installed — not found on PATH. "
-            "Install from ollama.com, then restart the app."
+            "Install from ollama.com, or use Browse to point at it."
         )
 
     def compose(self) -> ComposeResult:
@@ -441,7 +442,7 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Llama.cpp Server Executable Path:", classes="inline-label")
+                    yield Label("Server Executable:", classes="inline-label")
                     yield Input(
                         id="llamacpp-exec-path",
                         placeholder="e.g. /opt/llama.cpp/build/bin/server",

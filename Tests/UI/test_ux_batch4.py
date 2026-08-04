@@ -142,9 +142,9 @@ def test_ollama_prereq_reports_detection() -> None:
 def test_log_lines_styled_by_level_with_text_intact() -> None:
     error = _styled_line(LogRecord("ERROR", "m", "an error line"))
     assert error.plain == "an error line"
-    assert error.style == "bold red"
+    assert error.style == "bold bright_red"
     warning = _styled_line(LogRecord("WARNING", "m", "a warning line"))
-    assert warning.style == "yellow"
+    assert warning.style == "bright_yellow"
     info = _styled_line(LogRecord("INFO", "m", "an info line"))
     assert info.style == ""
 

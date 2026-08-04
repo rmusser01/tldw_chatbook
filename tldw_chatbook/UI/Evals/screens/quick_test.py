@@ -8,7 +8,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer
 from textual.widgets import Button, Static, Select, Input, Label, ProgressBar, TextArea
-from textual.binding import Binding
 from textual.reactive import reactive
 from textual.worker import Worker
 
@@ -37,9 +36,8 @@ class QuickTestScreen(Container):
     """
 
     BINDINGS = [
-        Binding("ctrl+e", "export_results", "Export", show=False),
-        Binding("tab", "focus_next", "Next Field", show=False),
-        Binding("shift+tab", "focus_previous", "Prev Field", show=False),
+        # tab/shift+tab removed (Textual defaults handle focus traversal);
+        # ctrl+e export removed (unimplemented — ADR-031 rule 4).
     ]
 
     DEFAULT_CSS = """
@@ -56,7 +54,7 @@ class QuickTestScreen(Container):
     .form-section {
         width: 100%;
         max-width: 80;
-        height: 24;
+        height: 26;
         align-horizontal: center;
         padding: 2;
         border: round $primary;
@@ -109,14 +107,15 @@ class QuickTestScreen(Container):
     .run-section {
         width: 100%;
         max-width: 80;
+        height: 4;
         align-horizontal: center;
-        padding: 1;
+        padding: 0;
         align: center middle;
     }
     
     .run-button {
         width: 30;
-        margin: 1;
+        margin: 0;
     }
     
     .run-button.running {
@@ -223,6 +222,17 @@ class QuickTestScreen(Container):
 
         # Main content
         with ScrollableContainer(classes="main-container"):
+            # Run button first: the primary action stays above the fold no
+            # matter how the form below it measures (same pattern as the
+            # Lab server forms, UX-054).
+            with Container(classes="run-section"):
+                yield Button(
+                    "▶️ Run Test",
+                    id="run-button",
+                    classes="run-button",
+                    variant="primary",
+                )
+
             # Configuration section
             with Container(classes="form-section"):
                 yield Static("Quick Test Configuration", classes="section-title")
@@ -271,16 +281,6 @@ class QuickTestScreen(Container):
                         classes="config-input",
                         placeholder="0.0-2.0",
                     )
-
-            # Run button
-            with Container(classes="run-section"):
-                yield Button(
-                    "▶️ Run Test",
-                    id="run-button",
-                    classes="run-button",
-                    variant="primary",
-                )
-
             # Progress section (hidden by default)
             with Container(classes="progress-section", id="progress-section"):
                 yield Static("📊 Evaluation Progress", classes="section-title")
@@ -326,6 +326,13 @@ class QuickTestScreen(Container):
             return
         self._load_tasks()
         self._load_models()
+        if not self.available_tasks or not self.available_models:
+            # Honest guidance instead of two dead dropdowns (UX-071 follow-up).
+            self.query_one("#quick-test-demo-note", Static).update(
+                "No evaluation tasks or models in the database yet — Quick Test "
+                "needs at least one of each. Register a model and import a task "
+                "with the evaluation tools, then come back."
+            )
         self.query_one("#task-select").focus()
 
     def _initialize_orchestrator(self) -> None:

@@ -32,13 +32,15 @@ if TYPE_CHECKING:
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
 
-#: Level chip definitions: (chip id suffix, label, accepted levelnames).
-#: "Info+" also covers DEBUG/TRACE, which have no chip of their own.
+#: Level chips are THRESHOLDS, ordered by severity, matching the journalctl
+#: convention: each chip shows its level and above. "Info+" hides DEBUG/TRACE
+#: chatter; "Warnings+" and "Errors" surface what users come for (UX: the old
+#: partition semantics let "Info+" hide warnings/errors entirely).
 _LEVEL_FILTERS: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("all", "All", frozenset()),
+    ("info", "Info+", frozenset({"INFO", "WARNING", "ERROR", "CRITICAL"})),
+    ("warning", "Warnings+", frozenset({"WARNING", "ERROR", "CRITICAL"})),
     ("error", "Errors", frozenset({"ERROR", "CRITICAL"})),
-    ("warning", "Warnings", frozenset({"WARNING"})),
-    ("info", "Info+", frozenset({"INFO", "DEBUG", "TRACE", "NOTSET"})),
 )
 
 
@@ -68,11 +70,12 @@ def _passes_filter(
 
 def _styled_line(record: LogRecord) -> Text:
     """Style a log line by level; the level word stays in the text itself,
-    so color is a redundant scanner cue, never the only carrier (UX-075)."""
+    so color is a redundant scanner cue, never the only carrier (UX-075).
+    Bright variants keep ERROR/WARNING legible on dark themes."""
     if record.level in ("ERROR", "CRITICAL"):
-        return Text(record.message, style="bold red")
+        return Text(record.message, style="bold bright_red")
     if record.level == "WARNING":
-        return Text(record.message, style="yellow")
+        return Text(record.message, style="bright_yellow")
     return Text(record.message)
 
 
@@ -97,9 +100,9 @@ class LogsWindow(Container):
         Binding("/", "focus_filter", "Filter", show=False),
         Binding("p", "toggle_pause", "Pause", show=False),
         Binding("1", "level('all')", "All", show=False),
-        Binding("2", "level('error')", "Errors", show=False),
-        Binding("3", "level('warning')", "Warnings", show=False),
-        Binding("4", "level('info')", "Info", show=False),
+        Binding("2", "level('info')", "Info+", show=False),
+        Binding("3", "level('warning')", "Warnings+", show=False),
+        Binding("4", "level('error')", "Errors", show=False),
         Binding("y", "copy_visible", "Copy visible", show=False),
     ]
 
@@ -214,6 +217,9 @@ class LogsWindow(Container):
         if was_empty:
             # Leaving the empty state: restore the log widget and re-render.
             self._render_view()
+        # The header chip must track errors even while the view is paused.
+        if record.level in ("ERROR", "CRITICAL"):
+            self._update_header_chip()
         if self._paused:
             self._pending_while_paused += 1
             self._update_status_line()
@@ -224,8 +230,6 @@ class LogsWindow(Container):
             self._rendered_count += 1
         self._update_status_line()
         self._update_filter_chips()
-        if record.level in ("ERROR", "CRITICAL"):
-            self._update_header_chip()
 
     # ------------------------------------------------------------------
     # Filtering & rendering

@@ -62,7 +62,7 @@ EVAL_NAV_CARDS: tuple[NavigationCard, ...] = (
         id="results",
         title="Results Browser",
         icon="📊",
-        description="Browse, search and export\nevaluation results",
+        description="Browse evaluation results\nand recent runs",
         shortcut="Press [4]",
         color="primary",
     ),

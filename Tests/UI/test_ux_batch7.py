@@ -79,7 +79,7 @@ async def test_lab_form_rows_are_side_by_side() -> None:
             container = app.query_one("#llamacpp-exec-path").parent
             labels = [w for w in container.children if w.has_class("inline-label")]
             assert labels, "label must live inside the input row"
-            assert "Executable Path" in str(labels[0].render())
+            assert "Server Executable" in str(labels[0].render())
     finally:
         monkey.undo()
 

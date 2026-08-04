@@ -196,36 +196,59 @@ class AppFooterStatus(Widget):
         return total
 
     def _apply_responsive_footer(self) -> None:
-        """Pick the honest hint variant that fits; never clip mid-word."""
+        """Pick the honest hint variant that fits; never clip mid-word.
+
+        Degradation order (discoverability outranks metrics chrome): shrink
+        the right cluster (DB sizes, then word, then token counts) BEFORE
+        eliding the screen's own hints; globals stay to the last row.
+        """
         width = self.size.width
         if width <= 0:
             # Pre-layout: show the full text; on_resize will refine.
             self._shortcut_display.update(self._shortcut_text)
             return
 
-        # Degrade the right cluster first so hints keep their room.
-        self._token_count_display.display = (
-            self._show_token_count and width >= self._TOKEN_MIN_WIDTH
-        )
-        self._word_count_display.display = width >= self._WORD_MIN_WIDTH
-        self._db_status_display.display = width >= self._DB_MIN_WIDTH
+        hard_token = width >= self._TOKEN_MIN_WIDTH and self._show_token_count
+        hard_word = width >= self._WORD_MIN_WIDTH
+        hard_db = width >= self._DB_MIN_WIDTH
 
-        available = max(width - self._right_cluster_text_len() - 6, 8)
-        candidates: list[str] = []
         if self._context_text:
-            candidates.append(f"{self._context_text} | {self.GLOBAL_HINTS}")
-            candidates.append(f"… {self.GLOBAL_HINTS}")
-            candidates.append(f"… {self.GLOBAL_HINTS_COMPACT}")
+            full = f"{self._context_text} | {self.GLOBAL_HINTS}"
+            ellipsis = f"… {self.GLOBAL_HINTS}"
+            compact = f"… {self.GLOBAL_HINTS_COMPACT}"
         else:
-            candidates.append(self.GLOBAL_HINTS)
-            candidates.append(self.GLOBAL_HINTS_COMPACT)
-        candidates.append(self.GLOBAL_HINTS_MIN)
+            full = self.GLOBAL_HINTS
+            ellipsis = self.GLOBAL_HINTS_COMPACT
+            compact = self.GLOBAL_HINTS_COMPACT
 
-        text = next(
-            (candidate for candidate in candidates if len(candidate) <= available),
-            self.GLOBAL_HINTS_MIN,
-        )
-        self._shortcut_display.update(text)
+        # (text, show_token, show_word, show_db) in degradation order.
+        steps = [
+            (full, True, True, True),
+            (full, True, True, False),
+            (full, True, False, False),
+            (full, False, False, False),
+            (ellipsis, False, False, False),
+            (compact, False, False, False),
+            (self.GLOBAL_HINTS_MIN, False, False, False),
+        ]
+        for text, token_flag, word_flag, db_flag in steps:
+            token_vis = token_flag and hard_token
+            word_vis = word_flag and hard_word
+            db_vis = db_flag and hard_db
+            right_len = 0
+            if word_vis:
+                right_len += len(str(self._word_count_display.render()))
+            if token_vis:
+                right_len += len(str(self._token_count_display.render()))
+            if db_vis:
+                right_len += len(str(self._db_status_display.render()))
+            available = max(width - right_len - 6, 8)
+            if len(text) <= available:
+                self._token_count_display.display = token_vis
+                self._word_count_display.display = word_vis
+                self._db_status_display.display = db_vis
+                self._shortcut_display.update(text)
+                return
 
     # ------------------------------------------------------------------
     # Right-cluster updaters
