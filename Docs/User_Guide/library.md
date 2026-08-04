@@ -38,25 +38,32 @@ pages:
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom:
-  - the **Ingest content…** button ("Open the ingest canvas to add
-    Library content.");
+  - the **Add content…** button ("Add files, links, and transcripts to
+    your Library.");
   - the **Search Library…** box — submitting it lands on the
     Search / RAG canvas and runs your query (an empty submit just opens
-    the canvas);
+    the canvas). Press **/** anywhere outside a text field to jump
+    straight into this box; pressing **/** again inside it selects the
+    whole query so the next keystroke replaces it;
   - three sections — **Browse** (Media, Conversations, Notes, Prompts,
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill, Study decks, Flashcards, Quizzes), and **Import / Export**
-    (Import media, Export). Each row is two lines: the title with its
-    count, then "in Library". The selected row is marked **▸**, and the
-    Flashcards row shows "due: N" instead of a plain count;
+    (Import media, Export). Each row is one line: the title with its
+    count, plus a dim plain-language gloss on the jargon rows (e.g.
+    "Search / RAG — search everything"). The three Study hand-off rows
+    add a second "opens Study" line. The selected row is marked **▸**,
+    and the Flashcards row shows "due: N" instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
     headers toggle open (**▾**) and closed (**▸**).
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one it shows
-  the landing copy: "Search, pick a content type, or ingest something
-  new."
-- **Footer** — minimal; a "u — use Library context in Console" hint
-  appears only while the Search / RAG row is selected.
+  the landing hub: per-source counts, recent items when the Library has
+  content, and quick actions (Import media / Search / New note), under
+  the guidance line "Search everything, pick a section on the left, or
+  add something new."
+- **Footer** — shows the keys that work where you are: "/ focus search"
+  on every canvas, and on the Search / RAG canvas also "u use Library
+  context in Console", "enter select evidence", and "o open evidence".
 
 One special case: selecting **Notes** adds a **Database | Files** strip
 above the workbench. **Files** swaps the entire Library shell for the
@@ -68,7 +75,7 @@ File Notes workspace — see [File Notes](library/file-notes.md).
 
 | Control | What it does |
 |---|---|
-| **Ingest content…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
+| **Add content…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |
 
@@ -106,7 +113,7 @@ Collapsed by default; click the **Details** header to open it.
 
 | Group | Contents |
 |---|---|
-| **Status** | A "Runtime · Local" (or "Runtime · Server: \<label\>") line, and a counts row: "Notes N · Media N · Conversations N". |
+| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, and a counts row: "Notes N · Media N · Conversations N". |
 | **Workspace** | "Active · \<workspace name\>" and "Handoff · \<summary\>" lines. |
 | **Actions** | The buttons below, plus the note "Server sync WIP · local only". |
 
@@ -141,7 +148,7 @@ available.").
    and press Enter — you land on the Search / RAG canvas with results
    grouped as "Evidence · top 5 per source". Narrow with the **Sources**
    scope toggles ([Search & RAG](library/search-and-rag.md)).
-2. **Ingest your first file.** Click **Ingest content…**, enter a file
+2. **Add your first file.** Click **Add content…**, enter a file
    path or URL (or **Browse…**), review the pre-flight summary and
    options, then press **Start ingest**. The item appears under
    **Media** — full walkthrough in [Import & export](library/import-and-export.md).

@@ -452,7 +452,10 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
 
         visible = _visible_text(screen)
         assert "Conversations (2)" in visible
-        assert "Search, pick a content type, or ingest something new." in visible
+        assert (
+            "Search everything, pick a section on the left, or add something new."
+            in visible
+        )
         assert screen.query_one("#library-canvas-landing")
 
         assert not screen.query("#library-mode-bar")
@@ -618,6 +621,41 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
         assert status.region.y + status.region.height <= fold, (
             f"status group pushed below rail viewport: {status.region}"
         )
+
+
+@pytest.mark.asyncio
+async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
+    """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
+    the SAME one-line row (the F-011 height contract is untouched), and
+    plain rows carry no gloss."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_row = screen.query_one("#library-row-browse-search", Button)
+        label = search_row.label
+        plain = label.plain
+        assert "— search everything" in plain
+        assert "\n" not in plain
+        assert search_row.styles.height.value == 1
+        # The gloss renders DIM (not just present): a "dim" style span
+        # covers exactly the em-dash subtitle, leaving title/count at
+        # normal emphasis.
+        dim_spans = [s for s in label.spans if "dim" in str(s.style)]
+        assert dim_spans, f"no dim span on the jargon gloss: {label.spans}"
+        assert any(
+            plain[s.start : s.end] == "— search everything" for s in dim_spans
+        ), f"dim span does not cover the gloss: {label.spans}"
+
+        plain_row = screen.query_one("#library-row-browse-notes", Button)
+        assert "—" not in plain_row.label.plain
+        assert not [
+            s for s in plain_row.label.spans if "dim" in str(s.style)
+        ]
 
 
 @pytest.mark.asyncio

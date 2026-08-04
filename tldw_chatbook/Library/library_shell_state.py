@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
+LIBRARY_CANVAS_LANDING_COPY = (
+    "Search everything, pick a section on the left, or add something new."
+)
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
@@ -75,6 +77,11 @@ class LibraryRailRow:
     count_emphasis: str = ""
     disabled: bool = False
     disabled_tooltip: str = ""
+    # F-013: one-line plain-language gloss for jargon rows (e.g. "search
+    # everything" under "Search / RAG"), rendered by the rail as a dim
+    # em-dash suffix on the same line. Empty on already-plain rows so the
+    # rail doesn't stutter.
+    subtitle: str = ""
 
 
 @dataclass(frozen=True)
@@ -147,6 +154,7 @@ def build_library_shell_state(
             target_id="media",
             count=state.media_count,
             count_known=state.media_known,
+            subtitle="imported files & transcripts",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -179,6 +187,7 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
+            subtitle="saved instructions for the AI",
         ),
         LibraryRailRow(
             # Task 1: row exists and is selectable now; its canvas (Task 3)
@@ -192,6 +201,7 @@ def build_library_shell_state(
             target_id="skills",
             count=state.skills_count,
             count_known=state.skills_known,
+            subtitle="installable AI abilities",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -201,6 +211,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
+            subtitle="saved groups of content",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,
@@ -210,6 +221,7 @@ def build_library_shell_state(
             target_id="search",
             count=None,
             count_known=True,
+            subtitle="search everything",
         ),
     )
 

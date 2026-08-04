@@ -29,7 +29,7 @@ _MAX_LIBRARY_ROW_TITLE = 20
 def library_dim_label_text(label: str, value: str) -> Text:
     """Build a "label · value" line with a dimmed label and a literal value.
 
-    Used for the Details rail's scannable rows (e.g. "Runtime · Local",
+    Used for the Details rail's scannable rows (e.g. "Source · Local",
     "Active · Local Default") so the label reads as secondary context while
     the value stays at normal emphasis.
 
@@ -205,7 +205,10 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             details_lines = self.shell.details_lines
             runtime_value = details_lines[0] if details_lines else ""
             yield Static(
-                library_dim_label_text("Runtime", runtime_value),
+                # F-013: "Source", not "Runtime" -- the line says where the
+                # Library's content lives (this device or a server), and
+                # "Runtime" taught nothing.
+                library_dim_label_text("Source", runtime_value),
                 id="library-details-runtime",
                 classes="library-details-row",
             )
@@ -249,6 +252,13 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 # the Library entirely for the Study screen family.
                 is_handoff = row.target_kind == "handoff"
                 label = f"{marker} {_visible_row_title(row.title)}{count_suffix}"
+                if row.subtitle:
+                    # F-013: dim plain-language gloss on the SAME line (the
+                    # F-011 one-line contract is untouched); it sits after
+                    # the count so narrow rails clip the expendable gloss
+                    # first, never the title or count. Escaped like the
+                    # title -- Button labels parse Rich markup.
+                    label += f" [dim]— {escape_markup(row.subtitle)}[/dim]"
                 if is_handoff:
                     label += "\n    opens Study"
                 button = Button(

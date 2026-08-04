@@ -118,8 +118,30 @@ def test_empty_selection_yields_landing_canvas():
     assert shell.canvas_kind == "empty"
     assert (
         shell.canvas_empty_copy
-        == "Search, pick a content type, or ingest something new."
+        == "Search everything, pick a section on the left, or add something new."
     )
+
+
+def test_jargon_rows_carry_plain_language_subtitles():
+    """F-013: the load-bearing jargon rows get a one-line plain-language
+    gloss; already-plain rows stay unglossed so the rail doesn't stutter."""
+    shell = build_library_shell_state(LibraryShellInput())
+    subtitles = {
+        row.row_id: row.subtitle
+        for section in shell.sections
+        for row in section.rows
+    }
+    assert subtitles["browse-media"] == "imported files & transcripts"
+    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "saved instructions for the AI"
+    assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "installable AI abilities"
+    assert subtitles["browse-collections"] == "saved groups of content"
+    assert subtitles["browse-search"] == "search everything"
+    # Plain-language rows carry no gloss.
+    assert subtitles["browse-conversations"] == ""
+    assert subtitles["browse-notes"] == ""
+    assert subtitles["create-note"] == ""
+    assert subtitles["ingest-import-media"] == ""
+    assert subtitles["ingest-export"] == ""
 
 
 def test_conversations_selection_yields_conversations_canvas():

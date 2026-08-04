@@ -659,7 +659,7 @@ async def test_library_empty_state_reports_empty_with_next_action():
     assert "Notes (0)" in visible_text
     assert "Media (0)" in visible_text
     assert "Conversations (0)" in visible_text
-    assert "Search, pick a content type, or ingest something new." in visible_text
+    assert "Search everything, pick a section on the left, or add something new." in visible_text
 
 
 @pytest.mark.asyncio

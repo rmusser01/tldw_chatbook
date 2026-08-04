@@ -1421,9 +1421,9 @@ class LibraryIngestProvider(Provider):
 
     COMMANDS = (
         (
-            "Library: Ingest content…",
+            "Library: Add content…",
             "open_library_ingest",
-            "Open Library and start ingesting content",
+            "Open Library and add content",
         ),
     )
 

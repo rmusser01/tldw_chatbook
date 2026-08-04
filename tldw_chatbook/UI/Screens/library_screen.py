@@ -3937,15 +3937,17 @@ class LibraryScreen(BaseAppScreen):
     def _compose_library_rail_top_action(self) -> list[Widget]:
         """Build the top-of-rail action widget(s) for the Library shell.
 
-        Returns a primary Ingest button that jumps directly to the Ingest
-        media canvas, surfaced above the rail search box for discoverability.
+        Returns the rail's primary button, which jumps directly to the
+        ingest media canvas, surfaced above the rail search box for
+        discoverability. F-013: the label names the action in plain
+        language ("ingest" stays inside the ingest canvas itself).
         """
         return [
             Button(
-                "Ingest content…",
+                "Add content…",
                 variant="primary",
                 id="library-ingest-top-button",
-                tooltip="Open the ingest canvas to add Library content.",
+                tooltip="Add files, links, and transcripts to your Library.",
             )
         ]
 
@@ -4502,8 +4504,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns exactly two plain-text values: the runtime value (rendered
-        by the rail with a dimmed "Runtime" label) and the local source
+        Returns exactly two plain-text values: the source value (rendered
+        by the rail with a dimmed "Source" label) and the local source
         counts, or a lookup-error/recovery block in place of the counts when
         the local source snapshot failed to load.
         """
