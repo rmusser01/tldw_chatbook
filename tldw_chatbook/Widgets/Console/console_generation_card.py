@@ -40,8 +40,9 @@ from tldw_chatbook.Chat.console_image_view import (
 )
 
 #: Same inline frame color the rest of native Console uses for bordered
-#: panels (``CONSOLE_FRAME_COLOR`` in ``chat_screen.py``) -- duplicated
-#: locally rather than imported to avoid a screen<->widget circular import.
+#: panels (``CONSOLE_FRAME_COLOR`` in ``UI/Console_Modules/frame.py``) --
+#: duplicated locally rather than imported to avoid a screen<->widget
+#: circular import.
 CARD_BORDER_COLOR = "#6f7782"
 CARD_TITLE = "Image Generation"
 

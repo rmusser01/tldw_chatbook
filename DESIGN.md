@@ -381,3 +381,25 @@ Its docstring settles three kinds of binding, one rule per kind:
    default; a controller that snapshots something whose identity *can*
    change under it is repeating the staleness bug wave 1 found and fixed
    twice before landing on this rule.
+
+**A region widget never stores a removable child-widget instance.** When a
+screen hands a region widget a piece of its content that the screen may
+later remove and replace OUTSIDE that region's own `compose()` — by
+`query_one`-ing straight into the region's DOM, the way
+`_apply_console_live_work_card_swap` and
+`_render_character_avatar_into_section` do for `ConsoleInspectorRail`'s
+live-work card and `ConsoleLeftRail`'s character avatar — the region must
+not store that content as a bare widget INSTANCE and re-yield it from
+`compose()`. Nothing keeps the stored reference in sync with the screen's
+own remove/remount, so it is safe only as long as nothing ever calls
+`compose()` again; the moment a `reactive(..., recompose=True)` is added to
+that region, its `compose()` re-yields a widget Textual has already
+removed from the DOM — reappearing stale content (e.g. the pre-swap
+source-readiness card) instead of raising. Pass a zero-arg builder
+callable instead (preferred — the same late-binding shape as a
+controller's constructor dependencies above; see `ConsoleInspectorRail`'s
+`live_work_card_builder` and `ConsoleLeftRail`'s
+`character_avatar_widget_builder` in `UI/Console_Modules/right_rail.py` /
+`left_rail.py`) so every `compose()` call mounts a fresh instance built
+from current state, or have the region re-query its own DOM instead of
+caching a reference at all.

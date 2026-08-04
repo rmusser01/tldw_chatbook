@@ -302,7 +302,6 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
-from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
 from ...Chat.console_expression_state import (
     EXPRESSION_IMAGE_STATES,
     resolve_console_expression_state,
@@ -413,7 +412,6 @@ from ...Widgets.Console import (
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
-    ClickableAvatarBox,
     ConsoleImageViewerModal,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -12504,12 +12502,6 @@ class ChatScreen(BaseAppScreen):
             classes=card_state.container_classes,
         )
 
-    def _render_console_live_work_status_card(
-        self, launch: ConsoleLiveWorkLaunch
-    ) -> ComposeResult:
-        """Render a reusable live-work status card for Console launch context."""
-        yield self._build_console_live_work_status_card(launch)
-
     def _console_library_rag_scope_label(self) -> str:
         """Return the readiness card's Library RAG source line (RAG-44).
 
@@ -13042,16 +13034,6 @@ class ChatScreen(BaseAppScreen):
         """
         return frame_console_region(widget, top=top, variant=variant)
 
-    @staticmethod
-    def _staged_context_frame_variant(_state: ConsoleStagedContextState) -> str:
-        """Always use quiet framing; the rail frame is the single border source."""
-        return "quiet"
-
-    @staticmethod
-    def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
-        """Keep workspace context visually nested inside the framed left rail."""
-        return "quiet"
-
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
 
@@ -13110,10 +13092,6 @@ class ChatScreen(BaseAppScreen):
         container.styles.height = "auto"
         container.styles.min_height = 0
         return container
-
-    def _render_console_live_work_source_readiness(self) -> ComposeResult:
-        """Render Console source readiness when no live-work item is staged."""
-        yield self._build_console_live_work_source_readiness_card()
 
     @on(Button.Pressed, "#console-live-work-primary-action")
     def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
@@ -13631,11 +13609,26 @@ class ChatScreen(BaseAppScreen):
                     getattr(getattr(self, "app_instance", None), "app_config", {})
                     or {}
                 )
-                character_avatar_widget = None
+                # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
+                # zero-arg callable, not a pre-built widget: the rail's own
+                # `compose()` calls it, so a future recompose always mounts a
+                # fresh avatar widget built from the CURRENT
+                # `self._active_character_avatar` rather than re-yielding a
+                # stale instance `_render_character_avatar_into_section` may
+                # already have removed from the DOM (final review finding 1).
+                # The lambda closes over `self` and reads
+                # `self._active_character_avatar` at CALL time, matching
+                # `ConsoleDictationController`'s late-binding constructor rule
+                # (see `dictation.py`'s module docstring) -- not a bound
+                # method or a snapshotted spec, which would freeze today's
+                # value instead.
+                character_avatar_widget_builder = None
                 character_avatar_name = ""
                 if show_character_section:
-                    character_avatar_widget = self._build_character_avatar_widget(
-                        self._active_character_avatar
+                    character_avatar_widget_builder = (
+                        lambda: self._build_character_avatar_widget(
+                            self._active_character_avatar
+                        )
                     )
                     character_avatar_name = (
                         self._active_character_avatar_name
@@ -13655,7 +13648,7 @@ class ChatScreen(BaseAppScreen):
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=self._console_agent_full_log_available(),
                     show_character_section=show_character_section,
-                    character_avatar_widget=character_avatar_widget,
+                    character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
                 )
                 left_rail.can_focus = True
@@ -13686,21 +13679,34 @@ class ChatScreen(BaseAppScreen):
                 # self._console_library_rag_query via
                 # _build_console_live_work_source_readiness_card) -- built
                 # here, on the screen, exactly as it was built inline before
-                # this extraction (wave-1 console decomposition, task 4),
-                # and handed to `ConsoleInspectorRail` as a finished widget,
-                # mirroring how task 3 hands `character_avatar_widget` to
-                # `ConsoleLeftRail`.
-                live_work_card = (
-                    self._build_console_live_work_status_card(pending_launch)
-                    if pending_launch
-                    else self._build_console_live_work_source_readiness_card()
-                )
+                # this extraction (wave-1 console decomposition, task 4).
+                # `live_work_card_builder` hands `ConsoleInspectorRail` a
+                # zero-arg callable, not a finished widget: the rail's own
+                # `compose()` calls it, so a future recompose always mounts a
+                # fresh card instead of re-yielding a stale instance
+                # `_apply_console_live_work_card_swap` may already have
+                # removed from the DOM (final review finding 1) -- the same
+                # builder shape `character_avatar_widget_builder` uses for
+                # `ConsoleLeftRail` above. The lambda closes over `self` and
+                # reads `self._pending_console_launch_context` at CALL time
+                # (matching `ConsoleDictationController`'s late-binding
+                # constructor rule -- see `dictation.py`'s module docstring),
+                # which is the same value `pending_launch` above was just
+                # resolved from and nothing mutates in between.
                 right_rail = ConsoleInspectorRail(
                     staged_context_state=staged_context_state,
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
                     settings_summary_state=self._build_console_settings_summary_state(),
-                    live_work_card=live_work_card,
+                    live_work_card_builder=(
+                        lambda: (
+                            self._build_console_live_work_status_card(
+                                self._pending_console_launch_context
+                            )
+                            if self._pending_console_launch_context
+                            else self._build_console_live_work_source_readiness_card()
+                        )
+                    ),
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"

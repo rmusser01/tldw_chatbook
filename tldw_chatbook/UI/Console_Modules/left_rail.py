@@ -42,6 +42,7 @@ message rather than matched by id prefix in the screen's
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -115,7 +116,7 @@ class ConsoleLeftRail(Vertical):
         agent_drilldown_active: bool,
         agent_full_log_available: bool,
         show_character_section: bool,
-        character_avatar_widget: Widget | None,
+        character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
         **kwargs,
     ) -> None:
@@ -145,8 +146,24 @@ class ConsoleLeftRail(Vertical):
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
-            character_avatar_widget: Pre-built avatar widget, when
-                ``show_character_section`` is True.
+            character_avatar_widget_builder: Zero-arg callable that builds
+                the avatar widget, when ``show_character_section`` is True
+                (``None`` otherwise). The screen still owns
+                ``_build_character_avatar_widget`` and the spec it reads
+                (``self._active_character_avatar``); only the CALL is
+                deferred to this rail's own ``compose()``. A builder, not a
+                pre-built instance, is the point:
+                ``_render_character_avatar_into_section`` replaces this
+                widget by re-querying ``#console-character-avatar`` and
+                remounting directly, without going through this rail at
+                all, so a stored widget INSTANCE here would go stale the
+                moment anything recomposes this rail (see the design spec's
+                region-widget rule) -- re-yielding a widget Textual already
+                removed from the DOM. Calling the builder fresh on every
+                ``compose()`` (matching ``ConsoleDictationController``'s
+                late-binding constructor rule -- see ``dictation.py``'s
+                module docstring) always mounts a brand-new instance built
+                from the CURRENT ``self._active_character_avatar`` instead.
             character_avatar_name: Character name label text, when
                 ``show_character_section`` is True.
             kwargs: Forwarded to ``Vertical``.
@@ -168,7 +185,7 @@ class ConsoleLeftRail(Vertical):
         self._agent_drilldown_active = agent_drilldown_active
         self._agent_full_log_available = agent_full_log_available
         self._show_character_section = show_character_section
-        self._character_avatar_widget = character_avatar_widget
+        self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
 
     def compose(self) -> ComposeResult:
@@ -491,8 +508,8 @@ class ConsoleLeftRail(Vertical):
                     avatar_holder.styles.width = "auto"
                     avatar_holder.styles.height = "auto"
                     with avatar_holder:
-                        if self._character_avatar_widget is not None:
-                            yield self._character_avatar_widget
+                        if self._character_avatar_widget_builder is not None:
+                            yield self._character_avatar_widget_builder()
                     yield Static(
                         self._character_avatar_name,
                         id="console-character-name",

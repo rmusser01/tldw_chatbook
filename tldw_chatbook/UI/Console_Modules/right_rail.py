@@ -53,6 +53,8 @@ the compound-widget boundary transparently, proven live in task 3's review.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
@@ -95,7 +97,7 @@ class ConsoleInspectorRail(Vertical):
         retrieval_scope_state: ConsoleRetrievalScopeState,
         inspector_state: ConsoleInspectorState,
         settings_summary_state: ConsoleSettingsSummaryState,
-        live_work_card: Widget,
+        live_work_card_builder: Callable[[], Widget],
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -114,15 +116,24 @@ class ConsoleInspectorRail(Vertical):
                 parsed independently here from the left rail's own copy --
                 matches the pre-extraction inline compose, which built this
                 twice (once per rail) rather than sharing one value.
-            live_work_card: Pre-built pending-launch status card or
-                source-readiness card
+            live_work_card_builder: Zero-arg callable that builds the
+                pending-launch status card or source-readiness card
                 (``ChatScreen._build_console_live_work_status_card``/
                 ``_build_console_live_work_source_readiness_card``) -- these
                 reach ``self.app_instance`` and
                 ``self._console_library_rag_query``, so the screen still
-                builds the card and hands the finished widget in, exactly
-                as it hands in ``character_avatar_widget`` for the left
-                rail's Character section.
+                owns the build logic; only the CALL is deferred to this
+                rail's own ``compose()``. A builder, not a pre-built
+                instance, is the point: ``_apply_console_live_work_card_swap``
+                removes and remounts this same card by id without going
+                through this rail at all, so a stored widget INSTANCE here
+                would go stale the moment anything recomposes this rail
+                (see the design spec's region-widget rule) -- re-yielding a
+                widget Textual already removed from the DOM. Calling the
+                builder fresh on every ``compose()`` (matching
+                ``ConsoleDictationController``'s late-binding constructor
+                rule -- see ``dictation.py``'s module docstring) always
+                mounts a brand-new instance instead.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -134,7 +145,7 @@ class ConsoleInspectorRail(Vertical):
         self._retrieval_scope_state = retrieval_scope_state
         self._inspector_state = inspector_state
         self._settings_summary_state = settings_summary_state
-        self._live_work_card = live_work_card
+        self._live_work_card_builder = live_work_card_builder
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, staged-context tray, scope row, and run inspector."""
@@ -227,4 +238,4 @@ class ConsoleInspectorRail(Vertical):
                 settings_summary.styles.min_width = 0
                 yield settings_summary
 
-            yield self._live_work_card
+            yield self._live_work_card_builder()
