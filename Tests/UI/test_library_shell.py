@@ -775,6 +775,39 @@ async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
 
 
 @pytest.mark.asyncio
+async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
+    """F-020: at 100x30 the rail's content overflows and its scrollbar
+    actually renders -- and the thumb uses the visible $ds-text-muted
+    token (the task-1712 fix for this same bug class on
+    #settings-category-list: '$ds-grid-line blended into the panel')."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail = screen.query_one("#library-rail")
+        assert rail.max_scroll_y > 0, "rail unexpectedly fits at 100x30"
+        assert rail.show_vertical_scrollbar is True
+
+    # Drift guard on the token itself: the thumb must contrast with the
+    # panel, or the rendered scrollbar is still invisible (the F-020
+    # capture: a track with no readable thumb).
+    component = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text(encoding="utf-8")
+    rail_block = re.search(r"#library-rail\s*\{([^}]*)\}", component)
+    assert rail_block, "#library-rail rule missing from _agentic_terminal.tcss"
+    assert "scrollbar-color: $ds-text-muted;" in rail_block.group(1)
+
+
+@pytest.mark.asyncio
 async def test_landing_footer_advertises_the_focus_search_key():
     """F-012: the landing state is not a keyboard dead zone -- the footer
     advertises the one Library key that works there (`/` focuses the rail
@@ -5292,6 +5325,10 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
     literal ``#library-rail`` rule (not just "selector appears somewhere in
     the file") keeps this from passing on an unrelated rule that happens to
     mention the same properties elsewhere.
+
+    F-020: the thumb token moved from ``$ds-grid-line`` (blended into the
+    panel -- an invisible overflow cue) to ``$ds-text-muted``, the
+    task-1712 fix for this same bug class on ``#settings-category-list``.
     """
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     for css_path in (
@@ -5301,7 +5338,7 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
         body = _css_rule_body(css_path.read_text(), "#library-rail")
         assert "overflow-y: auto" in body, css_path
         assert "scrollbar-background: $ds-surface-panel" in body, css_path
-        assert "scrollbar-color: $ds-grid-line" in body, css_path
+        assert "scrollbar-color: $ds-text-muted" in body, css_path
 
 
 @pytest.mark.asyncio
