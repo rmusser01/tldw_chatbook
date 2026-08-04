@@ -72,7 +72,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
             assert "Watchlists: Connected" in console_text
-            assert "More: Ctrl+P" in console_text
+            assert "More ›" in console_text
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)
 
             app.screen.query_one("#nav-library", Button).press()

@@ -347,7 +347,7 @@ async def test_type_group_panels_render_for_detected_groups():
         generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
         assert "PDF documents" in str(pdf_panel.title)
         assert "PDF engine: pymupdf4llm" in str(pdf_panel.title)
-        assert "Plain text / documents / HTML" in str(generic_panel.title)
+        assert "Plain text & HTML" in str(generic_panel.title)
         assert "Chunk size: 1000" in str(generic_panel.title)
 
         scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
@@ -1350,7 +1350,7 @@ async def test_expand_collapse_all_hidden_for_single_panel():
 @pytest.mark.asyncio
 async def test_generic_scope_line_reworded_when_no_generic_files_staged():
     """(task-2016) The always-present generic panel claimed "Applies to all
-    Plain text / documents / HTML in this import." even when the import
+    Plain text & HTML in this import." even when the import
     contained zero such files."""
     state = build_library_ingest_state(
         (),
@@ -1494,3 +1494,59 @@ async def test_duplicate_forecast_line_renders_in_summary():
     async with app.run_test() as pilot:
         line = pilot.app.query_one("#ingest-duplicate-summary", Static)
         assert "already be in your Library" in str(line.renderable)
+
+
+@pytest.mark.asyncio
+async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> None:
+    """Severity colour supplements glyphs; invalid fields stay marked.
+
+    (task-2230 a11y) Failed/skipped rows carry a severity class ON TOP of
+    the glyph+word they already have (never colour-only), and an invalid
+    option field stays marked without focus -- the gate line's
+    "highlighted" pointed at a border that only existed while focused.
+    """
+    failed = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="Failed to process pdf file.",
+    )
+    skipped = LibraryIngestJob(
+        job_id="ingest-job-2",
+        source_path="/tmp/photo.jpg",
+        state=IngestJobState.SKIPPED,
+        error="Unsupported file type: .jpg.",
+    )
+    done = LibraryIngestJob(
+        job_id="ingest-job-3",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.DONE,
+    )
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((failed, skipped, done), form=form)
+
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        rows = list(pilot.app.query(".library-ingest-row"))
+        classes = [set(row.classes) for row in rows]
+        assert any("library-ingest-row-failed" in c for c in classes)
+        assert any("library-ingest-row-skipped" in c for c in classes)
+        # The done row carries neither severity class.
+        assert sum(
+            1
+            for c in classes
+            if "library-ingest-row-failed" in c
+            or "library-ingest-row-skipped" in c
+        ) == 2
+
+        # Glyph + word survive alongside the colour (monochrome contract).
+        by_id = {row.job_id: row for row in state.queue_rows}
+        assert by_id["ingest-job-1"].line.startswith("✗ failed")
+        assert by_id["ingest-job-2"].line.startswith("○ skipped")
+
+        invalid = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        assert invalid.has_class("-ingest-option-invalid"), (
+            "an invalid field must stay marked without focus"
+        )
+        assert pilot.app.focused is not invalid

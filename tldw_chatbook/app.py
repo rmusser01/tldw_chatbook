@@ -65,6 +65,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import traceback
 from copy import deepcopy
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
@@ -754,7 +755,7 @@ class TabNavigationProvider(Provider):
         TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
         TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
         TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
-        TAB_PERSONAS: "Open Roleplay & Chat Dictionaries for characters, personas, dictionaries, and behavior profiles",
+        TAB_PERSONAS: "Open Roleplay for characters, personas, dictionaries, and behavior profiles",
         TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
@@ -762,7 +763,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
-        TAB_CCP: "Switch to Roleplay & Chat Dictionaries for characters, personas, dictionaries, and world books",
+        TAB_CCP: "Switch to Roleplay for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to Library search and RAG",
         TAB_INGEST: "Switch to content ingestion",
@@ -1140,7 +1141,7 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries for character setup",
+                    "Opened Roleplay for character setup",
                 )
             elif action_id == "new_note":
                 _navigate_via_screen(
@@ -1316,19 +1317,19 @@ class CharacterProvider(Provider):
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries",
+                    "Opened Roleplay",
                 )
             elif action_id == "new_character":
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries to create a character",
+                    "Opened Roleplay to create a character",
                 )
             elif action_id == "list_characters":
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries to list characters",
+                    "Opened Roleplay to list characters",
                 )
         except Exception as e:
             self.app.notify(
@@ -1425,9 +1426,9 @@ class LibraryIngestProvider(Provider):
 
     COMMANDS = (
         (
-            "Library: Ingest content…",
+            "Library: Add content…",
             "open_library_ingest",
-            "Open Library and start ingesting content",
+            "Open Library and add content",
         ),
     )
 
@@ -1907,6 +1908,7 @@ class LibraryIngestQueueMixin:
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        batch_id: str | None = None,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -1914,6 +1916,9 @@ class LibraryIngestQueueMixin:
         When ``self.media_db`` is unavailable, the job is failed immediately
         (with the exact copy ``"Media database is unavailable."``) and it
         never reaches the parse pool.
+        ``batch_id`` carries the folder-expansion batch id (task-2221) so
+        the queue can group one submission's jobs; ``None`` for single
+        files.
 
         Args:
             source_path: The file path to ingest.
@@ -1955,10 +1960,15 @@ class LibraryIngestQueueMixin:
                 )
                 return failed if failed is not None else empty_job
             first_job: LibraryIngestJob | None = None
+            # (task-2221 owner ruling) One batch id per folder submission,
+            # so the queue can group this run's rows under one header and
+            # the tally can answer "what did THIS run just do".
+            folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
             for expanded_path in expanded:
                 job = self.submit_library_ingest_job(
                     source_path=expanded_path,
                     ingest_options=ingest_options,
+                    batch_id=folder_batch_id,
                     # Title is per-file (the ingest form clears it on submit
                     # for exactly this reason), so a folder's files each take
                     # their own filename-derived title rather than all
@@ -2021,6 +2031,7 @@ class LibraryIngestQueueMixin:
             chunk_size=chunk_size,
             detected_type=detected_type,
             ingest_options=ingest_options or {},
+            batch_id=batch_id,
         )
         if self.media_db is None:
             failed = self.library_ingest_jobs.mark_failed(
@@ -2615,13 +2626,29 @@ class LibraryIngestQueueMixin:
             error_text = _sanitize_library_ingest_error_text(
                 str(result.get("error") or "Library ingest parsing failed.")
             )
-            self.library_ingest_jobs.mark_failed(
-                job_id,
-                error=error_text or "Library ingest parsing failed.",
-                permanent=bool(result.get("permanent", False)),
-                error_detail=result.get("error_detail"),
-                stt_failure_provenance=result.get("stt_failure_provenance"),
-            )
+            error_detail = result.get("error_detail")
+            # (task-2220 owner ruling) An unsupported file was never
+            # attempted -- it records as SKIPPED, a neutral terminal
+            # outcome; "failed" is reserved for files the pipeline tried.
+            if (
+                isinstance(error_detail, dict)
+                and error_detail.get("category") == "unsupported_file_type"
+            ):
+                self.library_ingest_jobs.mark_skipped(
+                    job_id,
+                    reason=error_text or "Unsupported file type.",
+                    error_detail=error_detail,
+                )
+            else:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=error_text or "Library ingest parsing failed.",
+                    permanent=bool(result.get("permanent", False)),
+                    error_detail=error_detail,
+                    stt_failure_provenance=result.get(
+                        "stt_failure_provenance"
+                    ),
+                )
         self._top_up_ingest_parse_pool()
 
     def _handle_broken_ingest_parse_pool(

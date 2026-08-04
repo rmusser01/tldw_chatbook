@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
@@ -20,6 +21,7 @@ from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -68,9 +70,11 @@ from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
+    PolicyDeniedLibraryNotesScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesListScopeService,
@@ -443,6 +447,7 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         for selector in (
             "#library-rail-section-header-browse",
             "#library-rail-section-header-create",
+            "#library-rail-section-header-study",
             "#library-rail-section-header-ingest",
             "#library-rail-section-header-details",
         ):
@@ -450,12 +455,504 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
 
         visible = _visible_text(screen)
         assert "Conversations (2)" in visible
-        assert "Search, pick a content type, or ingest something new." in visible
+        assert (
+            "Search everything, pick a section on the left, or add something new."
+            in visible
+        )
         assert screen.query_one("#library-canvas-landing")
 
         assert not screen.query("#library-mode-bar")
         assert not screen.query("#library-contract-grid")
         assert not screen.query("#library-notes-summary")
+
+
+@pytest.mark.asyncio
+async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
+    """PR #1318 review: a failed snapshot must not render
+    'Notes 0 · Media 0 · Conversations 0' in the hub -- false zeros read
+    as an empty Library. The hub carries the error line instead, the same
+    honesty policy F-014 applied to the rail's count suffixes."""
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_lookup_error
+        hub_counts = str(screen.query_one("#library-hub-counts", Static).renderable)
+        assert "Notes 0" not in hub_counts
+        assert "Media 0" not in hub_counts
+        assert "Conversations 0" not in hub_counts
+        assert screen._library_lookup_error in hub_counts
+
+
+@pytest.mark.asyncio
+async def test_library_landing_hub_shows_next_actions_counts_and_recents():
+    """F-010: the landing canvas is the wired hub, not a one-line void --
+    actionable next-step rows (Import media / Search / New note) plus the
+    counts and recents the already-implemented helpers derive."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Reading list", "note_id": "n1"}],
+        media=[{"title": "Quarterly report.pdf", "media_id": "m1"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        visible = _visible_text(screen)
+        assert "Notes 1" in visible
+        assert "Media 1" in visible
+        assert "Conversations 2" in visible
+        assert "Reading list" in visible
+        assert "Quarterly report.pdf" in visible
+        assert "Quarterly planning sync" in visible
+        for selector in (
+            "#library-hub-action-import",
+            "#library-hub-action-search",
+            "#library-hub-action-new-note",
+        ):
+            button = screen.query_one(selector)
+            assert button.region.width > 0 and button.region.height > 0
+
+
+@pytest.mark.parametrize(
+    ("button_id", "marker"),
+    [
+        ("#library-hub-action-new-note", "#library-notes-create-blank"),
+        ("#library-hub-action-search", "#library-search-rag-panel"),
+        ("#library-hub-action-import", "#library-ingest-canvas"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_library_landing_hub_action_opens_its_canvas(button_id, marker):
+    """F-010: each hub action row drives the SAME canvas the corresponding
+    rail row opens (the shared `.library-rail-row`-family dispatch)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(button_id).press()
+        await _wait_for_selector(screen, pilot, marker)
+
+
+def test_library_dead_hub_helpers_are_removed():
+    """F-010: the never-called hub helpers are gone -- wired or deleted,
+    no lingering dead code."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+
+    for name in (
+        "_hub_state_summary",
+        "_hub_readiness_summary",
+        "_hub_readiness_counts",
+        "_hub_key_value_row",
+        "_hub_recent_sources_label",
+        "_hub_inventory_readiness_label",
+        "_hub_inventory_console_label",
+        "_hub_inventory_row",
+        "_hub_section_rule",
+        "_hub_console_status",
+        "_source_recent_label",
+    ):
+        assert not hasattr(LibraryScreen, name), name
+    assert not hasattr(library_screen_module, "LIBRARY_EMPTY_NEXT_ACTION_COPY")
+
+
+def test_library_dead_inspector_copy_is_removed():
+    """F-021: the retired inspector pane's empty-state copy is gone. The
+    review flagged the next-action line as architecture-talk in user
+    chrome, but the pane itself was retired with the legacy workbench --
+    nothing composes ``#library-source-inspector`` and nothing reads
+    either constant, so the fix is deletion, not rewording. User-facing
+    guidance lives in the F-013 landing copy and the F-010 hub."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+
+    assert not hasattr(library_screen_module, "LIBRARY_INSPECTOR_EMPTY_COPY")
+    assert not hasattr(
+        library_screen_module, "LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
+    """F-011: rail rows are one terminal line by default -- the blanket
+    "in Library" second line (pure stutter on all ~11 rows) is gone. A
+    meta line survives ONLY where it discriminates: the Study handoff
+    rows, which leave the Library for another screen."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        handoff_ids = {
+            "library-row-create-study",
+            "library-row-create-flashcards",
+            "library-row-create-quizzes",
+        }
+        rows = list(screen.query("Button.library-rail-row"))
+        assert rows, "expected rail rows to be mounted"
+        for row in rows:
+            label = str(row.label)
+            if row.id in handoff_ids:
+                assert "\n" in label, f"{row.id} lost its handoff discriminator"
+                assert "opens Study" in label
+                assert row.styles.height.value == 2
+            else:
+                assert "\n" not in label, f"{row.id} still carries a second line"
+                assert "in Library" not in label
+                assert row.styles.height.value == 1
+
+
+@pytest.mark.asyncio
+async def test_rail_create_section_and_details_reachable_at_100x30():
+    """F-011: the regression the stutter caused -- at 100x30 the Create
+    section is inside the viewport without scrolling (it was pushed out of
+    reach by 3-line rows), and the Details status group is reachable after
+    expanding the disclosure and scrolling the rail."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail = screen.query_one("#library-rail")
+        fold = rail.region.y + rail.region.height
+
+        # Create section: fully in view, no scroll required.
+        create_header = screen.query_one("#library-rail-section-header-create")
+        assert create_header.display and create_header.region.height > 0
+        assert create_header.region.y >= rail.region.y, (
+            f"create header above rail viewport: {create_header.region}"
+        )
+        assert create_header.region.y + create_header.region.height <= fold, (
+            f"create header below rail viewport: {create_header.region} (fold {fold})"
+        )
+
+        # Details toggle: one scroll to the bottom of the rail.
+        rail.scroll_end(animate=False)
+        await pilot.pause()
+        toggle = screen.query_one("#console-rail-section-toggle-library-details", Button)
+        assert toggle.region.y + toggle.region.height <= fold, (
+            f"details toggle unreachable after scroll_end: {toggle.region}"
+        )
+
+        # Expand it and the Status group is there, in view.
+        toggle.press()
+        await pilot.pause()
+        await pilot.pause()
+        rail.scroll_end(animate=False)
+        await pilot.pause()
+        status = screen.query_one("#library-details-group-status", Static)
+        assert status.display and status.region.height > 0
+        assert status.region.y + status.region.height <= fold, (
+            f"status group pushed below rail viewport: {status.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
+    """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
+    the SAME one-line row (the F-011 height contract is untouched), and
+    plain rows carry no gloss. F-015 fitting: the gloss is word-cut with
+    an ellipsis when the rail is too narrow for all of it (the rail's
+    realistic widths rarely fit the full gloss), so the pin asserts the
+    rendered gloss is a dim, ellipsized PREFIX of the full subtitle."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_row = screen.query_one("#library-row-browse-search", Button)
+        label = search_row.label
+        plain = label.plain
+        assert "\n" not in plain
+        assert search_row.styles.height.value == 1
+        # The gloss renders DIM (not just present): a "dim" style span
+        # covers exactly the em-dash subtitle, leaving title/count at
+        # normal emphasis.
+        dim_spans = [s for s in label.spans if "dim" in str(s.style)]
+        assert dim_spans, f"no dim span on the jargon gloss: {label.spans}"
+        covered = plain[dim_spans[0].start : dim_spans[0].end]
+        assert covered.startswith("— "), f"gloss lost its dash: {covered!r}"
+        assert "search everything".startswith(covered[2:].rstrip("…")), (
+            f"rendered gloss is not a prefix of the full subtitle: {covered!r}"
+        )
+
+        plain_row = screen.query_one("#library-row-browse-notes", Button)
+        assert "—" not in plain_row.label.plain
+        assert not [
+            s for s in plain_row.label.spans if "dim" in str(s.style)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_details_shows_db_sizes_from_the_app_cache():
+    """F-014: the relocated DB-size telemetry surfaces in the rail's
+    Details disclosure (fed from the DBStatusManager's app-level cache),
+    not in the footer."""
+    app = _build_test_app()
+    app.db_sizes_status = {
+        "prompts": "1.0 KB",
+        "chachanotes": "2.0 KB",
+        "media": "3.0 KB",
+    }
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        sizes = screen.query_one("#library-details-db-sizes", Static)
+        text = str(sizes.renderable)
+        assert "Prompts 1.0 KB" in text
+        assert "Chats/Notes 2.0 KB" in text
+        assert "Media 3.0 KB" in text
+
+
+@pytest.mark.asyncio
+async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
+    """F-014: a failed snapshot must not dress up as an empty Library --
+    on lookup error the rows show NO count suffix (the Details error line
+    carries the explanation), never a misleading "(0)"."""
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        for row_id in ("browse-media", "browse-conversations", "browse-notes"):
+            row = screen.query_one(f"#library-row-{row_id}", Button)
+            assert "(" not in row.label.plain, (
+                f"{row_id} shows a count under lookup error: {row.label.plain!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
+    """F-015: at 100x30 every visible rail row fits its width with the
+    COUNT intact -- subtitles drop first, then titles ellipsize, and the
+    count (the information that matters) is the last thing standing."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.pause()
+
+        # Every row's first line fits its rendered width...
+        for row in screen.query("Button.library-rail-row"):
+            first_line = row.label.plain.split("\n")[0]
+            width = row.content_region.width
+            assert cell_len(first_line) <= width, (
+                f"{row.id} overflows its width: {first_line!r} ({cell_len(first_line)} > {width})"
+            )
+
+        # ...and the count survives on the one row whose title + count
+        # exceed the rail: the TITLE absorbed the squeeze instead.
+        conv = screen.query_one("#library-row-browse-conversations", Button)
+        conv_line = conv.label.plain.split("\n")[0]
+        assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
+        assert "..." in conv_line or "…" in conv_line, (
+            f"title should ellipsize before the count clips: {conv_line!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
+    """F-015/F-016: the full 'Search Library…' placeholder fits the box at
+    100 cols, and the box carries the app's field treatment (the
+    $ds-grid-line frame its sibling filters use) instead of a borderless
+    black void."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        assert search.content_region.width >= cell_len(search.placeholder), (
+            f"placeholder {search.placeholder!r} clipped: "
+            f"{search.content_region.width} < {cell_len(search.placeholder)}"
+        )
+        top_style, top_color = search.styles.border.top
+        assert top_style == "tall"
+        # $ds-grid-line ($surface-lighten-1), the app's field frame token --
+        # not the near-invisible Textual default border (#191919).
+        assert top_color.hex.lower() == "#2d2d2d"
+
+
+@pytest.mark.asyncio
+async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
+    """F-020: at 100x30 the rail's content overflows and its scrollbar
+    actually renders -- and the thumb uses the visible $ds-text-muted
+    token (the task-1712 fix for this same bug class on
+    #settings-category-list: '$ds-grid-line blended into the panel')."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail = screen.query_one("#library-rail")
+        assert rail.max_scroll_y > 0, "rail unexpectedly fits at 100x30"
+        assert rail.show_vertical_scrollbar is True
+
+    # Drift guard on the token itself: the thumb must contrast with the
+    # panel, or the rendered scrollbar is still invisible (the F-020
+    # capture: a track with no readable thumb).
+    component = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text(encoding="utf-8")
+    rail_block = re.search(r"#library-rail\s*\{([^}]*)\}", component)
+    assert rail_block, "#library-rail rule missing from _agentic_terminal.tcss"
+    assert "scrollbar-color: $ds-text-muted;" in rail_block.group(1)
+
+
+@pytest.mark.asyncio
+async def test_landing_footer_advertises_the_focus_search_key():
+    """F-012: the landing state is not a keyboard dead zone -- the footer
+    advertises the one Library key that works there (`/` focuses the rail
+    search box) instead of the bare global default."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        footer = screen.query_one(AppFooterStatus)
+        assert footer.shortcut_text == "/ focus search"
+
+
+@pytest.mark.asyncio
+async def test_slash_focuses_the_rail_search_box_from_landing():
+    """F-012: `/` jumps straight into the rail search box from the landing
+    state -- the keyboard path into Search/RAG the review found missing."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        assert not search.has_focus
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.has_focus
+
+
+@pytest.mark.asyncio
+async def test_slash_types_literally_when_another_input_has_focus():
+    """F-012: `/` must never steal focus out of a text field the user is
+    already typing in -- it only fires when no Input/TextArea owns focus."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.focus()
+        await pilot.pause()
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert filter_input.has_focus
+        assert filter_input.value == "/"
+
+
+@pytest.mark.asyncio
+async def test_slash_on_the_focused_rail_search_rearms_selection():
+    """F-012: a second `/` on the already-focused rail search re-arms the
+    query (select-all, so the next keystroke replaces it) instead of
+    inserting a literal slash -- the settings screen's task-1584 trap."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("a", "b", "c")
+        await pilot.pause()
+        assert search.value == "abc"
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.value == "abc"
+        assert search.selection == (0, 3)
+
+
+@pytest.mark.asyncio
+async def test_search_deep_link_registers_the_use_in_console_footer_hint():
+    """F-012: the `u` hint must be visible whenever `u` works. Only the
+    rail-row switch re-registered the footer, so a navigation-context deep
+    link into the Search/RAG canvas left the key working but unadvertised."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        footer = screen.query_one(AppFooterStatus)
+        assert "u use Library context in Console" in footer.shortcut_text
+        assert "/ focus search" in footer.shortcut_text
 
 
 @pytest.mark.asyncio
@@ -4867,6 +5364,10 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
     literal ``#library-rail`` rule (not just "selector appears somewhere in
     the file") keeps this from passing on an unrelated rule that happens to
     mention the same properties elsewhere.
+
+    F-020: the thumb token moved from ``$ds-grid-line`` (blended into the
+    panel -- an invisible overflow cue) to ``$ds-text-muted``, the
+    task-1712 fix for this same bug class on ``#settings-category-list``.
     """
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     for css_path in (
@@ -4876,7 +5377,7 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
         body = _css_rule_body(css_path.read_text(), "#library-rail")
         assert "overflow-y: auto" in body, css_path
         assert "scrollbar-background: $ds-surface-panel" in body, css_path
-        assert "scrollbar-color: $ds-grid-line" in body, css_path
+        assert "scrollbar-color: $ds-text-muted" in body, css_path
 
 
 @pytest.mark.asyncio
@@ -9130,6 +9631,11 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
 
 async def _open_library_ingest_canvas(screen, pilot):
+    # Wait for the row, not just press blind: a background ingest job landing
+    # in `done` pokes the source snapshot, whose apply recomposes the rail --
+    # the row is briefly unmounted mid-rebuild (surfaced by the F-010 landing
+    # hub, which made that recompose reliably straddle this call).
+    await _wait_for_selector(screen, pilot, "#library-row-ingest-import-media")
     screen.query_one("#library-row-ingest-import-media").press()
     await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
@@ -9916,7 +10422,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued — all ingests"
+        assert str(counts_line.renderable) == "1 queued — in queue"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 
@@ -12032,7 +12538,11 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
         ]
         assert expected, "generic group unexpectedly has no value fields"
         for label in expected:
-            assert label in labels, f"value field {label!r} has no visible label"
+            # (task-2223) Labels may carry a unit/range hint suffix -- the
+            # contract is that the label text is VISIBLE, not bare.
+            assert any(label in rendered for rendered in labels), (
+                f"value field {label!r} has no visible label"
+            )
 
 
 @pytest.mark.asyncio
@@ -12684,7 +13194,7 @@ async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
             if call.args and str(call.args[0]).startswith("Ingest finished")
         ]
         assert summaries and summaries[-1] == (
-            "Ingest finished — 1 already in Library"
+            "Ingest finished — 1 matched"
         ), f"dedup batch misreported: {summaries}"
         assert summaries[0] == "Ingest finished — 1 imported"
 
@@ -13565,4 +14075,147 @@ async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_pa
         assert not harness.library_ingest_jobs.jobs()
         assert screen._build_library_ingest_state().recent_jobs, (
             "ledger must survive the confirmed clear"
+        )
+
+
+@pytest.mark.asyncio
+async def test_ingest_browse_offers_select_folder_action(
+    tmp_path: Path,
+) -> None:
+    """Ingest Browse offers a folder action; other pickers do not.
+
+    (task-2222 owner ruling) The action returns the directory being
+    viewed, while "Open" keeps descending into directories.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+
+    folder = tmp_path / "pickme"
+    folder.mkdir()
+    (folder / "doc.txt").write_text("hello")
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c8-pick")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        picked: list[object] = []
+        dialog = FileOpen(
+            location=str(folder),
+            title="Import media",
+            offer_select_folder=True,
+        )
+        harness.push_screen(dialog, picked.append)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = dialog.query_one("#select-current-folder", Button)
+        assert "folder" in str(button.label).lower()
+        button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert picked and str(picked[0]) == str(folder), (
+            "Select folder must return the directory being viewed"
+        )
+
+        plain = FileOpen(location=str(folder), title="Open")
+        harness.push_screen(plain, lambda _result: None)
+        await pilot.pause()
+        await pilot.pause()
+        assert not list(plain.query("#select-current-folder")), (
+            "the folder affordance must stay opt-in"
+        )
+        plain.dismiss(None)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_folder_shortcut_hidden_when_affordance_is_off(
+    tmp_path: Path,
+) -> None:
+    """The ctrl+s folder shortcut is hidden on pickers without the action.
+
+    (task-2222 Qodo round) The binding lives on the shared base, so an
+    unconditional declaration advertised a dead shortcut — including in
+    the F1 help — on every other dialog.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c8-bind")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        offering = FileOpen(location=str(tmp_path), offer_select_folder=True)
+        harness.push_screen(offering, lambda _r: None)
+        await pilot.pause()
+        assert offering.check_action("select_current_folder", ()) is not None
+        offering.dismiss(None)
+        await pilot.pause()
+
+        plain = FileOpen(location=str(tmp_path))
+        harness.push_screen(plain, lambda _r: None)
+        await pilot.pause()
+        assert plain.check_action("select_current_folder", ()) is None
+        plain.dismiss(None)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_invalid_marker_toggles_with_the_in_place_validation(
+    tmp_path: Path,
+) -> None:
+    """The invalid-field marker follows edits, not just compose.
+
+    (task-2230 Qodo round) The marker was applied at compose time only,
+    while text/number edits deliberately skip the recompose — so a field
+    stayed marked after becoming valid and never got marked after
+    becoming invalid, exactly the unreliable "highlighted" the marker
+    exists to fix.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="r7-mark")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen.query_one("#library-ingest-path", Input).value = str(staged)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk = screen.query_one("#opt-generic-chunk_size", Input)
+        assert not chunk.has_class("-ingest-option-invalid")
+
+        chunk.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+        assert chunk.has_class("-ingest-option-invalid"), (
+            "becoming invalid must mark the field in place"
+        )
+
+        chunk.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert not chunk.has_class("-ingest-option-invalid"), (
+            "becoming valid must clear the marker in place"
         )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import PurePath
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -17,6 +19,9 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_capabilities,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     validate_ingest_option_value,
     LibraryIngestCanvasState,
@@ -132,6 +137,14 @@ class LibraryIngestQueuePanel(Vertical):
 
     def compose(self) -> ComposeResult:
         state = self.state
+        # (task-2221 owner ruling) The tally leads with the LATEST batch;
+        # the lifetime line stays secondary below it.
+        if state.latest_batch_line:
+            yield Static(
+                state.latest_batch_line,
+                id="library-ingest-latest-batch",
+                markup=False,
+            )
         if state.queue_counts_line:
             yield Static(
                 state.queue_counts_line,
@@ -144,13 +157,36 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
+        # (task-2221) Per-submission group headers: rendered before the
+        # first row of each headed group. Rows keep their flat order and
+        # identity semantics -- the header is an extra Static, not a
+        # container, so the in-place update paths are untouched.
+        headers_before: dict[str, str] = {}
+        for group in state.queue_groups:
+            if group.header_line and group.job_ids:
+                headers_before[group.job_ids[0]] = group.header_line
         for index, row in enumerate(state.queue_rows):
+            header_line = headers_before.get(row.job_id, "")
+            if header_line:
+                yield Static(
+                    header_line,
+                    classes="library-ingest-batch-header",
+                    markup=False,
+                )
             # A source filename can contain Rich markup syntax (e.g. a
             # literal "[/bracket]" in the name) -- escape_markup here is
             # what keeps a hostile filename from raising MarkupError at
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
+            # (task-2230 a11y) Severity gets a colour IN ADDITION to the
+            # glyph+word it already carries -- failed and done rows were
+            # byte-identical in colour, so scanning a tall queue for the
+            # one failure was a linear read.
+            if row.state == IngestJobState.FAILED:
+                row_classes += " library-ingest-row-failed"
+            elif row.state == IngestJobState.SKIPPED:
+                row_classes += " library-ingest-row-skipped"
             stt_actions = _stt_recovery_actions(row.error_detail)
             has_actions = (
                 row.can_open
@@ -328,10 +364,28 @@ class LibraryIngestQueuePanel(Vertical):
                         if getattr(job, "dismissed", False)
                         else ""
                     )
+                    # (task-2223) Basename + relative time first -- a list
+                    # of ~130-char absolute paths was unscannable. The full
+                    # path keeps a muted second line.
+                    name = PurePath(str(job.source_path)).name
+                    age = (
+                        format_console_relative_age(
+                            job.finished_at_wall,
+                            now=datetime.now(timezone.utc),
+                        )
+                        if getattr(job, "finished_at_wall", "")
+                        else ""
+                    )
+                    age_suffix = f" · {age}" if age else ""
                     yield Static(
-                        f"{escape_markup(job.source_path)} — "
-                        f"{job.state.value}{dismissed_suffix}",
+                        f"{escape_markup(name)} — "
+                        f"{job.state.value}{dismissed_suffix}{age_suffix}",
                         classes="library-ingest-recent-item",
+                        markup=False,
+                    )
+                    yield Static(
+                        escape_markup(str(job.source_path)),
+                        classes="library-ingest-recent-path",
                         markup=False,
                     )
 
@@ -533,10 +587,16 @@ class LibraryIngestCanvas(VerticalScroll):
                 self._reported_option_values[(group, field.name)] = str(value)
                 # A populated Input never shows its placeholder, so
                 # placeholder-as-label left values like "1000" with no
-                # visible meaning (task-2012). The label gets its own line.
+                # visible meaning (task-2012). The label gets its own line,
+                # carrying the unit/range hint up front (task-2223).
+                label_text = (
+                    f"{field.label} ({field.hint})"
+                    if getattr(field, "hint", "")
+                    else field.label
+                )
                 children.append(
                     Static(
-                        field.label,
+                        label_text,
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -557,6 +617,10 @@ class LibraryIngestCanvas(VerticalScroll):
                 error_message = (
                     "" if disabled else validate_ingest_option_value(field, value)
                 )
+                if error_message:
+                    # (task-2230 a11y) Persistent marker: the stock invalid
+                    # border only paints while focused.
+                    children[-1].add_class("-ingest-option-invalid")
                 error_line = Static(
                     error_message,
                     id=f"{widget_id}-error",

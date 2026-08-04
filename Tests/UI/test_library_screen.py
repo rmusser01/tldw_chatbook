@@ -38,10 +38,11 @@ async def library_screen():
 
 @pytest.mark.asyncio
 async def test_ingest_button_present(library_screen):
-    """The rail-top Ingest button explains where it takes the user."""
+    """The rail-top primary button names the action in plain language
+    (F-013) and explains where it takes the user."""
     button = library_screen.query_one("#library-ingest-top-button", Button)
-    assert str(button.label) == "Ingest content…"
-    assert str(button.tooltip) == "Open the ingest canvas to add Library content."
+    assert str(button.label) == "Add content…"
+    assert str(button.tooltip) == "Add files, links, and transcripts to your Library."
 
 
 # ----- Ingest options snapshot (Task 13) ------------------------------------

@@ -30,6 +30,9 @@ class OptionField:
         type: Form widget type, e.g. ``select``, ``checkbox``, ``text``,
             ``number``.
         default: Default value when the field is first rendered.
+        hint: Optional unit/range hint rendered beside the field label
+            (task-2223: chunk size/overlap never stated their unit, and
+            the valid range surfaced only via a validation error).
         options: Allowed values for ``select`` fields; empty for other types.
         depends_on: Optional dependency feature ID that must be *installed*
             for this field to be editable. ``None`` means the field needs no
@@ -54,6 +57,7 @@ class OptionField:
     options: tuple[str, ...] = ()
     depends_on: str | None = None
     enabled_when: str | None = None
+    hint: str = ""
     enabled_when_values: tuple[Any, ...] = ()
 
 
@@ -420,7 +424,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     ),
     "generic": TypeGroupCapabilities(
         group="generic",
-        label="Plain text / documents / HTML",
+        label="Plain text & HTML",
         required_features=(),
         optional_features=(),
         fields=(
@@ -451,6 +455,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=1000,
                 enabled_when="chunk",
+                hint="characters · 100–5000",
             ),
             OptionField(
                 name="chunk_overlap",
@@ -458,6 +463,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=100,
                 enabled_when="chunk",
+                hint="characters · at least 0",
             ),
             OptionField(
                 name="encoding",

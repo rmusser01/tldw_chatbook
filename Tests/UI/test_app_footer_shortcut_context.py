@@ -1,5 +1,7 @@
 """Tests for global footer shortcut context updates."""
 
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App
 from textual.widgets import Static
@@ -79,30 +81,102 @@ async def test_footer_renders_workbench_shortcuts():
 
 
 @pytest.mark.asyncio
-async def test_footer_db_size_stats_use_readable_labels_and_context_tooltip(
+async def test_db_size_telemetry_caches_on_the_app_and_leaves_the_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Spell out production DB labels and describe their local context.
+    """F-014: DB-size telemetry no longer renders in user chrome.
+
+    The manager still computes the spelled-out sizes (task-1714 labels)
+    and logs them, but its output is cached on the app for the Library
+    Details disclosure instead of pushed into the footer, so a fresh
+    install's footer no longer reads "Prompts: N/A | Chats/Notes: N/A |
+    Media: N/A".
 
     Args:
-        monkeypatch: Pytest fixture used to bind the production manager to the
-            production footer function under test.
+        monkeypatch: Pytest fixture used to stub the size lookups.
     """
+    app = SimpleNamespace()
     footer = AppFooterStatus(id="footer")
-    manager = DBStatusManager(app=object())
-    monkeypatch.setattr(manager, "_get_db_status_widget", lambda: footer)
+    manager = DBStatusManager(app=app)
     monkeypatch.setattr(manager, "_get_db_size", lambda *_args: "1.0 KB")
 
     await manager.update_db_sizes()
 
-    rendered = str(footer._db_status_display.renderable)
-    tooltip = str(footer._db_status_display.tooltip or "")
+    assert app.db_sizes_status == {
+        "prompts": "1.0 KB",
+        "chachanotes": "1.0 KB",
+        "media": "1.0 KB",
+    }
+    # The footer indicator is never fed -- and stays collapsed (empty).
+    assert str(footer._db_status_display.renderable) == ""
+    assert footer._db_status_display.display is False
 
-    assert "Prompts:" in rendered
-    assert "Chats/Notes:" in rendered
-    assert "Media:" in rendered
-    assert "local" in tooltip.lower()
-    assert "database file sizes" in tooltip.lower()
+
+@pytest.mark.asyncio
+async def test_footer_db_indicator_collapses_when_empty_and_stays_down():
+    """The DB-size indicator only takes footer space while it has content;
+    the priority reflow must not resurrect an empty indicator on resize."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(200, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        db = app.query_one("#internal-db-size-indicator", Static)
+        # Never fed: collapsed from the start.
+        assert db.display is False
+
+        # Feeding content reveals it; clearing collapses it again.
+        footer.update_db_sizes_display("P: 144.0 KB | C/N: 904.0 KB | M: 376.0 KB")
+        await pilot.pause()
+        assert db.display is True
+        footer.update_db_sizes_display("")
+        await pilot.pause()
+        assert db.display is False
+
+        # A resize re-runs the priority reflow -- the empty indicator
+        # must stay down rather than reappear as blank chrome.
+        await pilot.resize_terminal(60, 12)
+        await pilot.pause()
+        assert db.display is False
+        await pilot.resize_terminal(200, 12)
+        await pilot.pause()
+        assert db.display is False
+
+
+@pytest.mark.asyncio
+async def test_footer_token_chip_hidden_until_a_real_count_lands():
+    """F-003: the Tokens chip is meaningful only where token counts exist
+    (chat contexts). It now starts empty and hidden -- never a
+    "Tokens: --" placeholder -- appears when a real count is pushed, and
+    hides again when the count clears (non-chat tabs write "" via the
+    periodic updater)."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(100, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        chip = app.query_one("#footer-token-count", Static)
+
+        # Fresh footer: no placeholder text, no chip.
+        assert str(chip.renderable) == ""
+        assert chip.display is False
+
+        # A real count reveals the chip...
+        footer.update_token_count("Tokens: 1,234")
+        await pilot.pause()
+        assert "Tokens: 1,234" in str(chip.renderable)
+        assert chip.display is True
+
+        # ...and clearing it (the non-chat updater path) hides it again.
+        footer.update_token_count("")
+        await pilot.pause()
+        assert chip.display is False
 
 
 @pytest.mark.asyncio
@@ -152,7 +226,10 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
             yield AppFooterStatus(id="footer")
 
     app = TestApp()
-    async with app.run_test(size=(100, 12)) as pilot:
+    # F-003 recalibration: the width budget below used to include the
+    # "Tokens: --" placeholder's 10 cells; the chip now starts hidden and
+    # empty, so the same push-over-the-edge exercise runs at 90 cols.
+    async with app.run_test(size=(90, 12)) as pilot:
         footer = app.query_one("#footer", AppFooterStatus)
         footer.update_db_sizes_display("P: 144.0 KB | C/N: 904.0 KB | M: 376.0 KB")
         await pilot.pause()

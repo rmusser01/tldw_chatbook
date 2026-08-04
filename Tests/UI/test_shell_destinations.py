@@ -25,22 +25,23 @@ def test_master_shell_destination_order_matches_spec():
 
 
 def test_personas_destination_labelled_roleplay_with_aliases():
-    """The nav destination reads "Roleplay", expanding to "Roleplay & Chat Dictionaries".
+    """The nav destination reads "Roleplay" - the one public name everywhere.
 
     "Personas" stays reserved for the in-screen user-identity mode
     (``MODE_LABELS["personas"]``), which this test does not touch (task-435).
 
     The label was "RP&CD" until a roleplay UAT found that a newcomer -- whose
     whole goal is roleplay -- could not decode the abbreviation from the nav
-    bar, which is exactly where the decision to navigate gets made. The
-    expansion was only visible as the screen title, i.e. after guessing right.
-    Every legacy route alias below still resolves, so muscle memory and links
-    are unaffected.
+    bar, which is exactly where the decision to navigate gets made. F-034
+    then retired the long "Roleplay & Chat Dictionaries" expansion (palette
+    full_label) so nav, header, and palette all say the same thing. Every
+    legacy route alias below still resolves, so muscle memory and links are
+    unaffected.
     """
     dest = get_shell_destination("personas")
     assert dest.label == "Roleplay"
-    assert dest.full_label == "Roleplay & Chat Dictionaries"
-    assert dest.accessible_label == "Roleplay & Chat Dictionaries"
+    assert dest.full_label == "Roleplay"
+    assert dest.accessible_label == "Roleplay"
     assert "roleplay" in dest.legacy_routes
     for route in (
         "personas",

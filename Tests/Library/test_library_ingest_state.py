@@ -402,7 +402,7 @@ def test_failed_row_line_appends_retry_suffix():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
-    assert row.line == "✗ failed · report.txt · bad codec · retry 2"
+    assert row.line == "✗ failed · report.txt · bad codec · attempt 3"
 
 
 def test_basename_used_for_nested_path():
@@ -459,7 +459,7 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert (
         state.queue_counts_line
-        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — all ingests"
+        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — in queue"
     )
 
 
@@ -490,7 +490,7 @@ def test_queue_counts_line_omits_zero_states():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     # (task-2043) The suffix says the totals span ALL ingests (the
     # registry restores prior sessions from the jobs DB).
-    assert state.queue_counts_line == "2 done · 1 failed — all ingests"
+    assert state.queue_counts_line == "2 done · 1 failed — in queue"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -1649,7 +1649,7 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert mixed.unsupported_line == (
-        "1 unsupported file will be recorded as a failure: x.json."
+        "1 unsupported file will be skipped: x.json."
     )
 
     blocked = build_library_ingest_state(
@@ -1768,7 +1768,7 @@ def test_queue_counts_line_shows_in_flight_batch_work():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert state.queue_counts_line == (
-        "1 parsing · 2 queued · 1 done — all ingests"
+        "1 parsing · 2 queued · 1 done — in queue"
     )
 
 
@@ -1907,3 +1907,383 @@ def test_armed_clear_label_names_failed_rows():
     assert done_only.queue_clear_finished_label == (
         "Press again to clear 1 finished"
     )
+
+
+def test_all_match_selection_gets_consent_line_and_stays_enabled():
+    """(task-2223 ruling) Zero imports + >=1 predicted match keeps Start
+    ENABLED (the dedup probe is capped best-effort) with an
+    informed-consent quiet line saying what starting will actually do."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/report.txt"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert state.start_enabled
+    assert state.start_quiet_line == (
+        "Everything here appears to already be in your Library — "
+        "starting will re-check and match, not re-import."
+    )
+    assert state.commit_summary_line == "0 will import · 1 will match"
+
+
+def test_skipped_jobs_render_neutral_and_count_separately():
+    """(task-2220 ruling) A skipped job renders with the neutral glyph, no
+    Retry, dismiss offered; the tally counts skips in their own segment,
+    never as failures; the armed clear label counts them as finished but
+    not as failed."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+        error="Unsupported file type: .jpg.",
+    )
+    done = _job(job_id="ingest-job-2", state=IngestJobState.DONE)
+    state = build_library_ingest_state(
+        (skipped, done),
+        form=LibraryIngestFormState(),
+        clear_finished_armed=True,
+    )
+    row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
+    assert row.glyph == "○"
+    assert row.line.startswith("○ skipped · photo.jpg")
+    assert row.can_retry is False
+    assert row.can_dismiss is True
+    assert state.queue_counts_line == "1 done · 1 skipped — in queue"
+    assert state.queue_clear_finished_label == (
+        "Press again to clear 2 finished"
+    )
+    assert [j.job_id for j in state.recent_jobs] == [
+        "ingest-job-1",
+        "ingest-job-2",
+    ]
+
+
+def test_commit_summary_splits_skip_from_fail():
+    """(task-2220) Unsupported files forecast as 'will skip'; empty files
+    keep 'will fail' (they are enqueued and genuinely fail)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt", "/tmp/b.txt"],
+                "unsupported": ["/tmp/pic.jpg"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=4,
+            empty_files=("/tmp/zero.txt",),
+        ),
+    )
+    assert state.commit_summary_line == (
+        "2 will import · 1 will skip · 1 will fail"
+    )
+    assert "will be skipped: pic.jpg." in state.unsupported_line
+
+
+def test_skips_only_queue_still_offers_clear_finished():
+    """(task-2220 Qodo round) A queue holding ONLY skipped rows must show
+    the Clear finished control -- skips count as finished everywhere."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+    )
+    state = build_library_ingest_state((skipped,), form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is True
+
+
+def test_queue_groups_batches_with_headers_and_latest_line():
+    """(task-2221 owner ruling) Contiguous same-batch runs become one
+    headed group (source, count, age, outcomes); singles stay bare; the
+    latest-batch line leads with the newest batch's outcomes."""
+    single = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+    )
+    b1 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    state = build_library_ingest_state(
+        (single, b1, b2), form=LibraryIngestFormState()
+    )
+    assert len(state.queue_groups) == 2
+    bare, headed = state.queue_groups
+    assert bare.header_line == ""
+    assert bare.job_ids == ("ingest-job-1",)
+    assert headed.batch_id == "local-aaa"
+    assert headed.job_ids == ("ingest-job-2", "ingest-job-3")
+    assert headed.header_line.startswith("▸ folder_a — 2 files")
+    assert "1 done" in headed.header_line
+    assert "1 skipped" in headed.header_line
+    # The batch carries the newer submitted_at here, so it is the latest
+    # run (the single job's default timestamp is older).
+    assert state.latest_batch_line == "Latest run: 1 done · 1 skipped"
+
+
+def test_single_file_submission_reads_naturally_without_header():
+    """(task-2221) A batchless single job renders exactly as before: one
+    bare group, no header, no latest-batch line."""
+    solo = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((solo,), form=LibraryIngestFormState())
+    assert len(state.queue_groups) == 1
+    assert state.queue_groups[0].header_line == ""
+    assert state.latest_batch_line == ""
+
+
+def test_latest_run_line_follows_a_single_file_submission() -> None:
+    """The latest-run line reports a single-file submission.
+
+    (task-2230) THE round-7 regression: the line was computed only from
+    groups carrying a batch_id, so a single-file run left it reporting
+    the previous multi-file batch. Every submission is a run.
+    """
+    b1 = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    later_single = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+        submitted_at=500.0,
+    )
+    state = build_library_ingest_state(
+        (b1, b2, later_single), form=LibraryIngestFormState()
+    )
+    assert state.latest_batch_line == "Latest run: 1 done", (
+        "the single-file run is the latest submission and must be reported"
+    )
+
+
+def test_latest_run_line_hidden_when_the_queue_holds_one_run() -> None:
+    """The latest-run line hides when the queue holds a single run.
+
+    (task-2230) The group header already reports it, so the line would
+    just repeat itself.
+    """
+    only = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((only,), form=LibraryIngestFormState())
+    assert state.latest_batch_line == ""
+
+
+def test_unresolvable_path_gates_start_with_an_explanation() -> None:
+    """An unresolvable path gates Start and explains itself.
+
+    (task-2230) It used to leave Start styled exactly like a valid
+    selection with a BLANK gate line, and pressing it left no queue
+    record at all.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/nope_does_not_exist.txt"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope_does_not_exist.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert not state.start_enabled
+    assert state.start_quiet_line == (
+        "Can't find that path — check it, or use Browse… to pick a file "
+        "or folder."
+    )
+
+
+def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:
+    """A dedup match reports as "matched", distinct from an import.
+
+    (task-2231) The forecast promises "will import · will match · will
+    skip"; the receipt used to fold match into "done" and render the two
+    outcomes as byte-identical rows, so the promise could not be audited.
+    """
+    imported = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/fresh.txt",
+        progress={"message": "Ingested fresh.txt"},
+        batch_id="local-aaa",
+        submitted_at=10.0,
+    )
+    matched = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/tmp/twin.txt",
+        progress={
+            "message": (
+                "Already in Library — matched an existing item; nothing "
+                "new was imported."
+            )
+        },
+        batch_id="local-aaa",
+        submitted_at=11.0,
+    )
+    other = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+        submitted_at=99.0,
+    )
+    state = build_library_ingest_state(
+        (imported, matched, other), form=LibraryIngestFormState()
+    )
+    rows = {row.job_id: row for row in state.queue_rows}
+    assert rows["ingest-job-1"].line.startswith("✓ done · fresh.txt")
+    assert rows["ingest-job-2"].line.startswith("≡ matched · twin.txt")
+    assert rows["ingest-job-2"].glyph == "≡"
+
+    headed = next(g for g in state.queue_groups if g.header_line)
+    assert "1 done" in headed.header_line
+    assert "1 matched" in headed.header_line
+
+
+def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
+    """A re-attempt is visible while it runs, not only once it ends.
+
+    (task-2231) Requeue creates a new QUEUED job with an incremented
+    count, but the in-flight rows never showed it — so pressing Retry
+    looked identical to nothing happening.
+    """
+    # (Qodo round) detected_type is appended by the parsing/writing
+    # branches, so the marker must be the row's TRAILING element -- with a
+    # type present it used to read "… · attempt 2 · pdf".
+    for state_value, word, detected in (
+        (IngestJobState.QUEUED, "queued", ""),
+        (IngestJobState.PARSING, "parsing", "pdf"),
+        (IngestJobState.WRITING, "writing", "pdf"),
+    ):
+        job = _job(
+            job_id="ingest-job-1",
+            state=state_value,
+            source_path="/tmp/broken.pdf",
+            retry_count=1,
+            detected_type=detected,
+        )
+        row = build_library_ingest_state(
+            (job,), form=LibraryIngestFormState()
+        ).queue_rows[0]
+        assert row.line.startswith(f"● {word} · broken.pdf")
+        assert row.line.endswith("· attempt 2"), (
+            f"{word} row must show the attempt number: {row.line!r}"
+        )
+
+    first = _job(job_id="ingest-job-2", state=IngestJobState.PARSING)
+    first_row = build_library_ingest_state(
+        (first,), form=LibraryIngestFormState()
+    ).queue_rows[0]
+    assert "attempt" not in first_row.line
+
+
+def test_consent_line_requires_every_importable_file_to_match() -> None:
+    """"Everything here" only renders when it is true.
+
+    (task-2231) The line rendered on a selection where only some files
+    were predicted matches.
+    """
+    form = LibraryIngestFormState(path="/tmp/folder")
+    partial = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt", "/tmp/b.txt"],
+                "unsupported": ["/tmp/pic.jpg"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=3,
+            already_in_library=2,
+        ),
+    )
+    assert "Everything here" not in partial.start_quiet_line
+
+    total = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert total.start_quiet_line.startswith("Everything here")
+
+
+def test_queue_tally_and_group_header_agree_on_matched() -> None:
+    """The tally buckets the way the headers and rows do.
+
+    (task-2231 Qodo round) The top-level counts line bucketed purely by
+    state, so it read "2 done" while a group header directly below it
+    read "1 done · 1 matched" — two contradictory summaries on one
+    screen.
+    """
+    imported = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/fresh.txt",
+        progress={"message": "Ingested fresh.txt"},
+        batch_id="local-aaa",
+        submitted_at=10.0,
+    )
+    matched = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/tmp/twin.txt",
+        progress={
+            "message": (
+                "Already in Library — matched an existing item; nothing "
+                "new was imported."
+            )
+        },
+        batch_id="local-aaa",
+        submitted_at=11.0,
+    )
+    state = build_library_ingest_state(
+        (imported, matched), form=LibraryIngestFormState()
+    )
+    assert state.queue_counts_line == "1 done · 1 matched — in queue"
+    headed = next(g for g in state.queue_groups if g.header_line)
+    assert "1 done" in headed.header_line
+    assert "1 matched" in headed.header_line

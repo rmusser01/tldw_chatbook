@@ -76,10 +76,28 @@ class TestCharacterCard:
         async with app.run_test() as pilot:
             assert pilot.app.query_one("#personas-character-card-empty").display is True
             assert pilot.app.query_one("#personas-character-card-body").display is False
-            assert (
-                pilot.app.query_one("#personas-card-edit-character", Button).disabled
-                is True
-            )
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            # F-037: the disabled Edit says why.
+            assert edit.tooltip == "Select a character to edit."
+
+    async def test_edit_tooltip_explains_unsaved_record_state(self):
+        """F-037: an id-less (never-saved) card keeps Edit disabled with a reason."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            record = dict(CHARACTER)
+            record.pop("id")
+            card.load_character(record)
+            await pilot.pause()
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            assert edit.tooltip == "This character has no saved record to edit."
+            # A saved record re-enables Edit and drops the reason.
+            card.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert edit.disabled is False
+            assert edit.tooltip is None
 
     async def test_load_populates_fields_and_enables_edit(self):
         app = WidgetApp()

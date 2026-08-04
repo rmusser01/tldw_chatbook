@@ -15,6 +15,17 @@ from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
 
+#: F-037: every disabled action explains itself. The screen hides the whole
+#: action stack pre-selection (F-031), but the pane keeps the disabled+reason
+#: contract for every state these buttons can render in.
+_NO_SELECTION_EXPORT_TOOLTIP = "Select an item to export."
+_NO_SELECTION_DELETE_TOOLTIP = "Select an item to delete."
+
+#: The one plain line a no-selection inspector shows (F-031): intent-first
+#: guidance instead of a wall of disabled controls and a false
+#: "Validation: OK". Doubles as the Console readiness line pre-selection.
+_NO_SELECTION_GUIDANCE = "Pick a character or persona to start chatting."
+
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 # Kind-applicability for actions that can never apply to some selections
@@ -24,8 +35,10 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 # separate from "applies but is currently blocked" (unsaved edits, provider
 # readiness, no selection yet), which stays owned by
 # set_console_actions_enabled/_apply_action_state's disabled+tooltip logic
-# below. Before a kind is known (no selection) every action still renders,
-# matching the pre-selection "select an item" baseline.
+# below. Before a kind is known (no selection) the per-button display flags
+# still reset to visible, but the whole action stack is hidden behind the
+# no-selection guidance line (F-031), so the flags only take effect once a
+# selection reveals the stack again.
 _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
@@ -95,6 +108,23 @@ class PersonasInspectorPane(Vertical):
         width: 100%;
         height: auto;
     }
+
+    /* F-041: a disabled checkbox must still READ as a checkbox. Textual's
+       base *:disabled:can-focus rule dims it to 0.7 and the stock toggle
+       glyph box is panel-on-panel (a dark gap in the rail). Keep the label
+       dimmed per the ds disabled idiom, restore full opacity, and give the
+       glyph box a visible surface. ($text-disabled/$surface are the theme
+       variables the ds-text-disabled/ds-surface-raised tokens alias; widget
+       DEFAULT_CSS cannot see bundle-scoped ds-* names.) */
+    PersonasInspectorPane #personas-export-include-tts:disabled {
+        opacity: 100%;
+        color: $text-disabled;
+    }
+
+    PersonasInspectorPane #personas-export-include-tts:disabled .toggle--button {
+        background: $surface;
+        color: $text;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -107,6 +137,18 @@ class PersonasInspectorPane(Vertical):
         self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
         self._tts_export_available = False
+        # F-040: marked library rows drive bulk Delete/Export JSON affordances.
+        self._marked_count = 0
+
+    def set_marked_count(self, count: int) -> None:
+        """Bulk-mark awareness for Delete/Export (F-040).
+
+        With marks active, Delete and Export JSON target the marked set
+        (their tooltips say so) and Export PNG - a single-card format - is
+        disabled with a reason. Zero restores the selection-owned gates.
+        """
+        self._marked_count = max(0, int(count))
+        self._apply_action_state()
 
     def compose(self) -> ComposeResult:
         """Compose the Inspector pane summary, readiness, and actions.
@@ -135,23 +177,52 @@ class PersonasInspectorPane(Vertical):
         # character by its picture at least as much as by its name, and the
         # inspector previously showed every attribute EXCEPT the portrait.
         yield ClickableAvatarBox(id="personas-inspector-avatar-thumb")
-        yield Static("Validation: OK", id="personas-validation-summary")
-        yield Static("Conversations", classes="destination-section")
-        yield ListView(id="personas-conversations-list")
-        yield Static("Readiness", classes="destination-section")
-        yield Static("Console blocked: select an item", id="personas-readiness-console")
-        with Vertical(id="personas-inspector-actions"):
+        # F-031: everything below the portrait is hidden until there is a
+        # selection - pre-selection the inspector is just the summary lines
+        # plus one plain guidance line (the readiness Static below), not a
+        # false "Validation: OK", dangling section headers, and dead buttons.
+        validation = Static("Validation: OK", id="personas-validation-summary")
+        validation.display = False
+        yield validation
+        conversations_header = Static(
+            "Conversations",
+            id="personas-conversations-header",
+            classes="destination-section",
+        )
+        conversations_header.display = False
+        yield conversations_header
+        conversations_list = ListView(id="personas-conversations-list")
+        conversations_list.display = False
+        yield conversations_list
+        readiness_header = Static(
+            "Readiness",
+            id="personas-readiness-header",
+            classes="destination-section",
+        )
+        readiness_header.display = False
+        yield readiness_header
+        yield Static(_NO_SELECTION_GUIDANCE, id="personas-readiness-console")
+        actions = Vertical(id="personas-inspector-actions")
+        actions.display = False
+        with actions:
+            # F-032: one primary Console CTA named by intent (Chat now =
+            # begin immediately) plus one secondary (Send to Console draft =
+            # stage the card for the next Console draft). Ids, handlers, and
+            # the per-intent gating (task-523: Chat now also needs a ready
+            # provider) are unchanged - only labels, order, and emphasis.
             yield Button(
-                "Attach to Console",
+                "Chat now",
+                id="personas-start-chat",
+                disabled=True,
+                classes="console-action-primary",
+                tooltip=_NO_SELECTION_GUIDANCE,
+            )
+            yield Button(
+                "Send to Console draft",
                 id="personas-attach-to-console",
                 disabled=True,
                 classes="console-action-secondary",
-            )
-            yield Button(
-                "Start Chat",
-                id="personas-start-chat",
-                disabled=True,
-                classes="console-action-secondary",
+                tooltip=_NO_SELECTION_GUIDANCE,
             )
             yield Checkbox(
                 "Include assigned voice profile",
@@ -164,18 +235,21 @@ class PersonasInspectorPane(Vertical):
                 id="personas-export-json",
                 disabled=True,
                 classes="console-action-subdued",
+                tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
             )
             yield Button(
                 "Export PNG",
                 id="personas-export-png",
                 disabled=True,
                 classes="console-action-subdued",
+                tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
             )
             yield Button(
                 "Delete",
                 id="personas-delete",
                 disabled=True,
                 classes="console-action-subdued personas-destructive",
+                tooltip=_NO_SELECTION_DELETE_TOOLTIP,
             )
 
     def show_selection(self, *, name: str, kind: str) -> None:
@@ -239,7 +313,7 @@ class PersonasInspectorPane(Vertical):
         reason: str | None = None,
         provider_block_reason: str | None = None,
     ) -> None:
-        """Set Attach/Start availability from the screen-owned Console gate.
+        """Set Chat-now/Send-draft availability from the screen-owned Console gate.
 
         Selection, export, and delete state stay local to the inspector, but
         Console action availability must be pushed by ``PersonasScreen`` so
@@ -249,15 +323,16 @@ class PersonasInspectorPane(Vertical):
             enabled: Whether Console actions are currently available.
             reason: Optional user-facing reason shown when actions are blocked.
             provider_block_reason: Optional blocker naming why the provider a
-                Start Chat/Attach Console handoff session would resolve is not
-                ready (task-440). Per-intent gating (task-523): when set (and
-                ``enabled`` is True) it replaces the "Console ready" copy with
-                "Start Chat blocked: ..." and DISABLES Start Chat - which needs
-                an immediate provider reply - while Attach stays enabled: Attach
-                only stages context, so its send is deferred and the user can
-                fix the provider before sending. Ignored when ``enabled`` is
-                False - the selection/unsaved reason already owns the copy and
-                both buttons are disabled by the gate.
+                Chat now/Send to Console draft handoff session would resolve
+                is not ready (task-440). Per-intent gating (task-523): when
+                set (and ``enabled`` is True) it replaces the "Ready to chat
+                in Console." copy with "Chat now blocked: ..." and DISABLES
+                Chat now - which needs an immediate provider reply - while
+                Send to Console draft stays enabled: it only stages context,
+                so its send is deferred and the user can fix the provider
+                before sending. Ignored when ``enabled`` is False - the
+                selection/unsaved reason already owns the copy and both
+                buttons are disabled by the gate.
         """
         self._console_actions_enabled = bool(enabled)
         self._console_action_block_reason = "" if enabled else (reason or "unavailable")
@@ -342,26 +417,63 @@ class PersonasInspectorPane(Vertical):
         selected = self._has_selection
         unsaved = self._is_unsaved
         kind = self._selected_kind
+        # F-031: pre-selection the inspector is one guidance line only. The
+        # section chrome (Validation, Conversations, Readiness header) and
+        # the action stack stay hidden until there is something to act on;
+        # per-button kind gating below is unchanged for when they render.
+        self.query_one("#personas-validation-summary", Static).display = selected
+        self.query_one("#personas-readiness-header", Static).display = selected
+        self.query_one("#personas-inspector-actions", Vertical).display = selected
+        # F-036: only characters have saved conversations - the section hides
+        # for persona/dictionary/lore selections (the task-443 kind idiom)
+        # instead of dangling a header over an empty list.
+        conversations_visible = selected and kind == "character"
+        self.query_one(
+            "#personas-conversations-header", Static
+        ).display = conversations_visible
+        self.query_one(
+            "#personas-conversations-list", ListView
+        ).display = conversations_visible
         readiness = self.query_one("#personas-readiness-console", Static)
-        if not self._console_actions_enabled:
-            reason = self._console_action_block_reason or "unavailable"
-            readiness.update(f"Console blocked: {reason}")
+        # F-032: readiness speaks in intent (what to do next), not app
+        # topology ("Console blocked: ..."). The per-intent gating is
+        # unchanged - only the copy moved.
+        if not selected:
+            readiness.update(_NO_SELECTION_GUIDANCE)
+        elif not self._console_actions_enabled:
+            if unsaved:
+                readiness.update("Save or discard your edits to chat in Console.")
+            elif kind not in _CONSOLE_ACTION_APPLICABLE_KINDS:
+                readiness.update("Console chat is for characters and personas.")
+            else:
+                reason = self._console_action_block_reason or "unavailable"
+                readiness.update(f"Chat blocked: {reason}")
         elif self._provider_block_reason:
-            # Per-intent (task-523): Attach stays available; only Start Chat is
-            # blocked because it needs an immediate reply from the provider.
-            readiness.update(f"Start Chat blocked: {self._provider_block_reason}")
+            # Per-intent (task-523): Send to Console draft stays available;
+            # only Chat now is blocked because it needs an immediate reply
+            # from the provider.
+            readiness.update(f"Chat now blocked: {self._provider_block_reason}")
         else:
-            readiness.update("Console ready")
+            readiness.update("Ready to chat in Console.")
         export_enabled = selected and not unsaved
-        export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        # Attach tooltip only surfaces when the selection gate itself is closed.
+        # F-037: every disabled action carries a reason - unsaved edits when
+        # that is the blocker, the select-first reason pre-selection.
+        if selected and unsaved:
+            export_tooltip: str | None = _UNSAVED_TOOLTIP
+        elif not selected:
+            export_tooltip = _NO_SELECTION_EXPORT_TOOLTIP
+        else:
+            export_tooltip = None
+        # Send-to-draft tooltip only surfaces when the selection gate itself
+        # is closed; the copy matches the readiness line's intent language.
         attach_tooltip = None
         if not self._console_actions_enabled:
-            attach_tooltip = (
-                _UNSAVED_TOOLTIP
-                if selected and unsaved
-                else f"Console action blocked: {self._console_action_block_reason}"
-            )
+            if not selected:
+                attach_tooltip = _NO_SELECTION_GUIDANCE
+            elif unsaved:
+                attach_tooltip = _UNSAVED_TOOLTIP
+            else:
+                attach_tooltip = f"Chat blocked: {self._console_action_block_reason}"
         # Kind gates rendering (task-443); readiness/unsaved/provider-readiness
         # gate the disabled+tooltip state of whatever is rendered (see the
         # module-level constants).
@@ -384,14 +496,15 @@ class PersonasInspectorPane(Vertical):
                 else "Assign a voice profile before including it."
             )
         )
-        # Attach: the selection gate only (staging context defers the reply).
+        # Send to Console draft: the selection gate only (staging context
+        # defers the reply).
         attach_btn = self.query_one("#personas-attach-to-console", Button)
         attach_btn.display = console_applies
         attach_btn.disabled = not self._console_actions_enabled
         attach_btn.tooltip = attach_tooltip
-        # Start Chat: selection AND a ready handoff provider (task-523) -- it
+        # Chat now: selection AND a ready handoff provider (task-523) -- it
         # needs an immediate reply, so an unready provider disables it while
-        # Attach stays available.
+        # Send to Console draft stays available.
         start_btn = self.query_one("#personas-start-chat", Button)
         start_btn.display = console_applies
         start_btn.disabled = (not self._console_actions_enabled) or bool(
@@ -400,18 +513,35 @@ class PersonasInspectorPane(Vertical):
         if not self._console_actions_enabled:
             start_btn.tooltip = attach_tooltip
         elif self._provider_block_reason:
-            start_btn.tooltip = f"Start Chat blocked: {self._provider_block_reason}"
+            start_btn.tooltip = f"Chat now blocked: {self._provider_block_reason}"
         else:
             start_btn.tooltip = None
+        # F-040: an active mark set retargets Delete/Export JSON at the
+        # marked rows (tooltips say so) and sidesteps the single-selection
+        # unsaved gate (bulk actions discard/ignore edit state by design,
+        # like single Delete). Export PNG stays single-card.
+        marked = self._marked_count
         json_button = self.query_one("#personas-export-json", Button)
         json_button.display = export_json_applies
-        json_button.disabled = not export_enabled
-        json_button.tooltip = export_tooltip
+        json_button.disabled = (not export_enabled) and marked == 0
+        json_button.tooltip = (
+            f"Export the {marked} marked items as JSON."
+            if marked
+            else export_tooltip
+        )
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
-        png_button.disabled = not (export_enabled and kind == "character")
-        png_button.tooltip = export_tooltip
-        self.query_one("#personas-delete", Button).disabled = not selected
+        png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
+        png_button.tooltip = (
+            "Bulk export is JSON only." if marked else export_tooltip
+        )
+        delete_button = self.query_one("#personas-delete", Button)
+        delete_button.disabled = (not selected) and marked == 0
+        delete_button.tooltip = (
+            f"Delete the {marked} marked items."
+            if marked
+            else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
+        )
 
     def set_avatar_thumbnail(self, renderable: object | None) -> None:
         """Mount a prepared portrait renderable, or clear the box.

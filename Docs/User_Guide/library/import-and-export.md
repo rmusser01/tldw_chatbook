@@ -15,7 +15,7 @@ carry your content somewhere else.
 Press **Ctrl+3** for Library (see [the Library overview](../library.md)),
 then either:
 
-- Click **"Ingest content…"** — the primary button at the very top of the
+- Click **"Add content…"** — the primary button at the very top of the
   left rail — to land on Import media directly.
 - In the rail's **Import / Export** section, click **"Import media"** or
   **"Export"**.
@@ -101,7 +101,7 @@ individually and show up as ✗ rows you can retry after installing.
 
 ## Common tasks
 
-1. **Import one file** — Click "Ingest content…", press "Browse…", pick the
+1. **Import one file** — Click "Add content…", press "Browse…", pick the
    file, wait for the type breakdown, then press "Start ingest". When the
    row reads "✓ done", press "Open in Library" to view it.
 2. **Import a whole folder** — Type or paste the folder's path into the

@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
@@ -242,12 +242,15 @@ def _row_text(item) -> str:
 
 
 _SHARED_MODE_OWNER_CASES = (
+    # The count slot snapshots the pane's count line, which F-033 emptied for
+    # unfiltered lists (the total now lives in the merged header purpose
+    # line), so both cases expect "".
     pytest.param(
         "dictionaries",
         "dictionary",
         "New Dictionary Owner",
         "2 entries · on",
-        "1 dictionary",
+        "",
         id="dictionaries",
     ),
     pytest.param(
@@ -255,7 +258,7 @@ _SHARED_MODE_OWNER_CASES = (
         "lore",
         "New Lore Owner",
         "3 entries · on",
-        "1 lore book",
+        "",
         id="lore",
     ),
 )
@@ -420,7 +423,48 @@ class TestWorkbenchShell:
             assert work_area.size.width >= 34
             assert inspector.size.width >= 18
             assert _right_edge(inspector) <= _right_edge(workbench)
-            assert str(readiness.renderable).startswith("Console blocked:")
+            # task-440 honesty contract: with no provider configured the
+            # readiness line never claims ready (F-031 auto-select means a
+            # selection exists, so this is the provider gate talking).
+            assert "blocked" in str(readiness.renderable).lower()
+
+    async def test_header_band_merges_purpose_and_count(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-033: purpose + count share one line; the separate status strip
+        and the library pane's duplicate count line are gone."""
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(170, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The five-strip band lost the standalone count strip entirely.
+            assert not screen.query("#personas-status-row")
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert str(purpose.renderable) == "Characters — who the AI plays · 2"
+            # ...so the workbench starts one row higher than the old layout.
+            assert screen.query_one("#personas-workbench").region.y == 10
+            # The count renders once (header line), not again under the list.
+            count = screen.query_one("#personas-library-count", Static)
+            assert str(count.renderable) == ""
+
+    async def test_header_purpose_count_updates_per_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """F-033: the merged line carries the live count for each mode."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert str(purpose.renderable) == "Characters — who the AI plays · 2"
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Personas" in str(purpose.renderable)
+            assert "· 1" in str(purpose.renderable)
 
     async def test_library_rail_collapses_and_reopens_from_handle(
         self,
@@ -540,15 +584,27 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             context = screen._shortcut_context()
             rendered = context.render()
             assert "new" in rendered.lower()
             assert "search" in rendered.lower()
-            # task-445: unavailable actions (nothing is being edited/selected
-            # at fresh mount) are dropped from the rendered hint entirely
-            # rather than shown with a literal "unavailable" suffix.
+            # task-445: unavailable actions are dropped from the rendered
+            # hint entirely rather than shown with a literal "unavailable"
+            # suffix. F-031 auto-selects the first row on first paint, so
+            # draft IS available here; "save" (no editor open) is the
+            # remaining dropped hint.
             assert "save" not in rendered.lower()
+            # F-032: the footer names the renamed Console draft CTA.
             assert "attach" not in rendered.lower()
+            assert "ctrl+enter draft" in rendered.lower()
+            # F-038: the always-on accelerators are advertised, not hidden.
+            assert "f6 pane" in rendered.lower()
+            assert "ctrl+1-4 mode" in rendered.lower()
+            assert "[ ]" in rendered
+            # space toggle is dictionaries-only, so it stays hidden here.
+            assert "space" not in rendered.lower()
             assert context.source == "personas"
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
@@ -566,6 +622,42 @@ class TestWorkbenchShell:
             assert footer.parent is None
             default_footer = pilot.app.query_one(AppFooterStatus)
             assert default_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+    async def test_footer_advertises_space_toggle_in_dictionaries_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """F-038: the dictionary row toggle key is disclosed only in its mode."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "space" not in screen._shortcut_context().render().lower()
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            rendered = screen._shortcut_context().render().lower()
+            assert "space toggle" in rendered
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            assert "space" not in screen._shortcut_context().render().lower()
+
+    async def test_mode_chips_advertise_their_ctrl_shortcut(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-038: each mode chip tooltip carries its Ctrl+N jump key."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            expected = {
+                "characters": ("Characters — who the AI plays.", "(Ctrl+1)"),
+                "personas": ("Personas — who you play in the chat.", "(Ctrl+2)"),
+                "dictionaries": ("Dictionaries — text find/replace rules.", "(Ctrl+3)"),
+                "lore": ("Lore — world facts injected on keywords.", "(Ctrl+4)"),
+            }
+            for mode, (descriptor, hint) in expected.items():
+                tooltip = screen.query_one(f"#personas-mode-{mode}", Button).tooltip
+                assert descriptor in tooltip, mode
+                assert hint in tooltip, mode
 
     async def test_unmount_clear_does_not_stomp_other_screens_context(
         self, mock_app_instance, stub_characters
@@ -588,26 +680,26 @@ class TestWorkbenchShell:
             assert "ctrl+enter send" in footer.shortcut_text
             assert footer.shortcut_text != AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
-    async def test_status_row_shows_live_counts_per_mode(
+    async def test_purpose_line_shows_live_counts_per_mode(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
+        """F-033: the merged purpose line carries each mode's live count."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            status = screen.query_one("#personas-status-row", Static)
-            assert "Characters: 2" in str(status.renderable)
-            assert str(status.renderable) == "Characters: 2"
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "· 2" in str(purpose.renderable)
+            assert "Characters" in str(purpose.renderable)
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert "Personas: 1" in str(status.renderable)
-            # "prompts" is retired from the Personas mode strip (Task 7):
-            # "dictionaries" is the next still-unwired placeholder mode.
+            assert "· 1" in str(purpose.renderable)
+            assert "Personas" in str(purpose.renderable)
             await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Dictionaries" in str(status.renderable)
+            assert "Dictionaries" in str(purpose.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(
         self, mock_app_instance, stub_characters
@@ -635,7 +727,8 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
-            assert lore_chip.tooltip == "Lore — world facts injected on keywords."
+            # F-038: chip tooltips carry their Ctrl+N jump key.
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
@@ -662,12 +755,17 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             title = screen.query_one("#personas-header #workbench-header-title", Static)
             assert str(title.renderable).startswith("Roleplay")
             status = screen.query_one(
                 "#personas-header #workbench-header-status", Static
             )
-            assert str(status.renderable) == "Ready"
+            # F-031 auto-selects the first row on first paint, which makes
+            # the provider gate operative (task-440): the mock config has no
+            # ready provider, so the header honestly reads Blocked.
+            assert str(status.renderable) == "Blocked"
             # dynamic suffix still appends in create mode
             screen._edit_mode = "create"
             screen._update_title()
@@ -691,9 +789,9 @@ class TestWorkbenchShell:
             )  # characters is the default mode
             await screen._apply_mode("personas")
             await pilot.pause()
-            assert (
-                str(screen.query_one("#personas-purpose", Static).renderable)
-                == "Personas — assistant profiles for roleplay and chat"
+            # F-033: the purpose line also carries the live count.
+            assert str(screen.query_one("#personas-purpose", Static).renderable) == (
+                "Personas — who you play in the chat · 0"
             )
 
 
@@ -758,11 +856,14 @@ class TestCharacterSelectionAndEdit:
                 screen.query_one("#personas-selected-name", Static).renderable
             )
             assert "Detective Sam" not in selected_name
-            # Unsaved gating must survive the identity reset.
+            # Unsaved gating must survive the identity reset: no Console
+            # action is offered for a pristine create session (F-031: the
+            # readiness line falls back to the no-selection guidance).
             readiness = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert "blocked" in readiness
+            assert readiness == "Pick a character or persona to start chatting."
+            assert screen._console_action_allowed() is False
 
     async def test_ctrl_n_opens_editor_in_create_mode(
         self, mock_app_instance, stub_characters
@@ -1044,7 +1145,7 @@ class TestPersonasMode:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Archivist"]
 
-    async def test_personas_mode_uses_assistant_profile_copy_without_human_actions(
+    async def test_personas_mode_copy_avoids_human_identity_actions(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         app = PersonasTestApp(mock_app_instance)
@@ -1059,9 +1160,11 @@ class TestPersonasMode:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
+            # F-034: the descriptor teaches the genre convention (who YOU
+            # play) - and F-033 merged the live count into the same line.
             assert (
                 str(screen.query_one("#personas-purpose", Static).renderable)
-                == "Personas — assistant profiles for roleplay and chat"
+                == "Personas — who you play in the chat · 1"
             )
             visible_copy = "\n".join(
                 [
@@ -1171,14 +1274,14 @@ class TestPersonasMode:
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
 
-    async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
+    async def test_profile_save_refresh_failure_updates_purpose_line_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            assert "Personas: 1" in str(
-                screen.query_one("#personas-status-row", Static).renderable
+            assert "· 1" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
 
             stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
@@ -1193,8 +1296,8 @@ class TestPersonasMode:
 
             assert screen.query_one("#personas-service-error", Static)
             assert not list(screen.query(".personas-library-row"))
-            assert "Personas: 0" in str(
-                screen.query_one("#personas-status-row", Static).renderable
+            assert "· 0" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
 
     async def test_profile_edit_save_calls_update(
@@ -1544,11 +1647,13 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
+            # F-033: the match count now lives in the merged header purpose
+            # line; the pane's duplicate count line stays empty.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            # Task 4: the library pages from the DB seam, so a search reports the
-            # match count as the page total (no separate "of <library>" copy).
-            # task-445: a total of exactly 1 reads singular ("1 character").
-            assert "1 character" in count
+            assert count == ""
+            assert "· 1" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_clearing_search_restores_all_rows(
         self, mock_app_instance, stub_characters
@@ -1567,8 +1672,11 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "2 characters" in count
-            assert "of" not in count
+            # F-033: unfiltered count renders once, in the header purpose line.
+            assert count == ""
+            assert "· 2" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_search_is_case_insensitive(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -1603,10 +1711,13 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Navigator"]
+            # F-033: the pane's duplicate count line stays empty; the merged
+            # header line carries the personas library total.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            # Task 4: personas paginate in-memory; the count is the match total.
-            # task-445: a total of exactly 1 reads singular ("1 persona").
-            assert "1 persona" in count
+            assert count == ""
+            assert "· 2" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -3406,11 +3517,16 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
-            await pilot.pause()
+            # F-031: first-paint auto-select already started the (gated)
+            # listing during mount - the loading placeholder is up while the
+            # worker thread waits on the gate.
             panel = screen.query_one("#personas-conversations-list")
-            texts = [str(s.renderable) for s in panel.query(Static)]
+            texts: list[str] = []
+            for _ in range(200):
+                await pilot.pause(0.05)
+                texts = [str(s.renderable) for s in panel.query(Static)]
+                if any("Loading conversations..." in text for text in texts):
+                    break
             assert any("Loading conversations..." in text for text in texts)
             release.set()
             await pilot.app.workers.wait_for_complete()
@@ -3743,7 +3859,7 @@ class TestConversationsPanel:
 
 
 class TestConsoleActions:
-    """Attach to Console and Start Chat from the inspector (Task 12)."""
+    """Send to Console draft and Chat now from the inspector (Task 12, F-032)."""
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -3811,12 +3927,18 @@ class TestConsoleActions:
         assert "Detective Sam" in payload.suggested_prompt
 
     async def test_attach_blocked_without_selection(
-        self, mock_app_instance, stub_characters, stub_conversations
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
+        # No-selection requires an empty library now: F-031 auto-selects the
+        # first row on a fresh mount when rows exist.
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
             await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.press("ctrl+enter")
             await pilot.pause()
@@ -3842,7 +3964,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled is True
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Console blocked: prompts are not attachable" in str(
+            assert "Chat blocked: prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
 
@@ -3851,12 +3973,13 @@ class TestConsoleActions:
     ):
         """Task-440: honest readiness copy when the handoff provider is unready.
 
-        The configured chat_defaults provider (which a fresh Start-Chat
+        The configured chat_defaults provider (which a fresh Chat-now
         Console session resolves - the native Console never reads
         character_defaults) has no API key - the handoff send would fail, so
         neither readiness surface may claim things are ready. Per-intent gating
-        (task-523): Start Chat is DISABLED (it needs an immediate reply) while
-        Attach stays enabled (it stages context; the reply is deferred).
+        (task-523): Chat now is DISABLED (it needs an immediate reply) while
+        Send to Console draft stays enabled (it stages context; the reply is
+        deferred).
         """
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -3869,17 +3992,17 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Start Chat blocked:")
+            assert readiness_text != "Ready to chat in Console."
+            assert readiness_text.startswith("Chat now blocked:")
             assert "anthropic" in readiness_text.lower()
             assert (
                 "api key" in readiness_text.lower()
                 or "api_settings" in readiness_text.lower()
             )
             # Per-intent gating (task-523): an unready handoff provider blocks
-            # Start Chat (it needs an immediate reply) but NOT Attach (it only
-            # stages context; the reply is deferred). The user can still stage
-            # the card and fix the provider before sending.
+            # Chat now (it needs an immediate reply) but NOT Send to Console
+            # draft (it only stages context; the reply is deferred). The user
+            # can still stage the card and fix the provider before sending.
             assert screen.query_one("#personas-start-chat", Button).disabled is True
             assert (
                 screen.query_one("#personas-attach-to-console", Button).disabled
@@ -3896,7 +4019,7 @@ class TestConsoleActions:
     async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Provider ready -> existing "Console ready"/"Ready" copy is unchanged."""
+        """Provider ready -> "Ready to chat in Console."/"Ready" copy shows."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -3906,7 +4029,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
 
-            assert "Console ready" in str(
+            assert "Ready to chat in Console." in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert (
@@ -3928,9 +4051,10 @@ class TestConsoleActions:
     async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Task-440 review: readiness mirrors the Start-Chat HANDOFF resolution.
+        """Task-440 review: readiness mirrors the Chat-now HANDOFF resolution.
 
-        Attach/Start Chat create a fresh native-Console session resolved from
+        Send to Console draft/Chat now create a fresh native-Console session
+        resolved from
         chat_defaults (chat_screen._start_character_console_session ->
         _default_console_session_settings); the native Console never reads
         character_defaults. Shipped-defaults failure shape: only an Anthropic
@@ -3952,8 +4076,8 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Start Chat blocked:")
+            assert readiness_text != "Ready to chat in Console."
+            assert readiness_text.startswith("Chat now blocked:")
             assert "openai" in readiness_text.lower()
             assert (
                 str(
@@ -3963,7 +4087,8 @@ class TestConsoleActions:
                 )
                 != "Ready"
             )
-            # Per-intent gating (task-523): Start Chat disabled, Attach enabled.
+            # Per-intent gating (task-523): Chat now disabled, Send to Console
+            # draft enabled.
             assert (
                 screen.query_one("#personas-start-chat", Button).disabled is True
             )
@@ -3984,7 +4109,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
 
-            assert "Console ready" in str(
+            assert "Ready to chat in Console." in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert (
@@ -4019,7 +4144,7 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text == "Console blocked: unsaved edits"
+            assert readiness_text == "Save or discard your edits to chat in Console."
             assert "openai" not in readiness_text.lower()  # no provider copy
             header_status = str(
                 screen.query_one(
@@ -4146,14 +4271,14 @@ class TestConsoleActions:
     async def test_start_chat_uses_real_mechanism(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Start Chat stages a handoff with start_chat intent metadata.
+        """Chat now stages a handoff with start_chat intent metadata.
 
         The legacy CCP route launched a blank tab directly via the main chat
         tab container (`#chat-window` lookup), which is not mounted while a
         destination screen is active; the workbench therefore uses the
         app-level ``open_chat_with_handoff`` API with an intent marker.
         """
-        # Start Chat now needs a ready handoff provider (task-523 per-intent);
+        # Chat now needs a ready handoff provider (task-523 per-intent);
         # give a keyless local provider so the button is enabled and the guard
         # passes.
         mock_app_instance.app_config = {
@@ -4280,7 +4405,14 @@ class TestConsoleActions:
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            # F-031: first-paint auto-select already fetched the mounted row
+            # (server detail + card render) once; reset those provenance
+            # mocks so the strict assertions below pin only the click-driven
+            # selection path they were written for.
+            scope_service.get_character.reset_mock()
+            detail_dto.model_dump.reset_mock()
             row = screen.query_one("#personas-library-row-character-1")
             assert "Remote Elara" in _row_text(row)
             assert "Local collision" not in _row_text(row)
@@ -4373,7 +4505,7 @@ class TestConsoleActions:
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
         assert any(
-            msg.startswith("Start Chat blocked:") and severity == "warning"
+            msg.startswith("Chat now blocked:") and severity == "warning"
             for msg, severity in captured
         )
 
@@ -4562,13 +4694,16 @@ class TestConsoleActions:
     async def test_footer_shortcut_attach_available(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """The attach action is truthful: allowed only with a saved selection."""
+        """The attach action is truthful: allowed only with a saved, clean selection."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
-            screen = await _mounted(pilot)
-            assert screen._console_action_allowed() is False  # nothing selected yet
-            await self._select_first_character(pilot)
+            # F-031: first paint auto-selects the first row, so attach is
+            # allowed from the start...
+            screen = await self._select_first_character(pilot)
             assert screen._console_action_allowed() is True
+            # ...but the gate still closes the moment the selection is dirty.
+            screen.state.has_unsaved_changes = True
+            assert screen._console_action_allowed() is False
 
 
 class TestServerCharacterSourceIsolation:
@@ -4672,6 +4807,35 @@ class TestServerCharacterSourceIsolation:
                 is False
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is False
+
+    async def test_server_browsing_disables_actions_with_reason_tooltips(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-037: every action disabled by server browsing says why."""
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        mock_app_instance.chat_dictionary_scope_service = None
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # F-031 auto-selects the first server row; the local-only actions
+            # must be disabled AND explained.
+            assert screen.state.selected_entity_id == "7"
+            for control_id in (
+                "#personas-card-edit-character",
+                "#personas-export-json",
+                "#personas-export-png",
+                "#personas-delete",
+            ):
+                control = screen.query_one(control_id, Button)
+                assert control.disabled is True, control_id
+                assert control.tooltip == (
+                    "Server characters are read-only here."
+                ), control_id
 
     async def test_server_footer_does_not_advertise_local_character_creation(
         self, mock_app_instance, stub_characters
@@ -5152,6 +5316,8 @@ class TestServerCharacterSourceIsolation:
             assert screen._characters == []
             assert screen._character_total == 0
             assert not list(screen.query(".personas-library-row"))
+            # F-033: the pane count line is empty for unfiltered lists; the
+            # (zero) total shows in the merged header purpose line instead.
             assert (
                 str(
                     screen.query_one(
@@ -5159,7 +5325,10 @@ class TestServerCharacterSourceIsolation:
                         Static,
                     ).renderable
                 )
-                == "0 characters"
+                == ""
+            )
+            assert "· 0" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
             assert (
                 str(screen.query_one("#personas-library-sort", Button).label)
@@ -5179,19 +5348,22 @@ class TestServerCharacterSourceIsolation:
             "new_count",
         ),
         (
+            # F-033: the count slot snapshots the pane's count line, which is
+            # empty for unfiltered lists (the total moved to the merged
+            # header purpose line).
             (
                 "dictionaries",
                 "dictionary",
                 "New Dictionary Owner",
                 "2 entries · on",
-                "1 dictionary",
+                "",
             ),
             (
                 "lore",
                 "lore",
                 "New Lore Owner",
                 "3 entries · on",
-                "1 lore book",
+                "",
             ),
         ),
     )
@@ -5631,7 +5803,9 @@ class TestServerCharacterSourceIsolation:
                 await screen._apply_mode("prompts")
                 expected_mode = "prompts"
                 expected_rows = ()
-                expected_count = "0 prompts"
+                # F-033: unfiltered lists leave the pane count line empty;
+                # the total lives in the merged header purpose line.
+                expected_count = ""
 
             owner_sort = f"Sort: {expected_mode} current owner"
             owner_tag = f"Tag: {expected_mode} current owner"
@@ -7988,8 +8162,186 @@ def legacy_human_config(tmp_path, monkeypatch):
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
 
+class TestBulkLibraryActions:
+    """F-040: the library pane's mark set drives bulk delete/export."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
+    async def _mount_with_marks(self, pilot, row_indexes=(0, 1)):
+        """Mount and mark rows through the pane's m key, like a user."""
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        list_view = screen.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        for index in row_indexes:
+            list_view.index = index
+            await pilot.press("m")
+            await pilot.pause()
+        return screen
+
+    async def test_marks_retarget_delete_and_export_affordances(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            inspector = screen.query_one(PersonasInspectorPane)
+            delete = inspector.query_one("#personas-delete", Button)
+            export_json = inspector.query_one("#personas-export-json", Button)
+            export_png = inspector.query_one("#personas-export-png", Button)
+            assert delete.disabled is False
+            assert delete.tooltip == "Delete the 2 marked items."
+            assert export_json.disabled is False
+            assert export_json.tooltip == "Export the 2 marked items as JSON."
+            assert export_png.disabled is True
+            assert export_png.tooltip == "Bulk export is JSON only."
+            # Clearing the marks restores the selection-owned gates.
+            screen.query_one("#personas-library-pane").clear_marks()
+            await pilot.pause()
+            assert export_png.disabled is False
+            assert delete.tooltip is None
+
+    async def test_bulk_delete_marked_characters(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[tuple[str, int]] = []
+
+        def _delete(character_id, expected_version):
+            deleted.append((str(character_id), expected_version))
+            return True
+
+        monkeypatch.setattr(character_handler_module, "delete_character", _delete)
+        # The live read shrinks as deletes land, so the refresh renders empty.
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            lambda: [
+                dict(c)
+                for c in CHARACTERS
+                if str(c["id"]) not in {did for did, _ in deleted}
+            ],
+        )
+        confirm_calls: list[str] = []
+
+        async def _confirm(name: str) -> bool:
+            confirm_calls.append(name)
+            return True
+
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            screen._confirm_delete = _confirm
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # One confirm for the whole batch; each item deleted once.
+            assert confirm_calls == ["2 characters"]
+            assert sorted(deleted) == [("1", 1), ("2", 1)]
+            assert not list(screen.query(".personas-library-row"))
+            assert screen.state.selected_entity_id is None
+            assert screen._marked_rows == ()
+        assert ("Deleted 2 characters.", "information") in notifications
+
+    async def test_bulk_delete_keeps_unmarked_selection(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[str] = []
+
+        def _delete(character_id, expected_version):
+            deleted.append(str(character_id))
+            return True
+
+        monkeypatch.setattr(character_handler_module, "delete_character", _delete)
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            lambda: [
+                dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)
+            ],
+        )
+
+        async def _confirm(name: str) -> bool:
+            return True
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            # F-031 auto-selected row 1; only row 2 is marked for deletion.
+            screen = await self._mount_with_marks(pilot, (1,))
+            screen._confirm_delete = _confirm
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert deleted == ["2"]
+            assert screen.state.selected_entity_id == "1"
+
+    async def test_bulk_export_marked_characters_writes_one_file_per_card(
+        self, mock_app_instance, stub_characters, stub_conversations, tmp_path
+    ):
+        exports: list[tuple[int, str]] = []
+
+        def _fake_export(character_id, target_path, portable_profile):
+            exports.append((character_id, target_path))
+
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            screen._export_character_json_sync = _fake_export
+            pilot.app.push_screen_wait = AsyncMock(return_value=str(tmp_path))
+            screen.query_one("#personas-export-json", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [character_id for character_id, _ in exports] == [1, 2]
+            paths = sorted(target for _, target in exports)
+            assert paths[0].endswith("Detective Sam.json")
+            assert paths[1].endswith("Lab Assistant.json")
+        assert any(
+            message.startswith("Exported 2 items") and severity == "information"
+            for message, severity in notifications
+        )
+
+    async def test_footer_discloses_sort_key_in_sortable_modes(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "s sort" in screen._shortcut_context().render().lower()
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            assert "s sort" not in screen._shortcut_context().render().lower()
+
+
 class TestPersonaHumanIdentityRemoval:
-    """Personas remain assistant profiles and never identify the human user."""
+    """Personas never identify the human user (F-034: "who you play" copy
+    teaches the play-identity convention without reviving that framing)."""
 
     async def _select_profile(self, pilot):
         screen = await _mounted(pilot)
@@ -8091,7 +8443,7 @@ class TestPersonaHumanIdentityRemoval:
             get_local_authority_id=Mock(return_value="local-authority"),
             get_character_card_by_id=Mock(
                 side_effect=AssertionError(
-                    "Start Chat must use the source-aware scope service"
+                    "Chat now must use the source-aware scope service"
                 )
             ),
         )
@@ -8280,7 +8632,13 @@ class TestPersonaHumanIdentityRemoval:
 
 class TestCharactersEmptyStateGuidance:
     """task-436: Characters mode shows onboarding guidance when nothing is
-    selected, instead of a blank center pane that reads as broken."""
+    selected, instead of a blank center pane that reads as broken.
+
+    F-031 (task-2082) layers first-paint auto-select on top: a non-empty
+    library mounts with its first row already selected (guidance hidden,
+    card shown), so the guidance state is only reachable with an empty
+    library, after a delete, or after a mode round-trip.
+    """
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -8314,39 +8672,142 @@ class TestCharactersEmptyStateGuidance:
         await pilot.pause()
         return screen
 
-    async def test_guidance_shown_when_no_selection(
-        self, mock_app_instance, stub_characters
+    async def test_first_paint_auto_selects_first_library_row(
+        self, mock_app_instance, stub_characters, stub_conversations
     ):
+        """F-031: a non-empty library mounts with its first row selected -
+        card loaded, inspector awake - instead of a void center."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert screen.state.selected_entity_kind == "character"
+            assert screen.state.selected_entity_name == "Detective Sam"
+            assert screen.query_one("#ccp-character-card-view").display is True
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            assert "Selected: Detective Sam" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+            # Auto-select must not move focus (focus-steal guards, F-031).
+            search = screen.query_one("#personas-library-search", Input)
+            assert not search.has_focus
+
+    async def test_first_paint_auto_select_keeps_unsaved_guards_quiet(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """F-031: the auto-selected row is a clean selection - no unsaved
+        state, no guard dialog on a follow-up selection."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert screen.state.has_unsaved_changes is False
+            # A second selection runs the clean fast path (no confirm).
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "2"
+
+    async def test_guidance_shown_when_library_empty(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """With no rows there is nothing to auto-select: the no-selection
+        guidance paints (the state first-time users with no card see until
+        they New/Import one)."""
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             assert screen.state.active_mode == "characters"
             assert not screen.state.selected_entity_id
             guidance = screen.query_one("#personas-characters-empty", Static)
             assert guidance.display is True
             body = str(guidance.renderable)
+            # F-035: the truly-empty copy names the creation actions (and no
+            # longer claims there is a list to pick from).
+            assert "No characters yet" in body
             assert "New" in body and "Import" in body
+            assert "Pick one from the list" not in body
             assert screen.query_one("#ccp-character-card-view").display is False
 
+    async def test_guidance_adapts_when_library_has_items(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """F-035: with characters in the library, a cleared selection asks
+        for a pick - the New/Import onboarding copy would be wrong here."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # F-031 auto-selected row 1; a mode round-trip clears the
+            # selection while the non-empty library stays.
+            await screen._apply_mode("lore")
+            await pilot.pause()
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not screen.state.selected_entity_id
+            assert screen._character_total > 0
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            body = str(guidance.renderable)
+            assert body == "Pick a character from the list to see it here."
+            assert "Import" not in body
+
+    async def test_guidance_uses_left_aligned_empty_state_convention(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """F-035: empty copy aligns like the app's other empty states
+        (left/top, cf. .chat-empty-state), not centered in a void."""
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            assert str(guidance.styles.text_align) == "left"
+            assert guidance.styles.content_align_horizontal == "left"
+            assert guidance.styles.content_align_vertical == "top"
+
     async def test_guidance_hidden_after_selection(
-        self, mock_app_instance, stub_characters
+        self, mock_app_instance, stub_characters, stub_conversations
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Guidance is visible before any selection (pins the transition so
-            # the "hidden after" assertion below is non-vacuous).
+            # First paint already auto-selected row 1 (F-031), so the
+            # guidance is hidden from the start...
+            assert screen.state.selected_entity_id == "1"
             assert (
                 screen.query_one("#personas-characters-empty", Static).display
-                is True
+                is False
             )
-            # ... and disappears the moment a character is selected (AC#2).
-            await pilot.click("#personas-library-row-character-1")
+            # ...and stays hidden when the selection moves to another row.
+            await pilot.click("#personas-library-row-character-2")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert screen.state.selected_entity_id
+            assert screen.state.selected_entity_id == "2"
             assert (
                 screen.query_one("#personas-characters-empty", Static).display
                 is False
@@ -8801,7 +9262,8 @@ class TestDirtyTracking:
             readiness = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert "unsaved" in readiness
+            # F-032 intent copy for the unsaved gate.
+            assert readiness == "Save or discard your edits to chat in Console."
             confirms = self._bypass_confirm(screen, True)
             await pilot.click("#personas-mode-characters")
             await pilot.pause()
@@ -8853,7 +9315,8 @@ class TestDirtyTracking:
             # now that the save cleared it).
             assert str(subtitle.renderable) == "Editing Detective Sam"
             title = screen.query_one("#personas-header #workbench-header-title", Static)
-            assert str(title.renderable) == "Roleplay & Chat Dictionaries"
+            # F-034: the screen's one public name matches the nav label.
+            assert str(title.renderable) == "Roleplay"
 
     async def test_active_row_gets_unsaved_badge(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -8905,6 +9368,12 @@ class TestDirtyTracking:
         """UX-E2 carryover: import-selection must enable the attach action."""
         source = tmp_path / "card.json"
         source.write_bytes(b'{"name":"Detective Sam"}')
+        # F-031 auto-selects the first row on a fresh mount when rows exist;
+        # the "no prior selection" baseline this test pins needs an empty
+        # library.
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
         monkeypatch.setattr(
             character_handler_module,
             "inspect_character_card_tts_attachment",
@@ -8920,16 +9389,16 @@ class TestDirtyTracking:
             screen = await _mounted(pilot)
             await pilot.pause()
             assert screen._console_action_allowed() is False  # no prior selection
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
+            draft = next(
+                a for a in screen._shortcut_context().actions if a.label == "draft"
             )
-            assert attach.available is False  # no prior selection
+            assert draft.available is False  # no prior selection
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
             footer = screen.query_one(AppFooterStatus)
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
-            assert "ctrl+enter attach" not in footer.shortcut_text
+            assert "ctrl+enter draft" not in footer.shortcut_text
             await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -9663,7 +10132,13 @@ def _configure_character_tts_app(
 async def test_character_tts_population_requires_one_generation_and_observes_off_page_assignment(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: an empty library keeps first-paint auto-select from consuming
+    # this state machine's exact-call seams before the explicit select below.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -9755,7 +10230,12 @@ async def test_character_tts_population_rejects_mixed_repository_generations(
 async def test_character_tts_off_page_assignment_requires_matching_capability_revisions(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: empty library - see the population-generation test above.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -9906,7 +10386,12 @@ async def test_character_tts_server_principal_change_rejects_late_population(
 async def test_character_tts_local_authority_change_rejects_late_population(
     mock_app_instance,
     stub_characters,
+    monkeypatch,
 ) -> None:
+    # F-031: empty library - see the population-generation test above.
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: []
+    )
     profile = _character_tts_profile(1)
     original_ref = CharacterRef(
         source="local",

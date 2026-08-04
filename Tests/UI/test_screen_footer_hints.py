@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
@@ -75,6 +76,16 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 screen_footer = screen.query_one(AppFooterStatus)
                 assert "mode" in screen_footer.shortcut_text
                 assert "a add server" in screen_footer.shortcut_text
+                # F-003: the Tokens chip is meaningful only in chat contexts --
+                # on MCP it stays hidden, never a "Tokens: --" placeholder.
+                token_chip = screen.query_one("#footer-token-count", Static)
+                assert token_chip.display is False
+                assert "Tokens: --" not in str(token_chip.renderable)
+                # Past the 0.5s one-shot updater tick (which writes "" on
+                # non-chat tabs), still hidden.
+                await pilot.pause(0.7)
+                assert token_chip.display is False
+                assert "Tokens: --" not in str(token_chip.renderable)
 
                 await app.handle_screen_navigation(NavigateToScreen("library"))
                 screen = await _wait_for_screen(
@@ -83,9 +94,12 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     LibraryScreen,
                     "library",
                 )
+                # F-012: the landing state advertises the one Library key
+                # that works there (`/` focuses the rail search box)
+                # instead of the bare global default.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
-                    == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+                    == "/ focus search"
                 )
                 for _ in range(300):
                     rows = list(screen.query("#library-row-browse-search"))
@@ -105,11 +119,14 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # Task 12/RAG-36 fix-review: LIBRARY_SHORTCUTS also advertises
                 # the evidence-card `enter`/`o` keys (both `Binding(...,
                 # show=False)`, so this footer registration is their ONLY
-                # on-screen discoverability signal) -- pin the full three-hint
+                # on-screen discoverability signal) -- pin the full four-hint
                 # string so a future edit can't silently drop a key.
+                # F-012: `/ focus search` closes the set -- it works on every
+                # canvas, including this one.
                 assert screen_footer.shortcut_text == (
                     "u use Library context in Console | "
-                    "enter select evidence | o open evidence"
+                    "enter select evidence | o open evidence | "
+                    "/ focus search"
                 )
 
                 footer_before = screen_footer
@@ -129,7 +146,8 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     )
                 assert footer_after.shortcut_text == (
                     "u use Library context in Console | "
-                    "enter select evidence | o open evidence"
+                    "enter select evidence | o open evidence | "
+                    "/ focus search"
                 )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
@@ -153,11 +171,18 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
     itself (no pilot/app needed) -- both evidence-card `Binding`s
     (`enter`/`o`) are registered with `show=False`, so this tuple is the
     ONLY on-screen signal that they exist. A future edit to this tuple that
-    silently drops one of the three entries must fail here."""
+    silently drops one of the entries must fail here.
+
+    F-012: `/ focus search` closes the set (it works on every canvas), and
+    the landing/other-canvas set is pinned alongside it."""
     assert LibraryScreen.LIBRARY_SHORTCUTS == (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
+        ("/", "focus search"),
+    )
+    assert LibraryScreen.LIBRARY_LANDING_SHORTCUTS == (
+        ("/", "focus search"),
     )
 
 

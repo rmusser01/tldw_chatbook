@@ -26,6 +26,7 @@ never mount a screen before its saved state has been seeded.
 """
 
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App
@@ -169,16 +170,19 @@ class TestWorkbenchSelectionRestore:
             # center shows the character card view, not blank
             assert screen2.query_one("#ccp-character-card-view").display is True
 
-    async def test_fresh_screen_without_saved_state_shows_blank_center(
+    async def test_fresh_screen_without_saved_state_auto_selects_first_row(
         self, mock_app_instance, stub_characters
     ):
-        """No prior selection: on_mount's default (blank) center is untouched."""
+        """No prior selection + a non-empty library: F-031 first-paint
+        auto-select picks the first row and shows its card, not a void."""
         mock_app_instance.chat_dictionary_scope_service = None
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            assert screen.state.selected_entity_id is None
-            assert screen.query_one("#ccp-character-card-view").display is False
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True
 
 
 class TestPreviewRestore:
@@ -373,27 +377,47 @@ class TestPendingRestoreGuards:
             assert screen._console_action_allowed() is False
 
 
-class TestNonCharacterModeRestoreGate:
-    """A saved non-Characters mode must never be restored (task-434 review).
+class TestNonCharacterModeRestore:
+    """F-040: saved non-Characters modes restore mode AND selection.
 
-    ``on_mount`` only unconditionally wires the Characters path; every other
-    mode's library rows and mode-specific widgets (Preview pane, Try-It
-    panes) are refreshed/toggled solely by ``_apply_mode``, which a restore
-    never calls. Reconstructing ``self.state`` for a saved non-Characters
-    mode would therefore restore the mode chip while leaving the library
-    empty and the wrong panes visible - a regression, not a restore. The
-    gate keeps that path on the safe, already-correct default view.
+    ``_apply_pending_restore`` runs the full ``_apply_mode`` for the saved
+    mode before re-selecting, so the mode's library rows and mode-specific
+    panes are live when the selection lands. (Before F-040 these round-trips
+    fell back to the fresh Characters default - the documented task-434
+    floor this task raised.)
     """
 
-    async def test_saved_dictionaries_mode_falls_back_to_characters_on_restore(
+    async def test_saved_dictionaries_mode_restores_mode_and_selection(
         self, mock_app_instance, stub_characters
     ):
-        mock_app_instance.chat_dictionary_scope_service = None
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_dictionaries=AsyncMock(
+                return_value={
+                    "dictionaries": [
+                        {
+                            "id": 91,
+                            "name": "Some Dictionary",
+                            "entry_count": 2,
+                            "enabled": True,
+                        }
+                    ]
+                }
+            ),
+            get_dictionary=AsyncMock(
+                return_value={
+                    "id": 91,
+                    "name": "Some Dictionary",
+                    "entries": [],
+                    "version": 1,
+                }
+            ),
+            get_statistics=AsyncMock(return_value={}),
+        )
         saved = {
             "personas_workbench": {
                 "active_mode": "dictionaries",
                 "selected_entity_kind": "dictionary",
-                "selected_entity_id": "dict-1",
+                "selected_entity_id": "91",
                 "selected_entity_name": "Some Dictionary",
             },
             "personas_preview": None,
@@ -402,23 +426,37 @@ class TestNonCharacterModeRestoreGate:
         app = _RestoringPersonasTestApp(mock_app_instance, saved)
         async with app.run_test() as pilot:
             screen2 = await _mounted(pilot)
-            # Falls back to the fresh default: Characters mode, no selection.
-            assert screen2.state.active_mode == "characters"
-            assert screen2.state.selected_entity_id is None
-            assert screen2.state.selected_entity_kind is None
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen2.state.active_mode == "dictionaries"
+            assert screen2.state.selected_entity_id == "91"
+            assert screen2.state.selected_entity_kind == "dictionary"
+            assert screen2.state.selected_entity_name == "Some Dictionary"
             assert screen2._pending_restore is None
-            # Blank center, same as any fresh Characters-mode mount.
-            assert screen2.query_one("#ccp-character-card-view").display is False
+            assert (
+                screen2.query_one("#personas-dictionary-detail").display is True
+            )
 
-    async def test_saved_personas_mode_falls_back_to_characters(
+    async def test_saved_personas_mode_restores_mode_and_selection(
         self, mock_app_instance, stub_characters
     ):
-        """Only Characters mode is restored; saved Personas still falls back.
-
-        The terminology correction deliberately adds no migration or
-        persistence-format rewrite for this existing restore floor.
-        """
-        mock_app_instance.character_persona_scope_service = None
+        """Personas round-trips too, not just Characters (F-040)."""
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_persona_profiles=AsyncMock(
+                return_value={
+                    "items": [{"id": "persona-1", "name": "Some Persona"}],
+                    "total": 1,
+                }
+            ),
+            get_persona_profile=AsyncMock(
+                return_value={
+                    "id": "persona-1",
+                    "name": "Some Persona",
+                    "description": "Keeps notes.",
+                    "system_prompt": "You are archival.",
+                }
+            ),
+        )
         saved = {
             "personas_workbench": {
                 "active_mode": "personas",
@@ -432,8 +470,78 @@ class TestNonCharacterModeRestoreGate:
         app = _RestoringPersonasTestApp(mock_app_instance, saved)
         async with app.run_test() as pilot:
             screen2 = await _mounted(pilot)
-            # Falls back to the fresh default: Characters mode, no selection.
-            assert screen2.state.active_mode == "characters"
-            assert screen2.state.selected_entity_id is None
-            assert screen2.state.selected_entity_kind is None
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen2.state.active_mode == "personas"
+            assert screen2.state.selected_entity_id == "persona-1"
+            assert screen2.state.selected_entity_kind == "persona"
             assert screen2._pending_restore is None
+            assert screen2.query_one("#ccp-persona-card-view").display is True
+
+
+class TestInvalidRestoreStillAutoSelects:
+    """Qodo review: an unusable saved payload must not suppress F-031.
+
+    ``restore_state`` used to set ``_restored_from_saved_state`` for ANY
+    dict-shaped payload, so a stale/invalid saved state landed the user on
+    the dead no-selection first paint instead of auto-selecting a row.
+    """
+
+    async def test_invalid_mode_saved_state_still_auto_selects_first_row(
+        self, mock_app_instance, stub_characters
+    ):
+        """A saved mode that does not resolve to a chip mode is not a real
+        restore - first-paint auto-select still fires."""
+        saved = {
+            "personas_workbench": {
+                # Not a MODE_CHIP_ORDER mode: nothing here can be restored.
+                "active_mode": "prompts",
+                "selected_entity_kind": "prompt",
+                "selected_entity_id": "p-1",
+                "selected_entity_name": "Some Prompt",
+            },
+            "personas_preview": None,
+        }
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True
+
+    async def test_stale_saved_selection_falls_back_to_auto_select(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """A valid payload whose entity no longer resolves: the restore
+        clears the stale selection AND the round-trip flag, so auto-select
+        still rescues the paint."""
+        saved = {
+            "personas_workbench": {
+                "active_mode": "characters",
+                "selected_entity_kind": "character",
+                "selected_entity_id": "ghost-9",
+                "selected_entity_name": "Ghost",
+            },
+            "personas_preview": None,
+        }
+
+        real_select = PersonasScreen._select_character
+
+        async def _flaky_select(self, entity_id, entity_name, **kwargs):
+            if str(entity_id) == "ghost-9":
+                raise RuntimeError("stale entity")
+            await real_select(self, entity_id, entity_name, **kwargs)
+
+        monkeypatch.setattr(PersonasScreen, "_select_character", _flaky_select)
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The stale restore failed, so the mount fell back to the
+            # first-paint behavior and selected the first real row.
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True

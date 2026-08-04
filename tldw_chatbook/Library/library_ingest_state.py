@@ -12,10 +12,16 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import PurePath
+
+
 from collections.abc import Mapping
 from typing import Any, Sequence
 
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age as format_batch_relative_age,
+)
 from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed as _dependency_installed,
     get_capabilities,
@@ -24,6 +30,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
+    INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
 )
@@ -180,7 +187,11 @@ MAX_CHUNK_SIZE = 5000
 # Queue row state glyphs (binding).
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
+#: (task-2231) A dedup match is a distinct OUTCOME, not a quieter
+#: import -- the two used to be byte-identical rows.
+_GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
+_GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
@@ -255,7 +266,7 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     docstring) never has to reach into ``Home`` (the dependency runs the
     other way: ``Home`` already imports from ``Library``).
     """
-    return f" · retry {job.retry_count}" if job.retry_count else ""
+    return f" · attempt {job.retry_count + 1}" if job.retry_count else ""
 
 # Human-readable (singular, plural) labels for pre-flight type groups.
 # ``unsupported`` is popped into ``unsupported_files`` before this mapping is
@@ -632,6 +643,8 @@ class LibraryIngestCanvasState:
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
     queue_empty_line: str
+    queue_groups: tuple["IngestQueueGroup", ...]
+    latest_batch_line: str
     #: Which backend a new ingest will target, so the canvas can say so.
     ingest_backend: str = "local"
     #: Whether to offer switching backends -- only meaningful when a
@@ -711,6 +724,10 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         line = f"{_GLYPH_ACTIVE} parsing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        # (Qodo round) The attempt marker is the row's LAST element in every
+        # state -- appending it before detected_type made it read
+        # "… · attempt 2 · plaintext" only on rows that had a type.
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -727,6 +744,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         line = f"{_GLYPH_ACTIVE} writing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -743,7 +761,9 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
-            line=f"{_GLYPH_ACTIVE} queued · {basename}",
+            line=(
+                f"{_GLYPH_ACTIVE} queued · {basename}{_retry_suffix(job)}"
+            ),
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
@@ -759,12 +779,23 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         elapsed = _format_elapsed(
             job.submitted_at or job.started_at, job.finished_at, now=now
         )
-        line = f"{_GLYPH_DONE} done · {basename}"
+        # (task-2231) The forecast promised "will match"; the receipt says
+        # so too. Matched rows carry their own glyph and word, so an import
+        # and a dedup match are distinguishable at a glance rather than
+        # only by the sub-line.
+        is_matched = bool(
+            str((job.progress or {}).get("message", "")).startswith(
+                INGEST_DUPLICATE_PROGRESS_PREFIX
+            )
+        )
+        glyph = _GLYPH_MATCHED if is_matched else _GLYPH_DONE
+        word = "matched" if is_matched else "done"
+        line = f"{glyph} {word} · {basename}"
         if elapsed:
             line += f" · {elapsed}"
         return IngestQueueRow(
             job_id=job.job_id,
-            glyph=_GLYPH_DONE,
+            glyph=glyph,
             line=line,
             can_open=job.media_id is not None,
             can_retry=False,
@@ -793,6 +824,26 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_CANCELLED,
+            line=line,
+            can_open=False,
+            can_retry=False,
+            can_dismiss=True,
+            media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
+        )
+
+    if job.state == IngestJobState.SKIPPED:
+        # (task-2220) Neutral outcome: the pipeline never attempted this
+        # file. No Retry (requeue is FAILED-only); dismiss offered.
+        line = f"{_GLYPH_SKIPPED} skipped · {basename}"
+        if job.error:
+            line += f" · {short_ingest_error(job.error)}"
+        return IngestQueueRow(
+            job_id=job.job_id,
+            glyph=_GLYPH_SKIPPED,
             line=line,
             can_open=False,
             can_retry=False,
@@ -835,6 +886,7 @@ _COUNTS_LINE_ORDER: tuple[IngestJobState, ...] = (
     IngestJobState.WRITING,
     IngestJobState.QUEUED,
     IngestJobState.DONE,
+    IngestJobState.SKIPPED,
     IngestJobState.FAILED,
     IngestJobState.CANCELLED,
 )
@@ -853,19 +905,34 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     in this module -- e.g. ``"2 parsing · 1 writing · 3 queued · 1 done · 1
     failed"``), joined by ``" · "``.
     """
+    # (Qodo round) The tally must bucket the way the group headers and the
+    # rows do: counting every DONE job as "done" made the queue line say
+    # "2 done" while a header right below it said "1 done · 1 matched".
     counts = {state.value: 0 for state in IngestJobState}
+    matched = 0
     for job in jobs:
-        counts[job.state.value] += 1
-    joined = " · ".join(
+        if job.state == IngestJobState.DONE and str(
+            (job.progress or {}).get("message", "")
+        ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
+            matched += 1
+        else:
+            counts[job.state.value] += 1
+    segments = [
         f"{counts[state.value]} {state.value}"
         for state in _COUNTS_LINE_ORDER
         if counts[state.value]
-    )
+    ]
+    if matched:
+        segments.append(f"{matched} matched")
+    joined = " · ".join(segments)
     # (task-2043) The registry restores prior sessions from the jobs DB, so
     # these totals span ALL ingests -- say so, or a fresh batch's outcome
     # blurs into history.
-    return f"{joined} — all ingests" if joined else ""
-
+    # (task-2230) The count is QUEUE-scoped -- it drops when the user
+    # clears finished rows, while Recent ingests keeps the real history.
+    # Saying "all ingests" over a number that shrinks was a lie the label
+    # itself denied.
+    return f"{joined} — in queue" if joined else ""
 
 
 #: Suffix appended to a queue row for a job that runs on the server. Local is
@@ -879,6 +946,7 @@ _TERMINAL_ROW_STATES = (
     IngestJobState.DONE,
     IngestJobState.FAILED,
     IngestJobState.CANCELLED,
+    IngestJobState.SKIPPED,
 )
 
 
@@ -978,6 +1046,167 @@ def _build_queue_row(
 _MISSING_DEPENDENCY_RE = re.compile(
     r"No module named '([^']+)'|(\S+) is not installed|pip install (\S+)"
 )
+
+
+@dataclass(frozen=True)
+class IngestQueueGroup:
+    """One per-submission run of queue rows (task-2221 owner ruling).
+
+    Attributes:
+        batch_id: The members' shared batch id, or ``None`` for a
+            single-file submission (rendered without a header).
+        header_line: Ready-to-render group header, ``""`` for singletons.
+        job_ids: The member rows' job ids, in render order.
+    """
+
+    batch_id: str | None
+    header_line: str
+    job_ids: tuple[str, ...]
+
+
+def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
+    """Per-state outcome segments for one batch, active work last.
+
+    Args:
+        members: The batch's jobs, in render order.
+
+    Returns:
+        Non-zero tally segments in ``_COUNTS_LINE_ORDER`` order (e.g.
+        ``["2 done", "1 skipped"]``), with a trailing ``"N running"``
+        segment when any member is still queued/parsing/writing.
+    """
+    tallies: dict[str, int] = {}
+    active = 0
+    matched = 0
+    for job in members:
+        if job.state in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        ):
+            active += 1
+        elif job.state == IngestJobState.DONE and str(
+            (job.progress or {}).get("message", "")
+        ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
+            # (task-2231) "matched" is reported, not folded into "done".
+            matched += 1
+        else:
+            tallies[job.state.value] = tallies.get(job.state.value, 0) + 1
+    parts = [
+        f"{tallies[state.value]} {state.value}"
+        for state in _COUNTS_LINE_ORDER
+        if tallies.get(state.value)
+    ]
+    if matched:
+        parts.append(f"{matched} matched")
+    if active:
+        parts.append(f"{active} running")
+    return parts
+
+
+def build_ingest_queue_groups(
+    jobs: "Sequence[LibraryIngestJob]", *, now: datetime | None = None
+) -> tuple[tuple[IngestQueueGroup, ...], str]:
+    """Group jobs into contiguous per-submission runs (task-2221).
+
+    Contiguous runs of a shared ``batch_id`` become one headed group
+    (source dirname, file count, relative age, outcome tallies); jobs
+    without a batch id are singleton groups with no header, so a
+    single-file submission reads exactly as before. Also returns the
+    latest-batch tally line ("Latest batch: …"), ``""`` when no
+    multi-file batch exists.
+
+    Args:
+        jobs: The registry snapshot, in render order.
+        now: Reference time for the header's relative age; defaults to
+            the current UTC time.
+
+    Returns:
+        ``(groups, latest_batch_line)``.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    groups: list[IngestQueueGroup] = []
+    run: list[LibraryIngestJob] = []
+    run_batch: str | None = None
+
+    def _flush() -> None:
+        if not run:
+            return
+        members = tuple(run)
+        if run_batch is None:
+            for member in members:
+                groups.append(
+                    IngestQueueGroup(
+                        batch_id=None, header_line="", job_ids=(member.job_id,)
+                    )
+                )
+            return
+        source = PurePath(str(members[0].source_path)).parent.name or "batch"
+        count = len(members)
+        # (Qodo round) A batch is "running" until EVERY member is
+        # terminal -- a finished member's age on an in-progress batch
+        # misled about the run's state.
+        any_active = any(
+            job.state
+            in (
+                IngestJobState.QUEUED,
+                IngestJobState.PARSING,
+                IngestJobState.WRITING,
+            )
+            for job in members
+        )
+        finished_walls = [
+            job.finished_at_wall for job in members if job.finished_at_wall
+        ]
+        age = (
+            format_batch_relative_age(max(finished_walls), now=reference_now)
+            if finished_walls and not any_active
+            else "running"
+        )
+        parts = _batch_outcome_parts(members)
+        header = (
+            f"▸ {source} — {count} {'file' if count == 1 else 'files'}"
+            f" · {age}"
+        )
+        if parts:
+            header += " · " + " · ".join(parts)
+        groups.append(
+            IngestQueueGroup(
+                batch_id=run_batch,
+                header_line=header,
+                job_ids=tuple(job.job_id for job in members),
+            )
+        )
+
+    for job in jobs:
+        job_batch = getattr(job, "batch_id", None)
+        if job_batch != run_batch and run:
+            _flush()
+            run = []
+        run_batch = job_batch
+        run.append(job)
+    _flush()
+
+    # (task-2230) EVERY submission counts as a run, single files included
+    # -- filtering to batch_id-bearing groups meant a single-file ingest
+    # left this line reporting the previous multi-file batch (round-7 P1,
+    # a task-2221 regression). And with only one run in the queue the
+    # group header already says it, so the line would just repeat itself.
+    latest_batch_line = ""
+    if len(groups) > 1:
+        by_id = {job.job_id: job for job in jobs}
+        latest = max(
+            groups,
+            key=lambda g: max(
+                (by_id[jid].submitted_at for jid in g.job_ids if jid in by_id),
+                default=0.0,
+            ),
+        )
+        members = [by_id[jid] for jid in latest.job_ids if jid in by_id]
+        parts = _batch_outcome_parts(members)
+        if parts:
+            latest_batch_line = "Latest run: " + " · ".join(parts)
+    return tuple(groups), latest_batch_line
 
 
 def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
@@ -1080,13 +1309,27 @@ def build_library_ingest_state(
         )
         for job in jobs
     )
+    queue_groups, latest_batch_line = build_ingest_queue_groups(jobs)
+    # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
+    # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
-        job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+        job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
+        for job in jobs
     )
     finished_count = sum(
         1
         for job in jobs
-        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+        if job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
     )
     failed_count = sum(
         1 for job in jobs if job.state == IngestJobState.FAILED
@@ -1184,12 +1427,18 @@ def build_library_ingest_state(
     option_errors = collect_ingest_option_errors(
         form.type_options, groups=("generic", *type_groups)
     )
+    # (task-2230) An unresolvable source gates like every other
+    # known-doomed selection: a nonexistent path used to leave Start
+    # styled exactly like a valid one, and pressing it produced a
+    # transient toast and NO queue record -- the least recovery for the
+    # most common user error.
     start_enabled = (
         registry_available
         and media_db_available
         and bool(form.path.strip())
         and not nothing_importable
         and not option_errors
+        and not errors_are_path_problem
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
     # unavailable line wins, then the guaranteed-failure explanation, then
@@ -1219,6 +1468,11 @@ def build_library_ingest_state(
             f"Nothing in this selection can be imported — "
             f"{' and '.join(blocker_parts)}."
         )
+    elif errors_are_path_problem:
+        start_quiet_line = (
+            "Can't find that path — check it, or use Browse… to pick a "
+            "file or folder."
+        )
     elif option_errors:
         start_quiet_line = (
             f"Fix the highlighted options to start: {option_errors[0][2]}"
@@ -1241,7 +1495,8 @@ def build_library_ingest_state(
         match_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
         )
-        will_fail = len(unsupported_files) + len(empty_files)
+        will_skip = len(unsupported_files)
+        will_fail = len(empty_files)
         will_import = max(supported_total - will_match, 0)
         parts: list[str] = [f"{will_import} will import"]
         if will_match:
@@ -1249,9 +1504,26 @@ def build_library_ingest_state(
                 f"at least {will_match}" if match_capped else str(will_match)
             )
             parts.append(f"{match_text} will match")
+        if will_skip:
+            parts.append(f"{will_skip} will skip")
         if will_fail:
             parts.append(f"{will_fail} will fail")
         commit_summary_line = " · ".join(parts)
+        # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
+        # ENABLED (the dedup probe is capped best-effort, never a blocker)
+        # but consent becomes informed: say what starting will actually do.
+        # (task-2231) "Everything here" must be true: only when every
+        # importable file is a predicted match and nothing else is staged.
+        if (
+            will_import == 0
+            and will_match
+            and not will_fail
+            and not will_skip
+        ):
+            start_quiet_line = (
+                "Everything here appears to already be in your Library — "
+                "starting will re-check and match, not re-import."
+            )
 
     # (task-2100) Name the unsupported files -- a count alone forces a
     # submit-and-read-the-rows round trip to learn WHICH files. When the
@@ -1276,12 +1548,11 @@ def build_library_ingest_state(
             )
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
-            recorded_as = (
-                "a failure" if unsupported_count == 1 else "failures"
-            )
+            # (task-2220 owner ruling) Skipped, not "recorded as
+            # failures" -- the pipeline never attempts these.
             unsupported_line = (
                 f"{unsupported_count} unsupported {file_noun} will be "
-                f"recorded as {recorded_as}: {unsupported_names}."
+                f"skipped: {unsupported_names}."
             )
     else:
         unsupported_line = ""
@@ -1318,7 +1589,12 @@ def build_library_ingest_state(
     recent_jobs = [
         job
         for job in jobs
-        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+        if job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
     ]
     live_ids = {job.job_id for job in recent_jobs}
     recent_jobs.extend(
@@ -1368,6 +1644,8 @@ def build_library_ingest_state(
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
         queue_empty_line=queue_empty_line,
+        queue_groups=queue_groups,
+        latest_batch_line=latest_batch_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
     )
 

@@ -103,11 +103,24 @@ class PersonaPageChanged(Message):
         self.delta = delta
 
 
+class PersonaMarksChanged(Message):
+    """The library pane's marked (multi-selected) row set changed (F-040).
+
+    ``marks`` is a tuple of ``(kind, item_id, name)`` triples in row order;
+    empty when the last mark was cleared.
+    """
+
+    def __init__(self, marks: tuple[tuple[str, str, str], ...]) -> None:
+        super().__init__()
+        self.marks = marks
+
+
 __all__ = [
     "PersonaAction",
     "PersonaActionRequested",
     "PersonaEntityKind",
     "PersonaEntitySelected",
+    "PersonaMarksChanged",
     "PersonaModeChanged",
     "PersonaPageChanged",
     "PersonaSearchChanged",

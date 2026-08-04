@@ -293,12 +293,10 @@ async def test_submitting_a_directory_queues_one_job_per_file(
 
 
 @pytest.mark.asyncio
-async def test_directory_unsupported_file_fails_alone(tmp_path: Path) -> None:
-    """One unsupported file in a folder fails on its own row.
-
-    The supported siblings must still reach DONE rather than being taken
-    down with it.
-    """
+async def test_directory_unsupported_file_is_skipped_alone(tmp_path: Path) -> None:
+    """(task-2220 ruling) One unsupported file in a folder is SKIPPED on
+    its own row -- a neutral outcome, never a failure -- and the supported
+    siblings still reach DONE rather than being taken down with it."""
     db = _make_db(tmp_path)
     folder = tmp_path / "mixed"
     folder.mkdir()
@@ -315,9 +313,10 @@ async def test_directory_unsupported_file_fails_alone(tmp_path: Path) -> None:
         await _wait_for_job_state(
             app, pilot, jobs["good.txt"].job_id, IngestJobState.DONE
         )
-        await _wait_for_job_state(
-            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.FAILED
+        skipped = await _wait_for_job_state(
+            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.SKIPPED
         )
+        assert "Unsupported file type" in skipped.error
 
         await _wait_for_runner_idle(app, pilot)
 
@@ -501,25 +500,25 @@ async def test_missing_file_failure_is_permanent_and_refuses_retry(
 
 
 @pytest.mark.asyncio
-async def test_unsupported_file_type_failure_is_permanent_and_refuses_retry(
+async def test_unsupported_file_type_is_skipped_and_refuses_retry(
     tmp_path: Path,
 ) -> None:
-    """(M4) An unsupported extension is a validation-class failure too --
-    classified ``permanent`` inside the parse worker, Retry refused."""
+    """(M4, contract revised by task-2220) An unsupported extension records
+    as SKIPPED -- the pipeline never attempted it, so it is not a failure --
+    and Retry stays refused (``requeue`` is FAILED-only)."""
     db = _make_db(tmp_path)
     unsupported = _write_text_file(tmp_path, "note.xyz", "irrelevant content")
     app = _IngestRunnerHarness(db)
 
     async with app.run_test() as pilot:
-        failing_job = app.submit_library_ingest_job(source_path=str(unsupported))
-        failed = await _wait_for_job_state(
-            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        submitted = app.submit_library_ingest_job(source_path=str(unsupported))
+        skipped = await _wait_for_job_state(
+            app, pilot, submitted.job_id, IngestJobState.SKIPPED
         )
         await _wait_for_runner_idle(app, pilot)
 
-        assert failed.permanent is True
-        assert "Unsupported file type" in failed.error
-        assert app.retry_library_ingest_job(failed.job_id) is None
+        assert "Unsupported file type" in skipped.error
+        assert app.retry_library_ingest_job(skipped.job_id) is None
 
 
 @pytest.mark.asyncio
@@ -2750,7 +2749,7 @@ async def test_empty_file_failure_is_permanent_and_refuses_retry(
 ) -> None:
     """(task-2015) A truly empty file fails identically on every attempt --
     offering Retry for it is dead bait (the UAT pressed it and got the same
-    failure with '· retry 1'). Same permanence family as missing-file and
+    failure with '· attempt 2'). Same permanence family as missing-file and
     unsupported-type."""
     db = _make_db(tmp_path)
     empty = tmp_path / "empty.txt"
@@ -2823,3 +2822,30 @@ def test_worker_initializer_silences_import_noise(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "MARKER-OK" in result.stdout
     assert "should not reach stderr" not in result.stderr
+
+
+@pytest.mark.asyncio
+async def test_folder_submission_shares_one_batch_id(tmp_path: Path) -> None:
+    """(task-2221 owner ruling) Every file expanded from one folder
+    submission carries the same minted batch id, so the queue can group
+    the run under one header; a single-file submission stays batchless."""
+    db = _make_db(tmp_path)
+    folder = tmp_path / "run"
+    folder.mkdir()
+    _write_text_file(folder, "a.txt", "Document A.")
+    _write_text_file(folder, "b.txt", "Document B.")
+    solo = _write_text_file(tmp_path, "solo.txt", "Solo document.")
+    app = _IngestRunnerHarness(db, worker_count=2)
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(source_path=str(folder))
+        solo_job = app.submit_library_ingest_job(source_path=str(solo))
+
+        jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
+        assert jobs["a.txt"].batch_id is not None
+        assert jobs["a.txt"].batch_id == jobs["b.txt"].batch_id
+        assert jobs["a.txt"].batch_id.startswith("local-")
+        assert jobs["solo.txt"].batch_id is None
+        assert solo_job.batch_id is None
+
+        await _wait_for_runner_idle(app, pilot)

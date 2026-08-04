@@ -353,10 +353,9 @@ class TestTabNavigationProvider:
             "Console",
             "Library",
             "Artifacts",
-            # task-435: the personas destination's palette command uses the
-            # full accessible label (destination.full_label), not the short
-            # "Roleplay" rail label -- see the dedicated assertion below.
-            "Roleplay & Chat Dictionaries",
+            # F-034: one public name everywhere - the palette command uses
+            # the same "Roleplay" label as the nav rail and screen header.
+            "Roleplay",
             "Watchlists",
             "Schedules",
             "Workflows",
@@ -791,7 +790,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Ingest content…"
+        assert hits[0].text == "Library: Add content…"
         assert "Open Library" in hits[0].help
 
     @pytest.mark.asyncio
@@ -802,7 +801,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Ingest content…"
+        assert hits[0].text == "Library: Add content…"
 
     @pytest.mark.asyncio
     async def test_search_unmatched_query_returns_no_hits(self, library_ingest_provider):

@@ -659,7 +659,7 @@ async def test_library_empty_state_reports_empty_with_next_action():
     assert "Notes (0)" in visible_text
     assert "Media (0)" in visible_text
     assert "Conversations (0)" in visible_text
-    assert "Search, pick a content type, or ingest something new." in visible_text
+    assert "Search everything, pick a section on the left, or add something new." in visible_text
 
 
 @pytest.mark.asyncio
@@ -1904,7 +1904,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(buttons)
+        assert {"Characters", "Personas", "New", "Chat now"}.issubset(buttons)
 
 
 @pytest.mark.asyncio

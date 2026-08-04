@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-LIBRARY_RAIL_SECTION_IDS = ("browse", "create", "ingest", "details")
+LIBRARY_RAIL_SECTION_IDS = ("browse", "create", "study", "ingest", "details")
 
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 _FALSE_STRINGS = {"false", "no", "0", "off"}
@@ -17,6 +17,9 @@ class LibraryRailPreferences:
 
     browse_open: bool = True
     create_open: bool = True
+    # F-017: the Study handoff rows live in their own section (they open
+    # the Study destination; they create nothing).
+    study_open: bool = True
     ingest_open: bool = True
     details_open: bool = False
 
@@ -50,6 +53,7 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
     return LibraryRailPreferences(
         browse_open=_coerce_bool(raw.get("browse_open"), defaults.browse_open),
         create_open=_coerce_bool(raw.get("create_open"), defaults.create_open),
+        study_open=_coerce_bool(raw.get("study_open"), defaults.study_open),
         ingest_open=_coerce_bool(raw.get("ingest_open"), defaults.ingest_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
     )
@@ -69,6 +73,7 @@ def serialize_library_rail_preferences(
     return {
         "browse_open": bool(preferences.browse_open),
         "create_open": bool(preferences.create_open),
+        "study_open": bool(preferences.study_open),
         "ingest_open": bool(preferences.ingest_open),
         "details_open": bool(preferences.details_open),
     }

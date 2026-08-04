@@ -22,6 +22,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
@@ -184,6 +185,8 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -247,6 +250,8 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
+    SKILL_DISCARD_TOOLTIP_CLEAN,
+    SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
     library_rag_answer_children,
     library_rag_history_children,
@@ -262,11 +267,14 @@ from ...Widgets.Library import (
     skill_disable_model_label,
     skill_editor_warning_lines,
     skill_script_grant_line,
+    skill_trust_approve_tooltip,
     skill_trust_panel_remediation_copy,
     skill_trust_review_enabled,
     skill_trust_review_preview,
+    skill_trust_review_tooltip,
     skill_trust_state_line,
     skill_trust_unlock_enabled,
+    skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
 from ...Widgets.Library.library_file_notes_workspace import (
@@ -339,13 +347,12 @@ LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
 )
 LIBRARY_EMPTY_COPY = "No local Library content yet."
-LIBRARY_EMPTY_NEXT_ACTION_COPY = (
-    "Import media, create notes, or open Library Search/RAG after indexing."
-)
-LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
-LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
-    "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
-)
+# F-021: the retired inspector pane's LIBRARY_INSPECTOR_EMPTY_COPY /
+# LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY were deleted -- nothing has
+# composed #library-source-inspector since the legacy workbench chrome
+# went away, so the (architecture-talk) copy never rendered. The
+# user-facing guidance it gestured at lives in the F-013 landing copy
+# and the F-010 landing hub.
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 # Navigation composes a FRESH LibraryScreen instance per visit (PR #595
 # freeze fix), so a per-instance memo is useless -- the previous visit's
@@ -407,10 +414,6 @@ LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
 LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
-LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
-LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
-LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
-LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 # `_refresh_library_rag_results_widgets` tears down every direct child of
 # `#library-rag-results` NOT in this set, then remounts fresh ones from
@@ -727,6 +730,14 @@ def _apply_library_row_toggle(
         button.label = f"{glyph}{label_rest}"
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
+        # F-018: the reason/action tooltip flips in place with `disabled`
+        # (this patcher deliberately avoids a recompose, so the compose-
+        # time tooltip would otherwise go stale).
+        export_button.tooltip = (
+            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+            if export_button.disabled
+            else LIBRARY_EXPORT_SELECTED_TOOLTIP
+        )
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -941,11 +952,10 @@ class LibraryScreen(BaseAppScreen):
     #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
     _library_media_detail_is_remote: bool = False
 
-    #: Footer hint set — mirrors the show=True bindings the retired Textual
-    #: Footer used to render (task-264 review: per-screen AppFooterStatus
-    #: renders registered contexts, not bindings). `_register_footer_shortcuts`
-    #: only wires this set in while the Search/RAG canvas is active, so every
-    #: entry here is already scoped correctly -- no new gating needed.
+    #: Footer hint set while the Search/RAG canvas is active — mirrors the
+    #: show=True bindings the retired Textual Footer used to render
+    #: (task-264 review: per-screen AppFooterStatus renders registered
+    #: contexts, not bindings).
     #: Task 12/RAG-36 fix-review: the `enter`/`o` evidence-card `Binding`s
     #: are `show=False` (Textual's own key panel doesn't need them), which
     #: made this the ONLY on-screen advertisement of those keys -- and it
@@ -953,10 +963,21 @@ class LibraryScreen(BaseAppScreen):
     #: That reproduces the exact defect RAG-36 exists to close (a
     #: keyboard-only user cannot find a hidden key), so both are listed here
     #: too.
+    #: F-012: `/` (focus the rail search box) works on every canvas, so it
+    #: closes both sets.
     LIBRARY_SHORTCUTS = (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
+        ("/", "focus search"),
+    )
+
+    #: F-012: the landing state (and every non-Search canvas) still has one
+    #: working Library key -- `/` focuses the rail search box. Advertising
+    #: only what works beats the old bare-default footer, which read as
+    #: "no keyboard support here".
+    LIBRARY_LANDING_SHORTCUTS = (
+        ("/", "focus search"),
     )
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -1036,6 +1057,26 @@ class LibraryScreen(BaseAppScreen):
     }
 
     .library-hub-spacer {
+        height: 1;
+        min-height: 1;
+    }
+
+    /* F-010: the landing hub's counts/recents lines -- quiet dim meta,
+    same tier as .library-source-action-meta just above. */
+    .library-hub-meta {
+        color: $text-muted;
+        height: auto;
+        min-height: 0;
+        margin-top: 1;
+    }
+    /* F-010: the next-action rows hug their own height inside the
+    ds-toolbar band. */
+    #library-hub-actions {
+        height: auto;
+        min-height: 0;
+        margin-top: 1;
+    }
+    Button.library-hub-action {
         height: 1;
         min-height: 1;
     }
@@ -1450,7 +1491,12 @@ class LibraryScreen(BaseAppScreen):
         # queue went from idle to active -- the settle toast reports deltas
         # against that baseline.
         self._library_ingest_last_active_count: int = 0
-        self._library_ingest_batch_baseline: tuple[int, int, int] = (0, 0, 0)
+        self._library_ingest_batch_baseline: tuple[int, int, int, int] = (
+            0,
+            0,
+            0,
+            0,
+        )
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
@@ -1526,17 +1572,47 @@ class LibraryScreen(BaseAppScreen):
         ``screen.refresh(recompose=True)``, which replaces the footer widget;
         the registration must survive that.
         """
-        # task-420: the "u" action hard-gates on the Search/RAG row, so
-        # advertising it screen-wide made it a dead shortcut everywhere
-        # else -- register it only where it works, re-registered on every
-        # rail-row switch (the personas-style dynamic-context use of this
-        # API).
+        # task-420: the "u"/evidence actions hard-gate on the Search/RAG
+        # row, so advertising them screen-wide made them dead shortcuts
+        # everywhere else -- they register only where they work,
+        # re-registered on every rail-row switch AND on navigation-context
+        # deep links (F-012: `_apply_navigation_context_state` can land on
+        # the Search canvas without a rail-row press). F-012: everywhere
+        # else gets the one key that works there instead of the bare
+        # default -- `/` focuses the rail search box on every canvas.
         shortcuts = (
             self.LIBRARY_SHORTCUTS
             if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
-            else ()
+            else self.LIBRARY_LANDING_SHORTCUTS
         )
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
+
+    def on_key(self, event: Key) -> None:
+        """``/``: focus the rail search box from anywhere but a text field.
+
+        F-012's focus-search key, implemented as a screen-level key handler
+        (the settings screen's task-1715 pattern) rather than a ``Binding``:
+        the key stays out of the key palette, and it can never fire while an
+        ``Input``/``TextArea`` owns focus -- text fields consume printable
+        keys before this handler runs, so the isinstance guard is belt and
+        braces for any field that lets an event through. Once the rail box
+        itself has focus, its own ``_on_key`` re-arms the query instead
+        (see ``LibraryRailSearchInput``).
+        """
+        is_slash = (
+            event.key in {"/", "slash"}
+            or getattr(event, "character", None) == "/"
+        )
+        if not is_slash:
+            return
+        if isinstance(self.focused, (Input, TextArea)):
+            return
+        try:
+            self.query_one("#library-search-input", Input).focus()
+        except (NoMatches, QueryError):
+            return
+        event.stop()
+        event.prevent_default()
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -2175,6 +2251,10 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_open_source",
             )
+        # F-012: a deep link can change the active canvas (e.g. mode="search")
+        # without a rail-row press -- the footer's `u` hint must follow the
+        # canvas, not just the rail switch, or the key works unadvertised.
+        self._register_footer_shortcuts()
         if self.is_mounted:
             if (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -3339,10 +3419,6 @@ class LibraryScreen(BaseAppScreen):
             },
         )
 
-    def _source_recent_label(self, source_type: str) -> str:
-        recent = self._source_recent_value(source_type)
-        return f"Recent: {recent}"
-
     def _hub_table_cell(
         self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH
     ) -> str:
@@ -3357,93 +3433,10 @@ class LibraryScreen(BaseAppScreen):
             shortened = clean_value[:limit].strip()
         return f"{shortened}{suffix}"
 
-    def _hub_section_rule(self, label: str, widget_id: str) -> Static:
-        rule_width = 74
-        suffix_width = max(3, rule_width - len(label) - 4)
-        return Static(
-            f"-- {label} {'-' * suffix_width}",
-            id=widget_id,
-            classes="destination-section",
-        )
-
     def _hub_source_count_value(self, source_type: str) -> str:
         count = self._local_source_counts.get(source_type, 0)
         suffix = "" if self._local_source_total_known.get(source_type, True) else "+"
         return f"{count}{suffix}"
-
-    def _hub_console_status(self, source_type: str) -> str:
-        if self._local_source_counts.get(source_type, 0) <= 0:
-            return "blocked: no source"
-        workspace_depth_state = self._library_workspace_depth_state()
-        if workspace_depth_state.context_handoff_enabled:
-            return "ready"
-        return "blocked: workspace gate"
-
-    def _hub_recent_sources_label(self) -> str:
-        return "; ".join(
-            (
-                f"Notes: {self._source_recent_value('notes')}",
-                f"Media: {self._source_recent_value('media')}",
-                f"Conversations: {self._source_recent_value('conversations')}",
-            )
-        )
-
-    def _hub_readiness_counts(self) -> tuple[int, int, int]:
-        active_modules = sum(
-            1
-            for source_type in ("notes", "media", "conversations")
-            if self._local_source_counts.get(source_type, 0) > 0
-        )
-        workspace_depth_state = self._library_workspace_depth_state()
-        eligible_modules = (
-            active_modules if workspace_depth_state.context_handoff_enabled else 0
-        )
-        blocked_modules = max(0, active_modules - eligible_modules)
-        return active_modules, eligible_modules, blocked_modules
-
-    def _hub_state_summary(self) -> str:
-        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
-        workspace_depth_state = self._library_workspace_depth_state()
-        console_state = (
-            "ready" if workspace_depth_state.context_handoff_enabled else "blocked"
-        )
-        return "\n".join(
-            (
-                f"State: Local workspace | Browse all workspaces | Console staging {console_state}",
-                (
-                    f"Inventory: Notes {self._hub_source_count_value('notes')} | "
-                    f"Media {self._hub_source_count_value('media')} | "
-                    f"Conversations {self._hub_source_count_value('conversations')} | "
-                    f"Console eligible {eligible_modules} | Blocked {blocked_modules}"
-                ),
-            )
-        )
-
-    def _hub_readiness_summary(self) -> str:
-        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
-        blocked_suffix = "module" if blocked_modules == 1 else "modules"
-        eligible_suffix = "module" if eligible_modules == 1 else "modules"
-        return "\n".join(
-            (
-                self._hub_key_value_row(
-                    "Eligible", f"{eligible_modules} {eligible_suffix}"
-                ),
-                self._hub_key_value_row(
-                    "Blocked",
-                    f"{blocked_modules} workspace-gated {blocked_suffix}",
-                ),
-                self._hub_key_value_row("Recent", self._hub_recent_sources_label()),
-                self._hub_key_value_row(
-                    "Next",
-                    "Link sources to the active workspace or open an owner screen.",
-                ),
-            )
-        )
-
-    def _hub_key_value_row(
-        self, label: str, value: str, *, label_width: int = 14
-    ) -> str:
-        return f"{label:<{label_width}} {value}"
 
     def _source_recent_value(self, source_type: str) -> str:
         titles = self._source_sample_titles(source_type)
@@ -3451,64 +3444,48 @@ class LibraryScreen(BaseAppScreen):
             return "none"
         return self._hub_table_cell(titles[0])
 
-    def _hub_inventory_readiness_label(self, source_type: str, unit: str) -> str:
-        count_label = self._hub_source_count_value(source_type)
-        try:
-            count = int(count_label.rstrip("+"))
-        except ValueError:
-            count = 0
-        if count == 1:
-            return f"{count_label} {unit}"
-        return f"{count_label} {unit}s"
+    def _hub_counts_line(self) -> str:
+        """Per-source counts for the F-010 landing hub.
 
-    def _hub_inventory_console_label(self, source_type: str) -> str:
-        return f"Console {self._hub_console_status(source_type)}"
+        While the local source snapshot is still loading (and no lookup
+        error has been recorded), the counts read "…" rather than the
+        placeholder zeros seeded at construction time -- same honest-
+        loading policy `_build_library_shell_input()` applies to the rail's
+        own count suffixes. `_hub_source_count_value()` appends "+" when
+        the source's total is an estimate, mirroring the rail. On a lookup
+        ERROR the line carries the error itself rather than misleading
+        zeros (PR #1318 review; the F-014 count policy: a failed fetch
+        must not dress up as an empty Library).
+        """
+        if self._library_lookup_error is not None:
+            return self._library_lookup_error
 
-    def _hub_inventory_row(
-        self,
-        *,
-        source: str,
-        readiness: str,
-        owner: str,
-        action: str,
-        console: str,
-        widget_id: str,
-    ) -> Static:
-        source_cell = self._hub_table_cell(
-            source,
-            LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH,
-        )
-        readiness_cell = self._hub_table_cell(
-            readiness,
-            LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH,
-        )
-        owner_cell = self._hub_table_cell(
-            owner,
-            LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH,
-        )
-        action_cell = self._hub_table_cell(
-            action,
-            LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH,
-        )
-        return Static(
-            "\n".join(
-                (
-                    (
-                        f"{source_cell:<{LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH}} "
-                        f"{readiness_cell:<{LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH}} "
-                        f"{owner_cell:<{LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH}} "
-                        f"{action_cell:<{LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH}}"
-                    ),
-                    f"  {console}",
-                )
-            ),
-            markup=False,
-            id=widget_id,
-            classes="library-hub-card",
+        def value(source_type: str) -> str:
+            if not self._library_loaded:
+                return "…"
+            return self._hub_source_count_value(source_type)
+
+        return (
+            f"Notes {value('notes')} · Media {value('media')} · "
+            f"Conversations {value('conversations')}"
         )
 
-    def _hub_spacer(self, widget_id: str) -> Static:
-        return Static("", id=widget_id, classes="library-hub-spacer")
+    def _hub_recents_line(self) -> str | None:
+        """Recent-item line for the F-010 landing hub, or None when the
+        library has no content yet (a bare 'Recent: none ×3' line on a
+        fresh install would read as broken, not empty)."""
+        parts = [
+            f"{label}: {recent}"
+            for label, source_type in (
+                ("Notes", "notes"),
+                ("Media", "media"),
+                ("Conversations", "conversations"),
+            )
+            if (recent := self._source_recent_value(source_type)) != "none"
+        ]
+        if not parts:
+            return None
+        return f"Recent — {' · '.join(parts)}"
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -3987,15 +3964,17 @@ class LibraryScreen(BaseAppScreen):
     def _compose_library_rail_top_action(self) -> list[Widget]:
         """Build the top-of-rail action widget(s) for the Library shell.
 
-        Returns a primary Ingest button that jumps directly to the Ingest
-        media canvas, surfaced above the rail search box for discoverability.
+        Returns the rail's primary button, which jumps directly to the
+        ingest media canvas, surfaced above the rail search box for
+        discoverability. F-013: the label names the action in plain
+        language ("ingest" stays inside the ingest canvas itself).
         """
         return [
             Button(
-                "Ingest content…",
+                "Add content…",
                 variant="primary",
                 id="library-ingest-top-button",
-                tooltip="Open the ingest canvas to add Library content.",
+                tooltip="Add files, links, and transcripts to your Library.",
             )
         ]
 
@@ -4161,7 +4140,10 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(
-                                self._library_media_detail
+                                self._library_media_detail,
+                                arrival_note=(
+                                    self._pop_library_media_arrival_note()
+                                ),
                             ),
                             editing=self._library_media_editing,
                             confirming_delete=self._library_media_confirming_delete,
@@ -4425,15 +4407,64 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-purpose",
                         markup=False,
                     )
+                    # F-010: the landing canvas is the wired hub, not a
+                    # one-line void -- per-source counts and recents from
+                    # the existing helpers, plus quiet next-action rows
+                    # that dispatch exactly like their rail-row
+                    # counterparts (same `@on(.library-hub-action)` path,
+                    # same dirty-edit guards).
+                    yield Static(
+                        self._hub_counts_line(),
+                        id="library-hub-counts",
+                        classes="library-hub-meta",
+                        markup=False,
+                    )
+                    recents_line = self._hub_recents_line()
+                    if recents_line is not None:
+                        yield Static(
+                            recents_line,
+                            id="library-hub-recents",
+                            classes="library-hub-meta",
+                            markup=False,
+                        )
+                    with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
+                        for label, tooltip, row_id, target_id, button_id in (
+                            ("Import media", "Import media files into the Library.",
+                             LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
+                             "library-hub-action-import"),
+                            ("Search", "Search everything in the Library.",
+                             LIBRARY_ROW_BROWSE_SEARCH, "search",
+                             "library-hub-action-search"),
+                            ("New note", "Create a new note.",
+                             LIBRARY_ROW_CREATE_NOTE, "notes-create",
+                             "library-hub-action-new-note"),
+                        ):
+                            action = Button(
+                                label,
+                                id=button_id,
+                                classes="library-hub-action console-action-subdued",
+                                compact=True,
+                                tooltip=tooltip,
+                            )
+                            # Same attributes the rail rows carry -- the
+                            # shared press handler reads them to dispatch.
+                            action.row_id = row_id
+                            action.target_kind = "canvas"
+                            action.target_id = target_id
+                            yield action
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
 
-        While the local source snapshot is still loading (``_library_loaded``
-        is False) and no lookup error has been recorded yet, the media/notes/
-        conversations counts are reported as ``None`` rather than the
-        placeholder zeros seeded at construction time, so the rail does not
-        render a misleading ``(0)`` before the real snapshot arrives.
+        F-014's one count policy drives the count fields: while the local
+        source snapshot is still in flight (``_library_loaded`` is False
+        and no lookup error has been recorded yet) the rows render the dim
+        loading placeholder via ``counts_loading``; once the snapshot has
+        landed, known counts render as ``(N)``/``(N+)`` and unavailable
+        sources (missing prompts/skills services) render no suffix. On a
+        lookup ERROR every count is ``None`` -- a failed fetch must not
+        dress up as an empty Library with a wall of misleading ``(0)``s
+        (the Details error line carries the explanation).
 
         Returns:
             Adapter-provided Library shell input reflecting live counts and
@@ -4456,7 +4487,8 @@ class LibraryScreen(BaseAppScreen):
         )
         counts = self._local_source_counts
         known = self._local_source_total_known
-        counts_known_yet = self._library_loaded or bool(self._library_lookup_error)
+        counts_loading = not self._library_loaded and not self._library_lookup_error
+        counts_available = self._library_loaded and not self._library_lookup_error
         prompts_entry = self._local_source_records.get("prompts")
         prompts_count = (
             prompts_entry[0]
@@ -4470,33 +4502,44 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         return LibraryShellInput(
-            media_count=counts.get("media") if counts_known_yet else None,
+            media_count=counts.get("media") if counts_available else None,
             media_known=known.get("media", True),
             conversations_count=counts.get("conversations")
-            if counts_known_yet
+            if counts_available
             else None,
             conversations_known=known.get("conversations", True),
-            notes_count=counts.get("notes") if counts_known_yet else None,
+            notes_count=counts.get("notes") if counts_available else None,
             notes_known=known.get("notes", True),
             # Unlike notes/media/conversations, "prompts" has no sample-cap
             # fallback yet (no paginated fetch backs it in Task 1) -- the
             # count is either the exact seam result or ``None`` (uncounted
             # row), never a "+"-suffixed estimate, so ``prompts_known``
             # stays ``True``.
-            prompts_count=prompts_count if counts_known_yet else None,
+            prompts_count=prompts_count if counts_available else None,
             prompts_known=True,
             # Same posture as prompts: no sample-cap fallback backs this
             # count either (a single ``get_context`` call, not a paginated
             # fetch), so ``skills_known`` stays ``True``.
-            skills_count=skills_count if counts_known_yet else None,
+            skills_count=skills_count if counts_available else None,
             skills_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
             details_lines=self._library_details_lines(active_source, server_label),
-            study_decks_count=self._library_study_counts.get("study_decks"),
-            flashcards_due_count=self._library_study_counts.get("flashcards_due"),
-            quizzes_count=self._library_study_counts.get("quizzes"),
+            study_decks_count=(
+                self._library_study_counts.get("study_decks")
+                if counts_available
+                else None
+            ),
+            flashcards_due_count=(
+                self._library_study_counts.get("flashcards_due")
+                if counts_available
+                else None
+            ),
+            quizzes_count=(
+                self._library_study_counts.get("quizzes") if counts_available else None
+            ),
+            counts_loading=counts_loading,
         )
 
     def _library_details_lines(
@@ -4504,10 +4547,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns exactly two plain-text values: the runtime value (rendered
-        by the rail with a dimmed "Runtime" label) and the local source
-        counts, or a lookup-error/recovery block in place of the counts when
-        the local source snapshot failed to load.
+        Returns up to three plain-text values: the source value (rendered
+        by the rail with a dimmed "Source" label), the local source counts
+        (or a lookup-error/recovery block in place of the counts when the
+        local source snapshot failed to load), and -- only when the
+        DBStatusManager has cached them on the app -- the local DB file
+        sizes (F-014: telemetry relocated out of the app footer; omitted
+        entirely until first computed, never an "N/A" triplet).
         """
         runtime_value = (
             "Local"
@@ -4523,6 +4569,14 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
+        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
+        if isinstance(db_sizes, dict) and db_sizes:
+            sizes_line = (
+                f"Prompts {db_sizes.get('prompts', '?')} · "
+                f"Chats/Notes {db_sizes.get('chachanotes', '?')} · "
+                f"Media {db_sizes.get('media', '?')}"
+            )
+            return (runtime_value, counts_or_error, sizes_line)
         return (runtime_value, counts_or_error)
 
     def _build_library_conversations_state(self):
@@ -5964,6 +6018,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_last_active_count = active_count
         done_now = counts.get("done", 0)
         failed_now = counts.get("failed", 0)
+        skipped_now = counts.get("skipped", 0)
         # (task-2041) A dedup match reaches DONE without importing anything;
         # counting it as "imported" made the toast contradict the row copy.
         # Matches are recognised by the writer's progress-message prefix
@@ -5979,13 +6034,17 @@ class LibraryScreen(BaseAppScreen):
             matched_now = count_duplicate_done_jobs(
                 jobs_fn() if callable(jobs_fn) else ()
             )
-        baseline_done, baseline_failed, baseline_matched = (
-            self._library_ingest_batch_baseline
-        )
+        (
+            baseline_done,
+            baseline_failed,
+            baseline_matched,
+            baseline_skipped,
+        ) = self._library_ingest_batch_baseline
         if (
             done_now < baseline_done
             or failed_now < baseline_failed
             or matched_now < baseline_matched
+            or skipped_now < baseline_skipped
         ):
             # (task-2015 review) Clear/dismiss mid-batch shrinks DONE/FAILED
             # below the baseline; without re-anchoring, the settle deltas go
@@ -5994,39 +6053,55 @@ class LibraryScreen(BaseAppScreen):
             baseline_done = min(baseline_done, done_now)
             baseline_failed = min(baseline_failed, failed_now)
             baseline_matched = min(baseline_matched, matched_now)
+            baseline_skipped = min(baseline_skipped, skipped_now)
             self._library_ingest_batch_baseline = (
                 baseline_done,
                 baseline_failed,
                 baseline_matched,
+                baseline_skipped,
             )
         if previous_active == 0 and active_count > 0:
             self._library_ingest_batch_baseline = (
                 done_now,
                 failed_now,
                 matched_now,
+                skipped_now,
             )
         elif previous_active > 0 and active_count == 0:
-            baseline_done, baseline_failed, baseline_matched = (
-                self._library_ingest_batch_baseline
-            )
+            (
+                baseline_done,
+                baseline_failed,
+                baseline_matched,
+                baseline_skipped,
+            ) = self._library_ingest_batch_baseline
             matched = max(0, matched_now - baseline_matched)
             imported = (done_now - baseline_done) - matched
             failed = failed_now - baseline_failed
-            if imported > 0 or matched > 0 or failed > 0:
+            skipped = max(0, skipped_now - baseline_skipped)
+            if imported > 0 or matched > 0 or failed > 0 or skipped > 0:
                 parts = []
                 if imported > 0:
                     parts.append(f"{imported} imported")
                 if matched > 0:
-                    parts.append(f"{matched} already in Library")
+                    # (task-2231) The forecast says "will match"; the
+                    # toast answers in the same word.
+                    parts.append(f"{matched} matched")
+                if skipped > 0:
+                    parts.append(f"{skipped} skipped")
                 if failed > 0:
                     parts.append(f"{failed} failed")
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
+                    # (task-2220) Skips are neutral and never warn on
+                    # their own (failed == 0 -> information). Real failures
+                    # with zero successes DO warn even when skips are also
+                    # present -- something the user pointed at genuinely
+                    # broke and nothing landed.
                     notify(
                         "Ingest finished — " + " · ".join(parts),
                         severity=(
                             "information"
-                            if imported > 0 or matched > 0
+                            if imported > 0 or matched > 0 or failed == 0
                             else "warning"
                         ),
                     )
@@ -7481,8 +7556,15 @@ class LibraryScreen(BaseAppScreen):
                 release_source()
 
     @on(Button.Pressed, ".library-rail-row")
+    @on(Button.Pressed, ".library-hub-action")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
-        """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
+        """Dispatch a Library rail row press: navigate, browse, or open a canvas.
+
+        `.library-hub-action` covers the F-010 landing hub's next-action
+        rows -- they carry the same row_id/target_kind/target_id attributes
+        as rail rows, so both flow through this one dispatch (including its
+        dirty-edit guards).
+        """
         event.stop()
         button = event.button
         target_kind = str(getattr(button, "target_kind", "") or "")
@@ -8904,22 +8986,27 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one(
-                "#library-skill-trust-unlock", Button
-            ).disabled = not skill_trust_unlock_enabled(state.trust_status)
+            unlock_button = self.query_one("#library-skill-trust-unlock", Button)
+            unlock_button.disabled = not skill_trust_unlock_enabled(state.trust_status)
+            # F-018: reason/action tooltips flip in place with `disabled`.
+            unlock_button.tooltip = skill_trust_unlock_tooltip(state.trust_status)
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one(
-                "#library-skill-trust-review", Button
-            ).disabled = not skill_trust_review_enabled(
+            review_button = self.query_one("#library-skill-trust-review", Button)
+            review_button.disabled = not skill_trust_review_enabled(
+                state.trust_status, state.trust_blocked
+            )
+            review_button.tooltip = skill_trust_review_tooltip(
                 state.trust_status, state.trust_blocked
             )
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-trust-approve", Button).disabled = (
-                self._library_skill_active_review is None
+            approve_button = self.query_one("#library-skill-trust-approve", Button)
+            approve_button.disabled = self._library_skill_active_review is None
+            approve_button.tooltip = skill_trust_approve_tooltip(
+                self._library_skill_active_review is not None
             )
         except (NoMatches, QueryError):
             pass
@@ -9378,6 +9465,12 @@ class LibraryScreen(BaseAppScreen):
         for button in self.query("#library-skill-discard"):
             if isinstance(button, Button):
                 button.disabled = not enabled
+                # F-018: the reason/action tooltip flips in place with
+                # `disabled` (this patcher exists precisely to avoid a
+                # recompose, so the compose-time tooltip would go stale).
+                button.tooltip = (
+                    SKILL_DISCARD_TOOLTIP_DIRTY if enabled else SKILL_DISCARD_TOOLTIP_CLEAN
+                )
 
     def _library_skill_editor_active(self) -> bool:
         """True while the in-canvas skill editor is the live view (task-424)."""
@@ -13240,6 +13333,10 @@ class LibraryScreen(BaseAppScreen):
                 location=self._library_ingest_browse_location(),
                 title="Import media",
                 filters=_ingestible_file_filters(),
+                # (task-2222 owner ruling) Folder import must be pickable,
+                # not type-only: "Open" keeps descending, this returns the
+                # folder on screen.
+                offer_select_folder=True,
             ),
             browse_callback,
         )
@@ -13354,6 +13451,22 @@ class LibraryScreen(BaseAppScreen):
             else:
                 error_line.update(message)
                 error_line.display = bool(message)
+            # (task-2230 Qodo round) The persistent invalid marker is set at
+            # compose time, but text/number edits deliberately skip the
+            # recompose -- without toggling it here a field stayed marked
+            # after becoming valid (and never got marked after becoming
+            # invalid), which is exactly the unreliable "highlighted" the
+            # marker was added to fix.
+            try:
+                field_input = self.query_one(
+                    f"#opt-{event.group}-{event.name}", Input
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                field_input.set_class(
+                    bool(message), "-ingest-option-invalid"
+                )
             self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
@@ -14054,6 +14167,17 @@ class LibraryScreen(BaseAppScreen):
         """
         self.run_worker(self._open_library_item_by_id("media", str(media_id)))
 
+    #: One-shot note the media viewer surfaces on its next build --
+    #: set when navigation arrives via a dedup-matched ingest row
+    #: (task-2223: "Open in Library" on a match landed on the twin's
+    #: identity with no explanation).
+    _library_media_arrival_note: str = ""
+
+    def _pop_library_media_arrival_note(self) -> str:
+        note = self._library_media_arrival_note
+        self._library_media_arrival_note = ""
+        return note
+
     def _open_job_in_library(self, job: LibraryIngestJob) -> None:
         """Resolve a done ingest job to a media item and open it.
 
@@ -14061,6 +14185,13 @@ class LibraryScreen(BaseAppScreen):
         deduplicated and therefore has no stamped ``media_id``. Defensively
         skips fallback when the media database is unavailable.
         """
+        # Delegate to the tally's own predicate: ``progress`` is a dict
+        # with the marker under ["message"] (Qodo caught a str() check that
+        # could never match).
+        if count_duplicate_done_jobs((job,)):
+            self._library_media_arrival_note = (
+                "Matched an existing item — nothing new was imported."
+            )
         media_id = job.media_id
         if media_id is None:
             media_db = getattr(self.app_instance, "media_db", None)
@@ -14363,7 +14494,12 @@ class LibraryScreen(BaseAppScreen):
             terminal = [
                 job
                 for job in jobs_fn()
-                if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+                if job.state
+                in (
+                    IngestJobState.DONE,
+                    IngestJobState.FAILED,
+                    IngestJobState.SKIPPED,
+                )
             ]
             known = {job.job_id for job in terminal}
             terminal.extend(
@@ -17644,10 +17780,9 @@ class LibraryScreen(BaseAppScreen):
         at all. The workspace gate is not conversation-specific --
         ``build_library_workspace_depth_state`` computes
         ``context_handoff_enabled`` across every visible Library source
-        (notes, media, and conversations together), and the Library hub's
-        own per-source-type readiness rows (``_hub_console_status``) already
-        treat Media under that same gate -- so media handoff eligibility
-        follows the identical workspace-staging policy as conversations.
+        (notes, media, and conversations together) -- so media handoff
+        eligibility follows the identical workspace-staging policy as
+        conversations.
         """
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_media_handoff_payload()

@@ -164,6 +164,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         Binding("ctrl+r", "show_recent", "Show recent locations"),
         Binding("ctrl+f", "focus_search", "Search in directory"),
         Binding("escape", "dismiss(None)", "Cancel"),
+        Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
 
@@ -260,6 +261,14 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             with InputBar():
                 yield from self._input_bar()
                 yield Button(self._label(self._select_button, "Select"), id="select")
+                # (task-2222) Opt-in folder affordance: a file picker whose
+                # caller also accepts a directory can offer "this folder"
+                # without a second dialog. Off by default, so every other
+                # caller's bar is unchanged.
+                if getattr(self, "_offer_select_folder", False):
+                    yield Button(
+                        "Select folder", id="select-current-folder"
+                    )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
     def on_mount(self) -> None:
@@ -335,6 +344,48 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
     def _show_permission_error(self) -> None:
         """Show any permission error bubbled up from the directory navigator."""
         self._set_error(self.ERROR_PERMISSION_ERROR)
+
+    def check_action(
+        self, action: str, parameters: tuple[object, ...]
+    ) -> bool | None:
+        """Hide the folder shortcut on dialogs that do not offer it.
+
+        (task-2222 Qodo round) The binding is declared on the shared base,
+        so without this every picker advertised a ctrl+s that did nothing
+        -- including in the F1 help. Returning None removes it from both
+        the key map and the listing.
+
+        Args:
+            action: The action name being checked.
+            parameters: The action's parameters.
+
+        Returns:
+            ``None`` to hide the folder action when this dialog does not
+            offer it; otherwise the base class's decision.
+        """
+        if action == "select_current_folder" and not getattr(
+            self, "_offer_select_folder", False
+        ):
+            return None
+        return super().check_action(action, parameters)
+
+    def action_select_current_folder(self) -> None:
+        """Keyboard route to the folder affordance (task-2222)."""
+        if getattr(self, "_offer_select_folder", False):
+            self.dismiss(self.query_one(DirectoryNavigation).location)
+
+    @on(Button.Pressed, "#select-current-folder")
+    def _select_current_folder(self, event: Button.Pressed) -> None:
+        """Return the directory currently being viewed (task-2222).
+
+        "Open" keeps descending into directories; this returns the one on
+        screen, which is how every OS folder picker behaves.
+
+        Args:
+            event: The button press event.
+        """
+        event.stop()
+        self.dismiss(self.query_one(DirectoryNavigation).location)
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self, event: Button.Pressed) -> None:

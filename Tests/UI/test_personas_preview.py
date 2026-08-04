@@ -70,6 +70,15 @@ async def test_buttons_carry_shared_flat_button_classes():
         assert pilot.app.query_one("#personas-preview-open-console", Button).has_class(
             "console-action-subdued"
         )
+        # F-032: the preview's Console handoff says what it continues.
+        assert (
+            str(
+                pilot.app.query_one(
+                    "#personas-preview-open-console", Button
+                ).label
+            )
+            == "Continue this chat in Console"
+        )
         assert pilot.app.query_one("#personas-preview-toggle", Button).has_class(
             "console-action-subdued"
         )
